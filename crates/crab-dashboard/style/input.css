@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+    --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "DM Mono", ui-monospace, monospace;
+
+    --color-stone-25: oklch(0.985 0.001 106.42);
+    --color-stone-50: oklch(0.97 0.001 106.42);
+    --color-stone-75: oklch(0.95 0.002 106.42);
+    --color-stone-100: oklch(0.92 0.003 106.42);
+    --color-stone-200: oklch(0.85 0.005 106.42);
+    --color-stone-300: oklch(0.72 0.008 106.42);
+    --color-stone-400: oklch(0.58 0.01 106.42);
+    --color-stone-500: oklch(0.48 0.01 106.42);
+    --color-stone-600: oklch(0.38 0.01 106.42);
+    --color-stone-700: oklch(0.30 0.01 106.42);
+    --color-stone-800: oklch(0.22 0.01 106.42);
+    --color-stone-900: oklch(0.16 0.01 106.42);
+    --color-stone-950: oklch(0.12 0.01 106.42);
+
+    --color-teal-50: oklch(0.97 0.015 190);
+    --color-teal-100: oklch(0.93 0.03 190);
+    --color-teal-200: oklch(0.85 0.06 190);
+    --color-teal-300: oklch(0.75 0.08 190);
+    --color-teal-400: oklch(0.65 0.10 190);
+    --color-teal-500: oklch(0.55 0.10 190);
+    --color-teal-600: oklch(0.45 0.09 190);
+    --color-teal-700: oklch(0.35 0.07 190);
+    --color-teal-800: oklch(0.25 0.05 190);
+    --color-teal-900: oklch(0.18 0.04 190);
+
+    --color-amber-50: oklch(0.98 0.02 85);
+    --color-amber-100: oklch(0.95 0.04 85);
+    --color-amber-200: oklch(0.88 0.08 85);
+    --color-amber-300: oklch(0.80 0.12 85);
+    --color-amber-400: oklch(0.72 0.14 85);
+    --color-amber-500: oklch(0.64 0.14 85);
+    --color-amber-600: oklch(0.54 0.12 85);
+    --color-amber-700: oklch(0.42 0.10 85);
+    --color-amber-800: oklch(0.32 0.08 85);
+    --color-amber-900: oklch(0.22 0.06 85);
+
+    --color-rose-50: oklch(0.97 0.015 10);
+    --color-rose-100: oklch(0.94 0.03 10);
+    --color-rose-200: oklch(0.88 0.06 10);
+    --color-rose-300: oklch(0.80 0.09 10);
+    --color-rose-400: oklch(0.70 0.12 10);
+    --color-rose-500: oklch(0.60 0.14 10);
+    --color-rose-600: oklch(0.50 0.12 10);
+    --color-rose-700: oklch(0.40 0.10 10);
+    --color-rose-800: oklch(0.30 0.08 10);
+    --color-rose-900: oklch(0.20 0.06 10);
+}
+
+@layer base {
+    body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    ::selection {
+        background-color: oklch(0.55 0.10 190 / 0.2);
+    }
+}
+
+@utility scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.72 0.008 106.42) transparent;
+}
+
+@utility ring-teal {
+    --tw-ring-color: oklch(0.55 0.10 190);
+}

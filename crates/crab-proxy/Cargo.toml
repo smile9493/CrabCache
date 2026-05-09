@@ -11,6 +11,7 @@ crab-semantic.workspace = true
 pingora.workspace = true
 pingora-core.workspace = true
 pingora-proxy.workspace = true
+pingora-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true

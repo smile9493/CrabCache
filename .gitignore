@@ -21,6 +21,35 @@ config/gateway.toml
 # Docker volumes
 docker/data/
 
+# Dashboard build output
+crates/crab-dashboard/dist/
+
+# Node modules
+node_modules/
+
+# Trae skills (IDE tooling, not project code)
+.trae/skills/adapt/
+.trae/skills/animate/
+.trae/skills/arrange/
+.trae/skills/audit/
+.trae/skills/bolder/
+.trae/skills/clarify/
+.trae/skills/colorize/
+.trae/skills/critique/
+.trae/skills/delight/
+.trae/skills/distill/
+.trae/skills/extract/
+.trae/skills/frontend-design/
+.trae/skills/harden/
+.trae/skills/normalize/
+.trae/skills/onboard/
+.trae/skills/optimize/
+.trae/skills/overdrive/
+.trae/skills/polish/
+.trae/skills/quieter/
+.trae/skills/teach-impeccable/
+.trae/skills/typeset/
+
 # Misc
 doc_content.txt
 read_doc.ps1

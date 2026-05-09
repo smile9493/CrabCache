@@ -1,0 +1,15 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[watch]
+ignore = ["dist", "target"]
+
+[serve]
+address = "127.0.0.1"
+port = 8081
+
+[[hooks]]
+stage = "build"
+command = "sh"
+command_arguments = ["-c", "npx @tailwindcss/cli -i style/input.css -o style/output.css --minify 2>/dev/null || true"]

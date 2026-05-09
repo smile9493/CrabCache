@@ -43,3 +43,10 @@ qdrant_url = "http://127.0.0.1:6334"
 collection_name = "crab_semantic_cache"
 similarity_threshold = 0.95
 ttl_secs = 86400
+
+[connection]
+tcp_keepalive_idle_secs = 60
+tcp_keepalive_interval_secs = 10
+tcp_keepalive_count = 3
+idle_timeout_secs = 90
+h2_ping_interval_secs = 30

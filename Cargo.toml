@@ -7,6 +7,8 @@ members = [
     "crates/crab-cache",
     "crates/crab-semantic",
     "crates/crab-metrics",
+    "crates/crab-admin",
+    "crates/crab-dashboard",
 ]
 
 [workspace.package]
@@ -17,10 +19,11 @@ repository = "https://github.com/smile9493/CrabCache"
 
 [workspace.dependencies]
 # -- Pingora core --
-pingora        = { version = "0.4", features = ["proxy"] }
-pingora-core   = "0.4"
-pingora-proxy  = "0.4"
-pingora-ketama = "0.4"
+pingora        = { version = "0.8", features = ["proxy"] }
+pingora-core   = "0.8"
+pingora-proxy  = "0.8"
+pingora-ketama = "0.8"
+pingora-http   = "0.8"
 
 # -- Async runtime --
 tokio = { version = "1", features = ["full"] }
@@ -32,7 +35,7 @@ bb8       = "0.8"
 bb8-redis = "0.17"
 
 # -- Semantic cache --
-ort            = { version = "2", features = ["load-dynamic"] }
+ort            = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
 qdrant-client  = "1"
 tokenizers     = { version = "0.21", features = ["http"] }
 
@@ -51,7 +54,7 @@ thiserror      = "2"
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap        = "6"
-async-trait    = "0.1"
+async-trait    = "0.1.83"
 uuid           = { version = "1", features = ["v4"] }
 sha2           = "0.10"
 hex            = "0.4"

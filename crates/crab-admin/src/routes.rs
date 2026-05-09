@@ -1,0 +1,374 @@
+use crate::state::AppState;
+use crate::types::*;
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{delete, get, post},
+};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/keys", get(list_keys).post(create_key))
+        .route("/api/admin/keys/{id}", delete(revoke_key))
+        .route("/api/admin/cache/config", get(get_cache_config).put(update_cache_config))
+        .route("/api/admin/semantic/config", get(get_semantic_config).put(update_semantic_config))
+        .route("/api/admin/connection/config", get(get_connection_config).put(update_connection_config))
+        .route("/api/admin/models", get(get_models).post(sync_models))
+        .route("/api/admin/routing/status", get(get_routing_status))
+        .route("/api/admin/logs", get(get_logs))
+        .route("/api/admin/logs/{id}", get(get_log_detail))
+        .with_state(state)
+}
+
+async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot> {
+    let metrics = state.metrics.read().clone();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let uptime_secs = now.saturating_sub(state.start_time);
+
+    let qps = if uptime_secs > 0 {
+        metrics.total_requests as f64 / uptime_secs as f64
+    } else {
+        0.0
+    };
+
+    let tps = if uptime_secs > 0 {
+        (metrics.total_input_tokens + metrics.total_output_tokens) as f64 / uptime_secs as f64
+    } else {
+        0.0
+    };
+
+    Json(MetricsSnapshot {
+        qps,
+        tps,
+        l0_hits: metrics.l0_hits,
+        l1_hits: metrics.l1_hits,
+        l2_hits: metrics.l2_hits,
+        cache_misses: metrics.cache_misses,
+        cache_hit_tokens: metrics.cache_hit_tokens,
+        cache_miss_tokens: metrics.cache_miss_tokens,
+        latency_l0_ms: if metrics.l0_latency_count > 0 {
+            metrics.l0_latency_sum_ms / metrics.l0_latency_count as f64
+        } else {
+            0.0
+        },
+        latency_l1_ms: if metrics.l1_latency_count > 0 {
+            metrics.l1_latency_sum_ms / metrics.l1_latency_count as f64
+        } else {
+            0.0
+        },
+        latency_l2_ms: if metrics.l2_latency_count > 0 {
+            metrics.l2_latency_sum_ms / metrics.l2_latency_count as f64
+        } else {
+            0.0
+        },
+        latency_upstream_ms: if metrics.upstream_latency_count > 0 {
+            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
+        } else {
+            0.0
+        },
+        active_keys: state.keys.len() as u64,
+        uptime_hours: uptime_secs / 3600,
+    })
+}
+
+async fn list_keys(State(state): State<Arc<AppState>>) -> Json<Vec<ApiKey>> {
+    let keys: Vec<ApiKey> = state
+        .keys
+        .iter()
+        .map(|entry| {
+            let key = entry.value();
+            ApiKey {
+                id: key.id.clone(),
+                name: key.name.clone(),
+                key_preview: key.key_hash[..10].to_string(),
+                active: key.enabled,
+                rpm_limit: key.rpm_limit as u32,
+                monthly_token_budget: key.monthly_token_limit,
+                tokens_used_this_month: key.tokens_this_month,
+            }
+        })
+        .collect();
+
+    Json(keys)
+}
+
+async fn create_key(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateKeyRequest>,
+) -> Result<Json<ApiKey>, StatusCode> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let stored = crate::state::StoredKey {
+        id: id.clone(),
+        name: req.name.clone(),
+        key_hash: format!("sk-cc-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+        created_at: now,
+        enabled: true,
+        rpm_limit: req.rpm_limit as u64,
+        monthly_token_limit: req.monthly_token_budget,
+        current_rpm: 0,
+        tokens_this_month: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+    };
+
+    let api_key = ApiKey {
+        id: stored.id.clone(),
+        name: stored.name.clone(),
+        key_preview: stored.key_hash[..10].to_string(),
+        active: stored.enabled,
+        rpm_limit: stored.rpm_limit as u32,
+        monthly_token_budget: stored.monthly_token_limit,
+        tokens_used_this_month: 0,
+    };
+
+    state.keys.insert(id, stored);
+
+    Ok(Json(api_key))
+}
+
+async fn revoke_key(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> StatusCode {
+    if state.keys.remove(&id).is_some() {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+async fn get_cache_config(State(state): State<Arc<AppState>>) -> Json<CacheConfig> {
+    let config = state.cache_config.read().clone();
+    Json(CacheConfig {
+        l0_ttl_secs: config.l0_ttl_secs,
+        l1_ttl_secs: config.l1_ttl_secs,
+        default_ttl_secs: config.default_ttl_secs,
+    })
+}
+
+async fn update_cache_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateCacheConfigRequest>,
+) -> Json<CacheConfig> {
+    let mut config = state.cache_config.write();
+    config.l0_ttl_secs = req.l0_ttl_secs;
+    config.l1_ttl_secs = req.l1_ttl_secs;
+
+    Json(CacheConfig {
+        l0_ttl_secs: config.l0_ttl_secs,
+        l1_ttl_secs: config.l1_ttl_secs,
+        default_ttl_secs: config.default_ttl_secs,
+    })
+}
+
+async fn get_semantic_config(State(state): State<Arc<AppState>>) -> Json<SemanticConfig> {
+    let config = state.semantic_config.read().clone();
+    Json(SemanticConfig {
+        similarity_threshold: config.similarity_threshold as f64,
+    })
+}
+
+async fn update_semantic_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateSemanticConfigRequest>,
+) -> Json<SemanticConfig> {
+    let mut config = state.semantic_config.write();
+    config.similarity_threshold = req.similarity_threshold as f32;
+
+    Json(SemanticConfig {
+        similarity_threshold: config.similarity_threshold as f64,
+    })
+}
+
+async fn get_routing_status(State(state): State<Arc<AppState>>) -> Json<RoutingStatus> {
+    let backends = state.backends.read().clone();
+    let total_requests: u64 = backends.iter().map(|b| b.request_count).sum();
+    let active_count = backends.iter().filter(|b| b.healthy).count();
+
+    Json(RoutingStatus {
+        total_backends: backends.len(),
+        active_backends: active_count,
+        total_requests,
+        backends: backends
+            .into_iter()
+            .map(|b| BackendStatus {
+                name: b.name,
+                request_count: b.request_count,
+                healthy: b.healthy,
+            })
+            .collect(),
+    })
+}
+
+async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
+    let logs = state.request_logs.read().clone();
+    let result: Vec<RequestLog> = logs
+        .into_iter()
+        .map(|log| {
+            let ts = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(log.timestamp);
+            let datetime: chrono::DateTime<chrono::Utc> = ts.into();
+            RequestLog {
+                id: log.id,
+                timestamp: datetime.format("%H:%M:%S").to_string(),
+                model: log.model.clone(),
+                consumer: log.consumer.clone(),
+                latency_ms: log.duration_ms as u64,
+                total_tokens: log.input_tokens + log.output_tokens,
+                cache_status: log.cache_tier.clone(),
+                request_payload: serde_json::to_string_pretty(&log.request_payload).unwrap_or_default(),
+                response_preview: log.response_body.chars().take(200).collect(),
+            }
+        })
+        .collect();
+
+    Json(result)
+}
+
+async fn get_log_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<RequestDetail>, StatusCode> {
+    let logs = state.request_logs.read().clone();
+    let log = logs.iter().find(|l| l.id == id).ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(RequestDetail {
+        cache_path: log.cache_path.join(" → "),
+        request_payload: serde_json::to_string_pretty(&log.request_payload).unwrap_or_default(),
+        response_body: log.response_body.clone(),
+        route_backend: log.route_backend.clone(),
+    }))
+}
+
+async fn get_connection_config(State(state): State<Arc<AppState>>) -> Json<ConnectionConfig> {
+    let config = state.connection_config.read().clone();
+    Json(ConnectionConfig {
+        tcp_keepalive_idle_secs: config.tcp_keepalive_idle_secs,
+        tcp_keepalive_interval_secs: config.tcp_keepalive_interval_secs,
+        tcp_keepalive_count: config.tcp_keepalive_count,
+        idle_timeout_secs: config.idle_timeout_secs,
+        h2_ping_interval_secs: config.h2_ping_interval_secs,
+    })
+}
+
+async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListResponse> {
+    let stored = state.models.read();
+    let models: Vec<ModelInfo> = stored
+        .models
+        .iter()
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            owned_by: m.owned_by.clone(),
+            context_length: m.context_length,
+            input_price_per_mtok: m.input_price_per_mtok,
+            output_price_per_mtok: m.output_price_per_mtok,
+            available: m.available,
+        })
+        .collect();
+    let total = models.len();
+    Json(ModelListResponse {
+        models,
+        total,
+        synced_at: stored.synced_at.clone(),
+    })
+}
+
+async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResult>, StatusCode> {
+    let upstream_url = "https://api.deepseek.com/v1/models";
+    let api_key = &state.upstream_api_key;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(upstream_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let upstream: UpstreamModelsResponse = resp
+        .json()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
+
+    let mut stored = state.models.write();
+    let existing_ids: Vec<String> = stored.models.iter().map(|m| m.id.clone()).collect();
+
+    let added: Vec<String> = upstream_ids
+        .iter()
+        .filter(|id| !existing_ids.contains(id))
+        .cloned()
+        .collect();
+
+    let removed: Vec<String> = existing_ids
+        .iter()
+        .filter(|id| !upstream_ids.contains(id))
+        .cloned()
+        .collect();
+
+    let unchanged = upstream_ids
+        .iter()
+        .filter(|id| existing_ids.contains(id))
+        .count();
+
+    let upstream_models: Vec<crate::state::StoredModel> = upstream
+        .data
+        .into_iter()
+        .map(|m| {
+            let existing = stored.models.iter().find(|e| e.id == m.id);
+            crate::state::StoredModel {
+                id: m.id,
+                owned_by: m.owned_by,
+                context_length: existing.and_then(|e| e.context_length),
+                input_price_per_mtok: existing.and_then(|e| e.input_price_per_mtok),
+                output_price_per_mtok: existing.and_then(|e| e.output_price_per_mtok),
+                available: true,
+            }
+        })
+        .collect();
+
+    let total = upstream_models.len();
+    stored.models = upstream_models;
+    stored.synced_at = Some(
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    );
+
+    Ok(Json(SyncResult {
+        added,
+        removed,
+        unchanged,
+        total,
+    }))
+}
+
+async fn update_connection_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateConnectionConfigRequest>,
+) -> Json<ConnectionConfig> {
+    let mut config = state.connection_config.write();
+    config.tcp_keepalive_idle_secs = req.tcp_keepalive_idle_secs;
+    config.tcp_keepalive_interval_secs = req.tcp_keepalive_interval_secs;
+    config.tcp_keepalive_count = req.tcp_keepalive_count;
+    config.idle_timeout_secs = req.idle_timeout_secs;
+    config.h2_ping_interval_secs = req.h2_ping_interval_secs;
+
+    Json(ConnectionConfig {
+        tcp_keepalive_idle_secs: config.tcp_keepalive_idle_secs,
+        tcp_keepalive_interval_secs: config.tcp_keepalive_interval_secs,
+        tcp_keepalive_count: config.tcp_keepalive_count,
+        idle_timeout_secs: config.idle_timeout_secs,
+        h2_ping_interval_secs: config.h2_ping_interval_secs,
+    })
+}

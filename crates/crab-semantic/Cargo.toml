@@ -5,9 +5,11 @@ edition.workspace = true
 
 [dependencies]
 crab-metrics.workspace = true
+crab-cache.workspace = true
 ort.workspace = true
 qdrant-client.workspace = true
 tokenizers.workspace = true
+ndarray = "0.16"
 serde.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
