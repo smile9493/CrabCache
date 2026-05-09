@@ -1,0 +1,12 @@
+[package]
+name = "crab-route"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pingora-ketama.workspace = true
+pingora-core.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+hex.workspace = true

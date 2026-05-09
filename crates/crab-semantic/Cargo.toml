@@ -1,0 +1,17 @@
+[package]
+name = "crab-semantic"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+crab-metrics.workspace = true
+ort.workspace = true
+qdrant-client.workspace = true
+tokenizers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true

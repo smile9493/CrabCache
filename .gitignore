@@ -1,0 +1,26 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ONNX models (too large for git)
+models/*.onnx
+
+# Config with secrets
+config/gateway.toml
+
+# Docker volumes
+docker/data/
+
+# Misc
+doc_content.txt
+read_doc.ps1

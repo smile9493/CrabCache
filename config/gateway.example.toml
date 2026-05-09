@@ -1,0 +1,45 @@
+# CrabCache Gateway Configuration
+# Copy this file to gateway.toml and fill in your API keys.
+
+[gateway]
+listen_addr = "0.0.0.0:8080"
+metrics_addr = "0.0.0.0:9090"
+
+[upstream]
+api_base = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+
+[[upstream.api_keys]]
+key = "sk-your-deepseek-api-key-here"
+weight = 100
+enabled = true
+
+# Uncomment to add backup keys for rate-limit rotation:
+# [[upstream.api_keys]]
+# key = "sk-backup-key"
+# weight = 50
+# enabled = true
+
+[cache]
+default_ttl_secs = 3600
+l0_max_entries = 10000
+l0_max_memory_mb = 512
+redis_url = "redis://127.0.0.1:6379"
+redis_pool_size = 10
+
+# Per-model TTL overrides (seconds)
+[cache.model_overrides]
+"deepseek-chat" = 7200
+"deepseek-coder" = 300
+
+# Per-consumer TTL overrides (seconds)
+[cache.consumer_overrides]
+"reporting-job" = 1800
+
+[semantic]
+enabled = false
+onnx_model_path = "models/all-MiniLM-L6-v2.onnx"
+qdrant_url = "http://127.0.0.1:6334"
+collection_name = "crab_semantic_cache"
+similarity_threshold = 0.95
+ttl_secs = 86400

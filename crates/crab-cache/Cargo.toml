@@ -1,0 +1,21 @@
+[package]
+name = "crab-cache"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+crab-metrics.workspace = true
+moka.workspace = true
+redis.workspace = true
+bb8.workspace = true
+bb8-redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+dashmap.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tokio.workspace = true

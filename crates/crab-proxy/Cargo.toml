@@ -1,0 +1,22 @@
+[package]
+name = "crab-proxy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+crab-metrics.workspace = true
+crab-route.workspace = true
+crab-cache.workspace = true
+crab-semantic.workspace = true
+pingora.workspace = true
+pingora-core.workspace = true
+pingora-proxy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+http.workspace = true
+tokio.workspace = true
