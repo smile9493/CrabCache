@@ -1,6 +1,5 @@
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Trace-based load pattern parameters extracted from production logs.
 ///

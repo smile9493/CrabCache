@@ -10,12 +10,28 @@ pub struct MetricsSnapshot {
     pub cache_misses: u64,
     pub cache_hit_tokens: u64,
     pub cache_miss_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tokens: u64,
     pub latency_l0_ms: f64,
     pub latency_l1_ms: f64,
     pub latency_l2_ms: f64,
     pub latency_upstream_ms: f64,
     pub active_keys: u64,
     pub uptime_hours: u64,
+    pub hourly_stats: Vec<TimeSeriesPoint>,
+    pub daily_stats: Vec<TimeSeriesPoint>,
+    pub weekly_stats: Vec<TimeSeriesPoint>,
+    pub monthly_stats: Vec<TimeSeriesPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeSeriesPoint {
+    pub timestamp: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub cache_hits: u64,
+    pub avg_latency_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,4 +193,33 @@ pub struct SyncResult {
 pub struct GatewayInfo {
     pub base_url: String,
     pub listen_addr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceAnalysis {
+    pub total_requests: usize,
+    pub unique_requests: usize,
+    pub repeat_ratio: f64,
+    pub semantic_cluster_ratio: f64,
+    pub estimated_zipf_alpha: f64,
+    pub estimated_hit_rate: f64,
+    pub avg_latency_ms: f64,
+    pub avg_prompt_tokens: f64,
+    pub cache_hit_ratio: f64,
+    pub top_models: Vec<ModelUsage>,
+    pub cluster_distribution: Vec<ClusterInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelUsage {
+    pub model: String,
+    pub count: usize,
+    pub percentage: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterInfo {
+    pub cluster_id: usize,
+    pub count: usize,
+    pub percentage: f64,
 }

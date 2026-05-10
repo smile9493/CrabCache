@@ -14,6 +14,7 @@ pub struct AppState {
     pub models: RwLock<StoredModelList>,
     pub backends: RwLock<Vec<StoredBackend>>,
     pub metrics: RwLock<StoredMetrics>,
+    pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +147,19 @@ pub struct StoredMetrics {
     pub ttft_count: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredTraceEntry {
+    pub timestamp_ms: u64,
+    pub request_hash: String,
+    pub content_length: usize,
+    pub semantic_cluster: usize,
+    pub conversation_id: Option<String>,
+    pub model: String,
+    pub prompt_tokens: usize,
+    pub latency_ms: f64,
+    pub cache_hit: bool,
+}
+
 impl Default for StoredMetrics {
     fn default() -> Self {
         Self {
@@ -215,6 +229,7 @@ impl AppState {
             }),
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
+            trace_entries: RwLock::new(Vec::new()),
         }
     }
 }

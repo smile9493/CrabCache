@@ -71,6 +71,12 @@ impl Translations {
             Locale::EnUS => "Upstream",
         }
     }
+    pub fn sidebar_trace(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "影子日志",
+            Locale::EnUS => "Shadow Logs",
+        }
+    }
     pub fn sidebar_online(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "网关运行中",
@@ -797,6 +803,103 @@ impl Translations {
         }
     }
 
+    pub fn trace_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "影子日志分析",
+            Locale::EnUS => "Shadow Log Analysis",
+        }
+    }
+    pub fn trace_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "安全采集的生产数据统计特征，用于缓存命中率评估和参数调优",
+            Locale::EnUS => "Privacy-preserving production data analysis for cache optimization",
+        }
+    }
+    pub fn trace_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刷新分析",
+            Locale::EnUS => "Refresh Analysis",
+        }
+    }
+    pub fn trace_load_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载分析数据失败",
+            Locale::EnUS => "Failed to load analysis",
+        }
+    }
+    pub fn trace_total_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "总请求数",
+            Locale::EnUS => "Total Requests",
+        }
+    }
+    pub fn trace_unique_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "唯一请求数",
+            Locale::EnUS => "Unique Requests",
+        }
+    }
+    pub fn trace_repeat_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "重复率",
+            Locale::EnUS => "Repeat Ratio",
+        }
+    }
+    pub fn trace_estimated_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "预估命中率",
+            Locale::EnUS => "Est. Hit Rate",
+        }
+    }
+    pub fn trace_semantic_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义聚类率",
+            Locale::EnUS => "Semantic Cluster Ratio",
+        }
+    }
+    pub fn trace_zipf_alpha(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Zipf 参数 α",
+            Locale::EnUS => "Zipf Alpha",
+        }
+    }
+    pub fn trace_cache_hit_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实际缓存命中率",
+            Locale::EnUS => "Actual Cache Hit Ratio",
+        }
+    }
+    pub fn trace_avg_metrics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均指标",
+            Locale::EnUS => "Average Metrics",
+        }
+    }
+    pub fn trace_avg_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均延迟",
+            Locale::EnUS => "Avg Latency",
+        }
+    }
+    pub fn trace_avg_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均 Token 数",
+            Locale::EnUS => "Avg Tokens",
+        }
+    }
+    pub fn trace_top_models(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "热门模型",
+            Locale::EnUS => "Top Models",
+        }
+    }
+    pub fn trace_cluster_distribution(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "聚类分布",
+            Locale::EnUS => "Cluster Distribution",
+        }
+    }
+
     pub const fn empty_state_icon() -> &'static str { "—" }
 
     pub fn upstream_title(self) -> &'static str {
@@ -887,6 +990,125 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "加载上游配置失败",
             Locale::EnUS => "Failed to load upstream config",
+        }
+    }
+    
+    pub fn overview_token_stats(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 统计",
+            Locale::EnUS => "Token Statistics",
+        }
+    }
+    
+    pub fn overview_input_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 Token",
+            Locale::EnUS => "Input Tokens",
+        }
+    }
+    
+    pub fn overview_output_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出 Token",
+            Locale::EnUS => "Output Tokens",
+        }
+    }
+    
+    pub fn overview_total_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "总 Token",
+            Locale::EnUS => "Total Tokens",
+        }
+    }
+    
+    pub fn overview_usage_trends(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "使用趋势",
+            Locale::EnUS => "Usage Trends",
+        }
+    }
+    
+    pub fn overview_hourly(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "小时",
+            Locale::EnUS => "Hourly",
+        }
+    }
+    
+    pub fn overview_daily(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "日",
+            Locale::EnUS => "Daily",
+        }
+    }
+    
+    pub fn overview_weekly(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周",
+            Locale::EnUS => "Weekly",
+        }
+    }
+    
+    pub fn overview_monthly(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "月",
+            Locale::EnUS => "Monthly",
+        }
+    }
+    
+    pub fn overview_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "此时间范围暂无数据",
+            Locale::EnUS => "No data available for this time range",
+        }
+    }
+    
+    pub fn overview_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求",
+            Locale::EnUS => "req",
+        }
+    }
+    
+    pub fn overview_hits(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中",
+            Locale::EnUS => "hits",
+        }
+    }
+    
+    pub fn overview_auto_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自动刷新",
+            Locale::EnUS => "Auto refresh",
+        }
+    }
+    
+    pub fn overview_last_update(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最后更新",
+            Locale::EnUS => "Last update",
+        }
+    }
+    
+    pub fn overview_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刷新",
+            Locale::EnUS => "Refresh",
+        }
+    }
+    
+    pub fn keys_search_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "搜索密钥...",
+            Locale::EnUS => "Search keys...",
+        }
+    }
+    
+    pub fn keys_no_results(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "没有匹配的密钥",
+            Locale::EnUS => "No keys match your search",
         }
     }
 }

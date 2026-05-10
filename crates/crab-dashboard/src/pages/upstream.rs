@@ -19,28 +19,18 @@ pub fn UpstreamPage() -> impl IntoView {
     let saved = RwSignal::new(false);
     let save_error = RwSignal::new(String::new());
 
-    let load_data = {
-        let config = config.clone();
-        let base_url = base_url.clone();
-        let _api_key = api_key.clone();
-        let api_key_dirty = api_key_dirty.clone();
-        let endpoints_text = endpoints_text.clone();
-        move || {
-            leptos::task::spawn_local({
-                let config = config.clone();
-                async move {
-                    match api::fetch_upstream_config().await {
-                        Ok(c) => {
-                            base_url.set(c.base_url.clone());
-                            endpoints_text.set(c.endpoints.join("\n"));
-                            api_key_dirty.set(false);
-                            config.set(Some(Ok(c)));
-                        }
-                        Err(e) => config.set(Some(Err(e))),
-                    }
+    let load_data = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_upstream_config().await {
+                Ok(c) => {
+                    base_url.set(c.base_url.clone());
+                    endpoints_text.set(c.endpoints.join("\n"));
+                    api_key_dirty.set(false);
+                    config.set(Some(Ok(c)));
                 }
-            });
-        }
+                Err(e) => config.set(Some(Err(e))),
+            }
+        });
     };
 
     load_data();

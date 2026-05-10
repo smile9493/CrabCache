@@ -217,6 +217,18 @@
   grid-auto-rows: minmax(120px, auto);
   gap: 1rem;
 }
+.bento-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(120px, auto);
+  gap: 1rem;
+}
+.bento-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: minmax(120px, auto);
+  gap: 1rem;
+}
 .bento-cell { grid-column: span 1; grid-row: span 1; }
 .bento-cell-wide { grid-column: span 2; grid-row: span 1; }
 .bento-cell-tall { grid-column: span 1; grid-row: span 2; }

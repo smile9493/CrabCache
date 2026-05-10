@@ -1,5 +1,6 @@
 use crate::state::AppState;
 use crate::types::*;
+use crate::network::NetworkInfo;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -12,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key))
         .route("/api/admin/cache/config", get(get_cache_config).put(update_cache_config))
@@ -22,7 +24,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
+        .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .with_state(state)
+}
+
+async fn get_network_info() -> Json<NetworkInfo> {
+    let use_https = std::env::var("CRABCACHE_HTTPS")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    Json(NetworkInfo::new(8080, use_https))
 }
 
 async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot> {
@@ -45,6 +55,11 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot
         0.0
     };
 
+    let hourly_stats = generate_hourly_stats(&metrics, uptime_secs);
+    let daily_stats = generate_daily_stats(&metrics, uptime_secs);
+    let weekly_stats = generate_weekly_stats(&metrics, uptime_secs);
+    let monthly_stats = generate_monthly_stats(&metrics, uptime_secs);
+
     Json(MetricsSnapshot {
         qps,
         tps,
@@ -54,6 +69,9 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot
         cache_misses: metrics.cache_misses,
         cache_hit_tokens: metrics.cache_hit_tokens,
         cache_miss_tokens: metrics.cache_miss_tokens,
+        total_input_tokens: metrics.total_input_tokens,
+        total_output_tokens: metrics.total_output_tokens,
+        total_tokens: metrics.total_input_tokens + metrics.total_output_tokens,
         latency_l0_ms: if metrics.l0_latency_count > 0 {
             metrics.l0_latency_sum_ms / metrics.l0_latency_count as f64
         } else {
@@ -76,7 +94,127 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot
         },
         active_keys: state.keys.len() as u64,
         uptime_hours: uptime_secs / 3600,
+        hourly_stats,
+        daily_stats,
+        weekly_stats,
+        monthly_stats,
     })
+}
+
+fn generate_hourly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+    let hours = (uptime_secs / 3600).min(24) as usize;
+    let mut stats = Vec::new();
+    
+    for i in 0..hours {
+        let hour_ago = hours - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::hours(hour_ago as i64);
+        
+        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (hours as u64).max(1) };
+        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (hours as u64).max(1) };
+        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (hours as u64).max(1) };
+        let avg_latency_ms = if metrics.upstream_latency_count > 0 {
+            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
+        } else {
+            0.0
+        };
+        
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%H:00").to_string(),
+            requests,
+            tokens,
+            cache_hits,
+            avg_latency_ms,
+        });
+    }
+    
+    stats
+}
+
+fn generate_daily_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+    let days = (uptime_secs / 86400).min(7) as usize;
+    let mut stats = Vec::new();
+    
+    for i in 0..days {
+        let day_ago = days - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::days(day_ago as i64);
+        
+        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (days as u64).max(1) };
+        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (days as u64).max(1) };
+        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (days as u64).max(1) };
+        let avg_latency_ms = if metrics.upstream_latency_count > 0 {
+            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
+        } else {
+            0.0
+        };
+        
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%m-%d").to_string(),
+            requests,
+            tokens,
+            cache_hits,
+            avg_latency_ms,
+        });
+    }
+    
+    stats
+}
+
+fn generate_weekly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+    let weeks = (uptime_secs / 604800).min(4) as usize;
+    let mut stats = Vec::new();
+    
+    for i in 0..weeks {
+        let week_ago = weeks - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::weeks(week_ago as i64);
+        
+        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (weeks as u64).max(1) };
+        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (weeks as u64).max(1) };
+        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (weeks as u64).max(1) };
+        let avg_latency_ms = if metrics.upstream_latency_count > 0 {
+            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
+        } else {
+            0.0
+        };
+        
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("W%U").to_string(),
+            requests,
+            tokens,
+            cache_hits,
+            avg_latency_ms,
+        });
+    }
+    
+    stats
+}
+
+fn generate_monthly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+    let months = (uptime_secs / 2592000).min(12) as usize;
+    let mut stats = Vec::new();
+    
+    for i in 0..months {
+        let month_ago = months - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::days((month_ago * 30) as i64);
+        
+        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (months as u64).max(1) };
+        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (months as u64).max(1) };
+        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (months as u64).max(1) };
+        let avg_latency_ms = if metrics.upstream_latency_count > 0 {
+            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
+        } else {
+            0.0
+        };
+        
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%Y-%m").to_string(),
+            requests,
+            tokens,
+            cache_hits,
+            avg_latency_ms,
+        });
+    }
+    
+    stats
 }
 
 async fn list_keys(State(state): State<Arc<AppState>>) -> Json<Vec<ApiKey>> {
@@ -458,4 +596,166 @@ fn mask_api_key(key: &str) -> String {
         return "****".to_string();
     }
     format!("{}****{}", &key[..4], &key[key.len()-4..])
+}
+
+async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAnalysis> {
+    use std::collections::HashMap;
+    
+    let trace_entries = state.trace_entries.read().clone();
+    
+    if trace_entries.is_empty() {
+        return Json(TraceAnalysis {
+            total_requests: 0,
+            unique_requests: 0,
+            repeat_ratio: 0.0,
+            semantic_cluster_ratio: 0.0,
+            estimated_zipf_alpha: 0.0,
+            estimated_hit_rate: 0.0,
+            avg_latency_ms: 0.0,
+            avg_prompt_tokens: 0.0,
+            cache_hit_ratio: 0.0,
+            top_models: vec![],
+            cluster_distribution: vec![],
+        });
+    }
+    
+    let total_requests = trace_entries.len();
+    let mut hash_counts: HashMap<String, usize> = HashMap::new();
+    let mut cluster_counts: HashMap<usize, usize> = HashMap::new();
+    let mut model_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_latency = 0.0;
+    let mut total_prompt_tokens = 0;
+    let mut cache_hits = 0;
+    
+    for entry in &trace_entries {
+        *hash_counts.entry(entry.request_hash.clone()).or_insert(0) += 1;
+        *cluster_counts.entry(entry.semantic_cluster).or_insert(0) += 1;
+        *model_counts.entry(entry.model.clone()).or_insert(0) += 1;
+        total_latency += entry.latency_ms;
+        total_prompt_tokens += entry.prompt_tokens;
+        if entry.cache_hit {
+            cache_hits += 1;
+        }
+    }
+    
+    let unique_requests = hash_counts.len();
+    let repeat_ratio = if total_requests > 0 {
+        1.0 - (unique_requests as f64 / total_requests as f64)
+    } else {
+        0.0
+    };
+    
+    let multi_member_clusters: usize = cluster_counts.values().filter(|&&c| c > 1).sum();
+    let semantic_cluster_ratio = if total_requests > 0 {
+        multi_member_clusters as f64 / total_requests as f64
+    } else {
+        0.0
+    };
+    
+    let estimated_hit_rate = repeat_ratio + (1.0 - repeat_ratio) * semantic_cluster_ratio;
+    
+    let mut freqs: Vec<usize> = hash_counts.values().cloned().collect();
+    freqs.sort_by(|a, b| b.cmp(a));
+    let estimated_zipf_alpha = if freqs.len() >= 2 {
+        compute_zipf_alpha(&freqs)
+    } else {
+        0.0
+    };
+    
+    let avg_latency_ms = if total_requests > 0 {
+        total_latency / total_requests as f64
+    } else {
+        0.0
+    };
+    
+    let avg_prompt_tokens = if total_requests > 0 {
+        total_prompt_tokens as f64 / total_requests as f64
+    } else {
+        0.0
+    };
+    
+    let cache_hit_ratio = if total_requests > 0 {
+        cache_hits as f64 / total_requests as f64
+    } else {
+        0.0
+    };
+    
+    let mut top_models: Vec<ModelUsage> = model_counts
+        .into_iter()
+        .map(|(model, count)| ModelUsage {
+            model,
+            count,
+            percentage: if total_requests > 0 {
+                count as f64 / total_requests as f64 * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    top_models.sort_by(|a, b| b.count.cmp(&a.count));
+    top_models.truncate(5);
+    
+    let mut cluster_distribution: Vec<ClusterInfo> = cluster_counts
+        .into_iter()
+        .map(|(cluster_id, count)| ClusterInfo {
+            cluster_id,
+            count,
+            percentage: if total_requests > 0 {
+                count as f64 / total_requests as f64 * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    cluster_distribution.sort_by(|a, b| b.count.cmp(&a.count));
+    cluster_distribution.truncate(10);
+    
+    Json(TraceAnalysis {
+        total_requests,
+        unique_requests,
+        repeat_ratio,
+        semantic_cluster_ratio,
+        estimated_zipf_alpha,
+        estimated_hit_rate,
+        avg_latency_ms,
+        avg_prompt_tokens,
+        cache_hit_ratio,
+        top_models,
+        cluster_distribution,
+    })
+}
+
+fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
+    if freqs.len() < 2 {
+        return 0.0;
+    }
+    
+    let n = freqs.len();
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    let mut sum_xy = 0.0;
+    let mut sum_xx = 0.0;
+    
+    for (rank, &freq) in freqs.iter().enumerate() {
+        if freq == 0 {
+            continue;
+        }
+        let r = (rank + 1) as f64;
+        let f = freq as f64;
+        let log_r = r.ln();
+        let log_f = f.ln();
+        
+        sum_x += log_r;
+        sum_y += log_f;
+        sum_xy += log_r * log_f;
+        sum_xx += log_r * log_r;
+    }
+    
+    let denominator = n as f64 * sum_xx - sum_x * sum_x;
+    if denominator == 0.0 {
+        return 0.0;
+    }
+    
+    let alpha = (n as f64 * sum_xy - sum_x * sum_y) / denominator;
+    -alpha
 }

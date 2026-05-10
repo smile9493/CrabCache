@@ -13,43 +13,31 @@ pub fn RoutingPage() -> impl IntoView {
     let connection_config: RwSignal<Option<Result<ConnectionConfig, String>>> = RwSignal::new(None);
     let routing_status: RwSignal<Option<Result<RoutingStatus, String>>> = RwSignal::new(None);
 
-    leptos::task::spawn_local({
-        let cache_config = cache_config.clone();
-        async move {
-            match api::fetch_cache_config().await {
-                Ok(c) => cache_config.set(Some(Ok(c))),
-                Err(e) => cache_config.set(Some(Err(e))),
-            }
+    leptos::task::spawn_local(async move {
+        match api::fetch_cache_config().await {
+            Ok(c) => cache_config.set(Some(Ok(c))),
+            Err(e) => cache_config.set(Some(Err(e))),
         }
     });
 
-    leptos::task::spawn_local({
-        let semantic_config = semantic_config.clone();
-        async move {
-            match api::fetch_semantic_config().await {
-                Ok(c) => semantic_config.set(Some(Ok(c))),
-                Err(e) => semantic_config.set(Some(Err(e))),
-            }
+    leptos::task::spawn_local(async move {
+        match api::fetch_semantic_config().await {
+            Ok(c) => semantic_config.set(Some(Ok(c))),
+            Err(e) => semantic_config.set(Some(Err(e))),
         }
     });
 
-    leptos::task::spawn_local({
-        let connection_config = connection_config.clone();
-        async move {
-            match api::fetch_connection_config().await {
-                Ok(c) => connection_config.set(Some(Ok(c))),
-                Err(e) => connection_config.set(Some(Err(e))),
-            }
+    leptos::task::spawn_local(async move {
+        match api::fetch_connection_config().await {
+            Ok(c) => connection_config.set(Some(Ok(c))),
+            Err(e) => connection_config.set(Some(Err(e))),
         }
     });
 
-    leptos::task::spawn_local({
-        let routing_status = routing_status.clone();
-        async move {
-            match api::fetch_routing_status().await {
-                Ok(s) => routing_status.set(Some(Ok(s))),
-                Err(e) => routing_status.set(Some(Err(e))),
-            }
+    leptos::task::spawn_local(async move {
+        match api::fetch_routing_status().await {
+            Ok(s) => routing_status.set(Some(Ok(s))),
+            Err(e) => routing_status.set(Some(Err(e))),
         }
     });
 

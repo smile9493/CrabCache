@@ -31,6 +31,7 @@ pub fn Sidebar() -> impl IntoView {
                 <NavItem href="/models" label=move || use_translations().sidebar_models() icon="◉" />
                 <NavItem href="/routing" label=move || use_translations().sidebar_routing() icon="◈" />
                 <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" />
+                <NavItem href="/trace" label=move || use_translations().sidebar_trace() icon="◈" />
             </nav>
 
             <div class="sidebar-footer">

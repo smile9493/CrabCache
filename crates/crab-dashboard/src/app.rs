@@ -9,6 +9,7 @@ use crate::pages::logs::LogsPage;
 use crate::pages::models::ModelsPage;
 use crate::pages::overview::OverviewPage;
 use crate::pages::routing::RoutingPage;
+use crate::pages::trace::TracePage;
 use crate::pages::upstream::UpstreamPage;
 use crate::theme::provide_theme;
 
@@ -28,6 +29,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/routing") view=RoutingPage />
                         <Route path=path!("/logs") view=LogsPage />
+                        <Route path=path!("/trace") view=TracePage />
                         <Route path=path!("/upstream") view=UpstreamPage />
                     </Routes>
                 </main>

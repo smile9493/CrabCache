@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use gloo_timers::future::TimeoutFuture;
 
 use crate::api;
 use crate::components::ui::*;
@@ -9,20 +10,60 @@ use crate::types::MetricsSnapshot;
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
     let metrics: RwSignal<Option<Result<MetricsSnapshot, String>>> = RwSignal::new(None);
+    let auto_refresh = RwSignal::new(true);
+    let last_update = RwSignal::new(String::new());
+
+    let load_metrics = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_metrics().await {
+                Ok(m) => {
+                    metrics.set(Some(Ok(m)));
+                    last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                }
+                Err(e) => metrics.set(Some(Err(e))),
+            }
+        });
+    };
+
+    load_metrics();
 
     leptos::task::spawn_local(async move {
-        match api::fetch_metrics().await {
-            Ok(m) => metrics.set(Some(Ok(m))),
-            Err(e) => metrics.set(Some(Err(e))),
+        loop {
+            TimeoutFuture::new(5000).await;
+            if auto_refresh.get() {
+                load_metrics();
+            }
         }
     });
 
     view! {
         <div class="p-6 space-y-6">
-            <SectionHeader
-                title=t.overview_title()
-                description=t.overview_desc()
-            />
+            <div class="flex items-center justify-between">
+                <SectionHeader
+                    title=t.overview_title()
+                    description=t.overview_desc()
+                />
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-theme-muted">
+                        {move || format!("{}: {}", t.overview_last_update(), last_update.get())}
+                    </span>
+                    <label class="flex items-center gap-2 text-xs text-theme-secondary">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || auto_refresh.get()
+                            on:change=move |ev| auto_refresh.set(event_target_checked(&ev))
+                            class="rounded"
+                        />
+                        {t.overview_auto_refresh()}
+                    </label>
+                    <button
+                        on:click=move |_| load_metrics()
+                        class="btn btn-secondary text-xs"
+                    >
+                        {t.overview_refresh()}
+                    </button>
+                </div>
+            </div>
 
             {move || match metrics.get() {
                 None => view! { <Spinner /> }.into_any(),
@@ -34,6 +75,8 @@ pub fn OverviewPage() -> impl IntoView {
                 Some(Ok(m)) => view! {
                     <div class="space-y-6">
                         <MetricsBento metrics=m.clone() />
+                        <TokenStats metrics=m.clone() />
+                        <TimeSeriesChart metrics=m.clone() />
                         <div class="bento-grid-3">
                             <div class="bento-cell">
                                 <CacheHitSection metrics=m.clone() />
@@ -55,26 +98,280 @@ pub fn OverviewPage() -> impl IntoView {
 #[component]
 fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
-    let qps = RwSignal::new(format!("{}", metrics.qps));
-    let tps = RwSignal::new(format!("{}", metrics.tps));
-    let active_keys = RwSignal::new(format!("{}", metrics.active_keys));
-    let uptime = RwSignal::new(format!("{}h", metrics.uptime_hours));
+    let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
+    let total_requests = total_hits + metrics.cache_misses;
+    let hit_rate = if total_requests > 0 {
+        total_hits as f64 / total_requests as f64 * 100.0
+    } else {
+        0.0
+    };
 
     view! {
         <div class="bento-grid">
             <div class="bento-cell-hero">
-                <MetricCard title=Translations::overview_qps() value=qps.into() subtitle=t.overview_qps_sub() />
+                <div class="metric-card h-full">
+                    <div class="flex items-start justify-between mb-4">
+                        <div>
+                            <div class="metric-card-label">{Translations::overview_qps()}</div>
+                            <div class="metric-card-value">
+                                {format!("{:.2}", metrics.qps)}
+                            </div>
+                        </div>
+                        <div class="text-3xl opacity-30">"⚡"</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 mt-auto">
+                        <div>
+                            <div class="text-xs text-theme-muted mb-1">{Translations::overview_tps()}</div>
+                            <div class="text-lg font-mono tabular-nums text-theme">
+                                {format!("{:.2}", metrics.tps)}
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate()}</div>
+                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
+                                {format!("{:.1}%", hit_rate)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="bento-cell">
-                <MetricCard title=Translations::overview_tps() value=tps.into() subtitle=t.overview_tps_sub() />
+                <div class="metric-card h-full">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="metric-card-label">{t.overview_active_keys()}</div>
+                        <div class="text-2xl opacity-30">"🔑"</div>
+                    </div>
+                    <div class="metric-card-value">
+                        {format!("{}", metrics.active_keys)}
+                    </div>
+                    <div class="metric-card-sub">{t.overview_active_keys_sub()}</div>
+                    <div class="mt-3 flex items-center gap-2">
+                        <div class="online-dot"></div>
+                        <span class="online-label">"Active"</span>
+                    </div>
+                </div>
             </div>
             <div class="bento-cell">
-                <MetricCard title=t.overview_active_keys() value=active_keys.into() subtitle=t.overview_active_keys_sub() />
+                <div class="metric-card h-full">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="metric-card-label">{t.overview_uptime()}</div>
+                        <div class="text-2xl opacity-30">"⏱"</div>
+                    </div>
+                    <div class="metric-card-value">
+                        {format!("{}h", metrics.uptime_hours)}
+                    </div>
+                    <div class="metric-card-sub">{t.overview_uptime_sub()}</div>
+                    <div class="mt-3 pt-3 border-t border-theme">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-theme-muted">"Cache Hits"</span>
+                            <span class="font-mono tabular-nums text-accent">
+                                {format!("{}", total_hits)}
+                            </span>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="bento-cell">
-                <MetricCard title=t.overview_uptime() value=uptime.into() subtitle=t.overview_uptime_sub() />
+                <div class="metric-card h-full">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="metric-card-label">"Cache Tokens"</div>
+                        <div class="text-2xl opacity-30">"💾"</div>
+                    </div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-baseline">
+                            <span class="text-xs text-theme-muted">"Hit"</span>
+                            <span class="text-lg font-mono tabular-nums text-accent">
+                                {format!("{}", metrics.cache_hit_tokens)}
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-baseline">
+                            <span class="text-xs text-theme-muted">"Miss"</span>
+                            <span class="text-lg font-mono tabular-nums text-theme">
+                                {format!("{}", metrics.cache_miss_tokens)}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-theme">
+                        <div class="progress-bar h-2">
+                            <div 
+                                class="progress-bar-fill"
+                                style=format!("width: {}%", if metrics.cache_hit_tokens + metrics.cache_miss_tokens > 0 {
+                                    metrics.cache_hit_tokens as f64 / (metrics.cache_hit_tokens + metrics.cache_miss_tokens) as f64 * 100.0
+                                } else { 0.0 })
+                            ></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
+    }
+}
+
+#[component]
+fn TokenStats(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    view! {
+        <div class="glass-card">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-theme">{t.overview_token_stats()}</h3>
+                <div class="text-2xl opacity-30">"📊"</div>
+            </div>
+            <div class="grid grid-cols-3 gap-6">
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_input_tokens()}</div>
+                    <div class="text-2xl font-mono tabular-nums text-theme font-semibold">
+                        {format_number(metrics.total_input_tokens)}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_output_tokens()}</div>
+                    <div class="text-2xl font-mono tabular-nums text-accent font-semibold">
+                        {format_number(metrics.total_output_tokens)}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_total_tokens()}</div>
+                    <div class="text-2xl font-mono tabular-nums text-warning font-semibold">
+                        {format_number(metrics.total_tokens)}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let selected_view = RwSignal::new("hourly".to_string());
+    
+    let current_data = move || {
+        match selected_view.get().as_str() {
+            "hourly" => metrics.hourly_stats.clone(),
+            "daily" => metrics.daily_stats.clone(),
+            "weekly" => metrics.weekly_stats.clone(),
+            "monthly" => metrics.monthly_stats.clone(),
+            _ => metrics.hourly_stats.clone(),
+        }
+    };
+
+    view! {
+        <div class="glass-card">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-theme">{t.overview_usage_trends()}</h3>
+                <div class="flex gap-2">
+                    <button
+                        on:click=move |_| selected_view.set("hourly".to_string())
+                        class=move || {
+                            if selected_view.get() == "hourly" {
+                                "btn btn-primary text-xs"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
+                    >
+                        {t.overview_hourly()}
+                    </button>
+                    <button
+                        on:click=move |_| selected_view.set("daily".to_string())
+                        class=move || {
+                            if selected_view.get() == "daily" {
+                                "btn btn-primary text-xs"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
+                    >
+                        {t.overview_daily()}
+                    </button>
+                    <button
+                        on:click=move |_| selected_view.set("weekly".to_string())
+                        class=move || {
+                            if selected_view.get() == "weekly" {
+                                "btn btn-primary text-xs"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
+                    >
+                        {t.overview_weekly()}
+                    </button>
+                    <button
+                        on:click=move |_| selected_view.set("monthly".to_string())
+                        class=move || {
+                            if selected_view.get() == "monthly" {
+                                "btn btn-primary text-xs"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
+                    >
+                        {t.overview_monthly()}
+                    </button>
+                </div>
+            </div>
+            
+            <div class="space-y-4">
+                {move || {
+                    let data = current_data();
+                    let t = use_translations();
+                    if data.is_empty() {
+                        view! {
+                            <div class="text-center py-8 text-theme-muted text-sm">
+                                {t.overview_no_data()}
+                            </div>
+                        }.into_any()
+                    } else {
+                        let max_tokens = data.iter().map(|d| d.tokens).max().unwrap_or(1);
+                        view! {
+                            <div class="space-y-3">
+                                {data.into_iter().map(|point| {
+                                    let pct = point.tokens as f64 / max_tokens as f64 * 100.0;
+                                    let t = use_translations();
+                                    view! {
+                                        <div class="flex items-center gap-3">
+                                            <span class="w-20 text-xs text-theme-secondary font-mono">
+                                                {point.timestamp}
+                                            </span>
+                                            <div class="flex-1">
+                                                <div class="progress-bar h-6">
+                                                    <div
+                                                        class="progress-bar-fill flex items-center justify-end pr-2"
+                                                        style=format!("width: {}%", pct.min(100.0))
+                                                    >
+                                                        <span class="text-xs font-mono tabular-nums text-theme">
+                                                            {format_number(point.tokens)}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="w-24 text-right">
+                                                <div class="text-xs text-theme-muted">
+                                                    {format!("{} {}", point.requests, t.overview_requests())}
+                                                </div>
+                                                <div class="text-xs text-accent">
+                                                    {format!("{} {}", point.cache_hits, t.overview_hits())}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    }
+                                }).collect::<Vec<_>>()}
+                            </div>
+                        }.into_any()
+                    }
+                }}
+            </div>
+        </div>
+    }
+}
+
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        format!("{}", n)
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::types::*;
 use gloo_net::http::Request;
 
-const API_BASE: &str = "http://127.0.0.1:3000/api/admin";
+const API_BASE: &str = "/api/admin";
 
 async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T, String> {
     let resp = Request::get(url)
@@ -73,6 +73,10 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
 
 pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
+}
+
+pub async fn fetch_network_info() -> Result<NetworkInfo, String> {
+    fetch_json(&format!("{}/network/info", API_BASE)).await
 }
 
 pub async fn fetch_keys() -> Result<Vec<ApiKey>, String> {
@@ -154,4 +158,8 @@ pub async fn fetch_logs() -> Result<Vec<RequestLog>, String> {
 
 pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {
     fetch_json(&format!("{}/logs/{}", API_BASE, id)).await
+}
+
+pub async fn fetch_trace_analysis() -> Result<TraceAnalysis, String> {
+    fetch_json(&format!("{}/trace/analysis", API_BASE)).await
 }

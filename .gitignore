@@ -18,6 +18,9 @@ models/*.onnx
 # Config with secrets
 config/gateway.toml
 
+# SSL certificates (security)
+certs/
+
 # Docker volumes
 docker/data/
 

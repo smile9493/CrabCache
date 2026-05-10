@@ -3,20 +3,20 @@ use sha2::{Digest, Sha256};
 use tracing::trace;
 
 pub fn extract_affinity_key(headers: &HeaderMap, client_ip: &str) -> String {
-    if let Some(conv_id) = headers.get("x-conversation-id") {
-        if let Ok(conv_id_str) = conv_id.to_str() {
-            let key = format!("conv:{}", conv_id_str);
-            trace!(key = %key, "Using conversation ID as affinity key");
-            return key;
-        }
+    if let Some(conv_id) = headers.get("x-conversation-id")
+        && let Ok(conv_id_str) = conv_id.to_str()
+    {
+        let key = format!("conv:{}", conv_id_str);
+        trace!(key = %key, "Using conversation ID as affinity key");
+        return key;
     }
 
-    if let Some(user_id) = headers.get("x-user-id") {
-        if let Ok(user_id_str) = user_id.to_str() {
-            let key = format!("user:{}", user_id_str);
-            trace!(key = %key, "Using user ID as affinity key");
-            return key;
-        }
+    if let Some(user_id) = headers.get("x-user-id")
+        && let Ok(user_id_str) = user_id.to_str()
+    {
+        let key = format!("user:{}", user_id_str);
+        trace!(key = %key, "Using user ID as affinity key");
+        return key;
     }
 
     let mut hasher = Sha256::new();

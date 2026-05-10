@@ -11,19 +11,13 @@ pub fn LogsPage() -> impl IntoView {
     let logs: RwSignal<Option<Result<Vec<RequestLog>, String>>> = RwSignal::new(None);
     let selected_log: RwSignal<Option<RequestLog>> = RwSignal::new(None);
 
-    let load_logs = {
-        let logs = logs.clone();
-        move || {
-            leptos::task::spawn_local({
-                let logs = logs.clone();
-                async move {
-                    match api::fetch_logs().await {
-                        Ok(l) => logs.set(Some(Ok(l))),
-                        Err(e) => logs.set(Some(Err(e))),
-                    }
-                }
-            });
-        }
+    let load_logs = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_logs().await {
+                Ok(l) => logs.set(Some(Ok(l))),
+                Err(e) => logs.set(Some(Err(e))),
+            }
+        });
     };
 
     load_logs();

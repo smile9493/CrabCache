@@ -1,3 +1,4 @@
+mod network;
 mod routes;
 mod state;
 mod types;
@@ -7,6 +8,64 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing::info;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+struct ServerConfig {
+    listen_addr: String,
+    cert_path: Option<PathBuf>,
+    key_path: Option<PathBuf>,
+}
+
+impl ServerConfig {
+    fn from_args() -> Self {
+        let args: Vec<String> = std::env::args().collect();
+        
+        let mut listen_addr = "0.0.0.0:3000".to_string();
+        let mut cert_path = None;
+        let mut key_path = None;
+        
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--listen" | "-l" => {
+                    if i + 1 < args.len() {
+                        listen_addr = args[i + 1].clone();
+                        i += 1;
+                    }
+                }
+                "--cert" | "-c" => {
+                    if i + 1 < args.len() {
+                        cert_path = Some(PathBuf::from(&args[i + 1]));
+                        i += 1;
+                    }
+                }
+                "--key" | "-k" => {
+                    if i + 1 < args.len() {
+                        key_path = Some(PathBuf::from(&args[i + 1]));
+                        i += 1;
+                    }
+                }
+                "--https" => {
+                    cert_path = Some(PathBuf::from("certs/cert.pem"));
+                    key_path = Some(PathBuf::from("certs/key.pem"));
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        
+        ServerConfig {
+            listen_addr,
+            cert_path,
+            key_path,
+        }
+    }
+    
+    fn is_https(&self) -> bool {
+        self.cert_path.is_some() && self.key_path.is_some()
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,6 +76,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
 
     let cors = CorsLayer::new()
@@ -28,11 +90,39 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .fallback_service(ServeDir::new("crates/crab-dashboard/dist"));
 
-    let listen_addr = "0.0.0.0:3000";
-    info!(addr = listen_addr, "CrabCache Admin Dashboard starting");
+    let protocol = if config.is_https() { "https" } else { "http" };
+    
+    info!(
+        addr = config.listen_addr,
+        protocol = protocol,
+        "CrabCache Admin Dashboard starting"
+    );
 
-    let listener = tokio::net::TcpListener::bind(listen_addr).await?;
-    axum::serve(listener, app).await?;
+    if config.is_https() {
+        let cert_path = config.cert_path.unwrap();
+        let key_path = config.key_path.unwrap();
+        
+        info!(
+            cert = %cert_path.display(),
+            key = %key_path.display(),
+            "Using HTTPS with self-signed certificate"
+        );
+        
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            cert_path,
+            key_path,
+        )
+        .await?;
+        
+        let addr: std::net::SocketAddr = config.listen_addr.parse()?;
+        
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
+        axum::serve(listener, app).await?;
+    }
 
     Ok(())
 }

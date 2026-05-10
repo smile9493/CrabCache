@@ -3,30 +3,42 @@ use leptos::prelude::*;
 use crate::api;
 use crate::components::ui::*;
 use crate::locale::use_translations;
-use crate::types::{ApiKey, CreateKeyRequest};
+use crate::types::{ApiKey, CreateKeyRequest, NetworkInfo};
 
 #[component]
 pub fn KeysPage() -> impl IntoView {
     let t = use_translations();
     let keys: RwSignal<Option<Result<Vec<ApiKey>, String>>> = RwSignal::new(None);
-    let gateway_url: RwSignal<String> = RwSignal::new("http://127.0.0.1:8080".to_string());
+    let network_info: RwSignal<Option<NetworkInfo>> = RwSignal::new(None);
+    let search_query: RwSignal<String> = RwSignal::new(String::new());
 
-    let load_keys = {
-        let keys = keys.clone();
-        move || {
-            leptos::task::spawn_local({
-                let keys = keys.clone();
-                async move {
-                    match api::fetch_keys().await {
-                        Ok(k) => keys.set(Some(Ok(k))),
-                        Err(e) => keys.set(Some(Err(e))),
-                    }
+    let load_keys = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_keys().await {
+                Ok(k) => keys.set(Some(Ok(k))),
+                Err(e) => keys.set(Some(Err(e))),
+            }
+        });
+    };
+
+    let load_network_info = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_network_info().await {
+                Ok(info) => network_info.set(Some(info)),
+                Err(_) => {
+                    network_info.set(Some(NetworkInfo {
+                        primary_ip: None,
+                        all_ips: vec![],
+                        gateway_url: "http://127.0.0.1:8080".to_string(),
+                        gateway_url_lan: None,
+                    }));
                 }
-            });
-        }
+            }
+        });
     };
 
     load_keys();
+    load_network_info();
 
     let show_create = RwSignal::new(false);
     let new_key_name = RwSignal::new(String::new());
@@ -98,20 +110,65 @@ pub fn KeysPage() -> impl IntoView {
             </div>
 
             <div class="glass-card p-4">
-                <div class="flex items-center gap-3">
-                    <span class="text-xs text-theme-muted">{t.keys_gateway_url_label()}</span>
-                    <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
-                        {move || gateway_url.get()}
-                    </code>
-                    <button
-                        on:click={
-                            let url = gateway_url.get();
-                            move |_| copy_to_clipboard(url.clone())
-                        }
-                        class="text-xs text-accent hover:text-accent transition-colors"
-                    >
-                        {t.keys_copy_btn()}
-                    </button>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-6">
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-theme-muted font-semibold">"本地地址:"</span>
+                            <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
+                                {move || network_info.get().map(|n| n.gateway_url).unwrap_or_default()}
+                            </code>
+                            <button
+                                on:click=move |_| {
+                                    if let Some(info) = network_info.get() {
+                                        copy_to_clipboard(info.gateway_url);
+                                    }
+                                }
+                                class="text-xs text-accent hover:text-accent transition-colors"
+                            >
+                                {t.keys_copy_btn()}
+                            </button>
+                        </div>
+                        
+                        {move || {
+                            if let Some(info) = network_info.get() {
+                                if let Some(lan_url) = info.gateway_url_lan {
+                                    view! {
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-xs text-theme-muted font-semibold">"局域网地址:"</span>
+                                            <code class="text-sm font-mono text-accent bg-accent/10 px-2 py-1 rounded">
+                                                {lan_url.clone()}
+                                            </code>
+                                            <button
+                                                on:click=move |_| copy_to_clipboard(lan_url.clone())
+                                                class="text-xs text-accent hover:text-accent transition-colors"
+                                            >
+                                                {t.keys_copy_btn()}
+                                            </button>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! { <div></div> }.into_any()
+                                }
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }
+                        }}
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input
+                            type="text"
+                            placeholder=t.keys_search_placeholder()
+                            prop:value=move || search_query.get()
+                            on:input=move |ev| search_query.set(event_target_value(&ev))
+                            class="input w-64 text-sm"
+                        />
+                        <button
+                            on:click=move |_| load_keys()
+                            class="btn btn-secondary text-xs"
+                        >
+                            {t.overview_refresh()}
+                        </button>
+                    </div>
                 </div>
                 <p class="text-xs text-theme-muted mt-2">
                     {t.keys_gateway_url_hint()}
@@ -217,8 +274,22 @@ pub fn KeysPage() -> impl IntoView {
                     </div>
                 }.into_any(),
                 Some(Ok(key_list)) => {
-                    if key_list.is_empty() {
-                        view! { <EmptyState message=use_translations().keys_empty() /> }.into_any()
+                    let filtered_keys: Vec<ApiKey> = key_list
+                        .into_iter()
+                        .filter(|key| {
+                            let query = search_query.get().to_lowercase();
+                            if query.is_empty() {
+                                true
+                            } else {
+                                key.name.to_lowercase().contains(&query) ||
+                                key.key_preview.to_lowercase().contains(&query)
+                            }
+                        })
+                        .collect();
+                    
+                    if filtered_keys.is_empty() {
+                        let t = use_translations();
+                        view! { <EmptyState message=t.keys_no_results() /> }.into_any()
                     } else {
                         let t = use_translations();
                         view! {
@@ -235,7 +306,7 @@ pub fn KeysPage() -> impl IntoView {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {key_list.into_iter().map(|key| {
+                                        {filtered_keys.into_iter().map(|key| {
                                             let id = key.id.clone();
                                             let key_full = key.key_full.clone().unwrap_or_else(|| key.key_preview.clone());
                                             let quota_str = if key.unlimited_quota {
