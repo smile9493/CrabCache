@@ -23,10 +23,26 @@ pub struct ApiKey {
     pub id: String,
     pub name: String,
     pub key_preview: String,
+    pub key_full: Option<String>,
     pub active: bool,
     pub rpm_limit: u32,
     pub monthly_token_budget: u64,
     pub tokens_used_this_month: u64,
+    pub expired_at: Option<u64>,
+    pub model_limits: Vec<String>,
+    pub remain_quota: i64,
+    pub unlimited_quota: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKeyRequest {
+    pub name: String,
+    pub rpm_limit: u32,
+    pub monthly_token_budget: u64,
+    pub expired_at: Option<u64>,
+    pub model_limits: Option<Vec<String>>,
+    pub remain_quota: Option<i64>,
+    pub unlimited_quota: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,13 +103,6 @@ pub struct RequestDetail {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateKeyRequest {
-    pub name: String,
-    pub rpm_limit: u32,
-    pub monthly_token_budget: u64,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct UpdateCacheConfigRequest {
     pub l0_ttl_secs: u64,
     pub l1_ttl_secs: u64,
@@ -118,7 +127,6 @@ pub struct UpstreamConfig {
     pub base_url: String,
     pub api_key: String,
     pub api_key_masked: String,
-    pub model: String,
     pub endpoints: Vec<String>,
 }
 
@@ -126,7 +134,6 @@ pub struct UpstreamConfig {
 pub struct UpdateUpstreamConfigRequest {
     pub base_url: String,
     pub api_key: Option<String>,
-    pub model: String,
     pub endpoints: Vec<String>,
 }
 
@@ -164,4 +171,10 @@ pub struct SyncResult {
     pub removed: Vec<String>,
     pub unchanged: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayInfo {
+    pub base_url: String,
+    pub listen_addr: String,
 }

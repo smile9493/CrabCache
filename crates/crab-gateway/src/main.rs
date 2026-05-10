@@ -16,6 +16,10 @@ use prometheus::Registry;
 use std::sync::Arc;
 use tracing::info;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 struct MetricsServer {
     addr: String,
     registry: Registry,
@@ -57,6 +61,24 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
 }
 
 fn main() -> Result<()> {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info.location().map(|l| l.to_string()).unwrap_or_else(|| "unknown".to_string());
+        
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        tracing::error!(
+            location = %location,
+            message = %message,
+            "Panic occurred"
+        );
+    }));
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -105,8 +127,13 @@ fn main() -> Result<()> {
         consumer_overrides: config.cache.consumer_ttl_overrides.clone().unwrap_or_default(),
     };
 
+    let l0_config = crab_cache::L0Config {
+        max_capacity: config.cache.l0_max_capacity.unwrap_or(10_000),
+        ttl_secs: config.cache.l0_ttl_secs.unwrap_or(3600),
+    };
+
     let tiered_cache = Arc::new(
-        rt.block_on(async { TieredCache::new(l1_pool, ttl_config).await })?,
+        rt.block_on(async { TieredCache::new(l1_pool, l0_config, ttl_config).await })?,
     );
 
     let semantic_cache = if config.semantic.enabled {
@@ -158,6 +185,8 @@ fn main() -> Result<()> {
         "Reasoning configuration"
     );
 
+    let keys = dashmap::DashMap::new();
+
     let state = Arc::new(GatewayState {
         router,
         tiered_cache,
@@ -169,6 +198,7 @@ fn main() -> Result<()> {
         reasoning_config,
         upstream_base_url,
         fallback_model,
+        keys,
     });
 
     let proxy = GatewayProxy::new(state);

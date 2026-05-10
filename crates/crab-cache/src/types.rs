@@ -19,6 +19,21 @@ pub struct UsageInfo {
 }
 
 #[derive(Clone, Debug)]
+pub struct L0Config {
+    pub max_capacity: u64,
+    pub ttl_secs: u64,
+}
+
+impl Default for L0Config {
+    fn default() -> Self {
+        Self {
+            max_capacity: 10_000,
+            ttl_secs: 3600,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct TtlConfig {
     pub default_ttl_secs: u64,
     pub model_overrides: HashMap<String, u64>,

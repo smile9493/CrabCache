@@ -9,6 +9,7 @@ use crate::types::{ApiKey, CreateKeyRequest};
 pub fn KeysPage() -> impl IntoView {
     let t = use_translations();
     let keys: RwSignal<Option<Result<Vec<ApiKey>, String>>> = RwSignal::new(None);
+    let gateway_url: RwSignal<String> = RwSignal::new("http://127.0.0.1:8080".to_string());
 
     let load_keys = {
         let keys = keys.clone();
@@ -31,6 +32,8 @@ pub fn KeysPage() -> impl IntoView {
     let new_key_name = RwSignal::new(String::new());
     let new_key_rpm = RwSignal::new(60u32);
     let new_key_budget = RwSignal::new(1_000_000u64);
+    let new_key_unlimited = RwSignal::new(true);
+    let new_key_quota = RwSignal::new(1_000_000i64);
     let creating = RwSignal::new(false);
     let create_error = RwSignal::new(String::new());
 
@@ -41,10 +44,14 @@ pub fn KeysPage() -> impl IntoView {
             name: new_key_name.get(),
             rpm_limit: new_key_rpm.get(),
             monthly_token_budget: new_key_budget.get(),
+            expired_at: None,
+            model_limits: None,
+            remain_quota: if new_key_unlimited.get() { None } else { Some(new_key_quota.get()) },
+            unlimited_quota: Some(new_key_unlimited.get()),
         };
         leptos::task::spawn_local(async move {
             match api::create_key(&req).await {
-                Ok(_) => {
+                Ok(_key) => {
                     show_create.set(false);
                     new_key_name.set(String::new());
                     load_keys();
@@ -65,6 +72,16 @@ pub fn KeysPage() -> impl IntoView {
         });
     };
 
+    let copy_to_clipboard = move |text: String| {
+        let text = text.clone();
+        leptos::task::spawn_local(async move {
+            if let Some(window) = web_sys::window() {
+                let clipboard = window.navigator().clipboard();
+                let _ = clipboard.write_text(&text);
+            }
+        });
+    };
+
     view! {
         <div class="p-6 space-y-6">
             <div class="flex items-center justify-between">
@@ -80,21 +97,41 @@ pub fn KeysPage() -> impl IntoView {
                 </button>
             </div>
 
+            <div class="glass-card p-4">
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-theme-muted">{t.keys_gateway_url_label()}</span>
+                    <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
+                        {move || gateway_url.get()}
+                    </code>
+                    <button
+                        on:click={
+                            let url = gateway_url.get();
+                            move |_| copy_to_clipboard(url.clone())
+                        }
+                        class="text-xs text-accent hover:text-accent transition-colors"
+                    >
+                        {t.keys_copy_btn()}
+                    </button>
+                </div>
+                <p class="text-xs text-theme-muted mt-2">
+                    {t.keys_gateway_url_hint()}
+                </p>
+            </div>
+
             {move || {
                 if show_create.get() {
                     let t = use_translations();
                     view! {
                         <div class="glass-card space-y-4">
                             <h3 class="text-sm font-semibold text-theme">{t.keys_create_title()}</h3>
-                            <div class="grid grid-cols-3 gap-4">
+                            <div class="grid grid-cols-2 gap-4">
                                 <div>
                                     <label class="block text-xs text-theme-muted mb-1">{t.keys_name_label()}</label>
                                     <input
                                         type="text"
                                         prop:value=move || new_key_name.get()
                                         on:input=move |ev| {
-                                            let val = event_target_value(&ev);
-                                            new_key_name.set(val);
+                                            new_key_name.set(event_target_value(&ev));
                                         }
                                         class="input"
                                         placeholder="e.g. production-app"
@@ -113,17 +150,33 @@ pub fn KeysPage() -> impl IntoView {
                                         class="input"
                                     />
                                 </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_budget_label()}</label>
+                                    <label class="flex items-center gap-2 text-xs text-theme-muted mb-1">
+                                        <input
+                                            type="checkbox"
+                                            prop:checked=move || new_key_unlimited.get()
+                                            on:change=move |ev| {
+                                                new_key_unlimited.set(event_target_checked(&ev));
+                                            }
+                                            class="rounded"
+                                        />
+                                        {t.keys_unlimited_quota()}
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_quota_label()}</label>
                                     <input
                                         type="number"
-                                        prop:value=move || new_key_budget.get()
+                                        prop:value=move || new_key_quota.get()
                                         on:input=move |ev| {
                                             if let Ok(v) = event_target_value(&ev).parse() {
-                                                new_key_budget.set(v);
+                                                new_key_quota.set(v);
                                             }
                                         }
                                         class="input"
+                                        disabled=move || new_key_unlimited.get()
                                     />
                                 </div>
                             </div>
@@ -137,7 +190,7 @@ pub fn KeysPage() -> impl IntoView {
                             <div class="flex gap-2">
                                 <button
                                     on:click=on_create
-                                    disabled=move || creating.get()
+                                    disabled=move || creating.get() || new_key_name.get().is_empty()
                                     class="btn btn-primary text-sm"
                                 >
                                     {move || if creating.get() { t.keys_creating() } else { t.keys_create_btn() }}
@@ -175,9 +228,8 @@ pub fn KeysPage() -> impl IntoView {
                                         <tr>
                                             <th>{t.keys_col_name()}</th>
                                             <th>{t.keys_col_key()}</th>
-                                            <th>{crate::locale::Translations::keys_col_rpm()}</th>
+                                            <th>{t.keys_col_quota()}</th>
                                             <th>{t.keys_col_tokens()}</th>
-                                            <th>{t.keys_col_cost()}</th>
                                             <th>{t.keys_col_status()}</th>
                                             <th class="text-right">""</th>
                                         </tr>
@@ -185,37 +237,37 @@ pub fn KeysPage() -> impl IntoView {
                                     <tbody>
                                         {key_list.into_iter().map(|key| {
                                             let id = key.id.clone();
-                                            let tokens_pct = if key.monthly_token_budget > 0 {
-                                                (key.tokens_used_this_month as f64 / key.monthly_token_budget as f64 * 100.0).min(100.0)
-                                            } else { 0.0 };
-                                            let cost = key.tokens_used_this_month as f64 * 0.14 / 1_000_000.0;
+                                            let key_full = key.key_full.clone().unwrap_or_else(|| key.key_preview.clone());
+                                            let quota_str = if key.unlimited_quota {
+                                                t.keys_unlimited().to_string()
+                                            } else {
+                                                format!("{}", key.remain_quota)
+                                            };
                                             let t = use_translations();
                                             view! {
                                                 <tr>
                                                     <td class="text-theme font-medium">{key.name.clone()}</td>
                                                     <td>
-                                                        <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
-                                                            {key.key_preview.clone()}
-                                                        </code>
-                                                    </td>
-                                                    <td class="font-mono tabular-nums text-theme">
-                                                        {format!("{}/min", key.rpm_limit)}
-                                                    </td>
-                                                    <td>
-                                                        <div class="space-y-1">
-                                                            <span class="text-sm font-mono tabular-nums text-theme">
-                                                                {format!("{}", key.tokens_used_this_month)}
-                                                            </span>
-                                                            <div class="progress-bar w-24">
-                                                                <div
-                                                                    class="progress-bar-fill"
-                                                                    style=format!("width: {}%", tokens_pct)
-                                                                ></div>
-                                                            </div>
+                                                        <div class="flex items-center gap-2">
+                                                            <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
+                                                                {key_full.clone()}
+                                                            </code>
+                                                            <button
+                                                                on:click={
+                                                                    let key = key_full.clone();
+                                                                    move |_| copy_to_clipboard(key.clone())
+                                                                }
+                                                                class="text-xs text-accent hover:text-accent transition-colors"
+                                                            >
+                                                                {t.keys_copy_btn()}
+                                                            </button>
                                                         </div>
                                                     </td>
                                                     <td class="font-mono tabular-nums text-theme">
-                                                        {format!("${:.2}", cost)}
+                                                        {quota_str}
+                                                    </td>
+                                                    <td class="font-mono tabular-nums text-theme">
+                                                        {format!("{}", key.tokens_used_this_month)}
                                                     </td>
                                                     <td>
                                                         {if key.active {

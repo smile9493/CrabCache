@@ -29,6 +29,10 @@ pub struct StoredKey {
     pub tokens_this_month: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub expired_at: Option<u64>,
+    pub model_limits: Vec<String>,
+    pub remain_quota: i64,
+    pub unlimited_quota: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +85,6 @@ pub struct StoredBackend {
 pub struct StoredUpstreamConfig {
     pub base_url: String,
     pub api_key: String,
-    pub model: String,
     pub endpoints: Vec<String>,
 }
 
@@ -90,7 +93,6 @@ impl Default for StoredUpstreamConfig {
         Self {
             base_url: "https://api.deepseek.com".to_string(),
             api_key: String::new(),
-            model: "deepseek-v4-pro".to_string(),
             endpoints: vec!["api.deepseek.com:443".to_string()],
         }
     }

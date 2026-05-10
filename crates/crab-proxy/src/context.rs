@@ -1,10 +1,18 @@
-use crab_cache::{CacheEntry, RequestCoalescer, TieredCache};
+use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard};
 use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
 use crab_route::AffinityRouter;
 use crab_semantic::SemanticCache;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
+
+#[derive(Debug, Clone)]
+pub struct StoredKey {
+    pub id: String,
+    pub name: String,
+    pub key_hash: String,
+    pub enabled: bool,
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConnectionConfig {
@@ -67,6 +75,7 @@ pub struct GatewayContext {
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
     pub is_coalesced_follower: bool,
+    pub coalesce_guard: Option<CoalesceGuard>,
     pub original_request_body: Option<Vec<u8>>,
     pub prepared_request: Option<PreparedRequest>,
     pub new_request_body: Option<Vec<u8>>,
@@ -91,6 +100,7 @@ impl GatewayContext {
             ttft: None,
             accumulated_body: Vec::new(),
             is_coalesced_follower: false,
+            coalesce_guard: None,
             original_request_body: None,
             prepared_request: None,
             new_request_body: None,
@@ -113,4 +123,5 @@ pub struct GatewayState {
     pub reasoning_config: ReasoningConfig,
     pub upstream_base_url: String,
     pub fallback_model: String,
+    pub keys: dashmap::DashMap<String, StoredKey>,
 }

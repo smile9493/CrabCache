@@ -88,11 +88,16 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Json<Vec<ApiKey>> {
             ApiKey {
                 id: key.id.clone(),
                 name: key.name.clone(),
-                key_preview: key.key_hash[..10].to_string(),
+                key_preview: key.key_hash[..10.min(key.key_hash.len())].to_string(),
+                key_full: Some(key.key_hash.clone()),
                 active: key.enabled,
                 rpm_limit: key.rpm_limit as u32,
                 monthly_token_budget: key.monthly_token_limit,
                 tokens_used_this_month: key.tokens_this_month,
+                expired_at: key.expired_at,
+                model_limits: key.model_limits.clone(),
+                remain_quota: key.remain_quota,
+                unlimited_quota: key.unlimited_quota,
             }
         })
         .collect();
@@ -110,10 +115,12 @@ async fn create_key(
         .unwrap_or_default()
         .as_secs();
 
+    let key_full = format!("sk-cc-{}", &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]);
+
     let stored = crate::state::StoredKey {
         id: id.clone(),
         name: req.name.clone(),
-        key_hash: format!("sk-cc-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+        key_hash: key_full.clone(),
         created_at: now,
         enabled: true,
         rpm_limit: req.rpm_limit as u64,
@@ -122,16 +129,25 @@ async fn create_key(
         tokens_this_month: 0,
         input_tokens: 0,
         output_tokens: 0,
+        expired_at: req.expired_at,
+        model_limits: req.model_limits.unwrap_or_default(),
+        remain_quota: req.remain_quota.unwrap_or(-1),
+        unlimited_quota: req.unlimited_quota.unwrap_or(true),
     };
 
     let api_key = ApiKey {
         id: stored.id.clone(),
         name: stored.name.clone(),
-        key_preview: stored.key_hash[..10].to_string(),
+        key_preview: stored.key_hash[..10.min(stored.key_hash.len())].to_string(),
+        key_full: Some(stored.key_hash.clone()),
         active: stored.enabled,
         rpm_limit: stored.rpm_limit as u32,
         monthly_token_budget: stored.monthly_token_limit,
         tokens_used_this_month: 0,
+        expired_at: stored.expired_at,
+        model_limits: stored.model_limits.clone(),
+        remain_quota: stored.remain_quota,
+        unlimited_quota: stored.unlimited_quota,
     };
 
     state.keys.insert(id, stored);
@@ -411,7 +427,6 @@ async fn get_upstream_config(State(state): State<Arc<AppState>>) -> Json<Upstrea
         base_url: config.base_url,
         api_key: config.api_key.clone(),
         api_key_masked,
-        model: config.model,
         endpoints: config.endpoints,
     })
 }
@@ -427,7 +442,6 @@ async fn update_upstream_config(
             config.api_key = key;
         }
     }
-    config.model = req.model;
     config.endpoints = req.endpoints;
 
     let api_key_masked = mask_api_key(&config.api_key);
@@ -435,7 +449,6 @@ async fn update_upstream_config(
         base_url: config.base_url.clone(),
         api_key: config.api_key.clone(),
         api_key_masked,
-        model: config.model.clone(),
         endpoints: config.endpoints.clone(),
     })
 }

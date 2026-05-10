@@ -64,17 +64,28 @@ impl ProxyHttp for GatewayProxy {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        if !auth.ends_with(&self.state.api_key) {
+        let provided_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
+
+        let (is_authorized, consumer_from_key) = if let Some(stored_key) = self.state.keys.get(provided_key) {
+            let key = stored_key.value();
+            (key.enabled, Some(key.name.clone()))
+        } else {
+            (auth.ends_with(&self.state.api_key), None)
+        };
+
+        if !is_authorized {
             let _ = session.respond_error(401).await;
             return Ok(true);
         }
 
         ctx.authorization = Some(auth.to_string());
-        ctx.consumer = req_header
-            .headers
-            .get("x-consumer")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        ctx.consumer = consumer_from_key.or_else(|| {
+            req_header
+                .headers
+                .get("x-consumer")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        });
 
         let mut full_body = Vec::new();
         loop {
@@ -141,7 +152,120 @@ impl ProxyHttp for GatewayProxy {
         ctx.new_request_body = Some(new_body);
 
         if let Ok(cache_key) = crab_cache::generate_cache_key(&full_body) {
-            ctx.cache_key = Some(cache_key);
+            ctx.cache_key = Some(cache_key.clone());
+
+            if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
+                info!(
+                    request_id = %ctx.request_id,
+                    cache_key = %cache_key,
+                    tier = ?tier,
+                    "Cache hit, returning cached response"
+                );
+
+                ctx.cache_hit = Some(entry.clone());
+
+                let response_body = entry.response_body.clone();
+                let is_stream = ctx.is_streaming;
+
+                if is_stream {
+                    let sse_body = json_to_sse_stream(&response_body, &ctx.model);
+                    let header = build_sse_response_header(sse_body.len());
+                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+                } else {
+                    let header = build_json_response_header(response_body.len());
+                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
+                }
+
+                return Ok(true);
+            }
+
+            if let Some(semantic_cache) = &self.state.semantic_cache {
+                if let Some(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body).ok() {
+                    if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) {
+                        let last_message = messages.last().and_then(|m| m.get("content")).and_then(|c| c.as_str());
+                        
+                        if let Some(query_text) = last_message {
+                            if let Some(entry) = semantic_cache.search(query_text).await {
+                                info!(
+                                    request_id = %ctx.request_id,
+                                    query_len = query_text.len(),
+                                    "Semantic cache hit, returning cached response"
+                                );
+
+                                ctx.cache_hit = Some(entry.clone());
+
+                                let response_body = entry.response_body.clone();
+                                let is_stream = ctx.is_streaming;
+
+                                if is_stream {
+                                    let sse_body = json_to_sse_stream(&response_body, &ctx.model);
+                                    let header = build_sse_response_header(sse_body.len());
+                                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+                                } else {
+                                    let header = build_json_response_header(response_body.len());
+                                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
+                                }
+
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            match self.state.coalescer.acquire(&cache_key).await {
+                Ok(guard) => {
+                    if !guard.is_leader() {
+                        ctx.is_coalesced_follower = true;
+                        
+                        if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
+                            info!(
+                                request_id = %ctx.request_id,
+                                cache_key = %cache_key,
+                                tier = ?tier,
+                                "Follower found cached response after leader completed"
+                            );
+
+                            ctx.cache_hit = Some(entry.clone());
+
+                            let response_body = entry.response_body.clone();
+                            let is_stream = ctx.is_streaming;
+
+                            if is_stream {
+                                let sse_body = json_to_sse_stream(&response_body, &ctx.model);
+                                let header = build_sse_response_header(sse_body.len());
+                                let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                                let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+                            } else {
+                                let header = build_json_response_header(response_body.len());
+                                let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+                                let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
+                            }
+
+                            return Ok(true);
+                        } else {
+                            warn!(
+                                request_id = %ctx.request_id,
+                                cache_key = %cache_key,
+                                "Follower did not find cached response, falling through to upstream"
+                            );
+                        }
+                    } else {
+                        ctx.coalesce_guard = Some(guard);
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Coalescing failed, proceeding without coalescing"
+                    );
+                }
+            }
         }
 
         ctx.prepared_request = Some(prepared);
@@ -333,6 +457,10 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if end_of_stream && !ctx.is_streaming {
+            if let Some(guard) = &ctx.coalesce_guard {
+                guard.mark_completed();
+            }
+
             if let Some(upstream_start) = ctx.upstream_start {
                 let latency = upstream_start.elapsed();
                 global_metrics().record_latency(
@@ -401,11 +529,187 @@ impl ProxyHttp for GatewayProxy {
                             warn!(error = %e, "Failed to cache response");
                         }
                     });
+
+                    if let Some(semantic_cache) = &self.state.semantic_cache {
+                        if let Some(original_body) = &ctx.original_request_body {
+                            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
+                                if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
+                                    if let Some(query_text) = messages.last()
+                                        .and_then(|m| m.get("content"))
+                                        .and_then(|c| c.as_str())
+                                    {
+                                        let semantic_cache = semantic_cache.clone();
+                                        let entry_clone = CacheEntry {
+                                            response_body: ctx.accumulated_body.clone(),
+                                            model: ctx.model.clone(),
+                                            usage: UsageInfo::default(),
+                                            created_at: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs(),
+                                            ttl_secs: 3600,
+                                        };
+                                        let query_text = query_text.to_string();
+                                        
+                                        tokio::spawn(async move {
+                                            if let Err(e) = semantic_cache.insert(&query_text, &entry_clone).await {
+                                                warn!(error = %e, "Failed to insert into semantic cache");
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if end_of_stream && ctx.is_streaming {
+            if let Some(guard) = &ctx.coalesce_guard {
+                guard.mark_completed();
+            }
+
+            if let Some(upstream_start) = ctx.upstream_start {
+                let latency = upstream_start.elapsed();
+                global_metrics().record_latency(
+                    crab_metrics::LatencyKind::Upstream,
+                    latency,
+                    Some(crab_metrics::CacheTier::Miss),
+                );
+            }
+
+            if let (Some(cache_key), Some(accumulator)) = (&ctx.cache_key, &ctx.stream_accumulator) {
+                let messages = accumulator.messages();
+                if !messages.is_empty() {
+                    let response_json = serde_json::to_string(&serde_json::json!({
+                        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+                        "object": "chat.completion",
+                        "created": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        "model": ctx.model,
+                        "choices": messages.iter().enumerate().map(|(idx, msg)| {
+                            serde_json::json!({
+                                "index": idx,
+                                "message": msg,
+                                "finish_reason": "stop"
+                            })
+                        }).collect::<Vec<_>>(),
+                        "usage": {
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0
+                        }
+                    })).unwrap_or_default();
+
+                    let tiered_cache = self.state.tiered_cache.clone();
+                    let cache_key = cache_key.clone();
+                    let model = ctx.model.clone();
+                    let consumer = ctx.consumer.clone();
+                    let entry_for_cache = CacheEntry {
+                        response_body: response_json.clone().into_bytes(),
+                        model: ctx.model.clone(),
+                        usage: UsageInfo::default(),
+                        created_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        ttl_secs: 3600,
+                    };
+                    tokio::spawn(async move {
+                        if let Err(e) = tiered_cache
+                            .put(&cache_key, entry_for_cache, &model, consumer.as_deref())
+                            .await
+                        {
+                            warn!(error = %e, "Failed to cache streaming response");
+                        }
+                    });
+
+                    if let Some(semantic_cache) = &self.state.semantic_cache {
+                        if let Some(original_body) = &ctx.original_request_body {
+                            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
+                                if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
+                                    if let Some(query_text) = messages.last()
+                                        .and_then(|m| m.get("content"))
+                                        .and_then(|c| c.as_str())
+                                    {
+                                        let semantic_cache = semantic_cache.clone();
+                                        let entry_for_semantic = CacheEntry {
+                                            response_body: response_json.into_bytes(),
+                                            model: ctx.model.clone(),
+                                            usage: UsageInfo::default(),
+                                            created_at: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs(),
+                                            ttl_secs: 3600,
+                                        };
+                                        let query_text = query_text.to_string();
+                                        
+                                        tokio::spawn(async move {
+                                            if let Err(e) = semantic_cache.insert(&query_text, &entry_for_semantic).await {
+                                                warn!(error = %e, "Failed to insert streaming response into semantic cache");
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
         Ok(None)
+    }
+
+    async fn logging(
+        &self,
+        _session: &mut Session,
+        error: Option<&pingora_core::Error>,
+        ctx: &mut Self::CTX,
+    ) {
+        let duration = ctx.request_start.elapsed();
+
+        if let Some(e) = error {
+            warn!(
+                request_id = %ctx.request_id,
+                error = %e,
+                duration_ms = duration.as_millis() as u64,
+                model = %ctx.model,
+                "Request failed"
+            );
+        } else {
+            info!(
+                request_id = %ctx.request_id,
+                duration_ms = duration.as_millis() as u64,
+                model = %ctx.model,
+                cache_hit = ctx.cache_hit.is_some(),
+                is_streaming = ctx.is_streaming,
+                consumer = ?ctx.consumer,
+                "Request completed"
+            );
+        }
+
+        if let Some(ttft) = ctx.ttft {
+            debug!(
+                request_id = %ctx.request_id,
+                ttft_ms = ttft.as_millis() as u64,
+                "Time to first token recorded"
+            );
+        }
+
+        if let Some(cache_key) = &ctx.cache_key {
+            if ctx.cache_hit.is_none() {
+                debug!(
+                    request_id = %ctx.request_id,
+                    cache_key = %cache_key,
+                    "Cache miss for request"
+                );
+            }
+        }
     }
 }
 
@@ -447,6 +751,81 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
     {
         options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
     }
+}
+
+fn build_json_response_header(body_len: usize) -> pingora_http::ResponseHeader {
+    use pingora_http::ResponseHeader;
+    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
+    header.insert_header(http::header::CONTENT_TYPE, "application/json").unwrap();
+    header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
+    header.insert_header("x-cache-status", "HIT").unwrap();
+    header.insert_header(http::header::CONNECTION, "close").unwrap();
+    header
+}
+
+fn build_sse_response_header(body_len: usize) -> pingora_http::ResponseHeader {
+    use pingora_http::ResponseHeader;
+    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
+    header.insert_header(http::header::CONTENT_TYPE, "text/event-stream").unwrap();
+    header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
+    header.insert_header(http::header::CACHE_CONTROL, "no-cache").unwrap();
+    header.insert_header("x-cache-status", "HIT").unwrap();
+    header.insert_header(http::header::CONNECTION, "close").unwrap();
+    header
+}
+
+fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
+    use serde_json::json;
+
+    let value: serde_json::Value = match serde_json::from_slice(json_body) {
+        Ok(v) => v,
+        Err(_) => return json_body.to_vec(),
+    };
+
+    let choices = value.get("choices").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    let usage = value.get("usage").cloned();
+
+    let mut sse_output = Vec::new();
+
+    for (idx, choice) in choices.iter().enumerate() {
+        let delta = json!({
+            "index": idx,
+            "delta": choice.get("message").cloned().unwrap_or(json!({})),
+            "finish_reason": choice.get("finish_reason").cloned().unwrap_or(serde_json::Value::Null)
+        });
+
+        let event_data = json!({
+            "id": format!("chatcmpl-cache-{}", uuid::Uuid::new_v4()),
+            "object": "chat.completion.chunk",
+            "created": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            "model": model,
+            "choices": [delta]
+        });
+
+        sse_output.extend_from_slice(format!("data: {}\n\n", event_data).as_bytes());
+    }
+
+    if let Some(usage_data) = usage {
+        let usage_event = json!({
+            "id": format!("chatcmpl-cache-{}", uuid::Uuid::new_v4()),
+            "object": "chat.completion.chunk",
+            "created": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            "model": model,
+            "choices": [],
+            "usage": usage_data
+        });
+        sse_output.extend_from_slice(format!("data: {}\n\n", usage_event).as_bytes());
+    }
+
+    sse_output.extend_from_slice(b"data: [DONE]\n\n");
+
+    sse_output
 }
 
 #[cfg(test)]

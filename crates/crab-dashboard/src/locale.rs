@@ -337,6 +337,60 @@ impl Translations {
             Locale::EnUS => "Failed to load keys",
         }
     }
+    pub fn keys_gateway_url_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关地址",
+            Locale::EnUS => "Gateway URL",
+        }
+    }
+    pub fn keys_gateway_url_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端请求应发送到此地址",
+            Locale::EnUS => "Clients should send requests to this address",
+        }
+    }
+    pub fn keys_copy_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "复制",
+            Locale::EnUS => "Copy",
+        }
+    }
+    pub fn keys_created_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥已创建",
+            Locale::EnUS => "Key Created",
+        }
+    }
+    pub fn keys_created_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请立即复制此密钥，关闭后将无法再次查看完整密钥",
+            Locale::EnUS => "Copy this key now. You won't be able to see it again.",
+        }
+    }
+    pub fn keys_unlimited_quota(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无限配额",
+            Locale::EnUS => "Unlimited Quota",
+        }
+    }
+    pub fn keys_quota_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 配额",
+            Locale::EnUS => "Token Quota",
+        }
+    }
+    pub fn keys_col_quota(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配额",
+            Locale::EnUS => "Quota",
+        }
+    }
+    pub fn keys_unlimited(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无限",
+            Locale::EnUS => "Unlimited",
+        }
+    }
 
     pub fn routing_title(self) -> &'static str {
         match self.locale {

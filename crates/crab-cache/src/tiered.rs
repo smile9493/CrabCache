@@ -1,4 +1,4 @@
-use crate::{CacheEntry, TtlConfig};
+use crate::{CacheEntry, L0Config, TtlConfig};
 use anyhow::Result;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
@@ -15,10 +15,14 @@ pub struct TieredCache {
 }
 
 impl TieredCache {
-    pub async fn new(l1_pool: Pool<RedisConnectionManager>, ttl_config: TtlConfig) -> Result<Self> {
+    pub async fn new(
+        l1_pool: Pool<RedisConnectionManager>,
+        l0_config: L0Config,
+        ttl_config: TtlConfig,
+    ) -> Result<Self> {
         let l0 = Cache::builder()
-            .max_capacity(10_000)
-            .time_to_live(Duration::from_secs(3600))
+            .max_capacity(l0_config.max_capacity)
+            .time_to_live(Duration::from_secs(l0_config.ttl_secs))
             .build();
 
         Ok(Self {

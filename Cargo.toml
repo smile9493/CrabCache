@@ -69,5 +69,6 @@ crab-cache     = { path = "crates/crab-cache" }
 crab-semantic  = { path = "crates/crab-semantic" }
 crab-proxy     = { path = "crates/crab-proxy" }
 crab-reasoning = { path = "crates/crab-reasoning" }
+crab-admin     = { path = "crates/crab-admin" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"

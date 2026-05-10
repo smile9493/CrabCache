@@ -28,3 +28,7 @@ prometheus.workspace = true
 bb8.workspace = true
 bb8-redis.workspace = true
 async-trait.workspace = true
+dashmap.workspace = true
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = { version = "0.5", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }

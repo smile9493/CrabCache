@@ -11,17 +11,6 @@ pub fn generate_cache_key(request_body: &[u8]) -> Result<String> {
         obj.remove("top_p");
         obj.remove("frequency_penalty");
         obj.remove("presence_penalty");
-
-        if let Some(messages) = obj.get_mut("messages") {
-            if let Some(messages_arr) = messages.as_array_mut() {
-                messages_arr.sort_by_key(|m| {
-                    m.get("role")
-                        .and_then(|r| r.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default()
-                });
-            }
-        }
     }
 
     let normalized = serde_json::to_string(&value)?;
@@ -101,7 +90,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_cache_key_message_order() {
+    fn test_generate_cache_key_message_order_matters() {
         let body1 = json!({
             "model": "v4-pro",
             "messages": [
@@ -121,6 +110,6 @@ mod tests {
         let key1 = generate_cache_key(&serde_json::to_vec(&body1).unwrap()).unwrap();
         let key2 = generate_cache_key(&serde_json::to_vec(&body2).unwrap()).unwrap();
 
-        assert_eq!(key1, key2);
+        assert_ne!(key1, key2, "Different message orders should produce different keys");
     }
 }
