@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-pub use crab_proxy::ConnectionConfig;
+pub use crab_proxy::{ConnectionConfig, ReasoningConfig};
 
 #[derive(Debug, Deserialize)]
 pub struct GatewayConfig {
@@ -13,12 +13,15 @@ pub struct GatewayConfig {
     pub cache: CacheConfig,
     pub semantic: SemanticConfig,
     pub connection: Option<ConnectionConfig>,
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpstreamConfig {
     pub deepseek_endpoints: Vec<String>,
     pub default_weight: Option<u32>,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +73,14 @@ impl GatewayConfig {
                 )
             })
             .collect()
+    }
+
+    pub fn upstream_base_url(&self) -> &str {
+        self.upstream.base_url.as_deref().unwrap_or("https://api.deepseek.com")
+    }
+
+    pub fn fallback_model(&self) -> &str {
+        self.upstream.model.as_deref().unwrap_or("deepseek-v4-pro")
     }
 }
 

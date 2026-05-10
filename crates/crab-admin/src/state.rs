@@ -10,6 +10,7 @@ pub struct AppState {
     pub cache_config: RwLock<StoredCacheConfig>,
     pub semantic_config: RwLock<StoredSemanticConfig>,
     pub connection_config: RwLock<StoredConnectionConfig>,
+    pub upstream_config: RwLock<StoredUpstreamConfig>,
     pub models: RwLock<StoredModelList>,
     pub backends: RwLock<Vec<StoredBackend>>,
     pub metrics: RwLock<StoredMetrics>,
@@ -74,6 +75,25 @@ pub struct StoredBackend {
     pub weight: u32,
     pub healthy: bool,
     pub request_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredUpstreamConfig {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub endpoints: Vec<String>,
+}
+
+impl Default for StoredUpstreamConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.deepseek.com".to_string(),
+            api_key: String::new(),
+            model: "deepseek-v4-pro".to_string(),
+            endpoints: vec!["api.deepseek.com:443".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +206,7 @@ impl AppState {
                 idle_timeout_secs: 90,
                 h2_ping_interval_secs: 30,
             }),
+            upstream_config: RwLock::new(StoredUpstreamConfig::default()),
             models: RwLock::new(StoredModelList {
                 models: Vec::new(),
                 synced_at: None,

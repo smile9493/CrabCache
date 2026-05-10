@@ -1,4 +1,5 @@
 use crab_cache::{CacheEntry, RequestCoalescer, TieredCache};
+use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
 use crab_route::AffinityRouter;
 use crab_semantic::SemanticCache;
 use serde::Deserialize;
@@ -26,6 +27,33 @@ impl Default for ConnectionConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ReasoningConfig {
+    pub thinking_mode: String,
+    pub reasoning_effort: String,
+    pub missing_reasoning_strategy: String,
+    pub display_reasoning: bool,
+    pub collapsible_reasoning: bool,
+    pub cache_db_path: String,
+    pub cache_max_age_secs: Option<u64>,
+    pub cache_max_rows: Option<usize>,
+}
+
+impl Default for ReasoningConfig {
+    fn default() -> Self {
+        Self {
+            thinking_mode: "enabled".to_string(),
+            reasoning_effort: "max".to_string(),
+            missing_reasoning_strategy: "recover".to_string(),
+            display_reasoning: true,
+            collapsible_reasoning: true,
+            cache_db_path: ":memory:".to_string(),
+            cache_max_age_secs: Some(30 * 24 * 3600),
+            cache_max_rows: Some(100_000),
+        }
+    }
+}
+
 pub struct GatewayContext {
     pub request_id: String,
     pub cache_key: Option<String>,
@@ -39,6 +67,13 @@ pub struct GatewayContext {
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
     pub is_coalesced_follower: bool,
+    pub original_request_body: Option<Vec<u8>>,
+    pub prepared_request: Option<PreparedRequest>,
+    pub new_request_body: Option<Vec<u8>>,
+    pub stream_accumulator: Option<StreamAccumulator>,
+    pub display_adapter: Option<CursorReasoningDisplayAdapter>,
+    pub pending_recovery_notice: Option<String>,
+    pub authorization: Option<String>,
 }
 
 impl GatewayContext {
@@ -56,6 +91,13 @@ impl GatewayContext {
             ttft: None,
             accumulated_body: Vec::new(),
             is_coalesced_follower: false,
+            original_request_body: None,
+            prepared_request: None,
+            new_request_body: None,
+            stream_accumulator: None,
+            display_adapter: None,
+            pending_recovery_notice: None,
+            authorization: None,
         }
     }
 }
@@ -63,8 +105,12 @@ impl GatewayContext {
 pub struct GatewayState {
     pub router: Arc<AffinityRouter>,
     pub tiered_cache: Arc<TieredCache>,
-    pub semantic_cache: Arc<SemanticCache>,
+    pub semantic_cache: Option<Arc<SemanticCache>>,
     pub coalescer: Arc<RequestCoalescer>,
+    pub reasoning_store: Arc<ReasoningStore>,
     pub api_key: String,
     pub conn_config: ConnectionConfig,
+    pub reasoning_config: ReasoningConfig,
+    pub upstream_base_url: String,
+    pub fallback_model: String,
 }

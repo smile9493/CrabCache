@@ -1,36 +1,29 @@
 # CrabCache Gateway Configuration
 # Copy this file to gateway.toml and fill in your API keys.
 
-[gateway]
 listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
+api_key = "sk-your-deepseek-api-key-here"
 
 [upstream]
-api_base = "https://api.deepseek.com/v1"
-model = "deepseek-chat"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+default_weight = 1
 
-[[upstream.api_keys]]
-key = "sk-your-deepseek-api-key-here"
-weight = 100
-enabled = true
-
-# Uncomment to add backup keys for rate-limit rotation:
-# [[upstream.api_keys]]
-# key = "sk-backup-key"
-# weight = 50
-# enabled = true
+# DeepSeek API endpoint addresses (for Ketama routing)
+deepseek_endpoints = ["api.deepseek.com:443"]
 
 [cache]
 default_ttl_secs = 3600
-l0_max_entries = 10000
-l0_max_memory_mb = 512
-redis_url = "redis://127.0.0.1:6379"
-redis_pool_size = 10
+l0_max_capacity = 10000
+l0_ttl_secs = 3600
+l1_redis_url = "redis://127.0.0.1:6379"
+l1_pool_size = 16
 
 # Per-model TTL overrides (seconds)
-[cache.model_overrides]
-"deepseek-chat" = 7200
-"deepseek-coder" = 300
+[cache.model_ttl_overrides]
+"deepseek-v4-pro" = 7200
+"deepseek-v4-flash" = 3600
 
 # Per-consumer TTL overrides (seconds)
 [cache.consumer_overrides]
@@ -38,11 +31,22 @@ redis_pool_size = 10
 
 [semantic]
 enabled = false
-onnx_model_path = "models/all-MiniLM-L6-v2.onnx"
+model_path = "models/all-MiniLM-L6-v2.onnx"
+tokenizer_path = "models/tokenizer.json"
 qdrant_url = "http://127.0.0.1:6334"
 collection_name = "crab_semantic_cache"
 similarity_threshold = 0.95
 ttl_secs = 86400
+
+[reasoning]
+thinking_mode = "enabled"
+reasoning_effort = "max"
+missing_reasoning_strategy = "recover"
+display_reasoning = true
+collapsible_reasoning = true
+cache_db_path = "data/reasoning_content.sqlite3"
+cache_max_age_secs = 2592000
+cache_max_rows = 100000
 
 [connection]
 tcp_keepalive_idle_secs = 60

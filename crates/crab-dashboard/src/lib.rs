@@ -3,6 +3,7 @@ pub mod app;
 pub mod components;
 pub mod locale;
 pub mod pages;
+pub mod theme;
 pub mod types;
 
 use wasm_bindgen::prelude::*;

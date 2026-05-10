@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = routes::router(state)
         .layer(cors)
-        .fallback_service(ServeDir::new("dist"));
+        .fallback_service(ServeDir::new("crates/crab-dashboard/dist"));
 
     let listen_addr = "0.0.0.0:3000";
     info!(addr = listen_addr, "CrabCache Admin Dashboard starting");

@@ -114,6 +114,23 @@ pub struct UpdateConnectionConfigRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    pub base_url: String,
+    pub api_key: String,
+    pub api_key_masked: String,
+    pub model: String,
+    pub endpoints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUpstreamConfigRequest {
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub endpoints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
     pub owned_by: String,

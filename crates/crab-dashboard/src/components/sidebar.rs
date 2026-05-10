@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::components::*;
 
+use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{use_locale, use_translations, Translations};
 
 #[component]
@@ -12,30 +13,34 @@ pub fn Sidebar() -> impl IntoView {
     };
 
     view! {
-        <aside class="w-56 bg-stone-900 border-r border-stone-800 flex flex-col shrink-0">
-            <div class="px-5 py-5 border-b border-stone-800">
-                <div class="flex items-center gap-2.5">
-                    <span class="text-teal-500 text-xl font-bold font-mono">{Translations::sidebar_brand}</span>
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <span class="sidebar-brand">{Translations::sidebar_brand}</span>
+                    </div>
+                    <ThemeSwitcher />
                 </div>
-                <p class="text-[11px] text-stone-500 mt-1 font-mono">{move || use_translations().sidebar_subtitle()}</p>
+                <p class="sidebar-subtitle">{move || use_translations().sidebar_subtitle()}</p>
             </div>
 
-            <nav class="flex-1 px-3 py-4 space-y-1">
+            <nav class="sidebar-nav space-y-1">
                 <NavItem href="/" label=move || use_translations().sidebar_overview() icon="●" />
                 <NavItem href="/keys" label=move || use_translations().sidebar_keys() icon="◆" />
+                <NavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon="⬡" />
                 <NavItem href="/models" label=move || use_translations().sidebar_models() icon="◉" />
                 <NavItem href="/routing" label=move || use_translations().sidebar_routing() icon="◈" />
                 <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" />
             </nav>
 
-            <div class="px-4 py-3 border-t border-stone-800 space-y-2">
-                <div class="flex items-center gap-2 text-xs text-stone-500">
-                    <span class="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
-                    {move || use_translations().sidebar_online()}
+            <div class="sidebar-footer">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="online-dot"></span>
+                    <span class="online-label">{move || use_translations().sidebar_online()}</span>
                 </div>
                 <button
                     on:click=toggle_locale
-                    class="w-full text-xs text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded px-2 py-1 transition-colors text-left"
+                    class="text-xs text-theme-muted hover:text-theme transition-colors w-full text-left py-1"
                 >
                     {move || format!("🌐 {}", locale.get().label())}
                 </button>
@@ -54,15 +59,13 @@ fn NavItem(href: &'static str, label: impl Fn() -> &'static str + Send + 'static
             href=href
             attr:class=move || {
                 if is_active() {
-                    "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium \
-                     bg-stone-800 text-teal-400 transition-colors"
+                    "nav-item active"
                 } else {
-                    "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium \
-                     text-stone-400 hover:text-stone-200 hover:bg-stone-800/50 transition-colors"
+                    "nav-item"
                 }
             }
         >
-            <span class="text-xs font-mono">{icon}</span>
+            <span class="nav-icon">{icon}</span>
             <span>{label()}</span>
         </A>
     }

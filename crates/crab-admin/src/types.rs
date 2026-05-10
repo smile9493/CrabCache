@@ -104,13 +104,30 @@ pub struct UpdateSemanticConfigRequest {
     pub similarity_threshold: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConnectionConfigRequest {
     pub tcp_keepalive_idle_secs: u64,
     pub tcp_keepalive_interval_secs: u64,
     pub tcp_keepalive_count: usize,
     pub idle_timeout_secs: u64,
     pub h2_ping_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    pub base_url: String,
+    pub api_key: String,
+    pub api_key_masked: String,
+    pub model: String,
+    pub endpoints: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUpstreamConfigRequest {
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub endpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

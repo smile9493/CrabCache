@@ -65,10 +65,23 @@ impl Translations {
             Locale::EnUS => "Logs & Traces",
         }
     }
+    pub fn sidebar_upstream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游配置",
+            Locale::EnUS => "Upstream",
+        }
+    }
     pub fn sidebar_online(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "网关运行中",
             Locale::EnUS => "Gateway Online",
+        }
+    }
+
+    pub fn theme(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "切换主题",
+            Locale::EnUS => "Theme",
         }
     }
 
@@ -731,6 +744,97 @@ impl Translations {
     }
 
     pub const fn empty_state_icon() -> &'static str { "—" }
+
+    pub fn upstream_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游服务配置",
+            Locale::EnUS => "Upstream Configuration",
+        }
+    }
+    pub fn upstream_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置 CrabCache 连接上游 LLM API 服务的地址与认证密钥",
+            Locale::EnUS => "Configure CrabCache upstream LLM API endpoint and authentication.",
+        }
+    }
+    pub fn upstream_base_url_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 Base URL",
+            Locale::EnUS => "Upstream Base URL",
+        }
+    }
+    pub fn upstream_base_url_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "例如 https://api.deepseek.com",
+            Locale::EnUS => "e.g. https://api.deepseek.com",
+        }
+    }
+    pub fn upstream_api_key_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 API Key",
+            Locale::EnUS => "Upstream API Key",
+        }
+    }
+    pub fn upstream_api_key_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "用于向上游服务发起请求的密钥",
+            Locale::EnUS => "The API key used to authenticate with the upstream service",
+        }
+    }
+    pub fn upstream_api_key_masked_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已保存，留空则不修改",
+            Locale::EnUS => "Saved, leave blank to keep unchanged",
+        }
+    }
+    pub fn upstream_model_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "默认模型",
+            Locale::EnUS => "Default Model",
+        }
+    }
+    pub fn upstream_model_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求未指定模型时的默认回退模型",
+            Locale::EnUS => "Fallback model when request does not specify one",
+        }
+    }
+    pub fn upstream_endpoints_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游端点 (Ketama 环)",
+            Locale::EnUS => "Upstream Endpoints (Ketama Ring)",
+        }
+    }
+    pub fn upstream_endpoints_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "每行一个，格式 host:port",
+            Locale::EnUS => "One per line, format host:port",
+        }
+    }
+    pub fn upstream_save_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存配置",
+            Locale::EnUS => "Save Config",
+        }
+    }
+    pub fn upstream_saving(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存中...",
+            Locale::EnUS => "Saving...",
+        }
+    }
+    pub fn upstream_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置已保存",
+            Locale::EnUS => "Config saved",
+        }
+    }
+    pub fn upstream_load_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载上游配置失败",
+            Locale::EnUS => "Failed to load upstream config",
+        }
+    }
 }
 
 pub fn provide_locale() -> RwSignal<Locale> {

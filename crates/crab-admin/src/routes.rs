@@ -17,6 +17,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/cache/config", get(get_cache_config).put(update_cache_config))
         .route("/api/admin/semantic/config", get(get_semantic_config).put(update_semantic_config))
         .route("/api/admin/connection/config", get(get_connection_config).put(update_connection_config))
+        .route("/api/admin/upstream/config", get(get_upstream_config).put(update_upstream_config))
         .route("/api/admin/models", get(get_models).post(sync_models))
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/logs", get(get_logs))
@@ -284,22 +285,50 @@ async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListRespons
     })
 }
 
-async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResult>, StatusCode> {
-    let upstream_url = "https://api.deepseek.com/v1/models";
-    let api_key = &state.upstream_api_key;
+async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResult>, (StatusCode, String)> {
+    let upstream_config = state.upstream_config.read().clone();
+    let upstream_url = format!("{}/v1/models", upstream_config.base_url.trim_end_matches('/'));
+    let api_key = upstream_config.api_key.clone();
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(upstream_url)
-        .header("Authorization", format!("Bearer {}", api_key))
+    tracing::info!(url = %upstream_url, "Syncing models from upstream");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create HTTP client: {}", e)))?;
+
+    let mut request = client.get(&upstream_url);
+    if api_key.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Please configure upstream API key first in the Upstream settings page.".into()));
+    }
+    request = request.header("Authorization", format!("Bearer {}", &api_key));
+    let resp = request
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            tracing::error!(url = %upstream_url, error = %e, "Upstream request failed");
+            (StatusCode::BAD_GATEWAY, format!("Cannot reach upstream: {}", e))
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        tracing::error!(url = %upstream_url, status = %status, body = %body, "Upstream returned error");
+        let msg = match status.as_u16() {
+            401 | 403 => format!("Upstream authentication failed ({}). Check your API key.", status.as_u16()),
+            404 => format!("Models endpoint not found at {}. Check the Base URL.", upstream_url),
+            _ => format!("Upstream returned {}: {}", status.as_u16(), body.chars().take(200).collect::<String>()),
+        };
+        return Err((StatusCode::BAD_GATEWAY, msg));
+    }
 
     let upstream: UpstreamModelsResponse = resp
         .json()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            tracing::error!(url = %upstream_url, error = %e, "Failed to parse upstream models response");
+            (StatusCode::BAD_GATEWAY, format!("Failed to parse upstream response: {}", e))
+        })?;
 
     let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
 
@@ -345,6 +374,8 @@ async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResu
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
     );
 
+    tracing::info!(added = added.len(), removed = removed.len(), unchanged, total, "Models synced successfully");
+
     Ok(Json(SyncResult {
         added,
         removed,
@@ -371,4 +402,47 @@ async fn update_connection_config(
         idle_timeout_secs: config.idle_timeout_secs,
         h2_ping_interval_secs: config.h2_ping_interval_secs,
     })
+}
+
+async fn get_upstream_config(State(state): State<Arc<AppState>>) -> Json<UpstreamConfig> {
+    let config = state.upstream_config.read().clone();
+    let api_key_masked = mask_api_key(&config.api_key);
+    Json(UpstreamConfig {
+        base_url: config.base_url,
+        api_key: config.api_key.clone(),
+        api_key_masked,
+        model: config.model,
+        endpoints: config.endpoints,
+    })
+}
+
+async fn update_upstream_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateUpstreamConfigRequest>,
+) -> Json<UpstreamConfig> {
+    let mut config = state.upstream_config.write();
+    config.base_url = req.base_url;
+    if let Some(key) = req.api_key {
+        if !key.is_empty() && !key.contains("****") {
+            config.api_key = key;
+        }
+    }
+    config.model = req.model;
+    config.endpoints = req.endpoints;
+
+    let api_key_masked = mask_api_key(&config.api_key);
+    Json(UpstreamConfig {
+        base_url: config.base_url.clone(),
+        api_key: config.api_key.clone(),
+        api_key_masked,
+        model: config.model.clone(),
+        endpoints: config.endpoints.clone(),
+    })
+}
+
+fn mask_api_key(key: &str) -> String {
+    if key.len() <= 8 {
+        return "****".to_string();
+    }
+    format!("{}****{}", &key[..4], &key[key.len()-4..])
 }

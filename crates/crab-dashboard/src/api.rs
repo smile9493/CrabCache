@@ -115,6 +115,16 @@ pub async fn update_connection_config(
     put_json(&format!("{}/connection/config", API_BASE), req).await
 }
 
+pub async fn fetch_upstream_config() -> Result<UpstreamConfig, String> {
+    fetch_json(&format!("{}/upstream/config", API_BASE)).await
+}
+
+pub async fn update_upstream_config(
+    req: &UpdateUpstreamConfigRequest,
+) -> Result<UpstreamConfig, String> {
+    put_json(&format!("{}/upstream/config", API_BASE), req).await
+}
+
 pub async fn fetch_models() -> Result<ModelListResponse, String> {
     fetch_json(&format!("{}/models", API_BASE)).await
 }

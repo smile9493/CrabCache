@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use crab_cache::{RequestCoalescer, TieredCache, TtlConfig};
 use crab_metrics::global_metrics;
 use crab_proxy::{GatewayProxy, GatewayState};
+use crab_reasoning::ReasoningStore;
 use crab_route::AffinityRouter;
 use crab_semantic::{Embedder, SemanticCache, VectorStore};
 use pingora_core::server::Server;
@@ -85,7 +86,7 @@ fn main() -> Result<()> {
     };
     server.add_service(background_service("metrics", metrics_service));
 
-    let rt = tokio::runtime::Handle::current();
+    let rt = tokio::runtime::Runtime::new()?;
 
     let router = Arc::new(rt.block_on(async { AffinityRouter::new(&backends) })?);
 
@@ -134,17 +135,40 @@ fn main() -> Result<()> {
         None
     };
 
-    let conn_config = config.connection.unwrap_or_default();
+    let conn_config = config.connection.clone().unwrap_or_default();
+
+    let reasoning_config = config.reasoning.clone().unwrap_or_default();
+    let reasoning_store = Arc::new(
+        ReasoningStore::new(
+            &reasoning_config.cache_db_path,
+            reasoning_config.cache_max_age_secs,
+            reasoning_config.cache_max_rows,
+        )?
+    );
+
+    let upstream_base_url = config.upstream_base_url().to_string();
+    let fallback_model = config.fallback_model().to_string();
+
+    info!(
+        thinking_mode = %reasoning_config.thinking_mode,
+        reasoning_effort = %reasoning_config.reasoning_effort,
+        display_reasoning = reasoning_config.display_reasoning,
+        collapsible_reasoning = reasoning_config.collapsible_reasoning,
+        missing_reasoning_strategy = %reasoning_config.missing_reasoning_strategy,
+        "Reasoning configuration"
+    );
 
     let state = Arc::new(GatewayState {
         router,
         tiered_cache,
-        semantic_cache: semantic_cache.unwrap_or_else(|| {
-            Arc::new(create_disabled_semantic_cache())
-        }),
+        semantic_cache,
         coalescer: Arc::new(RequestCoalescer::new()),
+        reasoning_store,
         api_key: config.api_key.clone(),
         conn_config,
+        reasoning_config,
+        upstream_base_url,
+        fallback_model,
     });
 
     let proxy = GatewayProxy::new(state);
@@ -160,8 +184,4 @@ fn main() -> Result<()> {
     );
 
     server.run_forever();
-}
-
-fn create_disabled_semantic_cache() -> SemanticCache {
-    unreachable!("Semantic cache should not be used when disabled")
 }
