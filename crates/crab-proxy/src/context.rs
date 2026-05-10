@@ -2,6 +2,7 @@ use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard};
 use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
 use crab_route::AffinityRouter;
 use crab_semantic::SemanticCache;
+use crate::TraceLogger;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -132,4 +133,5 @@ pub struct GatewayState {
     pub upstream_base_url: String,
     pub fallback_model: String,
     pub keys: dashmap::DashMap<String, StoredKey>,
+    pub trace_logger: Option<Arc<TraceLogger>>,
 }

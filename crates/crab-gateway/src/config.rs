@@ -14,6 +14,36 @@ pub struct GatewayConfig {
     pub semantic: SemanticConfig,
     pub connection: Option<ConnectionConfig>,
     pub reasoning: Option<ReasoningConfig>,
+    pub trace_logging: Option<TraceConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TraceConfig {
+    pub enabled: bool,
+    pub path: String,
+    #[serde(default = "default_max_lines")]
+    pub max_lines: usize,
+    #[serde(default = "default_max_files")]
+    pub max_files: usize,
+}
+
+fn default_max_lines() -> usize {
+    10000
+}
+
+fn default_max_files() -> usize {
+    5
+}
+
+impl Default for TraceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "/var/log/crabcache/trace.jsonl".to_string(),
+            max_lines: 10000,
+            max_files: 5,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,5 +1,6 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState};
 use crate::sse::{parse_sse_chunk, UsageData};
+use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, UsageInfo};
 use crab_metrics::global_metrics;
 use crab_reasoning::{
@@ -17,6 +18,16 @@ use sha2::{Sha256, Digest};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
+
+fn sanitize_for_trace(value: Option<&str>) -> Option<String> {
+    value.map(|s| {
+        if s.len() > 64 {
+            format!("{}...<truncated>", &s[..32])
+        } else {
+            s.to_string()
+        }
+    })
+}
 
 pub struct GatewayProxy {
     state: Arc<GatewayState>,
@@ -712,11 +723,25 @@ impl ProxyHttp for GatewayProxy {
                 model = %ctx.model,
                 cache_hit = ctx.cache_hit.is_some(),
                 is_streaming = ctx.is_streaming,
-                consumer = ?ctx.consumer,
-                conversation_id = ?ctx.conversation_id,
+                consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
+                conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
                 total_tokens = ctx.total_tokens,
                 "Request completed"
             );
+
+            if let Some(trace_logger) = &self.state.trace_logger {
+                if let Some(body) = &ctx.original_request_body {
+                    let entry = SanitizedLogEntry::from_request(
+                        body,
+                        ctx.conversation_id.clone(),
+                        &ctx.model,
+                        ctx.total_tokens as usize,
+                        duration.as_secs_f64() * 1000.0,
+                        ctx.cache_hit.is_some(),
+                    );
+                    trace_logger.log(entry);
+                }
+            }
         }
 
         if let Some(ttft) = ctx.ttft {

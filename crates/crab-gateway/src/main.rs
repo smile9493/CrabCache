@@ -203,6 +203,28 @@ fn main() -> Result<()> {
 
     let keys = dashmap::DashMap::new();
 
+    let trace_logger = if let Some(trace_config) = &config.trace_logging {
+        if trace_config.enabled {
+            let (logger, _handle) = crab_proxy::TraceLogger::init(crab_proxy::TraceConfig {
+                enabled: trace_config.enabled,
+                path: trace_config.path.clone(),
+                max_lines: trace_config.max_lines,
+                max_files: trace_config.max_files,
+            });
+            info!(
+                path = %trace_config.path,
+                max_lines = trace_config.max_lines,
+                max_files = trace_config.max_files,
+                "Trace logging enabled"
+            );
+            Some(Arc::new(logger))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let state = Arc::new(GatewayState {
         router,
         tiered_cache,
@@ -215,6 +237,7 @@ fn main() -> Result<()> {
         upstream_base_url,
         fallback_model,
         keys,
+        trace_logger,
     });
 
     let proxy = GatewayProxy::new(state);

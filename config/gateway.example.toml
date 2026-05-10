@@ -54,3 +54,9 @@ tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
 h2_ping_interval_secs = 30
+
+[trace_logging]
+enabled = true
+path = "/var/log/crabcache/trace.jsonl"
+max_lines = 10000
+max_files = 5
