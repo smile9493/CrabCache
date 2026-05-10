@@ -15,6 +15,8 @@ use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
 use std::sync::Arc;
 use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
@@ -79,11 +81,25 @@ fn main() -> Result<()> {
         );
     }));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+    std::fs::create_dir_all("./logs").ok();
+
+    let file_appender = tracing_appender::rolling::daily("./logs", "gateway.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let json_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(non_blocking);
+
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(json_layer)
+        .with(stdout_layer)
         .init();
 
     let config_path = std::env::args()

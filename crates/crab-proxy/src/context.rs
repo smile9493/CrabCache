@@ -83,6 +83,10 @@ pub struct GatewayContext {
     pub display_adapter: Option<CursorReasoningDisplayAdapter>,
     pub pending_recovery_notice: Option<String>,
     pub authorization: Option<String>,
+    pub req_hash: Option<String>,
+    pub content_length: usize,
+    pub total_tokens: u64,
+    pub conversation_id: Option<String>,
 }
 
 impl GatewayContext {
@@ -108,6 +112,10 @@ impl GatewayContext {
             display_adapter: None,
             pending_recovery_notice: None,
             authorization: None,
+            req_hash: None,
+            content_length: 0,
+            total_tokens: 0,
+            conversation_id: None,
         }
     }
 }

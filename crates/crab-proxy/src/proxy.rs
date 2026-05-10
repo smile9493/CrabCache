@@ -13,6 +13,7 @@ use pingora_core::protocols::l4::ext::TcpKeepalive;
 use pingora_core::upstreams::peer::PeerOptions;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
+use sha2::{Sha256, Digest};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -87,6 +88,12 @@ impl ProxyHttp for GatewayProxy {
                 .map(|s| s.to_string())
         });
 
+        let conversation_id_from_header = req_header
+            .headers
+            .get("x-conversation-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
         let mut full_body = Vec::new();
         loop {
             match session.downstream_session.read_request_body().await? {
@@ -105,6 +112,12 @@ impl ProxyHttp for GatewayProxy {
 
         ctx.original_request_body = Some(full_body.clone());
 
+        let mut hasher = Sha256::new();
+        hasher.update(&full_body);
+        let req_hash = hex::encode(hasher.finalize());
+        ctx.req_hash = Some(req_hash);
+        ctx.content_length = full_body.len();
+
         let payload: serde_json::Value = match serde_json::from_slice(&full_body) {
             Ok(v) => v,
             Err(_) => {
@@ -115,6 +128,11 @@ impl ProxyHttp for GatewayProxy {
 
         ctx.model = payload.get("model").and_then(|m| m.as_str()).unwrap_or(&self.state.fallback_model).to_string();
         ctx.is_streaming = payload.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
+
+        ctx.conversation_id = payload.get("conversation_id")
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string())
+            .or(conversation_id_from_header);
 
         let prepared = prepare_upstream_request(
             &payload,
@@ -442,6 +460,7 @@ impl ProxyHttp for GatewayProxy {
                                 prompt_cache_hit_tokens: usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                 prompt_cache_miss_tokens: usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                             };
+                            ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
                             record_usage(&usage_data, &ctx.model, ctx.consumer.as_deref());
                         }
                     }
@@ -450,6 +469,7 @@ impl ProxyHttp for GatewayProxy {
                 let events = parse_sse_chunk(data);
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
+                        ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
                         record_usage(&usage, &ctx.model, ctx.consumer.as_deref());
                     }
                 }
@@ -502,6 +522,7 @@ impl ProxyHttp for GatewayProxy {
                         prompt_cache_hit_tokens: usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                         prompt_cache_miss_tokens: usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                     };
+                    ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
                     record_usage(&usage_data, &ctx.model, ctx.consumer.as_deref());
                 }
 
@@ -672,23 +693,28 @@ impl ProxyHttp for GatewayProxy {
         ctx: &mut Self::CTX,
     ) {
         let duration = ctx.request_start.elapsed();
+        let latency_ms = duration.as_millis() as u64;
 
         if let Some(e) = error {
             warn!(
                 request_id = %ctx.request_id,
                 error = %e,
-                duration_ms = duration.as_millis() as u64,
+                duration_ms = latency_ms,
                 model = %ctx.model,
                 "Request failed"
             );
         } else {
             info!(
                 request_id = %ctx.request_id,
-                duration_ms = duration.as_millis() as u64,
+                request_hash = %ctx.req_hash.as_ref().unwrap_or(&"missing".to_string()),
+                content_length = ctx.content_length,
+                latency_ms = latency_ms,
                 model = %ctx.model,
                 cache_hit = ctx.cache_hit.is_some(),
                 is_streaming = ctx.is_streaming,
                 consumer = ?ctx.consumer,
+                conversation_id = ?ctx.conversation_id,
+                total_tokens = ctx.total_tokens,
                 "Request completed"
             );
         }

@@ -1,0 +1,15 @@
+{"timestamp_ms":1700000000001,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":150.5,"cache_hit":false}
+{"timestamp_ms":1700000000101,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":5.2,"cache_hit":true}
+{"timestamp_ms":1700000000201,"request_hash":"f1e2d3c4b5a6f1e2","content_length":30,"model":"deepseek-chat","prompt_tokens":12,"completion_tokens":60,"total_tokens":72,"latency_ms":180.3,"cache_hit":false}
+{"timestamp_ms":1700000000301,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":4.8,"cache_hit":true}
+{"timestamp_ms":1700000000401,"request_hash":"b2c3d4e5f6a1b2c3","content_length":40,"model":"deepseek-chat","prompt_tokens":15,"completion_tokens":80,"total_tokens":95,"latency_ms":220.1,"cache_hit":false}
+{"timestamp_ms":1700000000501,"request_hash":"f1e2d3c4b5a6f1e2","content_length":30,"model":"deepseek-chat","prompt_tokens":12,"completion_tokens":60,"total_tokens":72,"latency_ms":5.5,"cache_hit":true}
+{"timestamp_ms":1700000000601,"request_hash":"c3d4e5f6a1b2c3d4","content_length":35,"model":"deepseek-chat","prompt_tokens":13,"completion_tokens":65,"total_tokens":78,"latency_ms":195.2,"cache_hit":false}
+{"timestamp_ms":1700000000701,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":4.9,"cache_hit":true}
+{"timestamp_ms":1700000000801,"request_hash":"d4e5f6a1b2c3d4e5","content_length":28,"model":"deepseek-chat","prompt_tokens":11,"completion_tokens":55,"total_tokens":66,"latency_ms":165.8,"cache_hit":false}
+{"timestamp_ms":1700000000901,"request_hash":"b2c3d4e5f6a1b2c3","content_length":40,"model":"deepseek-chat","prompt_tokens":15,"completion_tokens":80,"total_tokens":95,"latency_ms":5.1,"cache_hit":true}
+{"timestamp_ms":1700000001001,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":5.0,"cache_hit":true}
+{"timestamp_ms":1700000001101,"request_hash":"e5f6a1b2c3d4e5f6","content_length":45,"model":"deepseek-chat","prompt_tokens":18,"completion_tokens":90,"total_tokens":108,"latency_ms":250.3,"cache_hit":false}
+{"timestamp_ms":1700000001201,"request_hash":"f1e2d3c4b5a6f1e2","content_length":30,"model":"deepseek-chat","prompt_tokens":12,"completion_tokens":60,"total_tokens":72,"latency_ms":5.3,"cache_hit":true}
+{"timestamp_ms":1700000001301,"request_hash":"a1b2c3d4e5f6a1b2","content_length":25,"model":"deepseek-chat","prompt_tokens":10,"completion_tokens":50,"total_tokens":60,"latency_ms":4.7,"cache_hit":true}
+{"timestamp_ms":1700000001401,"request_hash":"c3d4e5f6a1b2c3d4","content_length":35,"model":"deepseek-chat","prompt_tokens":13,"completion_tokens":65,"total_tokens":78,"latency_ms":5.2,"cache_hit":true}
