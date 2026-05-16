@@ -30,8 +30,10 @@ pub struct TraceStats {
 
 impl TraceStats {
     pub fn from_records(records: &[TraceRecord]) -> Self {
-        let mut stats = Self::default();
-        stats.total_requests = records.len();
+        let mut stats = Self {
+            total_requests: records.len(),
+            ..Default::default()
+        };
 
         let mut total_latency = 0.0;
         let mut cache_hits = 0;
@@ -127,7 +129,7 @@ pub fn load_trace_from_file(path: &str) -> anyhow::Result<Vec<TraceRecord>> {
     let records: Vec<TraceRecord> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line))
+        .map(serde_json::from_str)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(records)
 }

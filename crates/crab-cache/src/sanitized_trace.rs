@@ -222,7 +222,7 @@ pub fn load_sanitized_log(path: &str) -> anyhow::Result<Vec<SanitizedLogEntry>> 
     let entries: Vec<SanitizedLogEntry> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line))
+        .map(serde_json::from_str)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(entries)
 }

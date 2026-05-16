@@ -2,7 +2,7 @@ use crate::context::{ConnectionConfig, GatewayContext, GatewayState};
 use crate::sse::{parse_sse_chunk, UsageData};
 use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, UsageInfo};
-use crab_metrics::global_metrics;
+use crab_metrics::{global_metrics, CacheTier};
 use crab_reasoning::{
     prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
     CursorReasoningDisplayAdapter, StreamAccumulator,
@@ -180,7 +180,7 @@ impl ProxyHttp for GatewayProxy {
         let new_body = serde_json::to_vec(&prepared.payload).unwrap_or_default();
         ctx.new_request_body = Some(new_body);
 
-        if let Ok(cache_key) = crab_cache::generate_cache_key(&full_body) {
+        if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(&full_body, self.state.cache_key_namespace.as_deref(), &self.state.cache_fingerprint) {
             ctx.cache_key = Some(cache_key.clone());
 
             if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
@@ -191,21 +191,16 @@ impl ProxyHttp for GatewayProxy {
                     "Cache hit, returning cached response"
                 );
 
+                ctx.cache_tier = Some(tier);
                 ctx.cache_hit = Some(entry.clone());
+                global_metrics().record_latency(
+                    crab_metrics::LatencyKind::CacheFetch,
+                    ctx.request_start.elapsed(),
+                    &ctx.model,
+                    Some(tier),
+                );
 
-                let response_body = entry.response_body.clone();
-                let is_stream = ctx.is_streaming;
-
-                if is_stream {
-                    let sse_body = json_to_sse_stream(&response_body, &ctx.model);
-                    let header = build_sse_response_header(sse_body.len());
-                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
-                } else {
-                    let header = build_json_response_header(response_body.len());
-                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
-                }
+                send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
 
                 return Ok(true);
             }
@@ -213,33 +208,38 @@ impl ProxyHttp for GatewayProxy {
             if let Some(semantic_cache) = &self.state.semantic_cache {
                 if let Some(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body).ok() {
                     if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) {
-                        let last_message = messages.last().and_then(|m| m.get("content")).and_then(|c| c.as_str());
-                        
-                        if let Some(query_text) = last_message {
-                            if let Some(entry) = semantic_cache.search(query_text).await {
-                                info!(
-                                    request_id = %ctx.request_id,
-                                    query_len = query_text.len(),
-                                    "Semantic cache hit, returning cached response"
-                                );
-
-                                ctx.cache_hit = Some(entry.clone());
-
-                                let response_body = entry.response_body.clone();
-                                let is_stream = ctx.is_streaming;
-
-                                if is_stream {
-                                    let sse_body = json_to_sse_stream(&response_body, &ctx.model);
-                                    let header = build_sse_response_header(sse_body.len());
-                                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+                        if let Some(query_text) = build_semantic_query_text(messages) {
+                            if let Some(entry) = semantic_cache.search(&query_text).await {
+                                // Model guard: verify the cached entry's model matches
+                                if entry.model != ctx.model {
+                                    global_metrics().record_semantic_cache_rejected();
+                                    debug!(
+                                        request_id = %ctx.request_id,
+                                        cached_model = %entry.model,
+                                        request_model = %ctx.model,
+                                        "Semantic cache candidate rejected by model guard",
+                                    );
                                 } else {
-                                    let header = build_json_response_header(response_body.len());
-                                    let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                                    let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
-                                }
+                                    info!(
+                                        request_id = %ctx.request_id,
+                                        query_len = query_text.len(),
+                                        "Semantic cache hit, returning cached response"
+                                    );
 
-                                return Ok(true);
+                                    ctx.cache_tier = Some(CacheTier::L2Semantic);
+                                    ctx.cache_hit = Some(entry.clone());
+                                    global_metrics().record_cache_hit(CacheTier::L2Semantic, &ctx.model, ctx.consumer.as_deref());
+                                    global_metrics().record_latency(
+                                        crab_metrics::LatencyKind::CacheFetch,
+                                        ctx.request_start.elapsed(),
+                                        &ctx.model,
+                                        Some(CacheTier::L2Semantic),
+                                    );
+
+                                    send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, CacheTier::L2Semantic).await;
+
+                                    return Ok(true);
+                                }
                             }
                         }
                     }
@@ -259,21 +259,17 @@ impl ProxyHttp for GatewayProxy {
                                 "Follower found cached response after leader completed"
                             );
 
+                            ctx.cache_tier = Some(tier);
                             ctx.cache_hit = Some(entry.clone());
+                            global_metrics().record_coalesced_request();
+                            global_metrics().record_latency(
+                                crab_metrics::LatencyKind::CacheFetch,
+                                ctx.request_start.elapsed(),
+                                &ctx.model,
+                                Some(tier),
+                            );
 
-                            let response_body = entry.response_body.clone();
-                            let is_stream = ctx.is_streaming;
-
-                            if is_stream {
-                                let sse_body = json_to_sse_stream(&response_body, &ctx.model);
-                                let header = build_sse_response_header(sse_body.len());
-                                let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                                let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
-                            } else {
-                                let header = build_json_response_header(response_body.len());
-                                let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-                                let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body), true).await;
-                            }
+                            send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
 
                             return Ok(true);
                         } else {
@@ -442,6 +438,7 @@ impl ProxyHttp for GatewayProxy {
                         global_metrics().record_latency(
                             crab_metrics::LatencyKind::TTFT,
                             ctx.ttft.unwrap(),
+                            &ctx.model,
                             Some(crab_metrics::CacheTier::Miss),
                         );
                     }
@@ -497,6 +494,7 @@ impl ProxyHttp for GatewayProxy {
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
+                    &ctx.model,
                     Some(crab_metrics::CacheTier::Miss),
                 );
             }
@@ -509,8 +507,8 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
 
-            if let Some(ref prepared) = ctx.prepared_request {
-                if let Some(rewritten) = rewrite_response_body(
+            let client_body: Vec<u8> = if let Some(ref prepared) = ctx.prepared_request {
+                match rewrite_response_body(
                     &ctx.accumulated_body,
                     &prepared.original_model,
                     Some(&self.state.reasoning_store),
@@ -521,11 +519,17 @@ impl ProxyHttp for GatewayProxy {
                     self.state.reasoning_config.display_reasoning,
                     self.state.reasoning_config.collapsible_reasoning,
                 ) {
-                    *body = Some(bytes::Bytes::from(rewritten));
+                    Some(rewritten) => {
+                        *body = Some(bytes::Bytes::from(rewritten.clone()));
+                        rewritten
+                    }
+                    None => ctx.accumulated_body.clone(),
                 }
-            }
+            } else {
+                ctx.accumulated_body.clone()
+            };
 
-            if let Ok(body_value) = serde_json::from_slice::<serde_json::Value>(&ctx.accumulated_body) {
+            if let Ok(body_value) = serde_json::from_slice::<serde_json::Value>(&client_body) {
                 if let Some(usage) = body_value.get("usage") {
                     let usage_data = UsageData {
                         prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -538,16 +542,9 @@ impl ProxyHttp for GatewayProxy {
                 }
 
                 if let Some(cache_key) = &ctx.cache_key {
-                    let entry = CacheEntry {
-                        response_body: ctx.accumulated_body.clone(),
-                        model: ctx.model.clone(),
-                        usage: UsageInfo::default(),
-                        created_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                        ttl_secs: 3600,
-                    };
+                    let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+
+                    let entry = build_cache_entry(client_body.clone(), ctx.model.clone(), ttl_secs);
 
                     let tiered_cache = self.state.tiered_cache.clone();
                     let cache_key = cache_key.clone();
@@ -566,22 +563,9 @@ impl ProxyHttp for GatewayProxy {
                         if let Some(original_body) = &ctx.original_request_body {
                             if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
                                 if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
-                                    if let Some(query_text) = messages.last()
-                                        .and_then(|m| m.get("content"))
-                                        .and_then(|c| c.as_str())
-                                    {
+                                    if let Some(query_text) = build_semantic_query_text(messages) {
                                         let semantic_cache = semantic_cache.clone();
-                                        let entry_clone = CacheEntry {
-                                            response_body: ctx.accumulated_body.clone(),
-                                            model: ctx.model.clone(),
-                                            usage: UsageInfo::default(),
-                                            created_at: std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                                .as_secs(),
-                                            ttl_secs: 3600,
-                                        };
-                                        let query_text = query_text.to_string();
+                                        let entry_clone = build_cache_entry(client_body.clone(), ctx.model.clone(), ttl_secs);
                                         
                                         tokio::spawn(async move {
                                             if let Err(e) = semantic_cache.insert(&query_text, &entry_clone).await {
@@ -607,6 +591,7 @@ impl ProxyHttp for GatewayProxy {
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
+                    &ctx.model,
                     Some(crab_metrics::CacheTier::Miss),
                 );
             }
@@ -636,55 +621,38 @@ impl ProxyHttp for GatewayProxy {
                         }
                     })).unwrap_or_default();
 
-                    let tiered_cache = self.state.tiered_cache.clone();
-                    let cache_key = cache_key.clone();
-                    let model = ctx.model.clone();
-                    let consumer = ctx.consumer.clone();
-                    let entry_for_cache = CacheEntry {
-                        response_body: response_json.clone().into_bytes(),
-                        model: ctx.model.clone(),
-                        usage: UsageInfo::default(),
-                        created_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                        ttl_secs: 3600,
-                    };
-                    tokio::spawn(async move {
-                        if let Err(e) = tiered_cache
-                            .put(&cache_key, entry_for_cache, &model, consumer.as_deref())
-                            .await
-                        {
-                            warn!(error = %e, "Failed to cache streaming response");
-                        }
-                    });
+                    if self.state.stream_cache_enabled {
+                        let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
-                    if let Some(semantic_cache) = &self.state.semantic_cache {
-                        if let Some(original_body) = &ctx.original_request_body {
-                            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
-                                if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
-                                    if let Some(query_text) = messages.last()
-                                        .and_then(|m| m.get("content"))
-                                        .and_then(|c| c.as_str())
-                                    {
+                        let tiered_cache = self.state.tiered_cache.clone();
+                        let cache_key = cache_key.clone();
+                        let model = ctx.model.clone();
+                        let consumer = ctx.consumer.clone();
+                        let entry_for_cache = build_cache_entry(response_json.clone().into_bytes(), ctx.model.clone(), ttl_secs);
+                        tokio::spawn(async move {
+                            if let Err(e) = tiered_cache
+                                .put(&cache_key, entry_for_cache, &model, consumer.as_deref())
+                                .await
+                            {
+                                warn!(error = %e, "Failed to cache streaming response");
+                            }
+                        });
+
+                        if let Some(semantic_cache) = &self.state.semantic_cache {
+                            if let Some(original_body) = &ctx.original_request_body {
+                                if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
+                                    if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
+                                        if let Some(query_text) = build_semantic_query_text(messages) {
                                         let semantic_cache = semantic_cache.clone();
-                                        let entry_for_semantic = CacheEntry {
-                                            response_body: response_json.into_bytes(),
-                                            model: ctx.model.clone(),
-                                            usage: UsageInfo::default(),
-                                            created_at: std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                                .as_secs(),
-                                            ttl_secs: 3600,
-                                        };
-                                        let query_text = query_text.to_string();
-                                        
-                                        tokio::spawn(async move {
-                                            if let Err(e) = semantic_cache.insert(&query_text, &entry_for_semantic).await {
-                                                warn!(error = %e, "Failed to insert streaming response into semantic cache");
-                                            }
-                                        });
+                                        let entry_for_semantic = build_cache_entry(response_json.into_bytes(), ctx.model.clone(), ttl_secs);
+                                            let query_text = query_text.to_string();
+                                            
+                                            tokio::spawn(async move {
+                                                if let Err(e) = semantic_cache.insert(&query_text, &entry_for_semantic).await {
+                                                    warn!(error = %e, "Failed to insert streaming response into semantic cache");
+                                                }
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -721,7 +689,8 @@ impl ProxyHttp for GatewayProxy {
                 content_length = ctx.content_length,
                 latency_ms = latency_ms,
                 model = %ctx.model,
-                cache_hit = ctx.cache_hit.is_some(),
+                cache_hit = ctx.cache_tier.is_some(),
+                cache_tier = ?ctx.cache_tier,
                 is_streaming = ctx.is_streaming,
                 consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
                 conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
@@ -737,7 +706,8 @@ impl ProxyHttp for GatewayProxy {
                         &ctx.model,
                         ctx.total_tokens as usize,
                         duration.as_secs_f64() * 1000.0,
-                        ctx.cache_hit.is_some(),
+                        ctx.cache_tier.is_some(),
+                        ctx.cache_tier.map(|t| t.as_str().to_string()),
                     );
                     trace_logger.log(entry);
                 }
@@ -761,6 +731,39 @@ impl ProxyHttp for GatewayProxy {
                 );
             }
         }
+    }
+}
+
+async fn send_cached_response(
+    session: &mut Session,
+    entry: &CacheEntry,
+    model: &str,
+    is_streaming: bool,
+    cache_tier: CacheTier,
+) {
+    let response_body = &entry.response_body;
+    if is_streaming {
+        let sse_body = json_to_sse_stream(response_body, model);
+        let header = build_sse_response_header(sse_body.len(), cache_tier);
+        let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+        let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+    } else {
+        let header = build_json_response_header(response_body.len(), cache_tier);
+        let _ = session.downstream_session.write_response_header(Box::new(header)).await;
+        let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body.clone()), true).await;
+    }
+}
+
+fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
+    CacheEntry {
+        response_body,
+        model,
+        usage: UsageInfo::default(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        ttl_secs,
     }
 }
 
@@ -804,23 +807,32 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
     }
 }
 
-fn build_json_response_header(body_len: usize) -> pingora_http::ResponseHeader {
+fn cache_status_header(tier: CacheTier) -> &'static str {
+    match tier {
+        CacheTier::L0Moka => "HIT_L0",
+        CacheTier::L1Redis => "HIT_L1",
+        CacheTier::L2Semantic => "HIT_L2",
+        CacheTier::Miss => "miss",
+    }
+}
+
+fn build_json_response_header(body_len: usize, cache_tier: CacheTier) -> pingora_http::ResponseHeader {
     use pingora_http::ResponseHeader;
     let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
     header.insert_header(http::header::CONTENT_TYPE, "application/json").unwrap();
     header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
-    header.insert_header("x-cache-status", "HIT").unwrap();
+    header.insert_header("x-cache-status", cache_status_header(cache_tier)).unwrap();
     header.insert_header(http::header::CONNECTION, "close").unwrap();
     header
 }
 
-fn build_sse_response_header(body_len: usize) -> pingora_http::ResponseHeader {
+fn build_sse_response_header(body_len: usize, cache_tier: CacheTier) -> pingora_http::ResponseHeader {
     use pingora_http::ResponseHeader;
     let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
     header.insert_header(http::header::CONTENT_TYPE, "text/event-stream").unwrap();
     header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
     header.insert_header(http::header::CACHE_CONTROL, "no-cache").unwrap();
-    header.insert_header("x-cache-status", "HIT").unwrap();
+    header.insert_header("x-cache-status", cache_status_header(cache_tier)).unwrap();
     header.insert_header(http::header::CONNECTION, "close").unwrap();
     header
 }
@@ -879,9 +891,50 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     sse_output
 }
 
+/// Build a stable concatenated query text for semantic cache from request messages.
+///
+/// Extracts system message (if present) and all user/assistant message text content,
+/// joining them with newlines. If any content field is a non-string array, it is
+/// serialized as a JSON subset. Returns None if no usable text is found.
+fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role == "system" || role == "user" || role == "assistant" {
+            let content = msg.get("content");
+            let text = match content {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(serde_json::Value::Array(arr)) => {
+                    // Array content: extract text parts or serialize as JSON subset
+                    let sub: Vec<String> = arr.iter().filter_map(|part| {
+                        part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                    }).collect();
+                    if sub.is_empty() {
+                        // No text parts found, skip this message
+                        continue;
+                    }
+                    sub.join(" ")
+                }
+                _ => continue,
+            };
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_gateway_context_new() {
@@ -890,7 +943,73 @@ mod tests {
         assert!(!ctx.is_streaming);
         assert!(ctx.cache_key.is_none());
         assert!(ctx.cache_hit.is_none());
+        assert!(ctx.cache_tier.is_none());
         assert!(ctx.original_request_body.is_none());
         assert!(ctx.prepared_request.is_none());
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_single_user() {
+        let messages = vec![
+            json!({"role": "user", "content": "Hello"}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_system_and_user() {
+        let messages = vec![
+            json!({"role": "system", "content": "You are a helpful assistant."}),
+            json!({"role": "user", "content": "What is Rust?"}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("You are a helpful assistant.\nWhat is Rust?".to_string()));
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_conversation() {
+        let messages = vec![
+            json!({"role": "system", "content": "Be concise."}),
+            json!({"role": "user", "content": "Hi"}),
+            json!({"role": "assistant", "content": "Hello!"}),
+            json!({"role": "user", "content": "Explain caching."}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert!(result.unwrap().contains("Explain caching."));
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_array_content() {
+        let messages = vec![
+            json!({"role": "user", "content": [{"type": "text", "text": "Hello from array"}]}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("Hello from array".to_string()));
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_empty_messages() {
+        let result = build_semantic_query_text(&[]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_no_text_content() {
+        let messages = vec![
+            json!({"role": "user", "content": [{"type": "image_url", "url": "http://example.com/img.png"}]}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_build_semantic_query_text_tool_role_skipped() {
+        let messages = vec![
+            json!({"role": "user", "content": "Hello"}),
+            json!({"role": "tool", "content": "tool result"}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("Hello".to_string()));
     }
 }

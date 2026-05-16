@@ -1,14 +1,83 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt;
 use std::net::SocketAddr;
 
 pub use crab_proxy::{ConnectionConfig, ReasoningConfig};
+
+/// A wrapper around `String` that redacts its value in `Debug` output
+/// and `Display` output, preventing accidental leakage of secrets
+/// in logs and error messages.
+#[derive(Clone)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn inner(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    /// Returns the value for use in Authorization headers etc.
+    /// Named explicitly to audit every call site.
+    pub fn as_authorization(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SecretString(****)")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "****")
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SecretString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(SecretString(s))
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        SecretString(s)
+    }
+}
+
+impl From<SecretString> for String {
+    fn from(s: SecretString) -> Self {
+        s.0
+    }
+}
+
+pub fn mask_api_key(key: &str) -> String {
+    if key.len() <= 8 {
+        return "****".to_string();
+    }
+    format!("{}****{}", &key[..4], &key[key.len() - 4..])
+}
 
 #[derive(Debug, Deserialize)]
 pub struct GatewayConfig {
     pub listen_addr: String,
     pub metrics_addr: String,
-    pub api_key: String,
+    #[serde(default)]
+    pub api_key: SecretString,
     pub upstream: UpstreamConfig,
     pub cache: CacheConfig,
     pub semantic: SemanticConfig,
@@ -52,6 +121,7 @@ pub struct UpstreamConfig {
     pub default_weight: Option<u32>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub tls_sni: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +133,35 @@ pub struct CacheConfig {
     pub default_ttl_secs: Option<u64>,
     pub model_ttl_overrides: Option<HashMap<String, u64>>,
     pub consumer_ttl_overrides: Option<HashMap<String, u64>>,
+    /// When false, streaming responses are not written to L0/L1 cache.
+    /// Defaults to true (preserving current behavior).
+    #[serde(default = "default_stream_cache_enabled")]
+    pub stream_cache_enabled: bool,
+    /// Optional namespace prefix for cache keys. When set, enables multi-tenant
+    /// isolation by prepending "{namespace}:" to all cache key hashes.
+    /// Defaults to empty (no namespace).
+    #[serde(default)]
+    pub cache_key_namespace: Option<String>,
+    /// Fingerprint normalization version. Bump this when normalization rules
+    /// change to invalidate old cache entries. Defaults to 1.
+    #[serde(default = "default_fingerprint_version")]
+    pub fingerprint_version: u32,
+    /// When true (default), message content is normalized before hashing
+    /// (whitespace, line endings, Unicode NFC). Set to false for emergency rollback.
+    #[serde(default = "default_fingerprint_normalize_content")]
+    pub fingerprint_normalize_content: bool,
+}
+
+fn default_fingerprint_version() -> u32 {
+    1
+}
+
+fn default_fingerprint_normalize_content() -> bool {
+    true
+}
+
+fn default_stream_cache_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,7 +179,13 @@ pub struct SemanticConfig {
 impl GatewayConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let mut config: Self = toml::from_str(&content)?;
+        // Environment variable overrides api_key from config file
+        if let Ok(key) = std::env::var("CRABCACHE_API_KEY") {
+            if !key.is_empty() {
+                config.api_key = SecretString::new(key);
+            }
+        }
         Ok(config)
     }
 
@@ -89,18 +194,20 @@ impl GatewayConfig {
             .deepseek_endpoints
             .iter()
             .enumerate()
-            .map(|(i, endpoint)| {
-                let addr: SocketAddr = endpoint
-                    .parse()
-                    .unwrap_or_else(|_| {
-                        panic!("Invalid endpoint address: {}", endpoint)
-                    });
-                crab_route::Backend::new(
+            .filter_map(|(i, endpoint)| {
+                let addr: SocketAddr = match endpoint.parse() {
+                    Ok(a) => a,
+                    Err(e) => {
+                        tracing::error!(endpoint = %endpoint, error = %e, "Invalid upstream endpoint address, skipping");
+                        return None;
+                    }
+                };
+                Some(crab_route::Backend::new(
                     format!("backend-{}", i + 1),
                     addr,
                     self.upstream.default_weight.unwrap_or(1),
-                    "api.deepseek.com".to_string(),
-                )
+                    self.upstream.tls_sni.clone().unwrap_or_else(|| "api.deepseek.com".to_string()),
+                ))
             })
             .collect()
     }
@@ -111,6 +218,50 @@ impl GatewayConfig {
 
     pub fn fallback_model(&self) -> &str {
         self.upstream.model.as_deref().unwrap_or("deepseek-v4-pro")
+    }
+
+    /// Validate the configuration and return a list of errors.
+    /// Returns `Ok(())` if all checks pass, or `Err(errors)` with a list of
+    /// human-readable validation error messages.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        let api_key = self.api_key.inner();
+        if api_key.is_empty() {
+            errors.push("api_key is not configured".into());
+        } else if api_key.starts_with("sk-your-") {
+            errors.push("api_key appears to be a placeholder (starts with 'sk-your-'). Please set a real API key.".into());
+        }
+
+        if self.upstream.deepseek_endpoints.is_empty() {
+            errors.push("At least one upstream endpoint is required in [upstream].deepseek_endpoints".into());
+        }
+
+        for ep in &self.upstream.deepseek_endpoints {
+            if ep.parse::<SocketAddr>().is_err() {
+                errors.push(format!("Invalid upstream endpoint address: '{}'", ep));
+            }
+        }
+
+        if let Some(threshold) = self.semantic.similarity_threshold {
+            if !(0.0..=1.0).contains(&threshold) {
+                errors.push("semantic.similarity_threshold must be in [0.0, 1.0]".into());
+            }
+        }
+
+        if self.metrics_addr.parse::<SocketAddr>().is_err() {
+            errors.push(format!("Invalid metrics_addr: '{}'", self.metrics_addr));
+        }
+
+        if self.listen_addr.parse::<SocketAddr>().is_err() {
+            errors.push(format!("Invalid listen_addr: '{}'", self.listen_addr));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 
