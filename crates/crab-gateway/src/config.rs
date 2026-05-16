@@ -72,11 +72,15 @@ pub fn mask_api_key(key: &str) -> String {
     format!("{}****{}", &key[..4], &key[key.len() - 4..])
 }
 
+fn default_empty_api_key() -> SecretString {
+    SecretString::new(String::new())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GatewayConfig {
     pub listen_addr: String,
     pub metrics_addr: String,
-    #[serde(default)]
+    #[serde(default = "default_empty_api_key")]
     pub api_key: SecretString,
     pub upstream: UpstreamConfig,
     pub cache: CacheConfig,
@@ -84,6 +88,27 @@ pub struct GatewayConfig {
     pub connection: Option<ConnectionConfig>,
     pub reasoning: Option<ReasoningConfig>,
     pub trace_logging: Option<TraceConfig>,
+    pub management: Option<ManagementConfig>,
+}
+
+fn default_management_admin_key() -> SecretString {
+    SecretString::new("change-me-in-production".to_string())
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ManagementConfig {
+    pub listen_addr: String,
+    #[serde(default = "default_management_admin_key")]
+    pub admin_key: SecretString,
+}
+
+impl Default for ManagementConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "127.0.0.1:9080".to_string(),
+            admin_key: default_management_admin_key(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -186,30 +211,45 @@ impl GatewayConfig {
                 config.api_key = SecretString::new(key);
             }
         }
+        if config.management.is_none() {
+            config.management = Some(ManagementConfig::default());
+        }
+        if let Some(mgmt) = &mut config.management {
+            if let Ok(key) = std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY") {
+                if !key.is_empty() {
+                    mgmt.admin_key = SecretString::new(key);
+                }
+            }
+            if let Ok(addr) = std::env::var("CRABCACHE_MANAGEMENT_LISTEN") {
+                if !addr.is_empty() {
+                    mgmt.listen_addr = addr;
+                }
+            }
+        }
         Ok(config)
     }
 
     pub fn parse_endpoints(&self) -> Vec<crab_route::Backend> {
-        self.upstream
-            .deepseek_endpoints
-            .iter()
-            .enumerate()
-            .filter_map(|(i, endpoint)| {
-                let addr: SocketAddr = match endpoint.parse() {
-                    Ok(a) => a,
-                    Err(e) => {
-                        tracing::error!(endpoint = %endpoint, error = %e, "Invalid upstream endpoint address, skipping");
-                        return None;
-                    }
-                };
-                Some(crab_route::Backend::new(
-                    format!("backend-{}", i + 1),
-                    addr,
-                    self.upstream.default_weight.unwrap_or(1),
-                    self.upstream.tls_sni.clone().unwrap_or_else(|| "api.deepseek.com".to_string()),
-                ))
-            })
-            .collect()
+        let tls_sni = self
+            .upstream
+            .tls_sni
+            .clone()
+            .unwrap_or_else(|| "api.deepseek.com".to_string());
+        crab_control::parse_backend_endpoints(
+            &self.upstream.deepseek_endpoints,
+            self.upstream.default_weight.unwrap_or(1),
+            &tls_sni,
+        )
+        .unwrap_or_else(|errors| {
+            for e in errors {
+                tracing::error!(error = %e, "Invalid upstream endpoint");
+            }
+            Vec::new()
+        })
+    }
+
+    pub fn management_config(&self) -> ManagementConfig {
+        self.management.clone().unwrap_or_default()
     }
 
     pub fn upstream_base_url(&self) -> &str {
@@ -257,6 +297,24 @@ impl GatewayConfig {
             errors.push(format!("Invalid listen_addr: '{}'", self.listen_addr));
         }
 
+        if let Some(mgmt) = &self.management {
+            if mgmt.listen_addr.parse::<SocketAddr>().is_err() {
+                errors.push(format!(
+                    "Invalid management.listen_addr: '{}'",
+                    mgmt.listen_addr
+                ));
+            }
+            let admin_key = mgmt.admin_key.inner();
+            if admin_key.is_empty() {
+                errors.push("management.admin_key must not be empty".into());
+            } else if admin_key == "change-me-in-production" {
+                errors.push(
+                    "management.admin_key is still the default placeholder; set a strong key"
+                        .into(),
+                );
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -273,5 +331,11 @@ mod tests {
     fn test_config_load_missing_file() {
         let result = GatewayConfig::load("/nonexistent/config.toml");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_management_defaults() {
+        let mgmt = ManagementConfig::default();
+        assert_eq!(mgmt.listen_addr, "127.0.0.1:9080");
     }
 }

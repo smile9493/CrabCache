@@ -32,3 +32,4 @@ rustls-pemfile = "2"
 tokio-rustls = "0.26"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 ring = "0.17"
+crab-control.workspace = true

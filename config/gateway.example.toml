@@ -5,6 +5,12 @@ listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
 api_key = "sk-your-deepseek-api-key-here"
 
+# Management HTTP API (Admin / control plane). Default binds loopback only.
+# In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
+[management]
+listen_addr = "127.0.0.1:9080"
+admin_key = "dev-only-gateway-admin-secret"
+
 [upstream]
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"

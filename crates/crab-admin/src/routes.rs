@@ -1,14 +1,52 @@
-use crate::state::AppState;
+use crate::state::{AppState, KeyMetadata};
 use crate::types::*;
 use crate::network::NetworkInfo;
+use crab_control::{
+    CreateGatewayKeyRequest, PutBackendsRequest, PutTtlConfigRequest,
+};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
+    response::Response,
     routing::{delete, get, post},
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Returns the admin API key from the environment, or a default dev key.
+fn admin_api_key() -> String {
+    std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string())
+}
+
+/// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
+async fn admin_auth(mut req: Request, next: Next) -> Result<Response, StatusCode> {
+    let expected_key = admin_api_key();
+    let provided_key = req
+        .headers()
+        .get("x-admin-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if provided_key != expected_key {
+        tracing::warn!("Admin API authentication failed");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    Ok(next.run(req).await)
+}
+
+fn gateway_status_code(err: crab_control::ControlError) -> StatusCode {
+    match err {
+        crab_control::ControlError::Http { status, .. } if status == 404 => StatusCode::NOT_FOUND,
+        crab_control::ControlError::Http { status, .. } if status == 409 => StatusCode::CONFLICT,
+        crab_control::ControlError::Http { status, .. } if (400..500).contains(&status) => {
+            StatusCode::BAD_GATEWAY
+        }
+        _ => StatusCode::BAD_GATEWAY,
+    }
+}
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -25,6 +63,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
+        .layer(middleware::from_fn(admin_auth))
         .with_state(state)
 }
 
@@ -92,7 +131,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot
         } else {
             0.0
         },
-        active_keys: state.keys.len() as u64,
+        active_keys: state.keys_meta.len() as u64,
         uptime_hours: uptime_secs / 3600,
         hourly_stats,
         daily_stats,
@@ -217,50 +256,81 @@ fn generate_monthly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u6
     stats
 }
 
-async fn list_keys(State(state): State<Arc<AppState>>) -> Json<Vec<ApiKey>> {
-    let keys: Vec<ApiKey> = state
-        .keys
-        .iter()
-        .map(|entry| {
-            let key = entry.value();
+async fn list_keys(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ApiKey>>, StatusCode> {
+    let specs = state
+        .gateway
+        .list_keys()
+        .await
+        .map_err(gateway_status_code)?;
+
+    let keys: Vec<ApiKey> = specs
+        .into_iter()
+        .map(|spec| {
+            let meta = state.keys_meta.get(&spec.id);
             ApiKey {
-                id: key.id.clone(),
-                name: key.name.clone(),
-                key_preview: key.key_hash[..10.min(key.key_hash.len())].to_string(),
-                key_full: Some(key.key_hash.clone()),
-                active: key.enabled,
-                rpm_limit: key.rpm_limit as u32,
-                monthly_token_budget: key.monthly_token_limit,
-                tokens_used_this_month: key.tokens_this_month,
-                expired_at: key.expired_at,
-                model_limits: key.model_limits.clone(),
-                remain_quota: key.remain_quota,
-                unlimited_quota: key.unlimited_quota,
+                id: spec.id.clone(),
+                name: spec.name,
+                key_preview: spec.key_preview,
+                key_full: meta
+                    .as_ref()
+                    .and_then(|m| {
+                        if m.token.is_empty() {
+                            None
+                        } else {
+                            Some(m.token.clone())
+                        }
+                    })
+                    .or(spec.key_full),
+                active: spec.enabled,
+                rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
+                monthly_token_budget: meta
+                    .as_ref()
+                    .map(|m| m.monthly_token_limit)
+                    .unwrap_or(0),
+                tokens_used_this_month: meta
+                    .as_ref()
+                    .map(|m| m.tokens_this_month)
+                    .unwrap_or(0),
+                expired_at: meta.as_ref().and_then(|m| m.expired_at),
+                model_limits: meta
+                    .as_ref()
+                    .map(|m| m.model_limits.clone())
+                    .unwrap_or_default(),
+                remain_quota: meta.as_ref().map(|m| m.remain_quota).unwrap_or(-1),
+                unlimited_quota: meta
+                    .as_ref()
+                    .map(|m| m.unlimited_quota)
+                    .unwrap_or(true),
             }
         })
         .collect();
 
-    Json(keys)
+    Ok(Json(keys))
 }
 
 async fn create_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<Json<ApiKey>, StatusCode> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let created = state
+        .gateway
+        .create_key(&CreateGatewayKeyRequest {
+            name: req.name.clone(),
+            enabled: true,
+            token: None,
+        })
+        .await
+        .map_err(gateway_status_code)?;
 
-    let key_full = format!("sk-cc-{}", &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]);
+    let model_limits = req.model_limits.clone().unwrap_or_default();
+    let remain_quota = req.remain_quota.unwrap_or(-1);
+    let unlimited_quota = req.unlimited_quota.unwrap_or(true);
 
-    let stored = crate::state::StoredKey {
-        id: id.clone(),
-        name: req.name.clone(),
-        key_hash: key_full.clone(),
-        created_at: now,
-        enabled: true,
+    let meta = KeyMetadata {
+        id: created.id.clone(),
+        token: created.key_full.clone(),
         rpm_limit: req.rpm_limit as u64,
         monthly_token_limit: req.monthly_token_budget,
         current_rpm: 0,
@@ -268,64 +338,99 @@ async fn create_key(
         input_tokens: 0,
         output_tokens: 0,
         expired_at: req.expired_at,
-        model_limits: req.model_limits.unwrap_or_default(),
-        remain_quota: req.remain_quota.unwrap_or(-1),
-        unlimited_quota: req.unlimited_quota.unwrap_or(true),
+        model_limits: model_limits.clone(),
+        remain_quota,
+        unlimited_quota,
     };
+    state.keys_meta.insert(created.id.clone(), meta);
 
-    let api_key = ApiKey {
-        id: stored.id.clone(),
-        name: stored.name.clone(),
-        key_preview: stored.key_hash[..10.min(stored.key_hash.len())].to_string(),
-        key_full: Some(stored.key_hash.clone()),
-        active: stored.enabled,
-        rpm_limit: stored.rpm_limit as u32,
-        monthly_token_budget: stored.monthly_token_limit,
+    Ok(Json(ApiKey {
+        id: created.id,
+        name: created.name,
+        key_preview: created.key_preview,
+        key_full: Some(created.key_full),
+        active: created.enabled,
+        rpm_limit: req.rpm_limit,
+        monthly_token_budget: req.monthly_token_budget,
         tokens_used_this_month: 0,
-        expired_at: stored.expired_at,
-        model_limits: stored.model_limits.clone(),
-        remain_quota: stored.remain_quota,
-        unlimited_quota: stored.unlimited_quota,
-    };
-
-    state.keys.insert(id, stored);
-
-    Ok(Json(api_key))
+        expired_at: req.expired_at,
+        model_limits,
+        remain_quota,
+        unlimited_quota,
+    }))
 }
 
 async fn revoke_key(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> StatusCode {
-    if state.keys.remove(&id).is_some() {
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
-    }
+) -> Result<StatusCode, StatusCode> {
+    let token = state
+        .keys_meta
+        .get(&id)
+        .map(|m| m.token.clone())
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    state
+        .gateway
+        .revoke_key(&token)
+        .await
+        .map_err(gateway_status_code)?;
+
+    state.keys_meta.remove(&id);
+    Ok(StatusCode::NO_CONTENT)
 }
 
-async fn get_cache_config(State(state): State<Arc<AppState>>) -> Json<CacheConfig> {
+async fn get_cache_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CacheConfig>, StatusCode> {
     let config = state.cache_config.read().clone();
-    Json(CacheConfig {
+    Ok(Json(CacheConfig {
         l0_ttl_secs: config.l0_ttl_secs,
         l1_ttl_secs: config.l1_ttl_secs,
         default_ttl_secs: config.default_ttl_secs,
-    })
+    }))
 }
 
 async fn update_cache_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UpdateCacheConfigRequest>,
-) -> Json<CacheConfig> {
-    let mut config = state.cache_config.write();
-    config.l0_ttl_secs = req.l0_ttl_secs;
-    config.l1_ttl_secs = req.l1_ttl_secs;
+) -> Result<Json<CacheConfig>, StatusCode> {
+    let put_req = {
+        let mut config = state.cache_config.write();
+        config.l0_ttl_secs = req.l0_ttl_secs;
+        config.l1_ttl_secs = req.l1_ttl_secs;
+        PutTtlConfigRequest {
+            default_ttl_secs: config.l1_ttl_secs,
+            model_overrides: config
+                .model_overrides
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+            consumer_overrides: config
+                .consumer_overrides
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+        }
+    };
 
-    Json(CacheConfig {
+    let ttl = state
+        .gateway
+        .put_ttl(&put_req)
+        .await
+        .map_err(gateway_status_code)?;
+
+    let config = {
+        let mut config = state.cache_config.write();
+        config.default_ttl_secs = ttl.default_ttl_secs;
+        config.clone()
+    };
+
+    Ok(Json(CacheConfig {
         l0_ttl_secs: config.l0_ttl_secs,
         l1_ttl_secs: config.l1_ttl_secs,
         default_ttl_secs: config.default_ttl_secs,
-    })
+    }))
 }
 
 async fn get_semantic_config(State(state): State<Arc<AppState>>) -> Json<SemanticConfig> {
@@ -347,24 +452,32 @@ async fn update_semantic_config(
     })
 }
 
-async fn get_routing_status(State(state): State<Arc<AppState>>) -> Json<RoutingStatus> {
-    let backends = state.backends.read().clone();
-    let total_requests: u64 = backends.iter().map(|b| b.request_count).sum();
-    let active_count = backends.iter().filter(|b| b.healthy).count();
+async fn get_routing_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<RoutingStatus>, StatusCode> {
+    let view = state
+        .gateway
+        .get_backends()
+        .await
+        .map_err(gateway_status_code)?;
 
-    Json(RoutingStatus {
+    let backends: Vec<BackendStatus> = view
+        .backends
+        .into_iter()
+        .map(|b| BackendStatus {
+            name: b.name,
+            request_count: 0,
+            healthy: true,
+        })
+        .collect();
+    let active_count = backends.len();
+
+    Ok(Json(RoutingStatus {
         total_backends: backends.len(),
         active_backends: active_count,
-        total_requests,
-        backends: backends
-            .into_iter()
-            .map(|b| BackendStatus {
-                name: b.name,
-                request_count: b.request_count,
-                healthy: b.healthy,
-            })
-            .collect(),
-    })
+        total_requests: 0,
+        backends,
+    }))
 }
 
 async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
@@ -558,37 +671,71 @@ async fn update_connection_config(
     })
 }
 
-async fn get_upstream_config(State(state): State<Arc<AppState>>) -> Json<UpstreamConfig> {
+async fn get_upstream_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<UpstreamConfig>, StatusCode> {
     let config = state.upstream_config.read().clone();
     let api_key_masked = mask_api_key(&config.api_key);
-    Json(UpstreamConfig {
+    Ok(Json(UpstreamConfig {
         base_url: config.base_url,
-        api_key: config.api_key.clone(),
+        api_key: api_key_masked.clone(),
         api_key_masked,
         endpoints: config.endpoints,
-    })
+    }))
 }
 
 async fn update_upstream_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UpdateUpstreamConfigRequest>,
-) -> Json<UpstreamConfig> {
-    let mut config = state.upstream_config.write();
-    config.base_url = req.base_url;
-    if let Some(key) = req.api_key {
-        if !key.is_empty() && !key.contains("****") {
-            config.api_key = key;
+) -> Result<Json<UpstreamConfig>, StatusCode> {
+    let put_req = {
+        let mut config = state.upstream_config.write();
+        config.base_url = req.base_url.clone();
+        if let Some(key) = &req.api_key {
+            if !key.is_empty() && !key.contains("****") {
+                config.api_key = key.clone();
+            }
         }
-    }
-    config.endpoints = req.endpoints;
+        config.endpoints = req.endpoints.clone();
+        PutBackendsRequest {
+            endpoints: req.endpoints.clone(),
+            default_weight: 1,
+            tls_sni: "api.deepseek.com".to_string(),
+        }
+    };
 
-    let api_key_masked = mask_api_key(&config.api_key);
-    Json(UpstreamConfig {
-        base_url: config.base_url.clone(),
-        api_key: config.api_key.clone(),
-        api_key_masked,
-        endpoints: config.endpoints.clone(),
-    })
+    state
+        .gateway
+        .put_backends(&put_req)
+        .await
+        .map_err(gateway_status_code)?;
+
+    let response = {
+        let config = state.upstream_config.read().clone();
+        let mut backends = state.backends.write();
+        *backends = config
+            .endpoints
+            .iter()
+            .enumerate()
+            .map(|(i, ep)| crate::state::StoredBackend {
+                name: format!("backend-{}", i + 1),
+                addr: ep.clone(),
+                weight: 1,
+                healthy: true,
+                request_count: 0,
+            })
+            .collect();
+
+        let api_key_masked = mask_api_key(&config.api_key);
+        UpstreamConfig {
+            base_url: config.base_url,
+            api_key: api_key_masked.clone(),
+            api_key_masked,
+            endpoints: config.endpoints,
+        }
+    };
+
+    Ok(Json(response))
 }
 
 fn mask_api_key(key: &str) -> String {

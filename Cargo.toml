@@ -10,6 +10,7 @@ members = [
     "crates/crab-admin",
     "crates/crab-dashboard",
     "crates/crab-reasoning",
+    "crates/crab-control",
 ]
 
 [workspace.package]
@@ -72,6 +73,7 @@ crab-semantic  = { path = "crates/crab-semantic" }
 crab-proxy     = { path = "crates/crab-proxy" }
 crab-reasoning = { path = "crates/crab-reasoning" }
 crab-admin     = { path = "crates/crab-admin" }
+crab-control   = { path = "crates/crab-control" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
 unicode-normalization = "0.1"

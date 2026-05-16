@@ -78,12 +78,17 @@ impl ProxyHttp for GatewayProxy {
 
         let provided_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
 
-        let (is_authorized, consumer_from_key) = if let Some(stored_key) = self.state.keys.get(provided_key) {
-            let key = stored_key.value();
-            (key.enabled, Some(key.name.clone()))
-        } else {
-            (auth.ends_with(&self.state.api_key), None)
-        };
+        let (is_authorized, consumer_from_key) =
+            if let Some(stored_key) = self.state.runtime.keys.get(provided_key) {
+                let key = stored_key.value();
+                (key.enabled, Some(key.name.clone()))
+            } else {
+                (
+                    provided_key == self.state.runtime.bootstrap_api_key
+                        || auth.ends_with(&self.state.runtime.bootstrap_api_key),
+                    None,
+                )
+            };
 
         if !is_authorized {
             let _ = session.respond_error(401).await;
@@ -137,7 +142,18 @@ impl ProxyHttp for GatewayProxy {
             }
         };
 
-        ctx.model = payload.get("model").and_then(|m| m.as_str()).unwrap_or(&self.state.fallback_model).to_string();
+        let fallback_model = self
+            .state
+            .runtime
+            .fallback_model
+            .read()
+            .map(|m| m.clone())
+            .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        ctx.model = payload
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or(&fallback_model)
+            .to_string();
         ctx.is_streaming = payload.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
 
         ctx.conversation_id = payload.get("conversation_id")
@@ -145,11 +161,18 @@ impl ProxyHttp for GatewayProxy {
             .map(|s| s.to_string())
             .or(conversation_id_from_header);
 
+        let upstream_base_url = self
+            .state
+            .runtime
+            .upstream_base_url
+            .read()
+            .map(|u| u.clone())
+            .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
         let prepared = prepare_upstream_request(
             &payload,
             Some(&self.state.reasoning_store),
-            &self.state.upstream_base_url,
-            &self.state.fallback_model,
+            &upstream_base_url,
+            &fallback_model,
             &self.state.reasoning_config.thinking_mode,
             &self.state.reasoning_config.reasoning_effort,
             &self.state.reasoning_config.missing_reasoning_strategy,
@@ -180,7 +203,18 @@ impl ProxyHttp for GatewayProxy {
         let new_body = serde_json::to_vec(&prepared.payload).unwrap_or_default();
         ctx.new_request_body = Some(new_body);
 
-        if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(&full_body, self.state.cache_key_namespace.as_deref(), &self.state.cache_fingerprint) {
+        let fingerprint = self
+            .state
+            .runtime
+            .fingerprint
+            .read()
+            .map(|f| f.clone())
+            .unwrap_or_default();
+        if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
+            &full_body,
+            self.state.cache_key_namespace.as_deref(),
+            &fingerprint,
+        ) {
             ctx.cache_key = Some(cache_key.clone());
 
             if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
@@ -304,15 +338,26 @@ impl ProxyHttp for GatewayProxy {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         if ctx.is_models_list {
-            let backend = self
+            let router = self
                 .state
+                .runtime
                 .router
+                .read()
+                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let backend = router
                 .backends()
                 .first()
                 .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
 
             let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
-            apply_connection_options(&self.state.conn_config, &mut peer.options);
+            let conn_config = self
+                .state
+                .runtime
+                .conn_config
+                .read()
+                .map_err(|_| Error::new(ErrorType::InternalError))?
+                .clone();
+            apply_connection_options(&conn_config, &mut peer.options);
             return Ok(Box::new(peer));
         }
 
@@ -332,10 +377,15 @@ impl ProxyHttp for GatewayProxy {
 
         let affinity_key = extract_affinity_key(&headers, &client_ip);
 
-        let backend = self
+        let router = self
             .state
+            .runtime
             .router
+            .read()
+            .map_err(|_| Error::new(ErrorType::InternalError))?;
+        let backend = router
             .select(affinity_key.as_bytes())
+            .cloned()
             .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
 
         debug!(
@@ -345,8 +395,15 @@ impl ProxyHttp for GatewayProxy {
             "Selected upstream backend"
         );
 
-        let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
-        apply_connection_options(&self.state.conn_config, &mut peer.options);
+        let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni);
+        let conn_config = self
+            .state
+            .runtime
+            .conn_config
+            .read()
+            .map_err(|_| Error::new(ErrorType::InternalError))?
+            .clone();
+        apply_connection_options(&conn_config, &mut peer.options);
 
         Ok(Box::new(peer))
     }
@@ -621,7 +678,7 @@ impl ProxyHttp for GatewayProxy {
                         }
                     })).unwrap_or_default();
 
-                    if self.state.stream_cache_enabled {
+                    if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
                         let tiered_cache = self.state.tiered_cache.clone();

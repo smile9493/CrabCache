@@ -18,6 +18,7 @@ pub struct SanitizedLogEntry {
     pub prompt_tokens: usize,
     pub latency_ms: f64,
     pub cache_hit: bool,
+    pub cache_tier: Option<String>,
 }
 
 impl SanitizedLogEntry {
@@ -28,6 +29,7 @@ impl SanitizedLogEntry {
         prompt_tokens: usize,
         latency_ms: f64,
         cache_hit: bool,
+        cache_tier: Option<String>,
     ) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(body);
@@ -58,6 +60,7 @@ impl SanitizedLogEntry {
             prompt_tokens,
             latency_ms,
             cache_hit,
+            cache_tier,
         }
     }
 }
@@ -220,6 +223,7 @@ mod tests {
             100,
             150.5,
             false,
+            None,
         );
 
         assert_eq!(entry.content_length, 17);
@@ -234,8 +238,8 @@ mod tests {
     #[test]
     fn test_hash_consistency() {
         let body = b"identical request";
-        let entry1 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false);
-        let entry2 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false);
+        let entry1 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false, None);
+        let entry2 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false, None);
         
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert_eq!(entry1.semantic_cluster, entry2.semantic_cluster);

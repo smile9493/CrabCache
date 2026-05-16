@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use prometheus::{
-    HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry,
+    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry,
 };
 use std::time::Duration;
 
@@ -49,6 +49,8 @@ pub struct GatewayMetrics {
     pub cache_fetch_latency: HistogramVec,
     pub semantic_requests: IntCounterVec,
     pub coalesced_requests: IntCounter,
+    pub cost_saved_usd: CounterVec,
+    pub upstream_prompt_cache_tokens: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -121,6 +123,22 @@ impl GatewayMetrics {
             "Total number of coalesced requests (duplicate concurrent requests)",
         )?;
 
+        let cost_saved_usd = CounterVec::new(
+            Opts::new(
+                "gateway_cache_cost_saved_usd_total",
+                "Total cost saved by cache hits in USD",
+            ),
+            &["model", "consumer", "tier"],
+        )?;
+
+        let upstream_prompt_cache_tokens = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_prompt_cache_tokens_total",
+                "Total upstream prompt cache tokens by status",
+            ),
+            &["status", "model", "consumer"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -130,6 +148,8 @@ impl GatewayMetrics {
             cache_fetch_latency,
             semantic_requests,
             coalesced_requests,
+            cost_saved_usd,
+            upstream_prompt_cache_tokens,
         })
     }
 
@@ -142,6 +162,8 @@ impl GatewayMetrics {
         registry.register(Box::new(self.cache_fetch_latency.clone()))?;
         registry.register(Box::new(self.semantic_requests.clone()))?;
         registry.register(Box::new(self.coalesced_requests.clone()))?;
+        registry.register(Box::new(self.cost_saved_usd.clone()))?;
+        registry.register(Box::new(self.upstream_prompt_cache_tokens.clone()))?;
         Ok(())
     }
 
@@ -207,18 +229,24 @@ impl GatewayMetrics {
         );
     }
 
-    pub fn record_latency(&self, kind: LatencyKind, duration: Duration, tier: Option<CacheTier>) {
+    pub fn record_latency(
+        &self,
+        kind: LatencyKind,
+        duration: Duration,
+        model: &str,
+        tier: Option<CacheTier>,
+    ) {
         let duration_secs = duration.as_secs_f64();
 
         match kind {
             LatencyKind::Upstream => {
                 self.upstream_latency
-                    .with_label_values(&["unknown"])
+                    .with_label_values(&[model])
                     .observe(duration_secs);
             }
             LatencyKind::TTFT => {
                 self.ttft
-                    .with_label_values(&["unknown"])
+                    .with_label_values(&[model])
                     .observe(duration_secs);
             }
             LatencyKind::CacheFetch => {
@@ -233,6 +261,7 @@ impl GatewayMetrics {
         tracing::trace!(
             kind = kind.as_str(),
             duration_secs = duration_secs,
+            model = model,
             tier = tier.map(|t| t.as_str()),
             "Latency recorded"
         );
@@ -247,8 +276,34 @@ impl GatewayMetrics {
         self.semantic_requests.with_label_values(&[status]).inc();
     }
 
+    pub fn record_semantic_cache_rejected(&self) {
+        self.semantic_requests
+            .with_label_values(&["rejected_by_guard"])
+            .inc();
+    }
+
     pub fn record_coalesced_request(&self) {
         self.coalesced_requests.inc();
+    }
+
+    pub fn record_cost_saved(&self, model: &str, consumer: Option<&str>, tier: CacheTier, usd: f64) {
+        let consumer = consumer.unwrap_or("unknown");
+        self.cost_saved_usd
+            .with_label_values(&[model, consumer, tier.as_str()])
+            .inc_by(usd);
+    }
+
+    pub fn record_upstream_prompt_cache(
+        &self,
+        status: &str,
+        tokens: u64,
+        model: &str,
+        consumer: Option<&str>,
+    ) {
+        let consumer = consumer.unwrap_or("unknown");
+        self.upstream_prompt_cache_tokens
+            .with_label_values(&[status, model, consumer])
+            .inc_by(tokens);
     }
 }
 
@@ -310,11 +365,13 @@ mod tests {
         metrics.record_latency(
             LatencyKind::Upstream,
             Duration::from_millis(100),
+            "v4-pro",
             None,
         );
         metrics.record_latency(
             LatencyKind::CacheFetch,
             Duration::from_micros(500),
+            "v4-pro",
             Some(CacheTier::L0Moka),
         );
     }

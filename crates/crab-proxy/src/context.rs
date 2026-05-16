@@ -1,6 +1,8 @@
-use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard, FingerprintConfig};
-use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
-use crab_route::AffinityRouter;
+use crate::runtime::RuntimeConfig;
+use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
+use crab_reasoning::{
+    CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator,
+};
 use crab_semantic::SemanticCache;
 use crab_metrics::CacheTier;
 use crate::TraceLogger;
@@ -125,19 +127,12 @@ impl GatewayContext {
 }
 
 pub struct GatewayState {
-    pub router: Arc<AffinityRouter>,
+    pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
     pub semantic_cache: Option<Arc<SemanticCache>>,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningStore>,
-    pub api_key: String,
-    pub conn_config: ConnectionConfig,
     pub reasoning_config: ReasoningConfig,
-    pub upstream_base_url: String,
-    pub fallback_model: String,
-    pub keys: dashmap::DashMap<String, StoredKey>,
     pub trace_logger: Option<Arc<TraceLogger>>,
-    pub stream_cache_enabled: bool,
     pub cache_key_namespace: Option<String>,
-    pub cache_fingerprint: FingerprintConfig,
 }

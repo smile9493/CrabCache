@@ -16,6 +16,8 @@ services:
         condition: service_started
     environment:
       - RUST_LOG=info
+      - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-dev-only-gateway-admin-secret}
+      - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
     restart: unless-stopped
 
   redis:
