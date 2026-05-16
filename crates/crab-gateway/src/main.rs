@@ -274,6 +274,7 @@ fn main() -> Result<()> {
         reasoning_config,
         trace_logger,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
+        pricing: config.cache.pricing.clone().unwrap_or_default(),
     });
 
     let proxy = GatewayProxy::new(state);

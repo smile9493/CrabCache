@@ -234,6 +234,18 @@ impl ProxyHttp for GatewayProxy {
                     Some(tier),
                 );
 
+                let cost = self.state.pricing.cost_saved_usd(
+                    &ctx.model,
+                    entry.usage.prompt_tokens,
+                    entry.usage.completion_tokens,
+                );
+                global_metrics().record_cost_saved(
+                    &ctx.model,
+                    ctx.consumer.as_deref(),
+                    tier,
+                    cost,
+                );
+
                 send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
 
                 return Ok(true);
@@ -270,6 +282,18 @@ impl ProxyHttp for GatewayProxy {
                                         Some(CacheTier::L2Semantic),
                                     );
 
+                                    let cost = self.state.pricing.cost_saved_usd(
+                                        &ctx.model,
+                                        entry.usage.prompt_tokens,
+                                        entry.usage.completion_tokens,
+                                    );
+                                    global_metrics().record_cost_saved(
+                                        &ctx.model,
+                                        ctx.consumer.as_deref(),
+                                        CacheTier::L2Semantic,
+                                        cost,
+                                    );
+
                                     send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, CacheTier::L2Semantic).await;
 
                                     return Ok(true);
@@ -301,6 +325,18 @@ impl ProxyHttp for GatewayProxy {
                                 ctx.request_start.elapsed(),
                                 &ctx.model,
                                 Some(tier),
+                            );
+
+                            let cost = self.state.pricing.cost_saved_usd(
+                                &ctx.model,
+                                entry.usage.prompt_tokens,
+                                entry.usage.completion_tokens,
+                            );
+                            global_metrics().record_cost_saved(
+                                &ctx.model,
+                                ctx.consumer.as_deref(),
+                                tier,
+                                cost,
                             );
 
                             send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
@@ -833,6 +869,23 @@ fn record_usage(usage: &UsageData, model: &str, consumer: Option<&str>) {
         model,
         consumer,
     );
+
+    if usage.prompt_cache_hit_tokens > 0 {
+        global_metrics().record_upstream_prompt_cache(
+            "hit",
+            usage.prompt_cache_hit_tokens,
+            model,
+            consumer,
+        );
+    }
+    if usage.prompt_cache_miss_tokens > 0 {
+        global_metrics().record_upstream_prompt_cache(
+            "miss",
+            usage.prompt_cache_miss_tokens,
+            model,
+            consumer,
+        );
+    }
 }
 
 fn is_models_endpoint(path: &str, method: &http::Method) -> bool {

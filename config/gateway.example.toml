@@ -53,6 +53,16 @@ fingerprint_normalize_content = true
 [cache.consumer_overrides]
 "reporting-job" = 1800
 
+# Optional cost-saved pricing for Prometheus metrics (gateway_cache_cost_saved_usd_total).
+# Prices are in USD per million tokens. Defaults to DeepSeek v3 pricing if omitted.
+[cache.pricing]
+default_input_price_per_million = 0.55
+default_output_price_per_million = 2.19
+
+# Per-model pricing overrides (optional)
+[cache.pricing.model_overrides]
+# "deepseek-v4-pro" = { input_price_per_million = 0.27, output_price_per_million = 1.10 }
+
 [semantic]
 enabled = false
 model_path = "models/all-MiniLM-L6-v2.onnx"

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 
-pub use crab_proxy::{ConnectionConfig, ReasoningConfig};
+pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 
 /// A wrapper around `String` that redacts its value in `Debug` output
 /// and `Display` output, preventing accidental leakage of secrets
@@ -175,6 +175,10 @@ pub struct CacheConfig {
     /// (whitespace, line endings, Unicode NFC). Set to false for emergency rollback.
     #[serde(default = "default_fingerprint_normalize_content")]
     pub fingerprint_normalize_content: bool,
+    /// Optional cost-saved pricing configuration for Prometheus metrics.
+    /// When omitted, default DeepSeek v3 pricing is used.
+    #[serde(default)]
+    pub pricing: Option<PricingConfig>,
 }
 
 fn default_fingerprint_version() -> u32 {
