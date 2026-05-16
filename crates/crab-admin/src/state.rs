@@ -1,29 +1,13 @@
+use crab_control::GatewayAdminClient;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct AppState {
-    pub start_time: u64,
-    pub upstream_api_key: String,
-    pub keys: DashMap<String, StoredKey>,
-    pub request_logs: RwLock<Vec<StoredRequestLog>>,
-    pub cache_config: RwLock<StoredCacheConfig>,
-    pub semantic_config: RwLock<StoredSemanticConfig>,
-    pub connection_config: RwLock<StoredConnectionConfig>,
-    pub upstream_config: RwLock<StoredUpstreamConfig>,
-    pub models: RwLock<StoredModelList>,
-    pub backends: RwLock<Vec<StoredBackend>>,
-    pub metrics: RwLock<StoredMetrics>,
-    pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
-}
-
+/// Extended metadata for an API key (quota/UI fields not stored on the gateway).
 #[derive(Debug, Clone)]
-pub struct StoredKey {
+pub struct KeyMetadata {
     pub id: String,
-    pub name: String,
-    pub key_hash: String,
-    pub created_at: u64,
-    pub enabled: bool,
+    pub token: String,
     pub rpm_limit: u64,
     pub monthly_token_limit: u64,
     pub current_rpm: u64,
@@ -34,6 +18,23 @@ pub struct StoredKey {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+}
+
+pub struct AppState {
+    pub start_time: u64,
+    pub upstream_api_key: String,
+    pub gateway: GatewayAdminClient,
+    /// API key metadata indexed by key id (gateway-assigned).
+    pub keys_meta: DashMap<String, KeyMetadata>,
+    pub request_logs: RwLock<Vec<StoredRequestLog>>,
+    pub cache_config: RwLock<StoredCacheConfig>,
+    pub semantic_config: RwLock<StoredSemanticConfig>,
+    pub connection_config: RwLock<StoredConnectionConfig>,
+    pub upstream_config: RwLock<StoredUpstreamConfig>,
+    pub models: RwLock<StoredModelList>,
+    pub backends: RwLock<Vec<StoredBackend>>,
+    pub metrics: RwLock<StoredMetrics>,
+    pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,7 +197,8 @@ impl AppState {
         Self {
             start_time: now,
             upstream_api_key: std::env::var("DEEPSEEK_API_KEY").unwrap_or_default(),
-            keys: DashMap::new(),
+            gateway: GatewayAdminClient::from_env(),
+            keys_meta: DashMap::new(),
             request_logs: RwLock::new(Vec::new()),
             cache_config: RwLock::new(StoredCacheConfig {
                 l0_max_capacity: 10000,

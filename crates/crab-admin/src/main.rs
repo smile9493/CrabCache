@@ -81,6 +81,37 @@ async fn main() -> anyhow::Result<()> {
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
 
+    match state.gateway.list_keys().await {
+        Ok(specs) => {
+            for spec in specs {
+                state.keys_meta.insert(
+                    spec.id.clone(),
+                    crate::state::KeyMetadata {
+                        id: spec.id,
+                        token: spec.key_full.unwrap_or_default(),
+                        rpm_limit: 0,
+                        monthly_token_limit: 0,
+                        current_rpm: 0,
+                        tokens_this_month: 0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        expired_at: None,
+                        model_limits: Vec::new(),
+                        remain_quota: -1,
+                        unlimited_quota: true,
+                    },
+                );
+            }
+            info!(count = state.keys_meta.len(), "Synced API keys from gateway");
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Gateway management API unreachable; key operations may fail until gateway is up"
+            );
+        }
+    }
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)

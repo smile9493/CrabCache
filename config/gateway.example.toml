@@ -5,6 +5,12 @@ listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
 api_key = "sk-your-deepseek-api-key-here"
 
+# Management HTTP API (Admin / control plane). Default binds loopback only.
+# In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
+[management]
+listen_addr = "127.0.0.1:9080"
+admin_key = "dev-only-gateway-admin-secret"
+
 [upstream]
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
@@ -46,6 +52,16 @@ fingerprint_normalize_content = true
 # Per-consumer TTL overrides (seconds)
 [cache.consumer_overrides]
 "reporting-job" = 1800
+
+# Optional cost-saved pricing for Prometheus metrics (gateway_cache_cost_saved_usd_total).
+# Prices are in USD per million tokens. Defaults to DeepSeek v3 pricing if omitted.
+[cache.pricing]
+default_input_price_per_million = 0.55
+default_output_price_per_million = 2.19
+
+# Per-model pricing overrides (optional)
+[cache.pricing.model_overrides]
+# "deepseek-v4-pro" = { input_price_per_million = 0.27, output_price_per_million = 1.10 }
 
 [semantic]
 enabled = false

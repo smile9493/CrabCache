@@ -1,11 +1,10 @@
-mod config;
-
-use crate::config::GatewayConfig;
+use crab_gateway::config::GatewayConfig;
+use crab_gateway::management::{serve as serve_management, ManagementState};
 use anyhow::Result;
 use async_trait::async_trait;
-use crab_cache::{RequestCoalescer, TieredCache, TtlConfig};
+use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_metrics::global_metrics;
-use crab_proxy::{GatewayProxy, GatewayState};
+use crab_proxy::{GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningStore;
 use crab_route::AffinityRouter;
 use crab_semantic::{Embedder, SemanticCache, VectorStore};
@@ -13,7 +12,7 @@ use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -64,8 +63,11 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
 
 fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|panic_info| {
-        let location = panic_info.location().map(|l| l.to_string()).unwrap_or_else(|| "unknown".to_string());
-        
+        let location = panic_info
+            .location()
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
@@ -93,8 +95,7 @@ fn main() -> Result<()> {
         .json()
         .with_writer(non_blocking);
 
-    let stdout_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stdout);
+    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -134,7 +135,7 @@ fn main() -> Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
 
-    let router = Arc::new(rt.block_on(async { AffinityRouter::new(&backends) })?);
+    let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
 
     let l1_pool = rt.block_on(async {
         bb8::Pool::builder()
@@ -145,11 +146,11 @@ fn main() -> Result<()> {
             .await
     })?;
 
-    let ttl_config = TtlConfig {
+    let ttl_config = Arc::new(RwLock::new(TtlConfig {
         default_ttl_secs: config.cache.default_ttl_secs.unwrap_or(3600),
         model_overrides: config.cache.model_ttl_overrides.clone().unwrap_or_default(),
         consumer_overrides: config.cache.consumer_ttl_overrides.clone().unwrap_or_default(),
-    };
+    }));
 
     let l0_config = crab_cache::L0Config {
         max_capacity: config.cache.l0_max_capacity.unwrap_or(10_000),
@@ -157,7 +158,7 @@ fn main() -> Result<()> {
     };
 
     let tiered_cache = Arc::new(
-        rt.block_on(async { TieredCache::new(l1_pool, l0_config, ttl_config).await })?,
+        rt.block_on(async { TieredCache::new(l1_pool, l0_config, ttl_config.clone()).await })?,
     );
 
     let semantic_cache = if config.semantic.enabled {
@@ -189,16 +190,19 @@ fn main() -> Result<()> {
     let conn_config = config.connection.clone().unwrap_or_default();
 
     let reasoning_config = config.reasoning.clone().unwrap_or_default();
-    let reasoning_store = Arc::new(
-        ReasoningStore::new(
-            &reasoning_config.cache_db_path,
-            reasoning_config.cache_max_age_secs,
-            reasoning_config.cache_max_rows,
-        )?
-    );
+    let reasoning_store = Arc::new(ReasoningStore::new(
+        &reasoning_config.cache_db_path,
+        reasoning_config.cache_max_age_secs,
+        reasoning_config.cache_max_rows,
+    )?);
 
     let upstream_base_url = config.upstream_base_url().to_string();
     let fallback_model = config.fallback_model().to_string();
+    let mgmt_cfg = config.management_config();
+    let mgmt_listen = mgmt_cfg.listen_addr.clone();
+    let mgmt_admin_key = mgmt_cfg.admin_key.into_inner();
+
+    let bootstrap_api_key = config.api_key.into_inner();
 
     info!(
         thinking_mode = %reasoning_config.thinking_mode,
@@ -208,8 +212,6 @@ fn main() -> Result<()> {
         missing_reasoning_strategy = %reasoning_config.missing_reasoning_strategy,
         "Reasoning configuration"
     );
-
-    let keys = dashmap::DashMap::new();
 
     let trace_logger = if let Some(trace_config) = &config.trace_logging {
         if trace_config.enabled {
@@ -233,25 +235,46 @@ fn main() -> Result<()> {
         None
     };
 
-    let state = Arc::new(GatewayState {
+    let runtime = RuntimeConfig::new(
         router,
+        ttl_config,
+        conn_config,
+        config.cache.stream_cache_enabled,
+        FingerprintConfig {
+            version: config.cache.fingerprint_version,
+            normalize_content: config.cache.fingerprint_normalize_content,
+        },
+        upstream_base_url,
+        fallback_model,
+        bootstrap_api_key.clone(),
+    );
+    runtime.insert_bootstrap_key(&bootstrap_api_key, "default");
+
+    let mgmt_state = ManagementState {
+        runtime: runtime.clone(),
+        admin_key: mgmt_admin_key,
+    };
+
+    let mgmt_listen_thread = mgmt_listen.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("management runtime");
+        rt.block_on(async {
+            if let Err(e) = serve_management(&mgmt_listen_thread, mgmt_state).await {
+                tracing::error!(error = %e, "Management API server failed");
+            }
+        });
+    });
+
+    let state = Arc::new(GatewayState {
+        runtime,
         tiered_cache,
         semantic_cache,
         coalescer: Arc::new(RequestCoalescer::new()),
         reasoning_store,
-        api_key: config.api_key.into_inner(),
-        conn_config,
         reasoning_config,
-        upstream_base_url,
-        fallback_model,
-        keys,
         trace_logger,
-        stream_cache_enabled: config.cache.stream_cache_enabled,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
-        cache_fingerprint: crab_cache::FingerprintConfig {
-            version: config.cache.fingerprint_version,
-            normalize_content: config.cache.fingerprint_normalize_content,
-        },
+        pricing: config.cache.pricing.clone().unwrap_or_default(),
     });
 
     let proxy = GatewayProxy::new(state);
@@ -263,6 +286,7 @@ fn main() -> Result<()> {
     info!(
         listen_addr = %config.listen_addr,
         metrics_addr = %config.metrics_addr,
+        management_addr = %mgmt_listen,
         "CrabCache gateway starting"
     );
 

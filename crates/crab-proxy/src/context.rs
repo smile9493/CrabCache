@@ -1,10 +1,13 @@
-use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard, FingerprintConfig};
-use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
-use crab_route::AffinityRouter;
+use crate::runtime::RuntimeConfig;
+use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
+use crab_reasoning::{
+    CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator,
+};
 use crab_semantic::SemanticCache;
 use crab_metrics::CacheTier;
 use crate::TraceLogger;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -61,6 +64,49 @@ impl Default for ReasoningConfig {
             cache_max_age_secs: Some(30 * 24 * 3600),
             cache_max_rows: Some(100_000),
         }
+    }
+}
+
+/// Per-model pricing for cost-saved calculation.
+/// Prices are in USD per million tokens.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ModelPricing {
+    pub input_price_per_million: f64,
+    pub output_price_per_million: f64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct PricingConfig {
+    pub default_input_price_per_million: f64,
+    pub default_output_price_per_million: f64,
+    #[serde(default)]
+    pub model_overrides: HashMap<String, ModelPricing>,
+}
+
+impl Default for PricingConfig {
+    fn default() -> Self {
+        Self {
+            // Default DeepSeek v3 pricing (cache miss rates)
+            default_input_price_per_million: 0.55,
+            default_output_price_per_million: 2.19,
+            model_overrides: HashMap::new(),
+        }
+    }
+}
+
+impl PricingConfig {
+    /// Calculate cost saved for a cache hit in USD.
+    /// Takes the input/output token counts from the cached entry.
+    pub fn cost_saved_usd(&self, model: &str, prompt_tokens: u64, completion_tokens: u64) -> f64 {
+        let (input_price, output_price) = self
+            .model_overrides
+            .get(model)
+            .map(|p| (p.input_price_per_million, p.output_price_per_million))
+            .unwrap_or((self.default_input_price_per_million, self.default_output_price_per_million));
+
+        let input_cost = (prompt_tokens as f64) / 1_000_000.0 * input_price;
+        let output_cost = (completion_tokens as f64) / 1_000_000.0 * output_price;
+        input_cost + output_cost
     }
 }
 
@@ -125,19 +171,13 @@ impl GatewayContext {
 }
 
 pub struct GatewayState {
-    pub router: Arc<AffinityRouter>,
+    pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
     pub semantic_cache: Option<Arc<SemanticCache>>,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningStore>,
-    pub api_key: String,
-    pub conn_config: ConnectionConfig,
     pub reasoning_config: ReasoningConfig,
-    pub upstream_base_url: String,
-    pub fallback_model: String,
-    pub keys: dashmap::DashMap<String, StoredKey>,
     pub trace_logger: Option<Arc<TraceLogger>>,
-    pub stream_cache_enabled: bool,
     pub cache_key_namespace: Option<String>,
-    pub cache_fingerprint: FingerprintConfig,
+    pub pricing: PricingConfig,
 }

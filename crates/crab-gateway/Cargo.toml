@@ -3,9 +3,18 @@ name = "crab-gateway"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "crab_gateway"
+path = "src/lib.rs"
+
 [[bin]]
 name = "crab-gateway"
 path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+axum = "0.8"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dependencies]
 crab-proxy.workspace = true
@@ -14,6 +23,9 @@ crab-cache.workspace = true
 crab-route.workspace = true
 crab-semantic.workspace = true
 crab-reasoning.workspace = true
+crab-control.workspace = true
+axum = "0.8"
+uuid.workspace = true
 pingora.workspace = true
 pingora-core.workspace = true
 pingora-proxy.workspace = true
