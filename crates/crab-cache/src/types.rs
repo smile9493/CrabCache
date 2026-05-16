@@ -50,10 +50,10 @@ impl TtlConfig {
     }
 
     pub fn resolve(&self, model: &str, consumer: Option<&str>) -> u64 {
-        if let Some(consumer) = consumer {
-            if let Some(ttl) = self.consumer_overrides.get(consumer) {
-                return *ttl;
-            }
+        if let Some(consumer) = consumer
+            && let Some(ttl) = self.consumer_overrides.get(consumer)
+        {
+            return *ttl;
         }
 
         if let Some(ttl) = self.model_overrides.get(model) {

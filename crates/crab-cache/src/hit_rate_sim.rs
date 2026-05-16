@@ -206,11 +206,11 @@ impl SimulatedCache {
     }
 
     fn l0_insert(&mut self, key: &str, value: String) {
-        if self.l0.len() >= self.l0_capacity {
-            if let Some(old_key) = self.l0.keys().next().cloned() {
-                self.l0.remove(&old_key);
-                self.stats.l0_evictions += 1;
-            }
+        if self.l0.len() >= self.l0_capacity
+            && let Some(old_key) = self.l0.keys().next().cloned()
+        {
+            self.l0.remove(&old_key);
+            self.stats.l0_evictions += 1;
         }
         self.l0.insert(key.to_string(), (value, Instant::now()));
     }

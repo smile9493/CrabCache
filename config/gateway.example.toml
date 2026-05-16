@@ -13,6 +13,9 @@ default_weight = 1
 # DeepSeek API endpoint addresses (for Ketama routing)
 deepseek_endpoints = ["api.deepseek.com:443"]
 
+# Optional: TLS SNI override for upstream connections (defaults to "api.deepseek.com")
+# tls_sni = "api.deepseek.com"
+
 [cache]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
@@ -20,7 +23,22 @@ l0_ttl_secs = 3600
 l1_redis_url = "redis://127.0.0.1:6379"
 l1_pool_size = 16
 
-# Per-model TTL overrides (seconds)
+# When false, streaming responses are not cached (avoids synthetic SSE on hit).
+# Defaults to true (preserving current synthetic stream cache behavior).
+# stream_cache_enabled = false
+
+# Fingerprint normalization version for cache keys.
+# Bump this when fingerprint normalization rules change to safely
+# invalidate old cached entries in Redis (L1) without downtime.
+# Default: 1
+fingerprint_version = 1
+
+# Normalize message content before hashing for cache keys.
+# When true (default), whitespace, line endings (\r\n → \n), and Unicode
+# NFC normalization are applied so that semantically identical requests
+# with different encodings share the same cache entry.
+# Set to false to disable normalization (emergency rollback).
+fingerprint_normalize_content = true
 [cache.model_ttl_overrides]
 "deepseek-v4-pro" = 7200
 "deepseek-v4-flash" = 3600

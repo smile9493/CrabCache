@@ -1,7 +1,8 @@
-use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard};
+use crab_cache::{CacheEntry, RequestCoalescer, TieredCache, CoalesceGuard, FingerprintConfig};
 use crab_reasoning::{CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator};
 use crab_route::AffinityRouter;
 use crab_semantic::SemanticCache;
+use crab_metrics::CacheTier;
 use crate::TraceLogger;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -67,6 +68,7 @@ pub struct GatewayContext {
     pub request_id: String,
     pub cache_key: Option<String>,
     pub cache_hit: Option<CacheEntry>,
+    pub cache_tier: Option<CacheTier>,
     pub is_streaming: bool,
     pub is_models_list: bool,
     pub model: String,
@@ -96,6 +98,7 @@ impl GatewayContext {
             request_id,
             cache_key: None,
             cache_hit: None,
+            cache_tier: None,
             is_streaming: false,
             is_models_list: false,
             model: String::new(),
@@ -134,4 +137,7 @@ pub struct GatewayState {
     pub fallback_model: String,
     pub keys: dashmap::DashMap<String, StoredKey>,
     pub trace_logger: Option<Arc<TraceLogger>>,
+    pub stream_cache_enabled: bool,
+    pub cache_key_namespace: Option<String>,
+    pub cache_fingerprint: FingerprintConfig,
 }

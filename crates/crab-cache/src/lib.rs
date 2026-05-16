@@ -15,7 +15,11 @@ pub use hit_rate_sim::{
     parameter_sweep, simulate_cache_hit_rate, simulate_cache_with_l2, CacheStats, SemanticCache,
     SimEmbedder, SimulatedCache, SweepResult,
 };
-pub use key::generate_cache_key;
+pub use key::{
+    generate_cache_key, generate_cache_key_with_fingerprint,
+    generate_namespaced_cache_key, generate_namespaced_cache_key_with_fingerprint,
+    FingerprintConfig,
+};
 pub use sanitized_trace::{
     load_sanitized_log, save_sanitized_log, FittedParameters, SanitizedLogEntry,
 };

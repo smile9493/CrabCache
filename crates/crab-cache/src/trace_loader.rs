@@ -205,8 +205,8 @@ impl TraceGenerator {
         let mut clusters = Vec::new();
         let cluster_count = templates.len() / 20;
 
-        for i in 0..cluster_count {
-            let base = templates[i].clone();
+        for template in templates.iter().take(cluster_count) {
+            let base = template.clone();
             let variants = vec![
                 format!("What is {}?", base),
                 format!("How does {} work?", base),
@@ -224,6 +224,7 @@ impl TraceGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_load_pattern_defaults() {

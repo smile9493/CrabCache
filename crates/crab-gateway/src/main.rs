@@ -109,6 +109,14 @@ fn main() -> Result<()> {
     let config = GatewayConfig::load(&config_path)?;
     info!(config_path = %config_path, "Configuration loaded");
 
+    if let Err(errors) = config.validate() {
+        for err in &errors {
+            tracing::error!("Configuration validation error: {}", err);
+        }
+        anyhow::bail!("Configuration validation failed with {} error(s)", errors.len());
+    }
+    info!("Configuration validated successfully");
+
     let backends = config.parse_endpoints();
     info!(backend_count = backends.len(), "Backends parsed");
 
@@ -231,13 +239,19 @@ fn main() -> Result<()> {
         semantic_cache,
         coalescer: Arc::new(RequestCoalescer::new()),
         reasoning_store,
-        api_key: config.api_key.clone(),
+        api_key: config.api_key.into_inner(),
         conn_config,
         reasoning_config,
         upstream_base_url,
         fallback_model,
         keys,
         trace_logger,
+        stream_cache_enabled: config.cache.stream_cache_enabled,
+        cache_key_namespace: config.cache.cache_key_namespace.clone(),
+        cache_fingerprint: crab_cache::FingerprintConfig {
+            version: config.cache.fingerprint_version,
+            normalize_content: config.cache.fingerprint_normalize_content,
+        },
     });
 
     let proxy = GatewayProxy::new(state);

@@ -74,3 +74,4 @@ crab-reasoning = { path = "crates/crab-reasoning" }
 crab-admin     = { path = "crates/crab-admin" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
+unicode-normalization = "0.1"
