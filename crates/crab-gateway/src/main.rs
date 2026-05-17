@@ -7,7 +7,7 @@ use crab_metrics::global_metrics;
 use crab_proxy::{GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningStore;
 use crab_route::AffinityRouter;
-use crab_semantic::{Embedder, SemanticCache, VectorStore};
+use crab_semantic::{EmbedderPool, SemanticGateConfig, SemanticCache, VectorStore};
 use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
@@ -162,10 +162,11 @@ fn main() -> Result<()> {
     );
 
     let semantic_cache = if config.semantic.enabled {
-        let embedder = Arc::new(Embedder::load(
+        let pool = EmbedderPool::load(
             &config.semantic.model_path,
             &config.semantic.tokenizer_path,
-        )?);
+            config.semantic.max_concurrent_embeds,
+        )?;
 
         let store = VectorStore::new(
             &config.semantic.qdrant_url,
@@ -176,7 +177,7 @@ fn main() -> Result<()> {
         let store = rt.block_on(store)?;
 
         let cache = SemanticCache::new(
-            embedder,
+            Arc::new(pool),
             store,
             config.semantic.similarity_threshold.unwrap_or(0.95),
             config.semantic.ttl_secs.unwrap_or(7200),
@@ -250,6 +251,62 @@ fn main() -> Result<()> {
     );
     runtime.insert_bootstrap_key(&bootstrap_api_key, "default");
 
+    // Background task: TCP health check for upstream backends
+    {
+        let runtime = runtime.clone();
+        let health_interval = config.upstream.health_check_interval_secs;
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("health check runtime");
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(health_interval));
+                loop {
+                    interval.tick().await;
+                    let backends: Vec<(String, std::net::SocketAddr)> = {
+                        let router = runtime.router.read()
+                            .map_err(|e| tracing::error!(error=%e, "Router lock poisoned"))
+                            .ok();
+                        match router {
+                            Some(r) => r.backends().iter().map(|b| (b.name.clone(), b.addr)).collect(),
+                            None => continue,
+                        }
+                    };
+
+                    for (name, addr) in &backends {
+                        let start = std::time::Instant::now();
+                        let result = tokio::net::TcpStream::connect(addr).await;
+                        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                        let health = match result {
+                            Ok(_) => crab_route::BackendHealth {
+                                healthy: true,
+                                last_check_ms: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64,
+                                latency_ms: elapsed_ms,
+                            },
+                            Err(e) => {
+                                tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
+                                crab_route::BackendHealth {
+                                    healthy: false,
+                                    last_check_ms: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_millis() as u64,
+                                    latency_ms: 0,
+                                }
+                            }
+                        };
+
+                        if let Ok(mut health_map) = runtime.backend_health.write() {
+                            health_map.insert(name.clone(), health);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         admin_key: mgmt_admin_key,
@@ -265,11 +322,22 @@ fn main() -> Result<()> {
         });
     });
 
+    let semantic_gate = SemanticGateConfig {
+        min_query_chars: config.semantic.min_query_chars,
+        max_query_chars: config.semantic.max_query_chars,
+        embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
+    };
+
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
         semantic_cache,
-        coalescer: Arc::new(RequestCoalescer::new()),
+        semantic_gate,
+        coalescer: {
+            let max_inflight = config.upstream.max_coalesce_inflight.unwrap_or(1000);
+            let timeout = config.upstream.coalesce_timeout_secs.unwrap_or(60);
+            Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
+        },
         reasoning_store,
         reasoning_config,
         trace_logger,

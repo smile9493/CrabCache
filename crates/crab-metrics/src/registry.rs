@@ -48,6 +48,8 @@ pub struct GatewayMetrics {
     pub ttft: HistogramVec,
     pub cache_fetch_latency: HistogramVec,
     pub semantic_requests: IntCounterVec,
+    pub embed_latency: HistogramVec,
+    pub skipped_requests: IntCounterVec,
     pub coalesced_requests: IntCounter,
     pub cost_saved_usd: CounterVec,
     pub upstream_prompt_cache_tokens: IntCounterVec,
@@ -110,6 +112,25 @@ impl GatewayMetrics {
             &["tier"],
         )?;
 
+        let embed_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_semantic_embed_latency_seconds",
+                "Semantic embed latency in seconds",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+            ]),
+            &[],
+        )?;
+
+        let skipped_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_semantic_skipped_total",
+                "Total number of semantic search skips by reason",
+            ),
+            &["reason"],
+        )?;
+
         let semantic_requests = IntCounterVec::new(
             Opts::new(
                 "gateway_semantic_cache_requests_total",
@@ -147,6 +168,8 @@ impl GatewayMetrics {
             ttft,
             cache_fetch_latency,
             semantic_requests,
+            embed_latency,
+            skipped_requests,
             coalesced_requests,
             cost_saved_usd,
             upstream_prompt_cache_tokens,
@@ -161,6 +184,8 @@ impl GatewayMetrics {
         registry.register(Box::new(self.ttft.clone()))?;
         registry.register(Box::new(self.cache_fetch_latency.clone()))?;
         registry.register(Box::new(self.semantic_requests.clone()))?;
+        registry.register(Box::new(self.embed_latency.clone()))?;
+        registry.register(Box::new(self.skipped_requests.clone()))?;
         registry.register(Box::new(self.coalesced_requests.clone()))?;
         registry.register(Box::new(self.cost_saved_usd.clone()))?;
         registry.register(Box::new(self.upstream_prompt_cache_tokens.clone()))?;
@@ -279,6 +304,18 @@ impl GatewayMetrics {
     pub fn record_semantic_cache_rejected(&self) {
         self.semantic_requests
             .with_label_values(&["rejected_by_guard"])
+            .inc();
+    }
+
+    pub fn record_semantic_embed_latency(&self, duration: Duration) {
+        self.embed_latency
+            .with_label_values(&[])
+            .observe(duration.as_secs_f64());
+    }
+
+    pub fn record_semantic_skipped(&self, reason: &str) {
+        self.skipped_requests
+            .with_label_values(&[reason])
             .inc();
     }
 

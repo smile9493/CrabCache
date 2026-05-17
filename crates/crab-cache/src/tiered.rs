@@ -4,7 +4,7 @@ use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use crab_metrics::{global_metrics, CacheTier};
 use moka::future::Cache;
-use redis::AsyncCommands;
+use redis::{AsyncCommands, cmd};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -163,6 +163,121 @@ impl TieredCache {
         }
 
         debug!(key = key, "Cache entry invalidated");
+        Ok(())
+    }
+
+    /// Invalidate all cache entries (L0 + L1 scan and delete).
+    pub async fn invalidate_all(&self) -> Result<()> {
+        // Invalidate L0
+        self.l0.invalidate_all();
+
+        // Scan and delete L1 cache entries
+        let mut conn = match self.l1_pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "Failed to get Redis connection for invalidate_all");
+                return Err(e.into());
+            }
+        };
+
+        let pattern = "cache:*".to_string();
+        let mut cursor = 0u64;
+        let batch_size = 100i64;
+        let mut total = 0u64;
+
+        loop {
+            let result: (u64, Vec<String>) = cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(batch_size)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| {
+                    warn!(error = %e, "Redis SCAN failed during invalidate_all");
+                    anyhow::anyhow!("Redis SCAN failed: {}", e)
+                })?;
+
+            cursor = result.0;
+            let keys = result.1;
+
+            if !keys.is_empty() {
+                let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+                match cmd("DEL").arg(&key_refs).query_async::<()>(&mut *conn).await {
+                    Ok(_) => {
+                        total += keys.len() as u64;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, count = keys.len(), "Redis DEL batch failed during invalidate_all");
+                    }
+                }
+            }
+
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        debug!(total_deleted = total, "Cache invalidate_all completed");
+        Ok(())
+    }
+
+    /// Invalidate cache entries matching a prefix pattern in the cache key.
+    /// The prefix is appended as "cache:{prefix}*" for Redis SCAN.
+    pub async fn invalidate_prefix(&self, prefix: &str) -> Result<()> {
+        // Invalidate L0 - with a prefix we can't efficiently find all matching entries,
+        // but future L1 gets will repopulate L0.
+        // For now, just invalidate L1.
+
+        let mut conn = match self.l1_pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, prefix = prefix, "Failed to get Redis connection for invalidate_prefix");
+                return Err(e.into());
+            }
+        };
+
+        let pattern = format!("cache:{}*", prefix);
+        let mut cursor = 0u64;
+        let batch_size = 100i64;
+        let mut total = 0u64;
+
+        loop {
+            let result: (u64, Vec<String>) = cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(batch_size)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| {
+                    warn!(error = %e, prefix = prefix, "Redis SCAN failed during invalidate_prefix");
+                    anyhow::anyhow!("Redis SCAN failed: {}", e)
+                })?;
+
+            cursor = result.0;
+            let keys = result.1;
+
+            if !keys.is_empty() {
+                let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+                match cmd("DEL").arg(&key_refs).query_async::<()>(&mut *conn).await {
+                    Ok(_) => {
+                        total += keys.len() as u64;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, count = keys.len(), "Redis DEL batch failed during invalidate_prefix");
+                    }
+                }
+            }
+
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        debug!(prefix = prefix, total_deleted = total, "Cache invalidate_prefix completed");
         Ok(())
     }
 }

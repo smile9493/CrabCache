@@ -1,13 +1,14 @@
-use crate::embedder::Embedder;
+use crate::pool::EmbedderPool;
 use crate::store::VectorStore;
 use anyhow::Result;
 use crab_cache::CacheEntry;
 use crab_metrics::global_metrics;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::debug;
 
 pub struct SemanticCache {
-    embedder: Arc<Embedder>,
+    pool: Arc<EmbedderPool>,
     store: VectorStore,
     threshold: f32,
     ttl_secs: u64,
@@ -15,7 +16,7 @@ pub struct SemanticCache {
 
 impl SemanticCache {
     pub async fn new(
-        embedder: Arc<Embedder>,
+        pool: Arc<EmbedderPool>,
         store: VectorStore,
         threshold: f32,
         ttl_secs: u64,
@@ -23,7 +24,7 @@ impl SemanticCache {
         store.ensure_collection().await?;
 
         Ok(Self {
-            embedder,
+            pool,
             store,
             threshold,
             ttl_secs,
@@ -31,7 +32,10 @@ impl SemanticCache {
     }
 
     pub async fn search(&self, query_text: &str) -> Option<CacheEntry> {
-        let vector = self.embedder.embed(query_text).await.ok()?;
+        let start = Instant::now();
+        let vector = self.pool.embed(query_text).await.ok()?;
+        let elapsed = start.elapsed();
+        global_metrics().record_semantic_embed_latency(elapsed);
 
         let result = self.store.search(&vector, self.threshold).await;
 
@@ -55,7 +59,10 @@ impl SemanticCache {
     }
 
     pub async fn insert(&self, query_text: &str, entry: &CacheEntry) -> Result<()> {
-        let vector = self.embedder.embed(query_text).await?;
+        let start = Instant::now();
+        let vector = self.pool.embed(query_text).await?;
+        let elapsed = start.elapsed();
+        global_metrics().record_semantic_embed_latency(elapsed);
 
         let id = simple_hash(query_text);
 

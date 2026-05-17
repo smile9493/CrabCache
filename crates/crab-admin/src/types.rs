@@ -69,6 +69,11 @@ pub struct CacheConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamCacheConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticConfig {
     pub similarity_threshold: f64,
 }

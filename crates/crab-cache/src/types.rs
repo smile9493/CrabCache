@@ -8,6 +8,8 @@ pub struct CacheEntry {
     pub usage: UsageInfo,
     pub created_at: u64,
     pub ttl_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sse_body: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

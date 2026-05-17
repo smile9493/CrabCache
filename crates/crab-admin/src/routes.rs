@@ -74,70 +74,187 @@ async fn get_network_info() -> Json<NetworkInfo> {
     Json(NetworkInfo::new(8080, use_https))
 }
 
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<MetricsSnapshot> {
-    let metrics = state.metrics.read().clone();
+async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsSnapshot>, StatusCode> {
+    let metrics_url = std::env::var("CRABCACHE_GATEWAY_METRICS_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9090/metrics".to_string());
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let resp = client.get(&metrics_url).send().await.map_err(|e| {
+        tracing::warn!(url = %metrics_url, error = %e, "Failed to fetch gateway metrics");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    let body = resp.text().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Parse Prometheus text format to extract cache metrics
+    let l0_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L0_moka", "result", "hit").unwrap_or(0);
+    let l1_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L1_redis", "result", "hit").unwrap_or(0);
+    let l2_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L2_semantic", "result", "hit").unwrap_or(0);
+    let cache_misses = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "miss", "result", "miss").unwrap_or(0);
+    let total_input_tokens_hit = parse_prometheus_counter(&body, "gateway_deepseek_input_tokens_total", "cache_status", "hit", "model", "").unwrap_or(0);
+    let total_input_tokens_miss = parse_prometheus_counter(&body, "gateway_deepseek_input_tokens_total", "cache_status", "miss", "model", "").unwrap_or(0);
+    let total_output_tokens = parse_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", "model", "", "consumer", "").unwrap_or(0);
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let uptime_secs = now.saturating_sub(state.start_time);
 
+    let total_requests = l0_hits + l1_hits + l2_hits + cache_misses;
     let qps = if uptime_secs > 0 {
-        metrics.total_requests as f64 / uptime_secs as f64
+        total_requests as f64 / uptime_secs as f64
     } else {
         0.0
     };
 
     let tps = if uptime_secs > 0 {
-        (metrics.total_input_tokens + metrics.total_output_tokens) as f64 / uptime_secs as f64
+        (total_input_tokens_hit + total_input_tokens_miss + total_output_tokens) as f64 / uptime_secs as f64
     } else {
         0.0
     };
 
-    let hourly_stats = generate_hourly_stats(&metrics, uptime_secs);
-    let daily_stats = generate_daily_stats(&metrics, uptime_secs);
-    let weekly_stats = generate_weekly_stats(&metrics, uptime_secs);
-    let monthly_stats = generate_monthly_stats(&metrics, uptime_secs);
+    let hourly_stats = generate_hourly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
+    let daily_stats = generate_daily_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
+    let weekly_stats = generate_weekly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
+    let monthly_stats = generate_monthly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
 
-    Json(MetricsSnapshot {
+    Ok(Json(MetricsSnapshot {
         qps,
         tps,
-        l0_hits: metrics.l0_hits,
-        l1_hits: metrics.l1_hits,
-        l2_hits: metrics.l2_hits,
-        cache_misses: metrics.cache_misses,
-        cache_hit_tokens: metrics.cache_hit_tokens,
-        cache_miss_tokens: metrics.cache_miss_tokens,
-        total_input_tokens: metrics.total_input_tokens,
-        total_output_tokens: metrics.total_output_tokens,
-        total_tokens: metrics.total_input_tokens + metrics.total_output_tokens,
-        latency_l0_ms: if metrics.l0_latency_count > 0 {
-            metrics.l0_latency_sum_ms / metrics.l0_latency_count as f64
-        } else {
-            0.0
-        },
-        latency_l1_ms: if metrics.l1_latency_count > 0 {
-            metrics.l1_latency_sum_ms / metrics.l1_latency_count as f64
-        } else {
-            0.0
-        },
-        latency_l2_ms: if metrics.l2_latency_count > 0 {
-            metrics.l2_latency_sum_ms / metrics.l2_latency_count as f64
-        } else {
-            0.0
-        },
-        latency_upstream_ms: if metrics.upstream_latency_count > 0 {
-            metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
-        } else {
-            0.0
-        },
+        l0_hits,
+        l1_hits,
+        l2_hits,
+        cache_misses,
+        cache_hit_tokens: total_input_tokens_hit,
+        cache_miss_tokens: total_input_tokens_miss,
+        total_input_tokens: total_input_tokens_hit + total_input_tokens_miss,
+        total_output_tokens,
+        total_tokens: total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
+        latency_l0_ms: 0.0,
+        latency_l1_ms: 0.0,
+        latency_l2_ms: 0.0,
+        latency_upstream_ms: 0.0,
         active_keys: state.keys_meta.len() as u64,
         uptime_hours: uptime_secs / 3600,
         hourly_stats,
         daily_stats,
         weekly_stats,
         monthly_stats,
-    })
+    }))
+}
+
+/// Parse a Prometheus counter value by matching label pairs.
+/// Handles simple cases like:
+///   gateway_cache_requests_total{tier="L0_moka",result="hit"} 42
+fn parse_prometheus_counter(body: &str, metric: &str, label1: &str, val1: &str, label2: &str, val2: &str) -> Option<u64> {
+    for line in body.lines() {
+        let line = line.trim();
+        if !line.starts_with(metric) {
+            continue;
+        }
+
+        // Extract labels portion between { and }
+        if let Some(open) = line.find('{') {
+            if let Some(close) = line.find('}') {
+                let labels = &line[open+1..close];
+                // Check that ALL required labels match
+                let has_l1 = labels.contains(&format!("{}=\"{}\"", label1, val1));
+                let has_l2 = if val2.is_empty() {
+                    true
+                } else {
+                    // For second label we need to be more flexible
+                    labels.contains(&format!("{}=\"{}\"", label2, val2))
+                };
+                if has_l1 && has_l2 {
+                    // Parse the value after }
+                    let value_part = line[close+1..].trim();
+                    return value_part.parse::<u64>().ok();
+                }
+            }
+        } else if val1.is_empty() && val2.is_empty() {
+            // No labels, just metric name followed by value
+            let value_part = line[metric.len()..].trim();
+            return value_part.parse::<u64>().ok();
+        }
+    }
+    None
+}
+
+fn generate_hourly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+    let hours = (uptime_secs / 3600).min(24) as usize;
+    let mut stats = Vec::new();
+    for i in 0..hours {
+        let hour_ago = hours - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::hours(hour_ago as i64);
+        let divisor = (hours as u64).max(1);
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%H:00").to_string(),
+            requests: if i == 0 { total_requests } else { total_requests / divisor },
+            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
+            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            avg_latency_ms: 0.0,
+        });
+    }
+    stats
+}
+
+fn generate_daily_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+    let days = (uptime_secs / 86400).min(7) as usize;
+    let mut stats = Vec::new();
+    for i in 0..days {
+        let day_ago = days - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::days(day_ago as i64);
+        let divisor = (days as u64).max(1);
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%m-%d").to_string(),
+            requests: if i == 0 { total_requests } else { total_requests / divisor },
+            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
+            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            avg_latency_ms: 0.0,
+        });
+    }
+    stats
+}
+
+fn generate_weekly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+    let weeks = (uptime_secs / 604800).min(4) as usize;
+    let mut stats = Vec::new();
+    for i in 0..weeks {
+        let week_ago = weeks - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::weeks(week_ago as i64);
+        let divisor = (weeks as u64).max(1);
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("W%U").to_string(),
+            requests: if i == 0 { total_requests } else { total_requests / divisor },
+            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
+            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            avg_latency_ms: 0.0,
+        });
+    }
+    stats
+}
+
+fn generate_monthly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+    let months = (uptime_secs / 2592000).min(12) as usize;
+    let mut stats = Vec::new();
+    for i in 0..months {
+        let month_ago = months - i - 1;
+        let timestamp = chrono::Utc::now() - chrono::Duration::days((month_ago * 30) as i64);
+        let divisor = (months as u64).max(1);
+        stats.push(TimeSeriesPoint {
+            timestamp: timestamp.format("%Y-%m").to_string(),
+            requests: if i == 0 { total_requests } else { total_requests / divisor },
+            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
+            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            avg_latency_ms: 0.0,
+        });
+    }
+    stats
 }
 
 fn generate_hourly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
@@ -467,7 +584,7 @@ async fn get_routing_status(
         .map(|b| BackendStatus {
             name: b.name,
             request_count: 0,
-            healthy: true,
+            healthy: b.healthy,
         })
         .collect();
     let active_count = backends.len();

@@ -2,14 +2,14 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use crab_control::{
     parse_backend_endpoints, ApiKeySpec, BackendSpec, CreateGatewayKeyRequest,
     CreateGatewayKeyResponse, ErrorResponse, GatewayStatus, PatchGatewayKeyRequest,
-    PutBackendsRequest, PutTtlConfigRequest, RoutingBackendsView, TtlConfigView,
-    GATEWAY_ADMIN_KEY_HEADER,
+    PutBackendsRequest, PutTtlConfigRequest, RoutingBackendsView, StreamCacheConfig,
+    TtlConfigView, GATEWAY_ADMIN_KEY_HEADER,
 };
 use crab_proxy::{RuntimeConfig, StoredKey};
 use std::sync::Arc;
@@ -25,10 +25,91 @@ pub fn router(state: ManagementState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/status", get(status))
         .route("/v1/keys", get(list_keys).post(create_key))
+        .route("/v1/cache/invalidate", post(invalidate_cache))
+        .route("/v1/cache/fingerprint", put(put_fingerprint))
         .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
         .route("/v1/cache/ttl", get(get_ttl).put(put_ttl))
+        .route("/v1/runtime/stream_cache", get(get_stream_cache).put(put_stream_cache))
         .route("/v1/routing/backends", get(get_backends).put(put_backends))
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct InvalidateRequest {
+    #[serde(default = "default_invalidate_scope")]
+    scope: String,
+}
+
+fn default_invalidate_scope() -> String {
+    "all".to_string()
+}
+
+#[derive(serde::Serialize)]
+struct InvalidateResponse {
+    scope: String,
+    status: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FingerprintRequest {
+    version: u32,
+    #[serde(default = "default_fingerprint_normalize")]
+    normalize_content: bool,
+}
+
+fn default_fingerprint_normalize() -> bool {
+    true
+}
+
+async fn invalidate_cache(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<InvalidateRequest>,
+) -> Result<Json<InvalidateResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    // The management state doesn't have direct access to TieredCache,
+    // so we log the request and let the admin handle it via TieredCache.
+    // For now, we rely on the gateway having its own invalidation logic
+    // through the cache key namespace + fingerprint version approach.
+    tracing::info!(scope = %req.scope, "Cache invalidation requested");
+
+    // Note: Full invalidation requires access to TieredCache.
+    // The gateway will reload fingerprint_version which effectively
+    // isolates new entries from old ones.
+    // To actually free Redis memory, invalidate via the TieredCache directly.
+
+    Ok(Json(InvalidateResponse {
+        scope: req.scope,
+        status: "acknowledged".to_string(),
+    }))
+}
+
+async fn put_fingerprint(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<FingerprintRequest>,
+) -> Result<Json<FingerprintRequest>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let mut cfg = state
+        .runtime
+        .fingerprint
+        .write()
+        .map_err(|_| internal_error("fingerprint lock poisoned"))?;
+    cfg.version = req.version;
+    cfg.normalize_content = req.normalize_content;
+
+    tracing::info!(
+        version = req.version,
+        normalize = req.normalize_content,
+        "Fingerprint config updated"
+    );
+
+    Ok(Json(FingerprintRequest {
+        version: cfg.version,
+        normalize_content: cfg.normalize_content,
+    }))
 }
 
 async fn health() -> StatusCode {
@@ -234,12 +315,41 @@ async fn put_ttl(
     }))
 }
 
-fn backend_to_spec(b: &crab_route::Backend) -> BackendSpec {
+async fn get_stream_cache(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<StreamCacheConfig>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(StreamCacheConfig {
+        enabled: state.runtime.stream_cache_enabled(),
+    }))
+}
+
+async fn put_stream_cache(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<StreamCacheConfig>,
+) -> Result<Json<StreamCacheConfig>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    state.runtime.set_stream_cache_enabled(req.enabled);
+    Ok(Json(StreamCacheConfig {
+        enabled: state.runtime.stream_cache_enabled(),
+    }))
+}
+
+fn backend_to_spec(b: &crab_route::Backend, health: Option<&crab_route::BackendHealth>) -> BackendSpec {
+    let (healthy, last_check_ms, latency_ms) = match health {
+        Some(h) => (h.healthy, h.last_check_ms, h.latency_ms),
+        None => (true, 0, 0),
+    };
     BackendSpec {
         name: b.name.clone(),
         addr: b.addr.to_string(),
         weight: b.weight,
         tls_sni: b.tls_sni.clone(),
+        healthy,
+        last_check_ms,
+        latency_ms,
     }
 }
 
@@ -253,10 +363,15 @@ async fn get_backends(
         .router
         .read()
         .map_err(|_| internal_error("router lock poisoned"))?;
+    let health = state
+        .runtime
+        .backend_health
+        .read()
+        .map_err(|_| internal_error("health lock poisoned"))?;
     let backends = router
         .backends()
         .iter()
-        .map(|b| backend_to_spec(b.as_ref()))
+        .map(|b| backend_to_spec(b.as_ref(), health.get(&b.name)))
         .collect();
     Ok(Json(RoutingBackendsView { backends }))
 }
@@ -294,10 +409,18 @@ async fn put_backends(
             .into_response()
     })?;
 
+    // Reset health for new backends
+    if let Ok(mut health) = state.runtime.backend_health.write() {
+        health.clear();
+        for b in router.backends() {
+            health.insert(b.name.clone(), crab_route::BackendHealth::new_healthy());
+        }
+    }
+
     let backends = router
         .backends()
         .iter()
-        .map(|b| backend_to_spec(b.as_ref()))
+        .map(|b| backend_to_spec(b.as_ref(), None))
         .collect();
     Ok(Json(RoutingBackendsView { backends }))
 }

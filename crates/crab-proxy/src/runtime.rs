@@ -1,7 +1,8 @@
 use crate::context::{ConnectionConfig, StoredKey};
 use crab_cache::{FingerprintConfig, TtlConfig};
-use crab_route::AffinityRouter;
+use crab_route::{AffinityRouter, BackendHealth};
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -17,6 +18,7 @@ pub struct RuntimeConfig {
     pub fallback_model: RwLock<String>,
     pub bootstrap_api_key: String,
     pub started_at: Instant,
+    pub backend_health: Arc<RwLock<HashMap<String, BackendHealth>>>,
 }
 
 impl RuntimeConfig {
@@ -30,6 +32,10 @@ impl RuntimeConfig {
         fallback_model: String,
         bootstrap_api_key: String,
     ) -> Arc<Self> {
+        let backends = router.backends().iter().map(|b| {
+            (b.name.clone(), BackendHealth::new_healthy())
+        }).collect::<HashMap<_, _>>();
+
         Arc::new(Self {
             keys: DashMap::new(),
             ttl,
@@ -41,6 +47,7 @@ impl RuntimeConfig {
             fallback_model: RwLock::new(fallback_model),
             bootstrap_api_key,
             started_at: Instant::now(),
+            backend_health: Arc::new(RwLock::new(backends)),
         })
     }
 

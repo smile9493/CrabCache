@@ -3,6 +3,7 @@ use crate::sse::{parse_sse_chunk, UsageData};
 use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, UsageInfo};
 use crab_metrics::{global_metrics, CacheTier};
+use crab_semantic::{evaluate_semantic_gate, GateDecision};
 use crab_reasoning::{
     prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
     CursorReasoningDisplayAdapter, StreamAccumulator,
@@ -255,48 +256,75 @@ impl ProxyHttp for GatewayProxy {
                 if let Some(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body).ok() {
                     if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) {
                         if let Some(query_text) = build_semantic_query_text(messages) {
-                            if let Some(entry) = semantic_cache.search(&query_text).await {
-                                // Model guard: verify the cached entry's model matches
-                                if entry.model != ctx.model {
-                                    global_metrics().record_semantic_cache_rejected();
+                            // Apply semantic gate before L2 search
+                            let gate_decision = evaluate_semantic_gate(
+                                &self.state.semantic_gate,
+                                &query_text,
+                                ctx.cache_hit.is_some(),
+                            );
+                            match gate_decision {
+                                GateDecision::Pass => {}
+                                ref reason => {
+                                    let reason_str = match reason {
+                                        GateDecision::TooShort => "too_short",
+                                        GateDecision::TooLong => "too_long",
+                                        GateDecision::NotExactMiss => "not_exact_miss",
+                                        _ => "unknown",
+                                    };
+                                    global_metrics().record_semantic_skipped(reason_str);
                                     debug!(
                                         request_id = %ctx.request_id,
-                                        cached_model = %entry.model,
-                                        request_model = %ctx.model,
-                                        "Semantic cache candidate rejected by model guard",
-                                    );
-                                } else {
-                                    info!(
-                                        request_id = %ctx.request_id,
+                                        reason = reason_str,
                                         query_len = query_text.len(),
-                                        "Semantic cache hit, returning cached response"
+                                        "Semantic gate blocked L2 search",
                                     );
+                                }
+                            }
 
-                                    ctx.cache_tier = Some(CacheTier::L2Semantic);
-                                    ctx.cache_hit = Some(entry.clone());
-                                    global_metrics().record_cache_hit(CacheTier::L2Semantic, &ctx.model, ctx.consumer.as_deref());
-                                    global_metrics().record_latency(
-                                        crab_metrics::LatencyKind::CacheFetch,
-                                        ctx.request_start.elapsed(),
-                                        &ctx.model,
-                                        Some(CacheTier::L2Semantic),
-                                    );
+                            if gate_decision == GateDecision::Pass {
+                                if let Some(entry) = semantic_cache.search(&query_text).await {
+                                    // Model guard: verify the cached entry's model matches
+                                    if entry.model != ctx.model {
+                                        global_metrics().record_semantic_cache_rejected();
+                                        debug!(
+                                            request_id = %ctx.request_id,
+                                            cached_model = %entry.model,
+                                            request_model = %ctx.model,
+                                            "Semantic cache candidate rejected by model guard",
+                                        );
+                                    } else {
+                                        info!(
+                                            request_id = %ctx.request_id,
+                                            query_len = query_text.len(),
+                                            "Semantic cache hit, returning cached response"
+                                        );
 
-                                    let cost = self.state.pricing.cost_saved_usd(
-                                        &ctx.model,
-                                        entry.usage.prompt_tokens,
-                                        entry.usage.completion_tokens,
-                                    );
-                                    global_metrics().record_cost_saved(
-                                        &ctx.model,
-                                        ctx.consumer.as_deref(),
-                                        CacheTier::L2Semantic,
-                                        cost,
-                                    );
+                                        ctx.cache_tier = Some(CacheTier::L2Semantic);
+                                        ctx.cache_hit = Some(entry.clone());
+                                        global_metrics().record_cache_hit(CacheTier::L2Semantic, &ctx.model, ctx.consumer.as_deref());
+                                        global_metrics().record_latency(
+                                            crab_metrics::LatencyKind::CacheFetch,
+                                            ctx.request_start.elapsed(),
+                                            &ctx.model,
+                                            Some(CacheTier::L2Semantic),
+                                        );
 
-                                    send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, CacheTier::L2Semantic).await;
+                                        let cost = self.state.pricing.cost_saved_usd(
+                                            &ctx.model,
+                                            entry.usage.prompt_tokens,
+                                            entry.usage.completion_tokens,
+                                        );
+                                        global_metrics().record_cost_saved(
+                                            &ctx.model,
+                                            ctx.consumer.as_deref(),
+                                            CacheTier::L2Semantic,
+                                            cost,
+                                        );
 
-                                    return Ok(true);
+                                        send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, CacheTier::L2Semantic).await;
+
+                                        return Ok(true);
+                                    }
                                 }
                             }
                         }
@@ -419,10 +447,17 @@ impl ProxyHttp for GatewayProxy {
             .router
             .read()
             .map_err(|_| Error::new(ErrorType::InternalError))?;
-        let backend = router
-            .select(affinity_key.as_bytes())
+
+        // Check if we have health information to filter by
+        let backend = {
+            let health = self.state.runtime.backend_health.read()
+                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            router.select_healthy(affinity_key.as_bytes(), |name| {
+                health.get(name).map(|h| h.healthy).unwrap_or(true)
+            })
             .cloned()
-            .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
+            .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?
+        };
 
         debug!(
             request_id = %ctx.request_id,
@@ -717,11 +752,17 @@ impl ProxyHttp for GatewayProxy {
                     if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
+                        let sse_body = ctx.accumulated_body.clone();
                         let tiered_cache = self.state.tiered_cache.clone();
                         let cache_key = cache_key.clone();
                         let model = ctx.model.clone();
                         let consumer = ctx.consumer.clone();
-                        let entry_for_cache = build_cache_entry(response_json.clone().into_bytes(), ctx.model.clone(), ttl_secs);
+                        let entry_for_cache = build_cache_entry_with_sse(
+                            response_json.clone().into_bytes(),
+                            sse_body,
+                            ctx.model.clone(),
+                            ttl_secs,
+                        );
                         tokio::spawn(async move {
                             if let Err(e) = tiered_cache
                                 .put(&cache_key, entry_for_cache, &model, consumer.as_deref())
@@ -836,7 +877,11 @@ async fn send_cached_response(
 ) {
     let response_body = &entry.response_body;
     if is_streaming {
-        let sse_body = json_to_sse_stream(response_body, model);
+        let sse_body = if let Some(ref saved) = entry.sse_body {
+            saved.clone()
+        } else {
+            json_to_sse_stream(response_body, model)
+        };
         let header = build_sse_response_header(sse_body.len(), cache_tier);
         let _ = session.downstream_session.write_response_header(Box::new(header)).await;
         let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
@@ -850,6 +895,21 @@ async fn send_cached_response(
 fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
     CacheEntry {
         response_body,
+        model,
+        usage: UsageInfo::default(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        ttl_secs,
+        sse_body: None,
+    }
+}
+
+fn build_cache_entry_with_sse(response_body: Vec<u8>, sse_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
+    CacheEntry {
+        response_body,
+        sse_body: Some(sse_body),
         model,
         usage: UsageInfo::default(),
         created_at: std::time::SystemTime::now()
