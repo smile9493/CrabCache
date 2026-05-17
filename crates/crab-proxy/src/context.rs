@@ -1,11 +1,12 @@
+use crate::TraceLogger;
 use crate::runtime::RuntimeConfig;
+use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
+use crab_metrics::CacheTier;
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator,
 };
 use crab_semantic::{SemanticCache, SemanticGateConfig};
-use crab_metrics::CacheTier;
-use crate::TraceLogger;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -103,7 +104,10 @@ impl PricingConfig {
             .model_overrides
             .get(model)
             .map(|p| (p.input_price_per_million, p.output_price_per_million))
-            .unwrap_or((self.default_input_price_per_million, self.default_output_price_per_million));
+            .unwrap_or((
+                self.default_input_price_per_million,
+                self.default_output_price_per_million,
+            ));
 
         let input_cost = (prompt_tokens as f64) / 1_000_000.0 * input_price;
         let output_cost = (completion_tokens as f64) / 1_000_000.0 * output_price;
@@ -138,6 +142,10 @@ pub struct GatewayContext {
     pub total_tokens: u64,
     pub conversation_id: Option<String>,
     pub request_permit: Option<OwnedSemaphorePermit>,
+    pub upstream_key_guard: Option<UpstreamKeyGuard>,
+    pub upstream_miss: bool,
+    /// Remaining same-request upstream retries after 429 (non-streaming only).
+    pub upstream_retry_budget: u8,
 }
 
 impl GatewayContext {
@@ -169,6 +177,9 @@ impl GatewayContext {
             total_tokens: 0,
             conversation_id: None,
             request_permit: None,
+            upstream_key_guard: None,
+            upstream_miss: false,
+            upstream_retry_budget: 1,
         }
     }
 }

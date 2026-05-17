@@ -1,21 +1,22 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState};
-use crate::sse::{parse_sse_chunk, UsageData};
+use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
+use crate::upstream_pool::REASONING_NAMESPACE_AUTH;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
-use crab_metrics::{global_metrics, CacheTier};
-use crab_semantic::{evaluate_semantic_gate, GateDecision};
+use crab_metrics::{CacheTier, global_metrics};
 use crab_reasoning::{
-    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
-    CursorReasoningDisplayAdapter, StreamAccumulator,
+    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_upstream_request,
+    rewrite_response_body, rewrite_sse_chunk,
 };
 use crab_route::extract_affinity_key;
+use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
 use pingora_core::protocols::l4::ext::TcpKeepalive;
 use pingora_core::upstreams::peer::PeerOptions;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -38,6 +39,38 @@ impl GatewayProxy {
     pub fn new(state: Arc<GatewayState>) -> Self {
         Self { state }
     }
+
+    fn authorize_client(&self, provided_key: &str, auth: &str) -> (bool, Option<String>) {
+        if let Some(stored_key) = self.state.runtime.keys.get(provided_key) {
+            let key = stored_key.value();
+            (key.enabled, Some(key.name.clone()))
+        } else if self
+            .state
+            .runtime
+            .is_legacy_client_token(provided_key, auth)
+        {
+            (true, None)
+        } else {
+            (false, None)
+        }
+    }
+
+    fn try_acquire_upstream_key(&self, ctx: &mut GatewayContext) -> bool {
+        if ctx.upstream_key_guard.is_some() {
+            return true;
+        }
+        match self.state.runtime.upstream_pool().acquire() {
+            Some(guard) => {
+                ctx.upstream_miss = true;
+                ctx.upstream_key_guard = Some(guard);
+                true
+            }
+            None => {
+                global_metrics().record_rejected("upstream_key_exhausted");
+                false
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -51,7 +84,10 @@ impl ProxyHttp for GatewayProxy {
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         let req_header = session.req_header();
 
-        if req_header.uri.path() == "/health" || req_header.uri.path() == "/healthz" || req_header.uri.path() == "/v1/healthz" {
+        if req_header.uri.path() == "/health"
+            || req_header.uri.path() == "/healthz"
+            || req_header.uri.path() == "/v1/healthz"
+        {
             let _ = session.respond_error(200).await;
             return Ok(true);
         }
@@ -66,12 +102,32 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        let auth = req_header
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let provided_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
+
         if is_models_endpoint(req_header.uri.path(), &req_header.method) {
+            let (is_authorized, consumer_from_key) = self.authorize_client(provided_key, auth);
+            if !is_authorized {
+                let _ = session.respond_error(401).await;
+                return Ok(true);
+            }
+            ctx.consumer = consumer_from_key;
             ctx.is_models_list = true;
+            if !self.try_acquire_upstream_key(ctx) {
+                let _ = session.respond_error(503).await;
+                return Ok(true);
+            }
             return Ok(false);
         }
 
-        if req_header.uri.path() != "/v1/chat/completions" && req_header.uri.path() != "/chat/completions" {
+        if req_header.uri.path() != "/v1/chat/completions"
+            && req_header.uri.path() != "/chat/completions"
+        {
             let _ = session.respond_error(404).await;
             return Ok(true);
         }
@@ -81,25 +137,7 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
-        let auth = req_header
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        let provided_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
-
-        let (is_authorized, consumer_from_key) =
-            if let Some(stored_key) = self.state.runtime.keys.get(provided_key) {
-                let key = stored_key.value();
-                (key.enabled, Some(key.name.clone()))
-            } else {
-                (
-                    provided_key == self.state.runtime.bootstrap_api_key
-                        || auth.ends_with(&self.state.runtime.bootstrap_api_key),
-                    None,
-                )
-            };
+        let (is_authorized, consumer_from_key) = self.authorize_client(provided_key, auth);
 
         if !is_authorized {
             let _ = session.respond_error(401).await;
@@ -182,9 +220,13 @@ impl ProxyHttp for GatewayProxy {
             .and_then(|m| m.as_str())
             .unwrap_or(&fallback_model)
             .to_string();
-        ctx.is_streaming = payload.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
+        ctx.is_streaming = payload
+            .get("stream")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false);
 
-        ctx.conversation_id = payload.get("conversation_id")
+        ctx.conversation_id = payload
+            .get("conversation_id")
             .and_then(|c| c.as_str())
             .map(|s| s.to_string())
             .or(conversation_id_from_header);
@@ -204,7 +246,7 @@ impl ProxyHttp for GatewayProxy {
             &self.state.reasoning_config.thinking_mode,
             &self.state.reasoning_config.reasoning_effort,
             &self.state.reasoning_config.missing_reasoning_strategy,
-            ctx.authorization.as_deref(),
+            Some(REASONING_NAMESPACE_AUTH),
         );
 
         info!(
@@ -267,14 +309,10 @@ impl ProxyHttp for GatewayProxy {
                     entry.usage.prompt_tokens,
                     entry.usage.completion_tokens,
                 );
-                global_metrics().record_cost_saved(
-                    &ctx.model,
-                    ctx.consumer.as_deref(),
-                    tier,
-                    cost,
-                );
+                global_metrics().record_cost_saved(&ctx.model, ctx.consumer.as_deref(), tier, cost);
 
-                if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await {
+                if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await
+                {
                     let _ = session.respond_error(500).await;
                 }
 
@@ -282,8 +320,11 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if let Some(semantic_cache) = &self.state.semantic_cache {
-                if let Some(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body).ok() {
-                    if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) {
+                if let Some(payload_value) =
+                    serde_json::from_slice::<serde_json::Value>(&full_body).ok()
+                {
+                    if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array())
+                    {
                         if let Some(query_text) = build_semantic_query_text(messages) {
                             // Apply semantic gate before L2 search
                             let gate_decision = evaluate_semantic_gate(
@@ -330,7 +371,11 @@ impl ProxyHttp for GatewayProxy {
 
                                         ctx.cache_tier = Some(CacheTier::L2Semantic);
                                         ctx.cache_hit = Some(entry.clone());
-                                        global_metrics().record_cache_hit(CacheTier::L2Semantic, &ctx.model, ctx.consumer.as_deref());
+                                        global_metrics().record_cache_hit(
+                                            CacheTier::L2Semantic,
+                                            &ctx.model,
+                                            ctx.consumer.as_deref(),
+                                        );
                                         global_metrics().record_latency(
                                             crab_metrics::LatencyKind::CacheFetch,
                                             ctx.request_start.elapsed(),
@@ -375,7 +420,7 @@ impl ProxyHttp for GatewayProxy {
                 Ok(guard) => {
                     if !guard.is_leader() {
                         ctx.is_coalesced_follower = true;
-                        
+
                         if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
                             info!(
                                 request_id = %ctx.request_id,
@@ -406,7 +451,14 @@ impl ProxyHttp for GatewayProxy {
                                 cost,
                             );
 
-                            if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await
+                            if !send_cached_response(
+                                session,
+                                &entry,
+                                &ctx.model,
+                                ctx.is_streaming,
+                                tier,
+                            )
+                            .await
                             {
                                 let _ = session.respond_error(500).await;
                             }
@@ -439,6 +491,11 @@ impl ProxyHttp for GatewayProxy {
         }
 
         ctx.prepared_request = Some(prepared);
+
+        if !self.try_acquire_upstream_key(ctx) {
+            let _ = session.respond_error(503).await;
+            return Ok(true);
+        }
 
         Ok(false)
     }
@@ -497,13 +554,18 @@ impl ProxyHttp for GatewayProxy {
 
         // Check if we have health information to filter by
         let backend = {
-            let health = self.state.runtime.backend_health.read()
+            let health = self
+                .state
+                .runtime
+                .backend_health
+                .read()
                 .map_err(|_| Error::new(ErrorType::InternalError))?;
-            router.select_healthy(affinity_key.as_bytes(), |name| {
-                health.get(name).map(|h| h.healthy).unwrap_or(true)
-            })
-            .cloned()
-            .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?
+            router
+                .select_healthy(affinity_key.as_bytes(), |name| {
+                    health.get(name).map(|h| h.healthy).unwrap_or(true)
+                })
+                .cloned()
+                .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?
         };
 
         debug!(
@@ -534,10 +596,13 @@ impl ProxyHttp for GatewayProxy {
     ) -> Result<()> {
         let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
         if let Some(ref new_body) = ctx.new_request_body {
-            let _ = upstream_request.insert_header(
-                http::header::CONTENT_LENGTH,
-                new_body.len().to_string(),
-            );
+            let _ = upstream_request
+                .insert_header(http::header::CONTENT_LENGTH, new_body.len().to_string());
+        }
+
+        if let Some(guard) = ctx.upstream_key_guard.as_ref() {
+            let bearer = format!("Bearer {}", guard.bearer_secret());
+            let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
         }
 
         Ok(())
@@ -568,12 +633,46 @@ impl ProxyHttp for GatewayProxy {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
+        let status = upstream_response.status.as_u16();
+        let pool = self.state.runtime.upstream_pool();
+        let key_id = ctx
+            .upstream_key_guard
+            .as_ref()
+            .map(|g| g.key_id().to_string());
+
+        if status == 429 {
+            if let Some(ref id) = key_id {
+                pool.report_rate_limited(id);
+                global_metrics().record_upstream_key_request(id, "rate_limited");
+                if !ctx.is_streaming && ctx.upstream_retry_budget > 0 {
+                    ctx.upstream_retry_budget = 0;
+                    global_metrics().record_upstream_key_retry("cooldown_only");
+                }
+            }
+            return Ok(());
+        }
+        if status == 401 {
+            if let Some(ref id) = key_id {
+                pool.report_unauthorized(id);
+                global_metrics().record_upstream_key_request(id, "error");
+                warn!(upstream_key_id = %id, "Upstream key rejected with 401; disabled");
+            }
+            return Ok(());
+        }
+
+        if let Some(ref id) = key_id {
+            global_metrics().record_upstream_key_request(id, "ok");
+            let _ = upstream_response.insert_header("x-upstream-key-id", id.clone());
+        }
+
         if ctx.is_models_list {
             return Ok(());
         }
 
-        let status = upstream_response.status.as_u16();
         if status >= 400 {
+            if let Some(ref id) = key_id {
+                global_metrics().record_upstream_key_request(id, "error");
+            }
             return Ok(());
         }
 
@@ -614,7 +713,9 @@ impl ProxyHttp for GatewayProxy {
                     }
                 }
 
-                if let (Some(prepared), Some(accumulator)) = (&ctx.prepared_request, &mut ctx.stream_accumulator) {
+                if let (Some(prepared), Some(accumulator)) =
+                    (&ctx.prepared_request, &mut ctx.stream_accumulator)
+                {
                     let text = String::from_utf8_lossy(data);
                     for line in text.lines() {
                         let line_bytes = line.as_bytes();
@@ -633,12 +734,25 @@ impl ProxyHttp for GatewayProxy {
 
                         if let Some(usage) = &result.chunk_usage {
                             let usage_data = UsageData {
-                                prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                completion_tokens: usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                prompt_cache_hit_tokens: usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                prompt_cache_miss_tokens: usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                prompt_tokens: usage
+                                    .get("prompt_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                completion_tokens: usage
+                                    .get("completion_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                prompt_cache_hit_tokens: usage
+                                    .get("prompt_cache_hit_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                prompt_cache_miss_tokens: usage
+                                    .get("prompt_cache_miss_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
                             };
-                            ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
+                            ctx.total_tokens +=
+                                usage_data.prompt_tokens + usage_data.completion_tokens;
                             record_usage(&usage_data, &ctx.model, ctx.consumer.as_deref());
                         }
                     }
@@ -669,10 +783,17 @@ impl ProxyHttp for GatewayProxy {
                 );
             }
 
-            if let (Some(prepared), Some(accumulator)) = (&ctx.prepared_request, &mut ctx.stream_accumulator) {
+            if let (Some(prepared), Some(accumulator)) =
+                (&ctx.prepared_request, &mut ctx.stream_accumulator)
+            {
                 if let Some(store_reasoning) = Some(&self.state.reasoning_store) {
                     for (scope, prior_messages) in &prepared.record_response_contexts {
-                        accumulator.store_reasoning(store_reasoning, scope, &prepared.cache_namespace, prior_messages);
+                        accumulator.store_reasoning(
+                            store_reasoning,
+                            scope,
+                            &prepared.cache_namespace,
+                            prior_messages,
+                        );
                     }
                 }
             }
@@ -702,17 +823,32 @@ impl ProxyHttp for GatewayProxy {
             if let Ok(body_value) = serde_json::from_slice::<serde_json::Value>(&client_body) {
                 if let Some(usage) = body_value.get("usage") {
                     let usage_data = UsageData {
-                        prompt_tokens: usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        completion_tokens: usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        prompt_cache_hit_tokens: usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        prompt_cache_miss_tokens: usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        prompt_tokens: usage
+                            .get("prompt_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        completion_tokens: usage
+                            .get("completion_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        prompt_cache_hit_tokens: usage
+                            .get("prompt_cache_hit_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        prompt_cache_miss_tokens: usage
+                            .get("prompt_cache_miss_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
                     };
                     ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
                     record_usage(&usage_data, &ctx.model, ctx.consumer.as_deref());
                 }
 
                 if let Some(cache_key) = &ctx.cache_key {
-                    let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+                    let ttl_secs = self
+                        .state
+                        .tiered_cache
+                        .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
                     let entry = build_cache_entry(client_body.clone(), ctx.model.clone(), ttl_secs);
 
@@ -731,14 +867,25 @@ impl ProxyHttp for GatewayProxy {
 
                     if let Some(semantic_cache) = &self.state.semantic_cache {
                         if let Some(original_body) = &ctx.original_request_body {
-                            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
-                                if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
+                            if let Ok(payload) =
+                                serde_json::from_slice::<serde_json::Value>(original_body)
+                            {
+                                if let Some(messages) =
+                                    payload.get("messages").and_then(|m| m.as_array())
+                                {
                                     if let Some(query_text) = build_semantic_query_text(messages) {
                                         let semantic_cache = semantic_cache.clone();
-                                        let entry_clone = build_cache_entry(client_body.clone(), ctx.model.clone(), ttl_secs);
-                                        
+                                        let entry_clone = build_cache_entry(
+                                            client_body.clone(),
+                                            ctx.model.clone(),
+                                            ttl_secs,
+                                        );
+
                                         tokio::spawn(async move {
-                                            if let Err(e) = semantic_cache.insert(&query_text, &entry_clone).await {
+                                            if let Err(e) = semantic_cache
+                                                .insert(&query_text, &entry_clone)
+                                                .await
+                                            {
                                                 warn!(error = %e, "Failed to insert into semantic cache");
                                             }
                                         });
@@ -766,7 +913,8 @@ impl ProxyHttp for GatewayProxy {
                 );
             }
 
-            if let (Some(cache_key), Some(accumulator)) = (&ctx.cache_key, &ctx.stream_accumulator) {
+            if let (Some(cache_key), Some(accumulator)) = (&ctx.cache_key, &ctx.stream_accumulator)
+            {
                 let messages = accumulator.messages();
                 if !messages.is_empty() {
                     let response_json = serde_json::to_string(&serde_json::json!({
@@ -789,10 +937,14 @@ impl ProxyHttp for GatewayProxy {
                             "completion_tokens": 0,
                             "total_tokens": 0
                         }
-                    })).unwrap_or_default();
+                    }))
+                    .unwrap_or_default();
 
                     if self.state.runtime.stream_cache_enabled() {
-                        let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+                        let ttl_secs = self
+                            .state
+                            .tiered_cache
+                            .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
                         let sse_body = ctx.accumulated_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
@@ -828,15 +980,28 @@ impl ProxyHttp for GatewayProxy {
 
                         if let Some(semantic_cache) = &self.state.semantic_cache {
                             if let Some(original_body) = &ctx.original_request_body {
-                                if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body) {
-                                    if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
-                                        if let Some(query_text) = build_semantic_query_text(messages) {
-                                        let semantic_cache = semantic_cache.clone();
-                                        let entry_for_semantic = build_cache_entry(response_json.into_bytes(), ctx.model.clone(), ttl_secs);
+                                if let Ok(payload) =
+                                    serde_json::from_slice::<serde_json::Value>(original_body)
+                                {
+                                    if let Some(messages) =
+                                        payload.get("messages").and_then(|m| m.as_array())
+                                    {
+                                        if let Some(query_text) =
+                                            build_semantic_query_text(messages)
+                                        {
+                                            let semantic_cache = semantic_cache.clone();
+                                            let entry_for_semantic = build_cache_entry(
+                                                response_json.into_bytes(),
+                                                ctx.model.clone(),
+                                                ttl_secs,
+                                            );
                                             let query_text = query_text.to_string();
-                                            
+
                                             tokio::spawn(async move {
-                                                if let Err(e) = semantic_cache.insert(&query_text, &entry_for_semantic).await {
+                                                if let Err(e) = semantic_cache
+                                                    .insert(&query_text, &entry_for_semantic)
+                                                    .await
+                                                {
                                                     warn!(error = %e, "Failed to insert streaming response into semantic cache");
                                                 }
                                             });
@@ -883,6 +1048,7 @@ impl ProxyHttp for GatewayProxy {
                 consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
                 conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
                 total_tokens = ctx.total_tokens,
+                upstream_key_id = ?ctx.upstream_key_guard.as_ref().map(|g| g.key_id()),
                 "Request completed"
             );
 
@@ -984,7 +1150,12 @@ fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> Ca
     }
 }
 
-fn build_cache_entry_with_sse(response_body: Vec<u8>, sse_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
+fn build_cache_entry_with_sse(
+    response_body: Vec<u8>,
+    sse_body: Vec<u8>,
+    model: String,
+    ttl_secs: u64,
+) -> CacheEntry {
     CacheEntry {
         response_body,
         sse_body: Some(sse_body),
@@ -1115,7 +1286,11 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
         Err(_) => return json_body.to_vec(),
     };
 
-    let choices = value.get("choices").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    let choices = value
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
     let usage = value.get("usage").cloned();
 
     let mut sse_output = Vec::new();
@@ -1177,9 +1352,14 @@ fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<String> {
                 Some(serde_json::Value::String(s)) => s.clone(),
                 Some(serde_json::Value::Array(arr)) => {
                     // Array content: extract text parts or serialize as JSON subset
-                    let sub: Vec<String> = arr.iter().filter_map(|part| {
-                        part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                    }).collect();
+                    let sub: Vec<String> = arr
+                        .iter()
+                        .filter_map(|part| {
+                            part.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
                     if sub.is_empty() {
                         // No text parts found, skip this message
                         continue;
@@ -1220,9 +1400,7 @@ mod tests {
 
     #[test]
     fn test_build_semantic_query_text_single_user() {
-        let messages = vec![
-            json!({"role": "user", "content": "Hello"}),
-        ];
+        let messages = vec![json!({"role": "user", "content": "Hello"})];
         let result = build_semantic_query_text(&messages);
         assert_eq!(result, Some("Hello".to_string()));
     }
@@ -1234,7 +1412,10 @@ mod tests {
             json!({"role": "user", "content": "What is Rust?"}),
         ];
         let result = build_semantic_query_text(&messages);
-        assert_eq!(result, Some("You are a helpful assistant.\nWhat is Rust?".to_string()));
+        assert_eq!(
+            result,
+            Some("You are a helpful assistant.\nWhat is Rust?".to_string())
+        );
     }
 
     #[test]

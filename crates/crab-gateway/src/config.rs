@@ -91,6 +91,15 @@ pub struct GatewayConfig {
     pub management: Option<ManagementConfig>,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub gateway: GatewaySection,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct GatewaySection {
+    /// When true, `api_key` may still be used as a client Bearer (not recommended in production).
+    #[serde(default)]
+    pub legacy_api_key_as_client_auth: bool,
 }
 
 fn default_max_request_body_bytes() -> usize {
@@ -128,10 +137,7 @@ fn default_invalidate_scan_timeout_secs() -> u64 {
     300
 }
 
-pub const WEAK_ADMIN_KEYS: &[&str] = &[
-    "change-me-in-production",
-    "dev-only-gateway-admin-secret",
-];
+pub const WEAK_ADMIN_KEYS: &[&str] = &["change-me-in-production", "dev-only-gateway-admin-secret"];
 
 pub const WEAK_API_KEY_PREFIXES: &[&str] = &["sk-your-"];
 
@@ -191,6 +197,12 @@ pub struct UpstreamConfig {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub tls_sni: Option<String>,
+    /// DeepSeek upstream API keys (quota pool). If empty, falls back to top-level `api_key`.
+    #[serde(default)]
+    pub keys: Vec<SecretString>,
+    /// Cooldown after HTTP 429 before reusing a key (seconds).
+    #[serde(default = "default_upstream_key_cooldown_secs")]
+    pub key_cooldown_secs: u64,
     #[serde(default = "default_health_check_interval_secs")]
     pub health_check_interval_secs: u64,
     #[serde(default = "default_max_coalesce_inflight")]
@@ -199,9 +211,19 @@ pub struct UpstreamConfig {
     pub coalesce_timeout_secs: Option<u64>,
 }
 
-fn default_health_check_interval_secs() -> u64 { 30 }
-fn default_max_coalesce_inflight() -> Option<usize> { None }
-fn default_coalesce_timeout_secs() -> Option<u64> { None }
+fn default_upstream_key_cooldown_secs() -> u64 {
+    60
+}
+
+fn default_health_check_interval_secs() -> u64 {
+    30
+}
+fn default_max_coalesce_inflight() -> Option<usize> {
+    None
+}
+fn default_coalesce_timeout_secs() -> Option<u64> {
+    None
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CacheConfig {
@@ -276,10 +298,18 @@ pub struct SemanticConfig {
     pub embed_only_on_exact_miss: bool,
 }
 
-fn default_semantic_min_query_chars() -> usize { 32 }
-fn default_semantic_max_query_chars() -> usize { 8192 }
-fn default_semantic_max_concurrent_embeds() -> usize { 4 }
-fn default_semantic_embed_only_on_exact_miss() -> bool { true }
+fn default_semantic_min_query_chars() -> usize {
+    32
+}
+fn default_semantic_max_query_chars() -> usize {
+    8192
+}
+fn default_semantic_max_concurrent_embeds() -> usize {
+    4
+}
+fn default_semantic_embed_only_on_exact_miss() -> bool {
+    true
+}
 
 impl GatewayConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
@@ -294,6 +324,16 @@ impl GatewayConfig {
         if let Ok(url) = std::env::var("CRABCACHE_L1_REDIS_URL") {
             if !url.is_empty() {
                 config.cache.l1_redis_url = url;
+            }
+        }
+        if let Ok(keys_csv) = std::env::var("CRABCACHE_UPSTREAM_KEYS") {
+            if !keys_csv.is_empty() {
+                config.upstream.keys = keys_csv
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| SecretString::new(s.to_string()))
+                    .collect();
             }
         }
         if config.management.is_none() {
@@ -338,11 +378,36 @@ impl GatewayConfig {
     }
 
     pub fn upstream_base_url(&self) -> &str {
-        self.upstream.base_url.as_deref().unwrap_or("https://api.deepseek.com")
+        self.upstream
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.deepseek.com")
     }
 
     pub fn fallback_model(&self) -> &str {
         self.upstream.model.as_deref().unwrap_or("deepseek-v4-pro")
+    }
+
+    /// Resolved DeepSeek upstream key secrets for the outbound pool.
+    pub fn upstream_key_secrets(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .upstream
+            .keys
+            .iter()
+            .map(|k| k.inner().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        if keys.is_empty() {
+            let api = self.api_key.inner();
+            if !api.is_empty() {
+                keys.push(api.to_string());
+            }
+        }
+        keys
+    }
+
+    pub fn upstream_key_cooldown_secs(&self) -> u64 {
+        self.upstream.key_cooldown_secs
     }
 
     /// Validate the configuration and return a list of errors.
@@ -351,15 +416,27 @@ impl GatewayConfig {
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
-        let api_key = self.api_key.inner();
-        if api_key.is_empty() {
-            errors.push("api_key is not configured".into());
-        } else if api_key.starts_with("sk-your-") {
-            errors.push("api_key appears to be a placeholder (starts with 'sk-your-'). Please set a real API key.".into());
+        let upstream_keys = self.upstream_key_secrets();
+        if upstream_keys.is_empty() {
+            errors.push(
+                "At least one upstream DeepSeek API key is required (upstream.keys, api_key, or CRABCACHE_UPSTREAM_KEYS / CRABCACHE_API_KEY)".into(),
+            );
+        } else {
+            for (i, key) in upstream_keys.iter().enumerate() {
+                if key.starts_with("sk-your-") {
+                    errors.push(format!(
+                        "upstream key #{} appears to be a placeholder (starts with 'sk-your-')",
+                        i + 1
+                    ));
+                }
+            }
         }
 
         if self.upstream.deepseek_endpoints.is_empty() {
-            errors.push("At least one upstream endpoint is required in [upstream].deepseek_endpoints".into());
+            errors.push(
+                "At least one upstream endpoint is required in [upstream].deepseek_endpoints"
+                    .into(),
+            );
         }
 
         for ep in &self.upstream.deepseek_endpoints {
@@ -544,10 +621,13 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 base_url: None,
                 model: None,
                 tls_sni: None,
+                keys: vec![],
+                key_cooldown_secs: 60,
                 health_check_interval_secs: 30,
                 max_coalesce_inflight: Some(10_000),
                 coalesce_timeout_secs: None,
             },
+            gateway: GatewaySection::default(),
             cache: CacheConfig {
                 l0_max_capacity: None,
                 l0_ttl_secs: None,
@@ -599,10 +679,13 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 base_url: None,
                 model: None,
                 tls_sni: None,
+                keys: vec![],
+                key_cooldown_secs: 60,
                 health_check_interval_secs: 30,
                 max_coalesce_inflight: None,
                 coalesce_timeout_secs: None,
             },
+            gateway: GatewaySection::default(),
             cache: CacheConfig {
                 l0_max_capacity: None,
                 l0_ttl_secs: None,

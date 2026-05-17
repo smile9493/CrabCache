@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry,
+    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts,
+    Registry,
 };
 use std::time::Duration;
 
@@ -55,6 +56,9 @@ pub struct GatewayMetrics {
     pub upstream_prompt_cache_tokens: IntCounterVec,
     pub stream_cache_sse_omitted: IntCounterVec,
     pub rejected_requests: IntCounterVec,
+    pub upstream_key_requests: IntCounterVec,
+    pub upstream_key_inflight: IntGaugeVec,
+    pub upstream_key_retries: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -110,7 +114,9 @@ impl GatewayMetrics {
                 "gateway_cache_fetch_latency_seconds",
                 "Cache fetch latency in seconds",
             )
-            .buckets(vec![0.000_001, 0.000_01, 0.000_1, 0.001, 0.005, 0.01, 0.05, 0.1]),
+            .buckets(vec![
+                0.000_001, 0.000_01, 0.000_1, 0.001, 0.005, 0.01, 0.05, 0.1,
+            ]),
             &["tier"],
         )?;
 
@@ -178,6 +184,30 @@ impl GatewayMetrics {
             &["reason"],
         )?;
 
+        let upstream_key_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_key_requests_total",
+                "Upstream DeepSeek API key pool requests by key id and result",
+            ),
+            &["key_id", "result"],
+        )?;
+
+        let upstream_key_inflight = IntGaugeVec::new(
+            Opts::new(
+                "gateway_upstream_key_inflight",
+                "In-flight upstream requests per DeepSeek API key id",
+            ),
+            &["key_id"],
+        )?;
+
+        let upstream_key_retries = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_key_retries_total",
+                "Upstream key rotation attempts after rate limit (same-request retry not yet supported for streaming)",
+            ),
+            &["outcome"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -193,6 +223,9 @@ impl GatewayMetrics {
             upstream_prompt_cache_tokens,
             stream_cache_sse_omitted,
             rejected_requests,
+            upstream_key_requests,
+            upstream_key_inflight,
+            upstream_key_retries,
         })
     }
 
@@ -211,7 +244,28 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_prompt_cache_tokens.clone()))?;
         registry.register(Box::new(self.stream_cache_sse_omitted.clone()))?;
         registry.register(Box::new(self.rejected_requests.clone()))?;
+        registry.register(Box::new(self.upstream_key_requests.clone()))?;
+        registry.register(Box::new(self.upstream_key_inflight.clone()))?;
+        registry.register(Box::new(self.upstream_key_retries.clone()))?;
         Ok(())
+    }
+
+    pub fn set_upstream_key_inflight(&self, key_id: &str, inflight: i64) {
+        self.upstream_key_inflight
+            .with_label_values(&[key_id])
+            .set(inflight);
+    }
+
+    pub fn record_upstream_key_retry(&self, outcome: &str) {
+        self.upstream_key_retries
+            .with_label_values(&[outcome])
+            .inc();
+    }
+
+    pub fn record_upstream_key_request(&self, key_id: &str, result: &str) {
+        self.upstream_key_requests
+            .with_label_values(&[key_id, result])
+            .inc();
     }
 
     pub fn record_rejected(&self, reason: &str) {
@@ -302,9 +356,7 @@ impl GatewayMetrics {
                     .observe(duration_secs);
             }
             LatencyKind::TTFT => {
-                self.ttft
-                    .with_label_values(&[model])
-                    .observe(duration_secs);
+                self.ttft.with_label_values(&[model]).observe(duration_secs);
             }
             LatencyKind::CacheFetch => {
                 if let Some(tier) = tier {
@@ -346,16 +398,20 @@ impl GatewayMetrics {
     }
 
     pub fn record_semantic_skipped(&self, reason: &str) {
-        self.skipped_requests
-            .with_label_values(&[reason])
-            .inc();
+        self.skipped_requests.with_label_values(&[reason]).inc();
     }
 
     pub fn record_coalesced_request(&self) {
         self.coalesced_requests.inc();
     }
 
-    pub fn record_cost_saved(&self, model: &str, consumer: Option<&str>, tier: CacheTier, usd: f64) {
+    pub fn record_cost_saved(
+        &self,
+        model: &str,
+        consumer: Option<&str>,
+        tier: CacheTier,
+        usd: f64,
+    ) {
         let consumer = consumer.unwrap_or("unknown");
         self.cost_saved_usd
             .with_label_values(&[model, consumer, tier.as_str()])
@@ -376,9 +432,8 @@ impl GatewayMetrics {
     }
 }
 
-static GLOBAL_METRICS: Lazy<GatewayMetrics> = Lazy::new(|| {
-    GatewayMetrics::new().expect("Failed to create global metrics")
-});
+static GLOBAL_METRICS: Lazy<GatewayMetrics> =
+    Lazy::new(|| GatewayMetrics::new().expect("Failed to create global metrics"));
 
 pub fn global_metrics() -> &'static GatewayMetrics {
     &GLOBAL_METRICS

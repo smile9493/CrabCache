@@ -1,0 +1,40 @@
+# Admin Dashboard API + static UI (build dashboard on host first: see scripts/build_dashboard.sh).
+FROM rust:1.85-slim AS builder
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates/crab-control/Cargo.toml crates/crab-control/Cargo.toml
+COPY crates/crab-admin/Cargo.toml crates/crab-admin/Cargo.toml
+
+RUN mkdir -p crates/crab-control/src && echo "" > crates/crab-control/src/lib.rs && \
+    mkdir -p crates/crab-admin/src && echo "fn main() {}" > crates/crab-admin/src/main.rs
+
+RUN cargo build --release -p crab-admin 2>/dev/null || true
+
+COPY crates/crab-control crates/crab-control
+COPY crates/crab-admin crates/crab-admin
+
+RUN cargo build --release -p crab-admin
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/crab-admin /app/crab-admin
+COPY crates/crab-dashboard/dist ./crates/crab-dashboard/dist
+
+ENV CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
+ENV CRABCACHE_ADMIN_KEY=admin
+
+EXPOSE 3000
+
+CMD ["/app/crab-admin", "--listen", "0.0.0.0:3000"]

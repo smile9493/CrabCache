@@ -48,7 +48,11 @@ impl GatewayAdminClient {
     }
 
     pub async fn health(&self) -> Result<(), ControlError> {
-        let resp = self.http.get(format!("{}/v1/health", self.base_url)).send().await?;
+        let resp = self
+            .http
+            .get(format!("{}/v1/health", self.base_url))
+            .send()
+            .await?;
         let resp = Self::check(resp).await?;
         if resp.status().is_success() {
             Ok(())
@@ -62,7 +66,11 @@ impl GatewayAdminClient {
 
     /// Readiness probe: checks Redis via the gateway management API.
     pub async fn ready(&self) -> Result<(), ControlError> {
-        let resp = self.http.get(format!("{}/v1/ready", self.base_url)).send().await?;
+        let resp = self
+            .http
+            .get(format!("{}/v1/ready", self.base_url))
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         if resp.status().is_success() {
             return Ok(());
@@ -72,7 +80,10 @@ impl GatewayAdminClient {
     }
 
     pub async fn status(&self) -> Result<GatewayStatus, ControlError> {
-        let resp = self.authed(reqwest::Method::GET, "/v1/status").send().await?;
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/status")
+            .send()
+            .await?;
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
@@ -146,7 +157,10 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn put_stream_cache(&self, req: &StreamCacheConfig) -> Result<StreamCacheConfig, ControlError> {
+    pub async fn put_stream_cache(
+        &self,
+        req: &StreamCacheConfig,
+    ) -> Result<StreamCacheConfig, ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/runtime/stream_cache")
             .json(req)
@@ -165,7 +179,10 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
+    pub async fn invalidate_cache(
+        &self,
+        req: &InvalidateCacheRequest,
+    ) -> Result<InvalidateCacheResponse, ControlError> {
         let mut builder = self
             .authed(reqwest::Method::POST, "/v1/cache/invalidate")
             .json(req);
@@ -189,7 +206,10 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn put_fingerprint(&self, req: &FingerprintConfigRequest) -> Result<FingerprintConfigRequest, ControlError> {
+    pub async fn put_fingerprint(
+        &self,
+        req: &FingerprintConfigRequest,
+    ) -> Result<FingerprintConfigRequest, ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/cache/fingerprint")
             .json(req)
@@ -214,6 +234,42 @@ impl GatewayAdminClient {
     ) -> Result<RoutingBackendsView, ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/routing/backends")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_upstream_keys(&self) -> Result<UpstreamKeysView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/upstream/keys")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_upstream_keys(
+        &self,
+        req: &PutUpstreamKeysRequest,
+    ) -> Result<UpstreamKeysView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/upstream/keys")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn patch_upstream_key(
+        &self,
+        id: &str,
+        req: &PatchUpstreamKeyRequest,
+    ) -> Result<UpstreamKeyView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PATCH, &format!("/v1/upstream/keys/{id}"))
             .json(req)
             .send()
             .await?;

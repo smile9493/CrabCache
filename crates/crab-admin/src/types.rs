@@ -202,6 +202,11 @@ pub struct UpdateConnectionConfigRequest {
     pub h2_ping_interval_secs: u64,
 }
 
+pub use crab_control::{
+    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyInput, UpstreamKeyView,
+    UpstreamKeysView,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
     pub base_url: String,
