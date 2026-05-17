@@ -89,6 +89,24 @@ impl Translations {
             Locale::EnUS => "Gateway Online",
         }
     }
+    pub fn sidebar_group_monitor(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "监控",
+            Locale::EnUS => "Monitor",
+        }
+    }
+    pub fn sidebar_group_config(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置",
+            Locale::EnUS => "Configure",
+        }
+    }
+    pub fn sidebar_group_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维",
+            Locale::EnUS => "Operations",
+        }
+    }
 
     pub fn theme(self) -> &'static str {
         match self.locale {
@@ -505,6 +523,78 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "无",
             Locale::EnUS => "None",
+        }
+    }
+    pub fn cache_ops_invalidate_running(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全量失效进行中…",
+            Locale::EnUS => "Full invalidation in progress…",
+        }
+    }
+    pub fn cache_ops_invalidate_job(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Gateway 异步任务",
+            Locale::EnUS => "Gateway async job",
+        }
+    }
+    pub fn overview_semantic_guard(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义守卫",
+            Locale::EnUS => "Semantic guard",
+        }
+    }
+    pub fn overview_semantic_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中 / 拒绝 / 跳过（与 L2 tier 命中不同）",
+            Locale::EnUS => "hit / rejected / skipped (not L2 tier hits)",
+        }
+    }
+    pub fn overview_cache_hits(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存命中",
+            Locale::EnUS => "Cache hits",
+        }
+    }
+    pub fn overview_cache_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存 Token",
+            Locale::EnUS => "Cache tokens",
+        }
+    }
+    pub fn overview_token_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中",
+            Locale::EnUS => "Hit",
+        }
+    }
+    pub fn overview_token_miss(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未命中",
+            Locale::EnUS => "Miss",
+        }
+    }
+    pub fn overview_status_active(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运行中",
+            Locale::EnUS => "Active",
+        }
+    }
+    pub fn keys_lan_url_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "局域网地址",
+            Locale::EnUS => "LAN URL",
+        }
+    }
+    pub fn cache_ops_scope_required(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请填写失效范围",
+            Locale::EnUS => "Scope is required",
+        }
+    }
+    pub fn auth_tagline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "DeepSeek V4 高性能 API 网关控制台",
+            Locale::EnUS => "Control plane for the DeepSeek V4 API gateway",
         }
     }
 

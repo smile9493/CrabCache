@@ -42,7 +42,7 @@ pub fn RoutingPage() -> impl IntoView {
     });
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <SectionHeader
                 title=t.routing_title()
                 description=t.routing_desc()

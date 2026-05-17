@@ -87,3 +87,22 @@ pub fn EmptyState(message: &'static str) -> impl IntoView {
         </div>
     }
 }
+
+#[component]
+pub fn Alert(variant: &'static str, message: Signal<String>) -> impl IntoView {
+    let class = match variant {
+        "success" => "alert alert-success",
+        "warning" => "alert alert-warning",
+        "error" => "alert alert-error",
+        _ => "alert alert-info",
+    };
+    view! {
+        {move || {
+            if message.get().is_empty() {
+                ().into_any()
+            } else {
+                view! { <div class=class role="alert">{message.get()}</div> }.into_any()
+            }
+        }}
+    }
+}

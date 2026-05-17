@@ -57,6 +57,7 @@ async fn test_management_state() -> ManagementState {
         tiered_cache,
         admin_key: "test-admin".to_string(),
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
+        invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(crab_gateway::management::InvalidateRateState::default())),
         invalidate_scan_timeout_secs: 300,
     }
@@ -165,6 +166,30 @@ async fn invalidate_all_accepts_with_confirm_header() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn get_invalidate_status_without_job() {
+    let app = router(test_management_state().await);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/cache/invalidate/status")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["all_in_progress"], false);
+    assert!(json["job"].is_null());
 }
 
 #[tokio::test]

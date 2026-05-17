@@ -23,7 +23,7 @@ pub fn LogsPage() -> impl IntoView {
     load_logs();
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <div class="flex items-center justify-between">
                 <SectionHeader
                     title=t.logs_title()

@@ -55,11 +55,24 @@ pub struct LastInvalidateView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateJobView {
+    pub scope: String,
+    pub phase: String,
+    pub error: Option<String>,
+    pub started_at_secs: u64,
+    pub completed_at_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheOpsView {
     pub fingerprint_version: u32,
     pub fingerprint_normalize: bool,
     pub stream_cache_enabled: bool,
     pub last_invalidate: Option<LastInvalidateView>,
+    #[serde(default)]
+    pub invalidate_all_in_progress: bool,
+    #[serde(default)]
+    pub invalidate_job: Option<InvalidateJobView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

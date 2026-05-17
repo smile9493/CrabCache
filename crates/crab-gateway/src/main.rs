@@ -318,6 +318,7 @@ fn main() -> Result<()> {
         tiered_cache: tiered_cache.clone(),
         admin_key: mgmt_admin_key,
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
+        invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(InvalidateRateState::default())),
         invalidate_scan_timeout_secs: mgmt_cfg.invalidate_scan_timeout_secs,
     };

@@ -145,6 +145,15 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn get_invalidate_status(&self) -> Result<InvalidateCacheStatus, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/cache/invalidate/status")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
         let mut builder = self
             .authed(reqwest::Method::POST, "/v1/cache/invalidate")

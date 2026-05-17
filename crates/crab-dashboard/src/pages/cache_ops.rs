@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::ui::*;
+use crate::components::ui::{Alert, SectionHeader, Spinner};
 use crate::locale::use_translations;
 use crate::types::{
     CacheOpsView, FingerprintConfigBody, InvalidateCacheBody, StreamCacheToggle,
@@ -11,7 +11,7 @@ use crate::types::{
 pub fn CacheOpsPage() -> impl IntoView {
     let t = use_translations();
     let ops: RwSignal<Option<Result<CacheOpsView, String>>> = RwSignal::new(None);
-    let message: RwSignal<Option<String>> = RwSignal::new(None);
+    let message: RwSignal<String> = RwSignal::new(String::new());
     let show_confirm_all = RwSignal::new(false);
 
     let reload = move || {
@@ -26,8 +26,9 @@ pub fn CacheOpsPage() -> impl IntoView {
     reload();
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <SectionHeader title=t.cache_ops_title() description=t.cache_ops_desc() />
+            <Alert variant="info" message=message.into() />
 
             {move || match ops.get() {
                 None => view! { <Spinner /> }.into_any(),
@@ -42,10 +43,6 @@ pub fn CacheOpsPage() -> impl IntoView {
                     let last = view.last_invalidate.clone();
 
                     view! {
-                        {move || message.get().map(|m| view! {
-                            <div class="glass-card text-sm text-accent">{m}</div>
-                        })}
-
                         <div class="bento-grid-2">
                             <div class="glass-card space-y-4">
                                 <h3 class="text-sm font-semibold text-theme">{t.cache_ops_fingerprint_title()}</h3>
@@ -77,10 +74,10 @@ pub fn CacheOpsPage() -> impl IntoView {
                                                 normalize_content: normalize,
                                             }).await {
                                                 Ok(_) => {
-                                                    message.set(Some(t.routing_saved().to_string()));
+                                                    message.set(t.routing_saved().to_string());
                                                     reload();
                                                 }
-                                                Err(e) => message.set(Some(e)),
+                                                Err(e) => { message.set(e); }
                                             }
                                         });
                                     }
@@ -101,27 +98,47 @@ pub fn CacheOpsPage() -> impl IntoView {
                                             leptos::task::spawn_local(async move {
                                                 match api::update_stream_cache(&StreamCacheToggle { enabled }).await {
                                                     Ok(_) => {
-                                                        message.set(Some(t.routing_saved().to_string()));
+                                                        message.set(t.routing_saved().to_string());
                                                         reload();
                                                     }
-                                                    Err(e) => message.set(Some(e)),
+                                                    Err(e) => { message.set(e); }
                                                 }
                                             });
                                         }
                                     />
                                     {t.cache_ops_stream_cache()}
                                 </label>
-                                <div class="text-xs text-theme-muted border-t border-theme pt-3">
-                                    <div class="font-medium text-theme-secondary mb-1">{t.cache_ops_last_invalidate()}</div>
-                                    {if let Some(li) = last {
+                                <div class="text-xs text-theme-muted border-t border-theme pt-3 space-y-3">
+                                    {if view.invalidate_all_in_progress {
                                         view! {
-                                            <div>{format!("scope={} status={}", li.scope, li.status)}</div>
-                                            <div class="text-theme-muted">{format!("at={}", li.at_secs)}</div>
-                                            {li.error.map(|e| view! { <div class="text-error">{e}</div> })}
+                                            <div class="text-warning font-medium">{t.cache_ops_invalidate_running()}</div>
                                         }.into_any()
                                     } else {
-                                        view! { <div>{t.cache_ops_none()}</div> }.into_any()
+                                        ().into_any()
                                     }}
+                                    {if let Some(job) = view.invalidate_job.clone() {
+                                        view! {
+                                            <div>
+                                                <div class="font-medium text-theme-secondary mb-1">{t.cache_ops_invalidate_job()}</div>
+                                                <div>{format!("{} — {}", job.scope, job.phase)}</div>
+                                                {job.error.map(|e| view! { <div class="text-error">{e}</div> })}
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }}
+                                    <div>
+                                        <div class="font-medium text-theme-secondary mb-1">{t.cache_ops_last_invalidate()}</div>
+                                        {if let Some(li) = last {
+                                            view! {
+                                                <div>{format!("scope={} status={}", li.scope, li.status)}</div>
+                                                <div class="text-theme-muted">{format!("at={}", li.at_secs)}</div>
+                                                {li.error.map(|e| view! { <div class="text-error">{e}</div> })}
+                                            }.into_any()
+                                        } else {
+                                            view! { <div>{t.cache_ops_none()}</div> }.into_any()
+                                        }}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -143,7 +160,7 @@ pub fn CacheOpsPage() -> impl IntoView {
                                 on:click=move |_| {
                                     let s = scope.get().trim().to_string();
                                     if s.is_empty() {
-                                        message.set(Some("scope is required".to_string()));
+                                        message.set(t.cache_ops_scope_required().to_string());
                                         return;
                                     }
                                     if s == "all" {
@@ -153,10 +170,10 @@ pub fn CacheOpsPage() -> impl IntoView {
                                         leptos::task::spawn_local(async move {
                                             match api::invalidate_cache(&InvalidateCacheBody { scope: scope_val }).await {
                                                 Ok(r) => {
-                                                    message.set(Some(format!("{}: {}", r.scope, r.status)));
+                                                    message.set(format!("{}: {}", r.scope, r.status));
                                                     reload();
                                                 }
-                                                Err(e) => message.set(Some(e)),
+                                                Err(e) => { message.set(e); }
                                             }
                                         });
                                     }
@@ -187,10 +204,10 @@ pub fn CacheOpsPage() -> impl IntoView {
                                                         scope: "all".to_string(),
                                                     }).await {
                                                         Ok(r) => {
-                                                            message.set(Some(format!("{}: {}", r.scope, r.status)));
+                                                            message.set(format!("{}: {}", r.scope, r.status));
                                                             reload();
                                                         }
-                                                        Err(e) => message.set(Some(e)),
+                                                        Err(e) => { message.set(e); }
                                                     }
                                                 });
                                             }

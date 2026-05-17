@@ -196,10 +196,22 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
         total_input_tokens: total_input_tokens_hit + total_input_tokens_miss,
         total_output_tokens,
         total_tokens: total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        latency_l0_ms: 0.0,
-        latency_l1_ms: 0.0,
-        latency_l2_ms: 0.0,
-        latency_upstream_ms: 0.0,
+        latency_l0_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L0_moka")],
+        ),
+        latency_l1_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L1_redis")],
+        ),
+        latency_l2_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L2_semantic")],
+        ),
+        latency_upstream_ms: avg_prometheus_histogram_ms(&body, "gateway_upstream_latency_seconds", &[]),
         active_keys: state.keys_meta.len() as u64,
         uptime_hours: uptime_secs / 3600,
         hourly_stats,
@@ -216,6 +228,46 @@ fn labels_match(labels: &str, required: &[(&str, &str)]) -> bool {
     required
         .iter()
         .all(|(key, val)| labels.contains(&format!("{key}=\"{val}\"")))
+}
+
+/// Sum all float samples for `metric` whose labels contain every required pair.
+fn sum_prometheus_sample(body: &str, metric: &str, required: &[(&str, &str)]) -> f64 {
+    let mut total = 0.0;
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || !line.starts_with(metric) {
+            continue;
+        }
+        if let Some(open) = line.find('{') {
+            if let Some(close) = line.find('}') {
+                let labels = &line[open + 1..close];
+                if !labels_match(labels, required) {
+                    continue;
+                }
+                let value_part = line[close + 1..].trim();
+                if let Ok(v) = value_part.parse::<f64>() {
+                    total += v;
+                }
+            }
+        } else if required.is_empty() {
+            let value_part = line[metric.len()..].trim();
+            if let Ok(v) = value_part.parse::<f64>() {
+                total += v;
+            }
+        }
+    }
+    total
+}
+
+/// Average latency in milliseconds from Prometheus histogram `_sum` / `_count` series.
+fn avg_prometheus_histogram_ms(body: &str, metric: &str, required: &[(&str, &str)]) -> f64 {
+    let sum = sum_prometheus_sample(body, &format!("{metric}_sum"), required);
+    let count = sum_prometheus_sample(body, &format!("{metric}_count"), required);
+    if count > 0.0 {
+        (sum / count) * 1000.0
+    } else {
+        0.0
+    }
 }
 
 /// Sum all counter samples for `metric` whose labels contain every required pair.
@@ -266,6 +318,23 @@ gateway_deepseek_input_tokens_total{cache_status="miss",model="m1",consumer="c"}
             sum_prometheus_counter(body, "gateway_deepseek_input_tokens_total", &[("cache_status", "miss")]),
             5
         );
+    }
+
+    #[test]
+    fn avg_histogram_across_models() {
+        let body = r#"
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m1"} 0.002
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m2"} 0.004
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m1"} 10
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
+"#;
+        let avg = super::avg_prometheus_histogram_ms(
+            body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L0_moka")],
+        );
+        // (0.006 / 40) * 1000 = 0.15 ms
+        assert!((avg - 0.15).abs() < 1e-6);
     }
 }
 
@@ -602,11 +671,27 @@ async fn get_cache_ops(
         error: li.error,
     });
 
+    let invalidate_status = state
+        .gateway
+        .get_invalidate_status()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let invalidate_job = invalidate_status.job.map(|j| InvalidateJobView {
+        scope: j.scope,
+        phase: j.phase,
+        error: j.error,
+        started_at_secs: j.started_at_secs,
+        completed_at_secs: j.completed_at_secs,
+    });
+
     Ok(Json(CacheOpsView {
         fingerprint_version: fingerprint.version,
         fingerprint_normalize: fingerprint.normalize_content,
         stream_cache_enabled: status.stream_cache_enabled,
         last_invalidate,
+        invalidate_all_in_progress: invalidate_status.all_in_progress,
+        invalidate_job,
     }))
 }
 

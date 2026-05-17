@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::auth::{save_admin_key, use_admin_key};
-use crate::locale::use_translations;
+use crate::locale::{Translations, use_translations};
 
 #[component]
 pub fn AuthGate() -> impl IntoView {
@@ -43,43 +43,47 @@ pub fn AuthGate() -> impl IntoView {
     };
 
     view! {
-        <div class="min-h-screen flex items-center justify-center bg-theme p-6">
-            <div class="w-full max-w-md metric-card p-8 space-y-6">
-                <div>
-                    <h1 class="text-xl font-semibold text-theme">{t.auth_title()}</h1>
-                    <p class="mt-2 text-sm text-theme-muted">{t.auth_desc()}</p>
+        <div class="auth-screen">
+            <div class="auth-screen-glow" aria-hidden="true"></div>
+            <div class="auth-card glass-card-raised">
+                <div class="auth-brand">
+                    <img src="/style/favicon.svg" alt="" class="brand-logo brand-logo-lg" width="40" height="40" />
+                    <div>
+                        <h1 class="auth-title">{Translations::sidebar_brand}</h1>
+                        <p class="auth-tagline">{t.auth_tagline()}</p>
+                    </div>
                 </div>
-                <div class="space-y-2">
-                    <label class="block text-xs text-theme-muted">{t.auth_key_label()}</label>
-                    <input
-                        type="password"
-                        class="w-full px-3 py-2 rounded-lg border border-theme bg-theme-secondary text-theme text-sm"
-                        placeholder=t.auth_key_placeholder()
-                        prop:value=move || input.get()
-                        on:input=move |ev| {
-                            input.set(event_target_value(&ev));
-                            error.set(String::new());
+                <div class="auth-form space-y-4">
+                    <div>
+                        <h2 class="text-base font-semibold text-theme">{t.auth_title()}</h2>
+                        <p class="mt-1 text-sm text-theme-muted">{t.auth_desc()}</p>
+                    </div>
+                    <div class="space-y-2">
+                        <label class="block text-xs text-theme-muted">{t.auth_key_label()}</label>
+                        <input
+                            type="password"
+                            class="input"
+                            placeholder=t.auth_key_placeholder()
+                            prop:value=move || input.get()
+                            on:input=move |ev| {
+                                input.set(event_target_value(&ev));
+                                error.set(String::new());
+                            }
+                            on:keydown=submit_keydown
+                        />
+                    </div>
+                    {move || {
+                        if error.get().is_empty() {
+                            ().into_any()
+                        } else {
+                            view! { <p class="text-sm text-error">{error.get()}</p> }.into_any()
                         }
-                        on:keydown=submit_keydown
-                    />
+                    }}
+                    <button type="button" class="btn btn-primary w-full" on:click=submit_click>
+                        {t.auth_submit()}
+                    </button>
+                    <DevDefaultKeyButton admin_key=admin_key />
                 </div>
-                {move || {
-                    if error.get().is_empty() {
-                        ().into_any()
-                    } else {
-                        view! {
-                            <p class="text-sm text-rose-500">{error.get()}</p>
-                        }.into_any()
-                    }
-                }}
-                <button
-                    type="button"
-                    class="w-full py-2 rounded-lg bg-accent text-white text-sm font-medium hover:opacity-90 transition-opacity"
-                    on:click=submit_click
-                >
-                    {t.auth_submit()}
-                </button>
-                <DevDefaultKeyButton admin_key=admin_key />
             </div>
         </div>
     }
@@ -103,21 +107,15 @@ fn DevDefaultKeyButton(admin_key: RwSignal<String>) -> impl IntoView {
         };
 
         return view! {
-            <div class="space-y-2">
+            <div class="space-y-2 pt-2 border-t border-theme-light">
                 {move || {
                     if error.get().is_empty() {
                         ().into_any()
                     } else {
-                        view! {
-                            <p class="text-sm text-rose-500">{error.get()}</p>
-                        }.into_any()
+                        view! { <p class="text-sm text-error">{error.get()}</p> }.into_any()
                     }
                 }}
-                <button
-                    type="button"
-                    class="w-full py-2 rounded-lg border border-theme text-theme-secondary text-sm hover:bg-theme-secondary transition-colors"
-                    on:click=use_dev_default
-                >
+                <button type="button" class="btn btn-secondary w-full" on:click=use_dev_default>
                     {t.auth_dev_default()}
                 </button>
             </div>

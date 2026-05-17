@@ -17,7 +17,7 @@ use crab_proxy::{RuntimeConfig, StoredKey};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
@@ -29,8 +29,18 @@ pub struct ManagementState {
     pub tiered_cache: Arc<TieredCache>,
     pub admin_key: String,
     pub invalidate_all_in_progress: Arc<AtomicBool>,
+    pub invalidate_job: Arc<Mutex<Option<InvalidateJobSnapshot>>>,
     pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
     pub invalidate_scan_timeout_secs: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct InvalidateJobSnapshot {
+    pub scope: String,
+    pub phase: String,
+    pub error: Option<String>,
+    pub started_at_secs: u64,
+    pub completed_at_secs: Option<u64>,
 }
 
 #[derive(Default)]
@@ -73,6 +83,7 @@ pub fn router(state: ManagementState) -> Router {
         .route("/v1/status", get(status))
         .route("/v1/keys", get(list_keys).post(create_key))
         .route("/v1/cache/invalidate", post(invalidate_cache))
+        .route("/v1/cache/invalidate/status", get(get_invalidate_status))
         .route(
             "/v1/cache/fingerprint",
             get(get_fingerprint).put(put_fingerprint),
@@ -93,6 +104,37 @@ struct InvalidateRequest {
 struct InvalidateResponse {
     scope: String,
     status: String,
+}
+
+#[derive(serde::Serialize)]
+struct InvalidateStatusResponse {
+    all_in_progress: bool,
+    job: Option<InvalidateJobSnapshot>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+async fn get_invalidate_status(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<InvalidateStatusResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let job = state
+        .invalidate_job
+        .lock()
+        .map_err(|_| internal_error("invalidate job lock poisoned"))?
+        .clone();
+
+    Ok(Json(InvalidateStatusResponse {
+        all_in_progress: state.invalidate_all_in_progress.load(Ordering::SeqCst),
+        job,
+    }))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -210,8 +252,20 @@ async fn invalidate_cache(
 
     let tiered_cache = state.tiered_cache.clone();
     let in_progress = state.invalidate_all_in_progress.clone();
+    let invalidate_job = state.invalidate_job.clone();
     let scope_label = req.scope.clone();
+    let started_at_secs = now_secs();
     let scan_opts = InvalidateScanOptions::from_timeout_secs(state.invalidate_scan_timeout_secs);
+
+    if let Ok(mut slot) = invalidate_job.lock() {
+        *slot = Some(InvalidateJobSnapshot {
+            scope: scope_label.clone(),
+            phase: "running".to_string(),
+            error: None,
+            started_at_secs,
+            completed_at_secs: None,
+        });
+    }
 
     tokio::spawn(async move {
         let result = match action {
@@ -246,6 +300,27 @@ async fn invalidate_cache(
 
         if is_all {
             in_progress.store(false, Ordering::SeqCst);
+        }
+
+        if let Ok(mut slot) = invalidate_job.lock() {
+            let completed_at_secs = now_secs();
+            let snapshot = match &result {
+                Ok(_) => InvalidateJobSnapshot {
+                    scope: scope_label.clone(),
+                    phase: "completed".to_string(),
+                    error: None,
+                    started_at_secs,
+                    completed_at_secs: Some(completed_at_secs),
+                },
+                Err(e) => InvalidateJobSnapshot {
+                    scope: scope_label.clone(),
+                    phase: "failed".to_string(),
+                    error: Some(e.to_string()),
+                    started_at_secs,
+                    completed_at_secs: Some(completed_at_secs),
+                },
+            };
+            *slot = Some(snapshot);
         }
 
         drop(result);
