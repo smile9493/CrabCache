@@ -147,7 +147,7 @@ pub fn TracePage() -> impl IntoView {
                                                     {format!("Cluster {}", c.cluster_id)}
                                                 </span>
                                                 <div class="flex-1 h-2 bg-theme-tertiary rounded-full overflow-hidden">
-                                                    <div 
+                                                    <div
                                                         class="h-full bg-accent rounded-full"
                                                         style=move || format!("width: {}%", c.percentage)
                                                     />

@@ -36,7 +36,7 @@ impl RequestCoalescer {
         loop {
             if let Some(entry) = self.inflight.get(key) {
                 let entry = entry.clone();
-                
+
                 if entry.completed.load(std::sync::atomic::Ordering::Acquire) {
                     return Ok(CoalesceGuard {
                         key: key.to_string(),
@@ -77,7 +77,7 @@ impl RequestCoalescer {
             match self.inflight.entry(key.to_string()) {
                 Entry::Occupied(existing) => {
                     let entry = existing.get().clone();
-                    
+
                     if entry.completed.load(std::sync::atomic::Ordering::Acquire) {
                         return Ok(CoalesceGuard {
                             key: key.to_string(),
@@ -153,7 +153,9 @@ impl CoalesceGuard {
 
     pub fn mark_completed(&self) {
         if let Some(entry) = &self.entry {
-            entry.completed.store(true, std::sync::atomic::Ordering::Release);
+            entry
+                .completed
+                .store(true, std::sync::atomic::Ordering::Release);
             entry.notify.notify_waiters();
         }
     }
@@ -163,7 +165,9 @@ impl Drop for CoalesceGuard {
     fn drop(&mut self) {
         if self.is_leader {
             if let Some(entry) = &self.entry {
-                entry.completed.store(true, std::sync::atomic::Ordering::Release);
+                entry
+                    .completed
+                    .store(true, std::sync::atomic::Ordering::Release);
                 entry.notify.notify_waiters();
             }
             self.inflight.remove(&self.key);

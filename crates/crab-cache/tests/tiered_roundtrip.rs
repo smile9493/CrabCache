@@ -1,8 +1,8 @@
 //! Integration test: TieredCache put → get roundtrip against Redis.
 
 use crab_cache::{
-    generate_cache_key_with_fingerprint, CacheEntry, FingerprintConfig, L0Config, TieredCache,
-    TtlConfig, UsageInfo,
+    CacheEntry, FingerprintConfig, L0Config, TieredCache, TtlConfig, UsageInfo,
+    generate_cache_key_with_fingerprint,
 };
 use crab_metrics::CacheTier;
 use std::sync::{Arc, RwLock};
@@ -20,11 +20,7 @@ async fn test_redis_pool() -> Option<bb8::Pool<bb8_redis::RedisConnectionManager
     let cache = TieredCache::new(pool.clone(), L0Config::default(), ttl)
         .await
         .ok()?;
-    if cache.ping().await {
-        Some(pool)
-    } else {
-        None
-    }
+    if cache.ping().await { Some(pool) } else { None }
 }
 
 #[tokio::test]

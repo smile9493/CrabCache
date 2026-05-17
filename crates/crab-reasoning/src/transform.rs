@@ -1,5 +1,7 @@
 use crate::store::ReasoningStore;
-use crate::streaming::{fold_reasoning_into_content, CursorReasoningDisplayAdapter, StreamAccumulator};
+use crate::streaming::{
+    CursorReasoningDisplayAdapter, StreamAccumulator, fold_reasoning_into_content,
+};
 use serde_json::Value;
 
 pub struct RecoveryNoticeContent(pub String);
@@ -21,10 +23,13 @@ pub fn record_response_reasoning(
     };
     let mut stored = 0;
     for choice in choices {
-        if !choice.is_object() { continue; }
+        if !choice.is_object() {
+            continue;
+        }
         if let Some(message) = choice.get("message") {
             for (scope, prior_messages) in recording_contexts {
-                stored += store.store_assistant_message(message, scope, cache_namespace, prior_messages);
+                stored +=
+                    store.store_assistant_message(message, scope, cache_namespace, prior_messages);
             }
         }
     }
@@ -48,7 +53,13 @@ pub fn rewrite_response_body(
             prefix_response_content(obj, prefix);
         }
     }
-    record_response_reasoning(&response_payload, store, request_messages, cache_namespace, recording_contexts);
+    record_response_reasoning(
+        &response_payload,
+        store,
+        request_messages,
+        cache_namespace,
+        recording_contexts,
+    );
     if display_reasoning {
         fold_reasoning_into_content(&mut response_payload, collapsible_reasoning);
     }
@@ -60,20 +71,35 @@ pub fn rewrite_response_body(
     Some(serde_json::to_vec(&response_payload).unwrap_or_default())
 }
 
-fn prefix_response_content(response_payload: &mut serde_json::Map<String, Value>, prefix: &str) -> bool {
-    let choices = match response_payload.get_mut("choices").and_then(|c| c.as_array_mut()) {
+fn prefix_response_content(
+    response_payload: &mut serde_json::Map<String, Value>,
+    prefix: &str,
+) -> bool {
+    let choices = match response_payload
+        .get_mut("choices")
+        .and_then(|c| c.as_array_mut())
+    {
         Some(c) => c,
         None => return false,
     };
     for choice in choices.iter_mut() {
-        if !choice.is_object() { continue; }
+        if !choice.is_object() {
+            continue;
+        }
         let message = match choice.get_mut("message") {
             Some(m) if m.is_object() => m,
             _ => continue,
         };
         if let Some(obj) = message.as_object_mut() {
-            let content = obj.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-            obj.insert("content".into(), Value::String(format!("{}{}", prefix, content)));
+            let content = obj
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            obj.insert(
+                "content".into(),
+                Value::String(format!("{}{}", prefix, content)),
+            );
             return true;
         }
     }
@@ -112,19 +138,33 @@ fn inject_recovery_notice(chunk: &mut Value, notice: &str) -> bool {
         None => return false,
     };
     for choice in choices.iter_mut() {
-        if !choice.is_object() { continue; }
+        if !choice.is_object() {
+            continue;
+        }
         let (has_content, has_tool_calls) = {
             let delta = match choice.get("delta") {
                 Some(d) if d.is_object() => d,
                 _ => continue,
             };
-            (delta.get("content").is_some(), delta.get("tool_calls").is_some())
+            (
+                delta.get("content").is_some(),
+                delta.get("tool_calls").is_some(),
+            )
         };
-        if !has_content && !has_tool_calls { continue; }
+        if !has_content && !has_tool_calls {
+            continue;
+        }
         if let Some(delta) = choice.get_mut("delta") {
             if let Some(obj) = delta.as_object_mut() {
-                let existing = obj.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                obj.insert("content".into(), Value::String(format!("{}{}", notice, existing)));
+                let existing = obj
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                obj.insert(
+                    "content".into(),
+                    Value::String(format!("{}{}", notice, existing)),
+                );
                 return true;
             }
         }
@@ -143,8 +183,15 @@ pub fn rewrite_sse_chunk(
     store: Option<&ReasoningStore>,
 ) -> SseRewriteResult {
     let stripped = {
-        let start = line.iter().position(|&b| !b" \t\r\n".contains(&b)).unwrap_or(0);
-        let end = line.iter().rposition(|&b| !b" \t\r\n".contains(&b)).map(|p| p + 1).unwrap_or(line.len());
+        let start = line
+            .iter()
+            .position(|&b| !b" \t\r\n".contains(&b))
+            .unwrap_or(0);
+        let end = line
+            .iter()
+            .rposition(|&b| !b" \t\r\n".contains(&b))
+            .map(|p| p + 1)
+            .unwrap_or(line.len());
         &line[start..end]
     };
     if !stripped.starts_with(b"data:") {
@@ -160,11 +207,17 @@ pub fn rewrite_sse_chunk(
 
     if data == b"[DONE]" {
         if let Some(store) = store {
-            let stored: usize = response_contexts.iter().map(|(scope, prior_messages)| {
-                accumulator.store_reasoning(store, scope, cache_namespace, prior_messages)
-            }).sum();
+            let stored: usize = response_contexts
+                .iter()
+                .map(|(scope, prior_messages)| {
+                    accumulator.store_reasoning(store, scope, cache_namespace, prior_messages)
+                })
+                .sum();
             if stored > 0 {
-                tracing::debug!(stored = stored, "Stored streaming reasoning cache keys on [DONE]");
+                tracing::debug!(
+                    stored = stored,
+                    "Stored streaming reasoning cache keys on [DONE]"
+                );
             }
         }
         let mut prefix = Vec::new();
@@ -180,7 +233,9 @@ pub fn rewrite_sse_chunk(
                 chunk_usage: None,
             };
         }
-        let closing_chunk = display_adapter.as_mut().and_then(|a| a.flush_chunk(original_model));
+        let closing_chunk = display_adapter
+            .as_mut()
+            .and_then(|a| a.flush_chunk(original_model));
         if let Some(chunk) = closing_chunk {
             prefix.extend_from_slice(&sse_data(&chunk));
         }
@@ -224,11 +279,17 @@ pub fn rewrite_sse_chunk(
     }
     accumulator.ingest_chunk(&chunk);
     if let Some(store) = store {
-        let stored: usize = response_contexts.iter().map(|(scope, prior_messages)| {
-            accumulator.store_ready_reasoning(store, scope, cache_namespace, prior_messages)
-        }).sum();
+        let stored: usize = response_contexts
+            .iter()
+            .map(|(scope, prior_messages)| {
+                accumulator.store_ready_reasoning(store, scope, cache_namespace, prior_messages)
+            })
+            .sum();
         if stored > 0 {
-            tracing::debug!(stored = stored, "Stored streaming reasoning cache keys mid-stream");
+            tracing::debug!(
+                stored = stored,
+                "Stored streaming reasoning cache keys mid-stream"
+            );
         }
     }
     let chunk_usage = chunk.get("usage").cloned();
@@ -238,7 +299,11 @@ pub fn rewrite_sse_chunk(
     if let Some(obj) = chunk.get_mut("model") {
         *obj = Value::String(original_model.to_string());
     }
-    let ending = if line.ends_with(b"\r\n") { "\r\n" } else { "\n" };
+    let ending = if line.ends_with(b"\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let json = serde_json::to_string(&chunk).unwrap_or_default();
     let rewritten = format!("data: {}{}", json, ending).into_bytes();
 
@@ -258,18 +323,36 @@ mod tests {
     fn test_rewrite_response_body_basic() {
         let body = r#"{"model":"deepseek-v4-pro","choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
         let result = rewrite_response_body(
-            body.as_bytes(), "deepseek-v4-pro", None, &[], "", None, &[], false, false,
+            body.as_bytes(),
+            "deepseek-v4-pro",
+            None,
+            &[],
+            "",
+            None,
+            &[],
+            false,
+            false,
         );
         assert!(result.is_some());
         let parsed: Value = serde_json::from_slice(&result.unwrap()).unwrap();
-        assert_eq!(parsed.get("model").unwrap().as_str(), Some("deepseek-v4-pro"));
+        assert_eq!(
+            parsed.get("model").unwrap().as_str(),
+            Some("deepseek-v4-pro")
+        );
     }
 
     #[test]
     fn test_rewrite_sse_done() {
         let mut acc = StreamAccumulator::new();
         let result = rewrite_sse_chunk(
-            b"data: [DONE]\n\n", "deepseek-v4-pro", &mut acc, "", &[], &mut None, None, None,
+            b"data: [DONE]\n\n",
+            "deepseek-v4-pro",
+            &mut acc,
+            "",
+            &[],
+            &mut None,
+            None,
+            None,
         );
         assert!(result.finalized);
     }

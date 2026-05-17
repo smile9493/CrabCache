@@ -58,7 +58,11 @@ pub fn KeysPage() -> impl IntoView {
             monthly_token_budget: new_key_budget.get(),
             expired_at: None,
             model_limits: None,
-            remain_quota: if new_key_unlimited.get() { None } else { Some(new_key_quota.get()) },
+            remain_quota: if new_key_unlimited.get() {
+                None
+            } else {
+                Some(new_key_quota.get())
+            },
             unlimited_quota: Some(new_key_unlimited.get()),
         };
         leptos::task::spawn_local(async move {
@@ -128,7 +132,7 @@ pub fn KeysPage() -> impl IntoView {
                                 {t.keys_copy_btn()}
                             </button>
                         </div>
-                        
+
                         {move || {
                             if let Some(info) = network_info.get() {
                                 if let Some(lan_url) = info.gateway_url_lan {
@@ -286,7 +290,7 @@ pub fn KeysPage() -> impl IntoView {
                             }
                         })
                         .collect();
-                    
+
                     if filtered_keys.is_empty() {
                         let t = use_translations();
                         view! { <EmptyState message=t.keys_no_results() /> }.into_any()

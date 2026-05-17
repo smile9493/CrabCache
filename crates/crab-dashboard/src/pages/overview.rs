@@ -1,10 +1,10 @@
-use leptos::prelude::*;
 use gloo_timers::future::TimeoutFuture;
+use leptos::prelude::*;
 
 use crate::api;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
-use crate::locale::{use_translations, Translations};
+use crate::locale::{Translations, use_translations};
 use crate::types::MetricsSnapshot;
 
 #[component]
@@ -204,7 +204,7 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                     </div>
                     <div class="mt-3 pt-3 border-t border-theme">
                         <div class="progress-bar h-2">
-                            <div 
+                            <div
                                 class="progress-bar-fill"
                                 style=format!("width: {}%", if metrics.cache_hit_tokens + metrics.cache_miss_tokens > 0 {
                                     metrics.cache_hit_tokens as f64 / (metrics.cache_hit_tokens + metrics.cache_miss_tokens) as f64 * 100.0
@@ -255,15 +255,13 @@ fn TokenStats(metrics: MetricsSnapshot) -> impl IntoView {
 fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let selected_view = RwSignal::new("hourly".to_string());
-    
-    let current_data = move || {
-        match selected_view.get().as_str() {
-            "hourly" => metrics.hourly_stats.clone(),
-            "daily" => metrics.daily_stats.clone(),
-            "weekly" => metrics.weekly_stats.clone(),
-            "monthly" => metrics.monthly_stats.clone(),
-            _ => metrics.hourly_stats.clone(),
-        }
+
+    let current_data = move || match selected_view.get().as_str() {
+        "hourly" => metrics.hourly_stats.clone(),
+        "daily" => metrics.daily_stats.clone(),
+        "weekly" => metrics.weekly_stats.clone(),
+        "monthly" => metrics.monthly_stats.clone(),
+        _ => metrics.hourly_stats.clone(),
     };
 
     view! {
@@ -321,7 +319,7 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
                     </button>
                 </div>
             </div>
-            
+
             <div class="space-y-4">
                 {move || {
                     let data = current_data();
@@ -397,7 +395,7 @@ fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
     let miss = RwSignal::new(metrics.cache_misses as f64);
 
     let hit_rate = RwSignal::new(
-        (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) as f64 / total as f64 * 100.0
+        (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) as f64 / total as f64 * 100.0,
     );
 
     view! {
@@ -427,7 +425,11 @@ fn CostSavingsSection(metrics: MetricsSnapshot) -> impl IntoView {
     let actual_cost = metrics.cache_miss_tokens as f64 * 0.14 / 1_000_000.0
         + metrics.cache_hit_tokens as f64 * 0.014 / 1_000_000.0;
     let saved = direct_cost - actual_cost;
-    let saved_pct = if direct_cost > 0.0 { saved / direct_cost * 100.0 } else { 0.0 };
+    let saved_pct = if direct_cost > 0.0 {
+        saved / direct_cost * 100.0
+    } else {
+        0.0
+    };
 
     let direct = RwSignal::new(format!("${:.2}", direct_cost));
     let actual = RwSignal::new(format!("${:.2}", actual_cost));
@@ -470,13 +472,26 @@ fn CostSavingsSection(metrics: MetricsSnapshot) -> impl IntoView {
 fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let stages: Vec<(&str, f64)> = vec![
-        (crate::locale::Translations::overview_latency_l0(), metrics.latency_l0_ms),
-        (crate::locale::Translations::overview_latency_l1(), metrics.latency_l1_ms),
-        (crate::locale::Translations::overview_latency_l2(), metrics.latency_l2_ms),
+        (
+            crate::locale::Translations::overview_latency_l0(),
+            metrics.latency_l0_ms,
+        ),
+        (
+            crate::locale::Translations::overview_latency_l1(),
+            metrics.latency_l1_ms,
+        ),
+        (
+            crate::locale::Translations::overview_latency_l2(),
+            metrics.latency_l2_ms,
+        ),
         (t.overview_latency_upstream(), metrics.latency_upstream_ms),
     ];
 
-    let max_latency = stages.iter().map(|&(_, v)| v).fold(0.0f64, f64::max).max(1.0);
+    let max_latency = stages
+        .iter()
+        .map(|&(_, v)| v)
+        .fold(0.0f64, f64::max)
+        .max(1.0);
 
     view! {
         <div class="glass-card h-full">

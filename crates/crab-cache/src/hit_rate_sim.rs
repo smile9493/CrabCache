@@ -217,7 +217,8 @@ impl SimulatedCache {
 
     pub fn set(&mut self, key: &str, value: &str, semantic_group: Option<usize>) {
         self.l0_insert(key, value.to_string());
-        self.l1.insert(key.to_string(), (value.to_string(), Instant::now()));
+        self.l1
+            .insert(key.to_string(), (value.to_string(), Instant::now()));
         if let Some(group) = semantic_group {
             self.l2.insert(group, (key.to_string(), value.to_string()));
         }
@@ -233,7 +234,11 @@ impl SimulatedCache {
     }
 }
 
-pub fn simulate_cache_hit_rate(pattern: LoadPattern, seed: u64, total_requests: usize) -> CacheStats {
+pub fn simulate_cache_hit_rate(
+    pattern: LoadPattern,
+    seed: u64,
+    total_requests: usize,
+) -> CacheStats {
     let mut generator = TraceGenerator::new(pattern.clone(), seed);
     let mut cache = SimulatedCache::new(100, 3600, 7200);
 
@@ -267,7 +272,11 @@ pub fn simulate_cache_with_l2(
         let content = &event.messages[0].content;
         let key = format!("{:x}", md5::compute(content));
 
-        let semantic_group = if enable_l2 { event.semantic_group } else { None };
+        let semantic_group = if enable_l2 {
+            event.semantic_group
+        } else {
+            None
+        };
 
         if cache.get(&key, semantic_group).is_none() {
             cache.record_miss();
@@ -328,9 +337,21 @@ mod tests {
     fn print_stats(name: &str, stats: &CacheStats) {
         println!("\n{}", name);
         println!("  Total requests: {}", stats.total_requests);
-        println!("  L0 hits: {} ({:.1}%)", stats.l0_hits, stats.l0_hit_rate() * 100.0);
-        println!("  L1 hits: {} ({:.1}%)", stats.l1_hits, stats.l1_hit_rate() * 100.0);
-        println!("  L2 hits: {} ({:.1}%)", stats.l2_hits, stats.l2_hit_rate() * 100.0);
+        println!(
+            "  L0 hits: {} ({:.1}%)",
+            stats.l0_hits,
+            stats.l0_hit_rate() * 100.0
+        );
+        println!(
+            "  L1 hits: {} ({:.1}%)",
+            stats.l1_hits,
+            stats.l1_hit_rate() * 100.0
+        );
+        println!(
+            "  L2 hits: {} ({:.1}%)",
+            stats.l2_hits,
+            stats.l2_hit_rate() * 100.0
+        );
         println!("  Misses: {}", stats.misses);
         println!("  L0 evictions: {}", stats.l0_evictions);
         println!("  Total hit rate: {:.2}%", stats.hit_rate() * 100.0);
@@ -363,22 +384,26 @@ mod tests {
     #[test]
     fn test_simulate_with_l2_semantic() {
         let pattern = LoadPattern::steady_state();
-        
+
         let stats_no_l2 = simulate_cache_with_l2(pattern.clone(), 42, 1000, false);
         let stats_with_l2 = simulate_cache_with_l2(pattern, 42, 1000, true);
-        
+
         print_stats("Steady State WITHOUT L2", &stats_no_l2);
         print_stats("Steady State WITH L2", &stats_with_l2);
-        
+
         println!("\nL2 Improvement:");
-        println!("  Hit rate: {:.2}% -> {:.2}%", 
-            stats_no_l2.hit_rate() * 100.0, 
-            stats_with_l2.hit_rate() * 100.0);
+        println!(
+            "  Hit rate: {:.2}% -> {:.2}%",
+            stats_no_l2.hit_rate() * 100.0,
+            stats_with_l2.hit_rate() * 100.0
+        );
         println!("  L2 hits: {}", stats_with_l2.l2_hits);
-        println!("  Avg latency: {:.2}ms -> {:.2}ms", 
-            stats_no_l2.avg_latency_ms(), 
-            stats_with_l2.avg_latency_ms());
-        
+        println!(
+            "  Avg latency: {:.2}ms -> {:.2}ms",
+            stats_no_l2.avg_latency_ms(),
+            stats_with_l2.avg_latency_ms()
+        );
+
         assert!(stats_with_l2.hit_rate() >= stats_no_l2.hit_rate());
     }
 
@@ -406,9 +431,10 @@ mod tests {
         }
 
         // Find best configuration
-        let best = results.iter().max_by(|a, b| {
-            a.hit_rate.partial_cmp(&b.hit_rate).unwrap()
-        }).unwrap();
+        let best = results
+            .iter()
+            .max_by(|a, b| a.hit_rate.partial_cmp(&b.hit_rate).unwrap())
+            .unwrap();
 
         println!("\nBest configuration:");
         println!("  repeat_ratio: {}", best.repeat_ratio);
@@ -416,7 +442,10 @@ mod tests {
         println!("  hit_rate: {:.2}%", best.hit_rate * 100.0);
 
         // Verify high repeat + high semantic gives best results
-        assert!(best.hit_rate > 0.6, "Best config should exceed 60% hit rate");
+        assert!(
+            best.hit_rate > 0.6,
+            "Best config should exceed 60% hit rate"
+        );
     }
 
     #[test]
@@ -432,13 +461,20 @@ mod tests {
         print_stats("High Repeat Scenario (repeat=0.9, semantic=0.3)", &stats);
 
         println!("\nExpected: hit rate should exceed 80%");
-        assert!(stats.hit_rate() > 0.8, "High repeat should give >80% hit rate");
+        assert!(
+            stats.hit_rate() > 0.8,
+            "High repeat should give >80% hit rate"
+        );
     }
 
     #[test]
     fn test_semantic_cache_basic() {
         let mut cache = SemanticCache::new(384, 0.95);
-        cache.put("What is Rust programming?", "key1", "Rust is a systems language.");
+        cache.put(
+            "What is Rust programming?",
+            "key1",
+            "Rust is a systems language.",
+        );
         let result = cache.get("What is Rust programming?");
         assert!(result.is_some());
         let result = cache.get("Explain Python");

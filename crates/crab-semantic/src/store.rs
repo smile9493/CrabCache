@@ -1,10 +1,10 @@
 use anyhow::Result;
 use crab_cache::CacheEntry;
+use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     CreateCollectionBuilder, Distance, PointStruct, SearchPointsBuilder, UpsertPointsBuilder,
     Value, VectorParamsBuilder,
 };
-use qdrant_client::Qdrant;
 use tracing::debug;
 
 pub struct VectorStore {
@@ -41,8 +41,9 @@ impl VectorStore {
         if !exists {
             self.client
                 .create_collection(
-                    CreateCollectionBuilder::new(&self.collection)
-                        .vectors_config(VectorParamsBuilder::new(self.vector_size, Distance::Cosine)),
+                    CreateCollectionBuilder::new(&self.collection).vectors_config(
+                        VectorParamsBuilder::new(self.vector_size, Distance::Cosine),
+                    ),
                 )
                 .await?;
 
@@ -98,9 +99,7 @@ impl VectorStore {
         let point = PointStruct::new(id, vector.to_vec(), payload);
 
         self.client
-            .upsert_points(
-                UpsertPointsBuilder::new(&self.collection, vec![point]),
-            )
+            .upsert_points(UpsertPointsBuilder::new(&self.collection, vec![point]))
             .await?;
 
         debug!(

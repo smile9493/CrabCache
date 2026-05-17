@@ -2,7 +2,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::ui::*;
-use crate::locale::{use_translations, Translations};
+use crate::locale::{Translations, use_translations};
 use crate::types::{ModelListResponse, SyncResult};
 
 #[component]

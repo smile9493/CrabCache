@@ -13,10 +13,7 @@ impl Embedder {
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-        debug!(
-            model_path = model_path,
-            "Embedder model path configured"
-        );
+        debug!(model_path = model_path, "Embedder model path configured");
 
         Ok(Self {
             model_path: model_path.to_string(),
@@ -36,16 +33,18 @@ impl Embedder {
             .iter()
             .map(|&m| m as i64)
             .collect();
-        let token_type_ids: Vec<i64> =
-            encoding.get_type_ids().iter().map(|&id| id as i64).collect();
+        let token_type_ids: Vec<i64> = encoding
+            .get_type_ids()
+            .iter()
+            .map(|&id| id as i64)
+            .collect();
 
         let seq_len = input_ids.len();
         let hidden_size = 384usize;
 
         let model_path = self.model_path.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
-            let mut session = ort::session::Session::builder()?
-                .commit_from_file(&model_path)?;
+            let mut session = ort::session::Session::builder()?.commit_from_file(&model_path)?;
 
             let shape = vec![1i64, seq_len as i64];
 

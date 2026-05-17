@@ -66,7 +66,8 @@ pub fn provide_admin_auth() -> RwSignal<String> {
 }
 
 pub fn use_admin_key() -> RwSignal<String> {
-    use_context::<RwSignal<String>>().expect("Admin auth context not found. Call provide_admin_auth() first.")
+    use_context::<RwSignal<String>>()
+        .expect("Admin auth context not found. Call provide_admin_auth() first.")
 }
 
 pub fn is_authenticated(key: &RwSignal<String>) -> bool {

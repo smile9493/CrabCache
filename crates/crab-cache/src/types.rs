@@ -87,7 +87,9 @@ mod tests {
     #[test]
     fn test_ttl_config_resolve_consumer_override() {
         let mut config = TtlConfig::new(3600);
-        config.consumer_overrides.insert("premium".to_string(), 10800);
+        config
+            .consumer_overrides
+            .insert("premium".to_string(), 10800);
         assert_eq!(config.resolve("v4-pro", Some("premium")), 10800);
         assert_eq!(config.resolve("v4-pro", Some("standard")), 3600);
     }
@@ -96,7 +98,9 @@ mod tests {
     fn test_ttl_config_priority() {
         let mut config = TtlConfig::new(3600);
         config.model_overrides.insert("v4-pro".to_string(), 7200);
-        config.consumer_overrides.insert("premium".to_string(), 10800);
+        config
+            .consumer_overrides
+            .insert("premium".to_string(), 10800);
 
         assert_eq!(config.resolve("v4-pro", Some("premium")), 10800);
         assert_eq!(config.resolve("v4-pro", Some("standard")), 7200);

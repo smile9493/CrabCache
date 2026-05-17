@@ -23,7 +23,7 @@ pub fn extract_affinity_key(headers: &HeaderMap, client_ip: &str) -> String {
     hasher.update(client_ip.as_bytes());
     let hash = hex::encode(hasher.finalize());
     let key = format!("ip:{}", &hash[..16]);
-    
+
     trace!(key = %key, client_ip = %client_ip, "Using client IP as affinity key");
     key
 }

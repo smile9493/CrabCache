@@ -4,7 +4,7 @@ use leptos_router::components::*;
 use crate::auth::{clear_admin_key, use_admin_key};
 use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::theme_switcher::ThemeSwitcher;
-use crate::locale::{use_locale, use_translations, Translations};
+use crate::locale::{Translations, use_locale, use_translations};
 
 pub fn provide_mobile_nav() -> RwSignal<bool> {
     let open = RwSignal::new(false);

@@ -8,8 +8,7 @@ fn sha256_hex(input: &str) -> String {
 }
 
 fn sha256_json(value: &Value) -> String {
-    let canonical = serde_json::to_string(value)
-        .unwrap_or_default();
+    let canonical = serde_json::to_string(value).unwrap_or_default();
     sha256_hex(&canonical)
 }
 
@@ -18,21 +17,29 @@ pub fn normalize_tool_call_for_signature(tool_call: &Value) -> Value {
     if let Some(tc) = tool_call.as_object() {
         normalized.insert(
             "type".into(),
-            tc.get("type").cloned().unwrap_or(Value::String("function".into())),
+            tc.get("type")
+                .cloned()
+                .unwrap_or(Value::String("function".into())),
         );
         let mut func = serde_json::Map::new();
         if let Some(function) = tc.get("function").and_then(|f| f.as_object()) {
             func.insert(
                 "name".into(),
-                function.get("name").cloned().unwrap_or(Value::String(String::new())),
+                function
+                    .get("name")
+                    .cloned()
+                    .unwrap_or(Value::String(String::new())),
             );
-            let arguments = function.get("arguments").map(|a| {
-                if a.is_string() {
-                    a.as_str().unwrap_or("").to_string()
-                } else {
-                    serde_json::to_string(a).unwrap_or_default()
-                }
-            }).unwrap_or_default();
+            let arguments = function
+                .get("arguments")
+                .map(|a| {
+                    if a.is_string() {
+                        a.as_str().unwrap_or("").to_string()
+                    } else {
+                        serde_json::to_string(a).unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default();
             func.insert("arguments".into(), Value::String(arguments));
         } else {
             func.insert("name".into(), Value::String(String::new()));
@@ -60,7 +67,9 @@ pub fn tool_call_ids(message: &Value) -> Vec<String> {
             arr.iter()
                 .filter_map(|tc| {
                     if tc.is_object() {
-                        tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string())
+                        tc.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     }
@@ -92,7 +101,10 @@ pub fn message_signature(message: &Value) -> String {
     let mut payload = serde_json::Map::new();
     payload.insert(
         "content".into(),
-        message.get("content").cloned().unwrap_or(Value::String(String::new())),
+        message
+            .get("content")
+            .cloned()
+            .unwrap_or(Value::String(String::new())),
     );
     let tool_calls: Vec<Value> = message
         .get("tool_calls")
@@ -132,7 +144,10 @@ fn canonical_scope_message(message: &Value) -> Value {
 }
 
 pub fn conversation_scope(messages: &[Value], namespace: &str) -> String {
-    let scope_messages: Vec<Value> = messages.iter().map(|m| canonical_scope_message(m)).collect();
+    let scope_messages: Vec<Value> = messages
+        .iter()
+        .map(|m| canonical_scope_message(m))
+        .collect();
     let payload = if namespace.is_empty() {
         Value::Array(scope_messages)
     } else {
@@ -174,7 +189,11 @@ pub fn turn_context_signature(prior_messages: &[Value]) -> String {
 
 pub fn scoped_reasoning_keys(message: &Value, scope: &str) -> Vec<String> {
     let mut keys = Vec::new();
-    keys.push(format!("scope:{}:signature:{}", scope, message_signature(message)));
+    keys.push(format!(
+        "scope:{}:signature:{}",
+        scope,
+        message_signature(message)
+    ));
     for tc_id in tool_call_ids(message) {
         keys.push(format!("scope:{}:tool_call:{}", scope, tc_id));
     }

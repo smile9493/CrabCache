@@ -3,9 +3,7 @@ use leptos::prelude::*;
 use crate::api;
 use crate::components::ui::{Alert, SectionHeader, Spinner};
 use crate::locale::use_translations;
-use crate::types::{
-    CacheOpsView, FingerprintConfigBody, InvalidateCacheBody, StreamCacheToggle,
-};
+use crate::types::{CacheOpsView, FingerprintConfigBody, InvalidateCacheBody, StreamCacheToggle};
 
 #[component]
 pub fn CacheOpsPage() -> impl IntoView {

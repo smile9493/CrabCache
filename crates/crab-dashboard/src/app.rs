@@ -4,7 +4,7 @@ use leptos_router::path;
 
 use crate::auth::{is_authenticated, provide_admin_auth};
 use crate::components::auth_gate::AuthGate;
-use crate::components::sidebar::{provide_mobile_nav, MobileTopBar, Sidebar};
+use crate::components::sidebar::{MobileTopBar, Sidebar, provide_mobile_nav};
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache_ops::CacheOpsPage;
 use crate::pages::keys::KeysPage;
