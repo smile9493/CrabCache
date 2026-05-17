@@ -508,6 +508,61 @@ impl Translations {
         }
     }
 
+    pub fn auth_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Admin 登录",
+            Locale::EnUS => "Admin Sign In",
+        }
+    }
+    pub fn auth_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请输入与服务器 CRABCACHE_ADMIN_KEY 一致的密钥。",
+            Locale::EnUS => "Enter the key matching the server CRABCACHE_ADMIN_KEY.",
+        }
+    }
+    pub fn auth_key_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Admin API Key",
+            Locale::EnUS => "Admin API Key",
+        }
+    }
+    pub fn auth_key_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "x-admin-key",
+            Locale::EnUS => "x-admin-key",
+        }
+    }
+    pub fn auth_submit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "登录",
+            Locale::EnUS => "Sign In",
+        }
+    }
+    pub fn auth_dev_default(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "使用开发默认密钥 (admin)",
+            Locale::EnUS => "Use development default (admin)",
+        }
+    }
+    pub fn auth_error_empty(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请输入 Admin API Key",
+            Locale::EnUS => "Admin API Key is required",
+        }
+    }
+    pub fn auth_error_save(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法保存密钥（localStorage 不可用）",
+            Locale::EnUS => "Failed to save key (localStorage unavailable)",
+        }
+    }
+    pub fn sidebar_change_admin_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "更改 Admin 密钥",
+            Locale::EnUS => "Change Admin Key",
+        }
+    }
+
     pub fn routing_cache_config_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存 TTL 配置",

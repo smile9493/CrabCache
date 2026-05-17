@@ -363,7 +363,7 @@ curl -s http://127.0.0.1:9080/v1/status \
 
 ### Admin Dashboard（管理面板）
 
-crab-admin 提供了一个基于 Leptos WASM 的 Web 管理界面：
+crab-admin 提供了一个基于 Leptos WASM 的 Web 管理界面。首次打开需在登录页输入与服务器 `CRABCACHE_ADMIN_KEY` 相同的 Admin API Key（请求头 `x-admin-key`）；侧栏可更改密钥。开发构建（debug）提供一键填入默认 `admin` 的快捷按钮。
 
 ```bash
 # 启动管理面板（HTTP 模式）

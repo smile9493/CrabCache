@@ -78,6 +78,14 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    let admin_key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string());
+    if admin_key == "admin" {
+        tracing::warn!(
+            "CRABCACHE_ADMIN_KEY is unset or uses the default 'admin'; set a strong key for production. \
+             Dashboard must use the same value in the Admin API Key sign-in screen."
+        );
+    }
+
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
 

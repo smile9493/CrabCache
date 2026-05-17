@@ -2,6 +2,8 @@ use leptos::prelude::*;
 use leptos_router::components::*;
 use leptos_router::path;
 
+use crate::auth::{is_authenticated, provide_admin_auth};
+use crate::components::auth_gate::AuthGate;
 use crate::components::sidebar::Sidebar;
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache_ops::CacheOpsPage;
@@ -18,7 +20,21 @@ use crate::theme::provide_theme;
 pub fn App() -> impl IntoView {
     provide_locale();
     provide_theme();
+    let admin_key = provide_admin_auth();
 
+    view! {
+        {move || {
+            if is_authenticated(&admin_key) {
+                view! { <AuthenticatedShell /> }.into_any()
+            } else {
+                view! { <AuthGate /> }.into_any()
+            }
+        }}
+    }
+}
+
+#[component]
+fn AuthenticatedShell() -> impl IntoView {
     view! {
         <Router>
             <div class="h-screen font-sans">

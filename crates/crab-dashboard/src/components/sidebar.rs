@@ -1,12 +1,19 @@
 use leptos::prelude::*;
 use leptos_router::components::*;
 
+use crate::auth::{clear_admin_key, use_admin_key};
 use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{use_locale, use_translations, Translations};
 
 #[component]
 pub fn Sidebar() -> impl IntoView {
     let locale = use_locale();
+    let admin_key = use_admin_key();
+
+    let change_admin_key = move |_| {
+        clear_admin_key();
+        admin_key.set(String::new());
+    };
 
     let toggle_locale = move |_| {
         locale.update(|l| *l = l.next());
@@ -45,6 +52,12 @@ pub fn Sidebar() -> impl IntoView {
                     class="text-xs text-theme-muted hover:text-theme transition-colors w-full text-left py-1"
                 >
                     {move || format!("🌐 {}", locale.get().label())}
+                </button>
+                <button
+                    on:click=change_admin_key
+                    class="text-xs text-theme-muted hover:text-theme transition-colors w-full text-left py-1"
+                >
+                    {move || use_translations().sidebar_change_admin_key()}
                 </button>
             </div>
         </aside>
