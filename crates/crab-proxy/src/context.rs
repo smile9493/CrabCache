@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Debug, Clone)]
 pub struct StoredKey {
@@ -136,6 +137,7 @@ pub struct GatewayContext {
     pub content_length: usize,
     pub total_tokens: u64,
     pub conversation_id: Option<String>,
+    pub request_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl GatewayContext {
@@ -166,6 +168,7 @@ impl GatewayContext {
             content_length: 0,
             total_tokens: 0,
             conversation_id: None,
+            request_permit: None,
         }
     }
 }
@@ -183,4 +186,6 @@ pub struct GatewayState {
     pub pricing: PricingConfig,
     /// Max raw SSE bytes stored per stream cache entry (`0` = never store `sse_body`).
     pub max_sse_cache_bytes: usize,
+    pub max_request_body_bytes: usize,
+    pub request_semaphore: Arc<Semaphore>,
 }

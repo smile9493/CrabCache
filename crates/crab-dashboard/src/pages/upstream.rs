@@ -77,7 +77,7 @@ pub fn UpstreamPage() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <SectionHeader
                 title=t.upstream_title()
                 description=t.upstream_desc()

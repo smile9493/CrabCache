@@ -1,29 +1,41 @@
-version: "3.8"
+# Agent middleware stack (default): gateway + Redis.
+#   docker compose up -d
+# Optional semantic cache (Qdrant + ONNX models):
+#   docker compose --profile semantic up -d
+#
+# Copy .env.example to .env and set CRABCACHE_API_KEY before starting.
 
 services:
   gateway:
     build: .
     ports:
-      - "8080:8080"
-      - "9090:9090"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     volumes:
-      - ./config/gateway.toml:/app/config/gateway.toml:ro
-      - ./models:/app/models:ro
+      - ./config/gateway.docker.toml:/app/config/gateway.toml:ro
+      - gateway_data:/app/data
+      - gateway_logs:/app/logs
     depends_on:
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     environment:
       - RUST_LOG=info
-      - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-dev-only-gateway-admin-secret}
+      - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:?Set CRABCACHE_API_KEY in .env}
+      - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}
+      - CRABCACHE_L1_REDIS_URL=${CRABCACHE_L1_REDIS_URL:-redis://redis:6379}
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -31,17 +43,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
 
   qdrant:
+    profiles:
+      - semantic
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    expose:
+      - "6333"
+      - "6334"
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
 
 volumes:
   redis_data:
   qdrant_data:
+  gateway_data:
+  gateway_logs:

@@ -89,7 +89,36 @@ pub struct GatewayConfig {
     pub reasoning: Option<ReasoningConfig>,
     pub trace_logging: Option<TraceConfig>,
     pub management: Option<ManagementConfig>,
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
+
+fn default_max_request_body_bytes() -> usize {
+    4_194_304
+}
+
+fn default_max_concurrent_requests() -> usize {
+    512
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LimitsConfig {
+    #[serde(default = "default_max_request_body_bytes")]
+    pub max_request_body_bytes: usize,
+    #[serde(default = "default_max_concurrent_requests")]
+    pub max_concurrent_requests: usize,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_request_body_bytes: default_max_request_body_bytes(),
+            max_concurrent_requests: default_max_concurrent_requests(),
+        }
+    }
+}
+
+const MAX_REQUEST_BODY_BYTES_CAP: usize = 64 * 1024 * 1024;
 
 fn default_management_admin_key() -> SecretString {
     SecretString::new("change-me-in-production".to_string())
@@ -262,6 +291,11 @@ impl GatewayConfig {
                 config.api_key = SecretString::new(key);
             }
         }
+        if let Ok(url) = std::env::var("CRABCACHE_L1_REDIS_URL") {
+            if !url.is_empty() {
+                config.cache.l1_redis_url = url;
+            }
+        }
         if config.management.is_none() {
             config.management = Some(ManagementConfig::default());
         }
@@ -373,6 +407,28 @@ impl GatewayConfig {
             ));
         }
 
+        if self.limits.max_request_body_bytes == 0 {
+            errors.push("limits.max_request_body_bytes must be > 0".into());
+        } else if self.limits.max_request_body_bytes > MAX_REQUEST_BODY_BYTES_CAP {
+            errors.push(format!(
+                "limits.max_request_body_bytes must be <= {} (64 MiB)",
+                MAX_REQUEST_BODY_BYTES_CAP
+            ));
+        }
+
+        if self.limits.max_concurrent_requests == 0 {
+            errors.push("limits.max_concurrent_requests must be > 0".into());
+        }
+
+        if let Some(coalesce_max) = self.upstream.max_coalesce_inflight {
+            if coalesce_max > self.limits.max_concurrent_requests {
+                errors.push(format!(
+                    "upstream.max_coalesce_inflight ({coalesce_max}) must be <= limits.max_concurrent_requests ({})",
+                    self.limits.max_concurrent_requests
+                ));
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -439,6 +495,99 @@ mod tests {
     }
 
     #[test]
+    fn test_limits_defaults() {
+        let limits = LimitsConfig::default();
+        assert_eq!(limits.max_request_body_bytes, 4_194_304);
+        assert_eq!(limits.max_concurrent_requests, 512);
+    }
+
+    #[test]
+    fn test_l1_redis_url_env_override() {
+        let dir = std::env::temp_dir().join(format!("crabcache_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.toml");
+        std::fs::write(
+            &path,
+            r#"
+listen_addr = "127.0.0.1:8080"
+metrics_addr = "127.0.0.1:9090"
+api_key = "sk-test-key-1234567890"
+upstream = { deepseek_endpoints = ["127.0.0.1:443"] }
+cache = { l1_redis_url = "redis://127.0.0.1:6379" }
+semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url = "", collection_name = "" }
+"#,
+        )
+        .unwrap();
+
+        // SAFETY: test runs single-threaded; no concurrent env access.
+        unsafe {
+            std::env::set_var("CRABCACHE_L1_REDIS_URL", "redis://redis:6379");
+        }
+        let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        unsafe {
+            std::env::remove_var("CRABCACHE_L1_REDIS_URL");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+
+        assert_eq!(config.cache.l1_redis_url, "redis://redis:6379");
+    }
+
+    #[test]
+    fn test_validate_coalesce_exceeds_concurrent_limit() {
+        let config = GatewayConfig {
+            listen_addr: "127.0.0.1:8080".into(),
+            metrics_addr: "127.0.0.1:9090".into(),
+            api_key: SecretString::new("sk-real-key-12345678".into()),
+            upstream: UpstreamConfig {
+                deepseek_endpoints: vec!["127.0.0.1:443".into()],
+                default_weight: None,
+                base_url: None,
+                model: None,
+                tls_sni: None,
+                health_check_interval_secs: 30,
+                max_coalesce_inflight: Some(10_000),
+                coalesce_timeout_secs: None,
+            },
+            cache: CacheConfig {
+                l0_max_capacity: None,
+                l0_ttl_secs: None,
+                l1_redis_url: "redis://127.0.0.1".into(),
+                l1_pool_size: None,
+                default_ttl_secs: None,
+                model_ttl_overrides: None,
+                consumer_ttl_overrides: None,
+                stream_cache_enabled: false,
+                cache_key_namespace: None,
+                fingerprint_version: 1,
+                fingerprint_normalize_content: true,
+                pricing: None,
+                max_sse_cache_bytes: default_max_sse_cache_bytes(),
+            },
+            semantic: SemanticConfig {
+                enabled: false,
+                model_path: String::new(),
+                tokenizer_path: String::new(),
+                qdrant_url: String::new(),
+                collection_name: String::new(),
+                vector_size: None,
+                similarity_threshold: None,
+                ttl_secs: None,
+                min_query_chars: 32,
+                max_query_chars: 8192,
+                max_concurrent_embeds: 4,
+                embed_only_on_exact_miss: true,
+            },
+            connection: None,
+            reasoning: None,
+            trace_logging: None,
+            management: None,
+            limits: LimitsConfig::default(),
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.iter().any(|e| e.contains("max_coalesce_inflight")));
+    }
+
+    #[test]
     fn test_security_warnings_weak_admin() {
         let config = GatewayConfig {
             listen_addr: "127.0.0.1:8080".into(),
@@ -491,6 +640,7 @@ mod tests {
                 admin_key: SecretString::new("dev-only-gateway-admin-secret".into()),
                 invalidate_scan_timeout_secs: 300,
             }),
+            limits: LimitsConfig::default(),
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));

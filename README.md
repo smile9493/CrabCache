@@ -169,14 +169,14 @@ l1_redis_url = "redis://127.0.0.1:6379"
 enabled = false
 ```
 
-### 启动依赖服务
+### 启动依赖服务（裸机）
 
 ```bash
-# 使用 Docker Compose 启动所有依赖
-docker compose up -d redis qdrant
-
-# 或仅启动 Redis（L1 缓存必需）
+# L1 缓存必需：仅 Redis（本地）
 docker compose up -d redis
+
+# 可选 L2 语义缓存
+docker compose --profile semantic up -d qdrant
 ```
 
 ### 运行网关
@@ -363,7 +363,7 @@ curl -s http://127.0.0.1:9080/v1/status \
 
 ### Admin Dashboard（管理面板）
 
-crab-admin 提供了一个基于 Leptos WASM 的 Web 管理界面：
+crab-admin 提供了一个基于 Leptos WASM 的 Web 管理界面。首次打开需在登录页输入与服务器 `CRABCACHE_ADMIN_KEY` 相同的 Admin API Key（请求头 `x-admin-key`）；侧栏可更改密钥。开发构建（debug）提供一键填入默认 `admin` 的快捷按钮。
 
 ```bash
 # 启动管理面板（HTTP 模式）
@@ -465,31 +465,52 @@ histogram_quantile(0.99,
 sum(increase(gateway_cache_cost_saved_usd_total[24h]))
 ```
 
-## 🐳 Docker 部署
+## 🐳 Docker 部署（Agent 中间层）
+
+默认栈：**gateway + Redis**（`config/gateway.docker.toml`，语义缓存关闭）。Redis 不映射到宿主机公网端口。
 
 ```bash
-# 构建网关镜像
-docker build -t crabcache:latest .
+cp .env.example .env
+# 编辑 .env：设置 CRABCACHE_API_KEY（上游 DeepSeek 密钥）
 
-# 启动所有服务
-docker compose up -d
+docker compose up -d --build
+docker compose ps   # gateway 应为 healthy（/ready 依赖 Redis）
 
-# 查看网关日志
-docker compose logs -f gateway
+# 验收（使用与上游相同的 bootstrap key，或 Management 创建的 sk-cc-*）
+export CRABCACHE_API_KEY=your-deepseek-key
+./scripts/verify_deployment.sh
+```
 
-# 仅启动依赖
-docker compose up -d redis qdrant
+公网入口：用 Nginx 反代本机 `127.0.0.1:8080`，参考 [`deploy/nginx/crabcache-api.conf.example`](deploy/nginx/crabcache-api.conf.example)（需 `proxy_buffering off` 以支持流式）。**不要**将 Management `:9080` 或 Redis 暴露到公网。
+
+### Agent 客户端配置
+
+| 字段 | 值 |
+|------|-----|
+| Base URL | `https://你的域名/v1`（OpenAI SDK 会自动请求 `/chat/completions`） |
+| API Key | Management `POST /v1/keys` 颁发的 `sk-cc-*`，或运维配置的 bootstrap key |
+| Model | 请求体中的 `model` 字段（如 `deepseek-v4-pro`） |
+
+创建客户端密钥（在服务器上，Management 默认容器内 `0.0.0.0:9080`）：
+
+```bash
+docker compose exec gateway curl -s -X POST http://127.0.0.1:9080/v1/keys \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"agent-1","enabled":true}'
 ```
 
 ### Docker Compose 服务
 
-| 服务 | 镜像 | 端口 | 说明 |
-|------|------|------|------|
-| `gateway` | `crabcache:latest` | `8080`, `9090` | CrabCache 网关 |
-| `redis` | `redis:7-alpine` | `6379` | L1 分布式缓存 |
-| `qdrant` | `qdrant/qdrant:latest` | `6333`, `6334` | L2 语义向量库 |
+| 服务 | 默认启动 | 宿主机端口 | 说明 |
+|------|----------|------------|------|
+| `gateway` | 是 | `127.0.0.1:8080`, `127.0.0.1:9090` | Agent API + Management（9080 仅容器内） |
+| `redis` | 是 | 无（仅 Docker 网络） | L1 缓存 |
+| `qdrant` | `--profile semantic` | 无 | L2 可选 |
 
-> **注意**: 生产环境中建议额外部署 Prometheus 和 Grafana 进行指标采集与可视化。
+环境变量见 [`.env.example`](.env.example)。可选生产覆盖：[`docker-compose.prod.yml`](docker-compose.prod.yml)。
+
+> **注意**: 生产环境建议 Prometheus/Grafana 采集 `9090` 指标（绑定本机，勿对公网开放）。
 
 ## 🧪 测试
 
@@ -497,9 +518,8 @@ docker compose up -d redis qdrant
 # 运行所有单元测试
 cargo test --workspace
 
-# 运行集成测试（需要 Redis）
-docker compose up -d redis
-cargo test --workspace -- --ignored
+# 运行集成测试（CI 自带 Redis；本地可先 docker compose up -d redis）
+cargo test -p crab-cache -p crab-gateway
 
 # 运行 clippy 检查
 cargo clippy --workspace -- -D warnings

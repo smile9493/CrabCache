@@ -1,16 +1,42 @@
+use crate::auth::{admin_key_header_value, handle_unauthorized};
 use crate::types::*;
-use gloo_net::http::Request;
+use gloo_net::http::{Request, RequestBuilder, Response};
 
 const API_BASE: &str = "/api/admin";
+const ADMIN_KEY_HEADER: &str = "x-admin-key";
+
+fn apply_admin_auth(mut builder: RequestBuilder) -> RequestBuilder {
+    if let Some(key) = admin_key_header_value() {
+        builder = builder.header(ADMIN_KEY_HEADER, &key);
+    }
+    builder
+}
+
+async fn http_error(resp: Response) -> String {
+    let status = resp.status();
+    if status == 401 {
+        handle_unauthorized();
+        return "unauthorized".to_string();
+    }
+
+    let body = resp.text().await.unwrap_or_default();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(msg) = value.get("error").and_then(|v| v.as_str()) {
+            return msg.to_string();
+        }
+    }
+
+    format!("HTTP {}", status)
+}
 
 async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T, String> {
-    let resp = Request::get(url)
+    let resp = apply_admin_auth(Request::get(url))
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(http_error(resp).await);
     }
 
     resp.json::<T>()
@@ -22,7 +48,7 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
     url: &str,
     body: &B,
 ) -> Result<T, String> {
-    let resp = Request::post(url)
+    let resp = apply_admin_auth(Request::post(url))
         .json(body)
         .map_err(|e| format!("Serialization error: {}", e))?
         .send()
@@ -30,7 +56,7 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(http_error(resp).await);
     }
 
     resp.json::<T>()
@@ -39,13 +65,13 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
 }
 
 async fn delete_json(url: &str) -> Result<(), String> {
-    let resp = Request::delete(url)
+    let resp = apply_admin_auth(Request::delete(url))
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(http_error(resp).await);
     }
 
     Ok(())
@@ -55,7 +81,7 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
     url: &str,
     body: &B,
 ) -> Result<T, String> {
-    let resp = Request::put(url)
+    let resp = apply_admin_auth(Request::put(url))
         .json(body)
         .map_err(|e| format!("Serialization error: {}", e))?
         .send()
@@ -63,7 +89,7 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(http_error(resp).await);
     }
 
     resp.json::<T>()
@@ -73,6 +99,10 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
 
 pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
+}
+
+pub async fn fetch_gateway_health() -> Result<GatewayHealth, String> {
+    fetch_json(&format!("{}/gateway/health", API_BASE)).await
 }
 
 pub async fn fetch_network_info() -> Result<NetworkInfo, String> {
@@ -134,13 +164,13 @@ pub async fn fetch_models() -> Result<ModelListResponse, String> {
 }
 
 pub async fn sync_models() -> Result<SyncResult, String> {
-    let resp = Request::post(&format!("{}/models", API_BASE))
+    let resp = apply_admin_auth(Request::post(&format!("{}/models", API_BASE)))
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(http_error(resp).await);
     }
 
     resp.json::<SyncResult>()
@@ -162,4 +192,20 @@ pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {
 
 pub async fn fetch_trace_analysis() -> Result<TraceAnalysis, String> {
     fetch_json(&format!("{}/trace/analysis", API_BASE)).await
+}
+
+pub async fn fetch_cache_ops() -> Result<CacheOpsView, String> {
+    fetch_json(&format!("{}/cache/ops", API_BASE)).await
+}
+
+pub async fn invalidate_cache(req: &InvalidateCacheBody) -> Result<InvalidateCacheResult, String> {
+    post_json(&format!("{}/cache/invalidate", API_BASE), req).await
+}
+
+pub async fn update_fingerprint(req: &FingerprintConfigBody) -> Result<FingerprintConfigBody, String> {
+    put_json(&format!("{}/cache/fingerprint", API_BASE), req).await
+}
+
+pub async fn update_stream_cache(req: &StreamCacheToggle) -> Result<StreamCacheToggle, String> {
+    put_json(&format!("{}/cache/stream_cache", API_BASE), req).await
 }

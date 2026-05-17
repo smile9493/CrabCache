@@ -2,7 +2,8 @@ use crate::state::{AppState, KeyMetadata};
 use crate::types::*;
 use crate::network::NetworkInfo;
 use crab_control::{
-    CreateGatewayKeyRequest, PutBackendsRequest, PutTtlConfigRequest,
+    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
+    PutBackendsRequest, PutTtlConfigRequest,
 };
 use axum::{
     Json, Router,
@@ -10,7 +11,7 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::Response,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,24 +38,46 @@ async fn admin_auth(mut req: Request, next: Next) -> Result<Response, StatusCode
     Ok(next.run(req).await)
 }
 
-fn gateway_status_code(err: crab_control::ControlError) -> StatusCode {
+fn gateway_status_code(err: &crab_control::ControlError) -> StatusCode {
     match err {
-        crab_control::ControlError::Http { status, .. } if status == 404 => StatusCode::NOT_FOUND,
-        crab_control::ControlError::Http { status, .. } if status == 409 => StatusCode::CONFLICT,
-        crab_control::ControlError::Http { status, .. } if (400..500).contains(&status) => {
+        crab_control::ControlError::Http { status, .. } if *status == 404 => StatusCode::NOT_FOUND,
+        crab_control::ControlError::Http { status, .. } if *status == 409 => StatusCode::CONFLICT,
+        crab_control::ControlError::Http { status, .. } if *status == 429 => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        crab_control::ControlError::Http { status, .. } if *status == 400 => StatusCode::BAD_REQUEST,
+        crab_control::ControlError::Http { status, .. } if (400..500).contains(status) => {
             StatusCode::BAD_GATEWAY
         }
         _ => StatusCode::BAD_GATEWAY,
     }
 }
 
+fn gateway_error_message(err: &crab_control::ControlError) -> String {
+    match err {
+        crab_control::ControlError::Http { body, .. } if !body.is_empty() => body.clone(),
+        other => other.to_string(),
+    }
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/gateway/health", get(get_gateway_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key))
         .route("/api/admin/cache/config", get(get_cache_config).put(update_cache_config))
+        .route("/api/admin/cache/ops", get(get_cache_ops))
+        .route("/api/admin/cache/invalidate", post(post_cache_invalidate))
+        .route(
+            "/api/admin/cache/fingerprint",
+            put(put_cache_fingerprint),
+        )
+        .route(
+            "/api/admin/cache/stream_cache",
+            get(get_stream_cache).put(put_stream_cache),
+        )
         .route("/api/admin/semantic/config", get(get_semantic_config).put(update_semantic_config))
         .route("/api/admin/connection/config", get(get_connection_config).put(update_connection_config))
         .route("/api/admin/upstream/config", get(get_upstream_config).put(update_upstream_config))
@@ -65,6 +88,37 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .layer(middleware::from_fn(admin_auth))
         .with_state(state)
+}
+
+async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {
+    match state.gateway.ready().await {
+        Ok(()) => match state.gateway.status().await {
+            Ok(s) => Json(GatewayHealthView {
+                healthy: true,
+                uptime_secs: s.uptime_secs,
+                active_keys: s.active_keys,
+                backend_count: s.backend_count,
+                stream_cache_enabled: s.stream_cache_enabled,
+                error: None,
+            }),
+            Err(e) => Json(GatewayHealthView {
+                healthy: true,
+                uptime_secs: 0,
+                active_keys: 0,
+                backend_count: 0,
+                stream_cache_enabled: false,
+                error: Some(gateway_error_message(&e)),
+            }),
+        },
+        Err(e) => Json(GatewayHealthView {
+            healthy: false,
+            uptime_secs: 0,
+            active_keys: 0,
+            backend_count: 0,
+            stream_cache_enabled: false,
+            error: Some(gateway_error_message(&e)),
+        }),
+    }
 }
 
 async fn get_network_info() -> Json<NetworkInfo> {
@@ -90,14 +144,53 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
 
     let body = resp.text().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Parse Prometheus text format to extract cache metrics
-    let l0_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L0_moka", "result", "hit").unwrap_or(0);
-    let l1_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L1_redis", "result", "hit").unwrap_or(0);
-    let l2_hits = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "L2_semantic", "result", "hit").unwrap_or(0);
-    let cache_misses = parse_prometheus_counter(&body, "gateway_cache_requests_total", "tier", "miss", "result", "miss").unwrap_or(0);
-    let total_input_tokens_hit = parse_prometheus_counter(&body, "gateway_deepseek_input_tokens_total", "cache_status", "hit", "model", "").unwrap_or(0);
-    let total_input_tokens_miss = parse_prometheus_counter(&body, "gateway_deepseek_input_tokens_total", "cache_status", "miss", "model", "").unwrap_or(0);
-    let total_output_tokens = parse_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", "model", "", "consumer", "").unwrap_or(0);
+    // l2_hits = tier L2_semantic; semantic_* = semantic guard status (different meaning).
+    let l0_hits = sum_prometheus_counter(
+        &body,
+        "gateway_cache_requests_total",
+        &[("tier", "L0_moka"), ("result", "hit")],
+    );
+    let l1_hits = sum_prometheus_counter(
+        &body,
+        "gateway_cache_requests_total",
+        &[("tier", "L1_redis"), ("result", "hit")],
+    );
+    let l2_hits = sum_prometheus_counter(
+        &body,
+        "gateway_cache_requests_total",
+        &[("tier", "L2_semantic"), ("result", "hit")],
+    );
+    let cache_misses = sum_prometheus_counter(
+        &body,
+        "gateway_cache_requests_total",
+        &[("tier", "miss"), ("result", "miss")],
+    );
+    let total_input_tokens_hit = sum_prometheus_counter(
+        &body,
+        "gateway_deepseek_input_tokens_total",
+        &[("cache_status", "hit")],
+    );
+    let total_input_tokens_miss = sum_prometheus_counter(
+        &body,
+        "gateway_deepseek_input_tokens_total",
+        &[("cache_status", "miss")],
+    );
+    let total_output_tokens = sum_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", &[]);
+    let semantic_hits = sum_prometheus_counter(
+        &body,
+        "gateway_semantic_cache_requests_total",
+        &[("status", "hit_above_threshold")],
+    ) + sum_prometheus_counter(
+        &body,
+        "gateway_semantic_cache_requests_total",
+        &[("status", "hit_below_threshold")],
+    );
+    let semantic_rejected = sum_prometheus_counter(
+        &body,
+        "gateway_semantic_cache_requests_total",
+        &[("status", "rejected_by_guard")],
+    );
+    let semantic_skipped = sum_prometheus_counter(&body, "gateway_semantic_skipped_total", &[]);
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -135,54 +228,146 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
         total_input_tokens: total_input_tokens_hit + total_input_tokens_miss,
         total_output_tokens,
         total_tokens: total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        latency_l0_ms: 0.0,
-        latency_l1_ms: 0.0,
-        latency_l2_ms: 0.0,
-        latency_upstream_ms: 0.0,
+        latency_l0_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L0_moka")],
+        ),
+        latency_l1_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L1_redis")],
+        ),
+        latency_l2_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L2_semantic")],
+        ),
+        latency_upstream_ms: avg_prometheus_histogram_ms(&body, "gateway_upstream_latency_seconds", &[]),
         active_keys: state.keys_meta.len() as u64,
         uptime_hours: uptime_secs / 3600,
         hourly_stats,
         daily_stats,
         weekly_stats,
         monthly_stats,
+        semantic_hits,
+        semantic_rejected,
+        semantic_skipped,
     }))
 }
 
-/// Parse a Prometheus counter value by matching label pairs.
-/// Handles simple cases like:
-///   gateway_cache_requests_total{tier="L0_moka",result="hit"} 42
-fn parse_prometheus_counter(body: &str, metric: &str, label1: &str, val1: &str, label2: &str, val2: &str) -> Option<u64> {
+fn labels_match(labels: &str, required: &[(&str, &str)]) -> bool {
+    required
+        .iter()
+        .all(|(key, val)| labels.contains(&format!("{key}=\"{val}\"")))
+}
+
+/// Sum all float samples for `metric` whose labels contain every required pair.
+fn sum_prometheus_sample(body: &str, metric: &str, required: &[(&str, &str)]) -> f64 {
+    let mut total = 0.0;
     for line in body.lines() {
         let line = line.trim();
-        if !line.starts_with(metric) {
+        if line.is_empty() || line.starts_with('#') || !line.starts_with(metric) {
             continue;
         }
-
-        // Extract labels portion between { and }
         if let Some(open) = line.find('{') {
             if let Some(close) = line.find('}') {
-                let labels = &line[open+1..close];
-                // Check that ALL required labels match
-                let has_l1 = labels.contains(&format!("{}=\"{}\"", label1, val1));
-                let has_l2 = if val2.is_empty() {
-                    true
-                } else {
-                    // For second label we need to be more flexible
-                    labels.contains(&format!("{}=\"{}\"", label2, val2))
-                };
-                if has_l1 && has_l2 {
-                    // Parse the value after }
-                    let value_part = line[close+1..].trim();
-                    return value_part.parse::<u64>().ok();
+                let labels = &line[open + 1..close];
+                if !labels_match(labels, required) {
+                    continue;
+                }
+                let value_part = line[close + 1..].trim();
+                if let Ok(v) = value_part.parse::<f64>() {
+                    total += v;
                 }
             }
-        } else if val1.is_empty() && val2.is_empty() {
-            // No labels, just metric name followed by value
+        } else if required.is_empty() {
             let value_part = line[metric.len()..].trim();
-            return value_part.parse::<u64>().ok();
+            if let Ok(v) = value_part.parse::<f64>() {
+                total += v;
+            }
         }
     }
-    None
+    total
+}
+
+/// Average latency in milliseconds from Prometheus histogram `_sum` / `_count` series.
+fn avg_prometheus_histogram_ms(body: &str, metric: &str, required: &[(&str, &str)]) -> f64 {
+    let sum = sum_prometheus_sample(body, &format!("{metric}_sum"), required);
+    let count = sum_prometheus_sample(body, &format!("{metric}_count"), required);
+    if count > 0.0 {
+        (sum / count) * 1000.0
+    } else {
+        0.0
+    }
+}
+
+/// Sum all counter samples for `metric` whose labels contain every required pair.
+fn sum_prometheus_counter(body: &str, metric: &str, required: &[(&str, &str)]) -> u64 {
+    let mut total = 0u64;
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || !line.starts_with(metric) {
+            continue;
+        }
+        if let Some(open) = line.find('{') {
+            if let Some(close) = line.find('}') {
+                let labels = &line[open + 1..close];
+                if !labels_match(labels, required) {
+                    continue;
+                }
+                let value_part = line[close + 1..].trim();
+                if let Ok(v) = value_part.parse::<u64>() {
+                    total += v;
+                }
+            }
+        } else if required.is_empty() {
+            let value_part = line[metric.len()..].trim();
+            if let Ok(v) = value_part.parse::<u64>() {
+                total += v;
+            }
+        }
+    }
+    total
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::sum_prometheus_counter;
+
+    #[test]
+    fn sum_across_multiple_model_labels() {
+        let body = r#"
+gateway_deepseek_input_tokens_total{cache_status="hit",model="m1",consumer="c"} 10
+gateway_deepseek_input_tokens_total{cache_status="hit",model="m2",consumer="c"} 20
+gateway_deepseek_input_tokens_total{cache_status="miss",model="m1",consumer="c"} 5
+"#;
+        assert_eq!(
+            sum_prometheus_counter(body, "gateway_deepseek_input_tokens_total", &[("cache_status", "hit")]),
+            30
+        );
+        assert_eq!(
+            sum_prometheus_counter(body, "gateway_deepseek_input_tokens_total", &[("cache_status", "miss")]),
+            5
+        );
+    }
+
+    #[test]
+    fn avg_histogram_across_models() {
+        let body = r#"
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m1"} 0.002
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m2"} 0.004
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m1"} 10
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
+"#;
+        let avg = super::avg_prometheus_histogram_ms(
+            body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L0_moka")],
+        );
+        // (0.006 / 40) * 1000 = 0.15 ms
+        assert!((avg - 0.15).abs() < 1e-6);
+    }
 }
 
 fn generate_hourly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
@@ -380,7 +565,7 @@ async fn list_keys(
         .gateway
         .list_keys()
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     let keys: Vec<ApiKey> = specs
         .into_iter()
@@ -439,7 +624,7 @@ async fn create_key(
             token: None,
         })
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     let model_limits = req.model_limits.clone().unwrap_or_default();
     let remain_quota = req.remain_quota.unwrap_or(-1);
@@ -491,10 +676,145 @@ async fn revoke_key(
         .gateway
         .revoke_key(&token)
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     state.keys_meta.remove(&id);
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_cache_ops(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CacheOpsView>, (StatusCode, String)> {
+    let status = state
+        .gateway
+        .status()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    let fingerprint = state
+        .gateway
+        .get_fingerprint()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let last_invalidate = state.last_invalidate.read().clone().map(|li| LastInvalidateView {
+        scope: li.scope,
+        status: li.status,
+        at_secs: li.at_secs,
+        error: li.error,
+    });
+
+    let invalidate_status = state
+        .gateway
+        .get_invalidate_status()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let invalidate_job = invalidate_status.job.map(|j| InvalidateJobView {
+        scope: j.scope,
+        phase: j.phase,
+        error: j.error,
+        started_at_secs: j.started_at_secs,
+        completed_at_secs: j.completed_at_secs,
+    });
+
+    Ok(Json(CacheOpsView {
+        fingerprint_version: fingerprint.version,
+        fingerprint_normalize: fingerprint.normalize_content,
+        stream_cache_enabled: status.stream_cache_enabled,
+        last_invalidate,
+        invalidate_all_in_progress: invalidate_status.all_in_progress,
+        invalidate_job,
+    }))
+}
+
+async fn post_cache_invalidate(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InvalidateCacheBody>,
+) -> Result<Json<InvalidateCacheResult>, (StatusCode, String)> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    match state
+        .gateway
+        .invalidate_cache(&InvalidateCacheRequest {
+            scope: req.scope.clone(),
+        })
+        .await
+    {
+        Ok(resp) => {
+            *state.last_invalidate.write() = Some(crate::state::LastInvalidate {
+                scope: resp.scope.clone(),
+                status: resp.status.clone(),
+                at_secs: now,
+                error: None,
+            });
+            tracing::info!(scope = %resp.scope, status = %resp.status, "Cache invalidation accepted by gateway");
+            Ok(Json(InvalidateCacheResult {
+                scope: resp.scope,
+                status: resp.status,
+            }))
+        }
+        Err(e) => {
+            let msg = gateway_error_message(&e);
+            *state.last_invalidate.write() = Some(crate::state::LastInvalidate {
+                scope: req.scope.clone(),
+                status: "failed".to_string(),
+                at_secs: now,
+                error: Some(msg.clone()),
+            });
+            Err((gateway_status_code(&e), msg))
+        }
+    }
+}
+
+async fn put_cache_fingerprint(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FingerprintConfigBody>,
+) -> Result<Json<FingerprintConfigBody>, (StatusCode, String)> {
+    let updated = state
+        .gateway
+        .put_fingerprint(&FingerprintConfigRequest {
+            version: req.version,
+            normalize_content: req.normalize_content,
+        })
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    Ok(Json(FingerprintConfigBody {
+        version: updated.version,
+        normalize_content: updated.normalize_content,
+    }))
+}
+
+async fn get_stream_cache(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<StreamCacheConfig>, (StatusCode, String)> {
+    let cfg = state
+        .gateway
+        .get_stream_cache()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    Ok(Json(StreamCacheConfig {
+        enabled: cfg.enabled,
+    }))
+}
+
+async fn put_stream_cache(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<StreamCacheConfig>,
+) -> Result<Json<StreamCacheConfig>, (StatusCode, String)> {
+    let cfg = state
+        .gateway
+        .put_stream_cache(&crab_control::StreamCacheConfig {
+            enabled: req.enabled,
+        })
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    Ok(Json(StreamCacheConfig {
+        enabled: cfg.enabled,
+    }))
 }
 
 async fn get_cache_config(
@@ -535,7 +855,7 @@ async fn update_cache_config(
         .gateway
         .put_ttl(&put_req)
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     let config = {
         let mut config = state.cache_config.write();
@@ -576,7 +896,7 @@ async fn get_routing_status(
         .gateway
         .get_backends()
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     let backends: Vec<BackendStatus> = view
         .backends
@@ -825,7 +1145,7 @@ async fn update_upstream_config(
         .gateway
         .put_backends(&put_req)
         .await
-        .map_err(gateway_status_code)?;
+        .map_err(|e| gateway_status_code(&e))?;
 
     let response = {
         let config = state.upstream_config.read().clone();

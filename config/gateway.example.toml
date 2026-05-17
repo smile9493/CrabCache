@@ -14,6 +14,12 @@ admin_key = "dev-only-gateway-admin-secret"
 # Max seconds for background Redis SCAN during POST /v1/cache/invalidate (default: 300)
 # invalidate_scan_timeout_secs = 300
 
+[limits]
+# Max inbound chat completion request body (default 4 MiB)
+max_request_body_bytes = 4194304
+# Max concurrent in-flight chat requests (default 512)
+max_concurrent_requests = 512
+
 [upstream]
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
@@ -38,6 +44,8 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
 l0_ttl_secs = 3600
+# Bare-metal / local dev: redis on localhost.
+# Docker Compose: use redis://redis:6379 (see config/gateway.docker.toml) or CRABCACHE_L1_REDIS_URL.
 l1_redis_url = "redis://127.0.0.1:6379"
 l1_pool_size = 16
 

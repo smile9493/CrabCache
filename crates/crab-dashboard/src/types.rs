@@ -1,5 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GatewayHealth {
+    pub healthy: bool,
+    #[serde(default)]
+    pub uptime_secs: u64,
+    #[serde(default)]
+    pub active_keys: u64,
+    #[serde(default)]
+    pub backend_count: usize,
+    #[serde(default)]
+    pub stream_cache_enabled: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInfo {
     pub primary_ip: Option<String>,
@@ -38,6 +53,63 @@ pub struct MetricsSnapshot {
     pub daily_stats: Vec<TimeSeriesPoint>,
     pub weekly_stats: Vec<TimeSeriesPoint>,
     pub monthly_stats: Vec<TimeSeriesPoint>,
+    #[serde(default)]
+    pub semantic_hits: u64,
+    #[serde(default)]
+    pub semantic_rejected: u64,
+    #[serde(default)]
+    pub semantic_skipped: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastInvalidateView {
+    pub scope: String,
+    pub status: String,
+    pub at_secs: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateJobView {
+    pub scope: String,
+    pub phase: String,
+    pub error: Option<String>,
+    pub started_at_secs: u64,
+    pub completed_at_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheOpsView {
+    pub fingerprint_version: u32,
+    pub fingerprint_normalize: bool,
+    pub stream_cache_enabled: bool,
+    pub last_invalidate: Option<LastInvalidateView>,
+    #[serde(default)]
+    pub invalidate_all_in_progress: bool,
+    #[serde(default)]
+    pub invalidate_job: Option<InvalidateJobView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateCacheBody {
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateCacheResult {
+    pub scope: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FingerprintConfigBody {
+    pub version: u32,
+    pub normalize_content: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamCacheToggle {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

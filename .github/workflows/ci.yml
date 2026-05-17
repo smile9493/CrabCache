@@ -9,6 +9,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      CRABCACHE_TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -36,4 +43,4 @@ jobs:
 
       - name: Run tests (core crates)
         run: |
-          cargo test -p crab-control -p crab-cache -p crab-route -p crab-proxy -p crab-gateway -p crab-metrics --no-fail-fast
+          cargo test -p crab-control -p crab-cache -p crab-route -p crab-proxy -p crab-gateway -p crab-metrics -p crab-admin --no-fail-fast

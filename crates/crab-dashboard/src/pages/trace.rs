@@ -22,7 +22,7 @@ pub fn TracePage() -> impl IntoView {
     load_analysis();
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <div class="flex items-center justify-between">
                 <SectionHeader
                     title=t.trace_title()

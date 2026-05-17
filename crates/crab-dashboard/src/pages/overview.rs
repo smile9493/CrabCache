@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use gloo_timers::future::TimeoutFuture;
 
 use crate::api;
+use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::{use_translations, Translations};
 use crate::types::MetricsSnapshot;
@@ -37,13 +38,12 @@ pub fn OverviewPage() -> impl IntoView {
     });
 
     view! {
-        <div class="p-6 space-y-6">
-            <div class="flex items-center justify-between">
-                <SectionHeader
-                    title=t.overview_title()
-                    description=t.overview_desc()
-                />
-                <div class="flex items-center gap-3">
+        <div class="page-content space-y-6">
+            <PageHeader
+                title=move || t.overview_title()
+                description=move || t.overview_desc()
+            >
+                <div class="flex items-center gap-3 flex-wrap justify-end">
                     <span class="text-xs text-theme-muted">
                         {move || format!("{}: {}", t.overview_last_update(), last_update.get())}
                     </span>
@@ -63,7 +63,7 @@ pub fn OverviewPage() -> impl IntoView {
                         {t.overview_refresh()}
                     </button>
                 </div>
-            </div>
+            </PageHeader>
 
             {move || match metrics.get() {
                 None => view! { <Spinner /> }.into_any(),
@@ -147,7 +147,7 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                     <div class="metric-card-sub">{t.overview_active_keys_sub()}</div>
                     <div class="mt-3 flex items-center gap-2">
                         <div class="online-dot"></div>
-                        <span class="online-label">"Active"</span>
+                        <span class="online-label">{t.overview_status_active()}</span>
                     </div>
                 </div>
             </div>
@@ -161,11 +161,22 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                         {format!("{}h", metrics.uptime_hours)}
                     </div>
                     <div class="metric-card-sub">{t.overview_uptime_sub()}</div>
-                    <div class="mt-3 pt-3 border-t border-theme">
+                    <div class="mt-3 pt-3 border-t border-theme space-y-1">
                         <div class="flex justify-between text-xs">
-                            <span class="text-theme-muted">"Cache Hits"</span>
+                            <span class="text-theme-muted">{t.overview_cache_hits()}</span>
                             <span class="font-mono tabular-nums text-accent">
                                 {format!("{}", total_hits)}
+                            </span>
+                        </div>
+                        <div class="flex justify-between text-xs text-theme-muted" title=t.overview_semantic_hint()>
+                            <span>{t.overview_semantic_guard()}</span>
+                            <span class="font-mono tabular-nums">
+                                {format!(
+                                    "{} / {} / {}",
+                                    metrics.semantic_hits,
+                                    metrics.semantic_rejected,
+                                    metrics.semantic_skipped
+                                )}
                             </span>
                         </div>
                     </div>
@@ -174,18 +185,18 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
             <div class="bento-cell">
                 <div class="metric-card h-full">
                     <div class="flex items-start justify-between mb-3">
-                        <div class="metric-card-label">"Cache Tokens"</div>
+                        <div class="metric-card-label">{t.overview_cache_tokens()}</div>
                         <div class="text-2xl opacity-30">"💾"</div>
                     </div>
                     <div class="space-y-2">
                         <div class="flex justify-between items-baseline">
-                            <span class="text-xs text-theme-muted">"Hit"</span>
+                            <span class="text-xs text-theme-muted">{t.overview_token_hit()}</span>
                             <span class="text-lg font-mono tabular-nums text-accent">
                                 {format!("{}", metrics.cache_hit_tokens)}
                             </span>
                         </div>
                         <div class="flex justify-between items-baseline">
-                            <span class="text-xs text-theme-muted">"Miss"</span>
+                            <span class="text-xs text-theme-muted">{t.overview_token_miss()}</span>
                             <span class="text-lg font-mono tabular-nums text-theme">
                                 {format!("{}", metrics.cache_miss_tokens)}
                             </span>

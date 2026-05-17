@@ -135,6 +135,21 @@ pub struct InvalidateCacheResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateJobSnapshot {
+    pub scope: String,
+    pub phase: String,
+    pub error: Option<String>,
+    pub started_at_secs: u64,
+    pub completed_at_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateCacheStatus {
+    pub all_in_progress: bool,
+    pub job: Option<InvalidateJobSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintConfigRequest {
     pub version: u32,
     #[serde(default = "default_fingerprint_normalize")]

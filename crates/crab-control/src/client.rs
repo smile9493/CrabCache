@@ -60,6 +60,17 @@ impl GatewayAdminClient {
         }
     }
 
+    /// Readiness probe: checks Redis via the gateway management API.
+    pub async fn ready(&self) -> Result<(), ControlError> {
+        let resp = self.http.get(format!("{}/v1/ready", self.base_url)).send().await?;
+        let status = resp.status().as_u16();
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(ControlError::Http { status, body })
+    }
+
     pub async fn status(&self) -> Result<GatewayStatus, ControlError> {
         let resp = self.authed(reqwest::Method::GET, "/v1/status").send().await?;
         let resp = Self::check(resp).await?;
@@ -145,10 +156,33 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
+    pub async fn get_invalidate_status(&self) -> Result<InvalidateCacheStatus, ControlError> {
         let resp = self
+            .authed(reqwest::Method::GET, "/v1/cache/invalidate/status")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
+        let mut builder = self
             .authed(reqwest::Method::POST, "/v1/cache/invalidate")
-            .json(req)
+            .json(req);
+        if req.scope.trim() == "all" {
+            builder = builder.header(
+                CACHE_INVALIDATE_CONFIRM_HEADER,
+                CACHE_INVALIDATE_CONFIRM_ALL,
+            );
+        }
+        let resp = builder.send().await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_fingerprint(&self) -> Result<FingerprintConfigRequest, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/cache/fingerprint")
             .send()
             .await?;
         let resp = Self::check(resp).await?;

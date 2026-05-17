@@ -20,10 +20,19 @@ pub struct KeyMetadata {
     pub unlimited_quota: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct LastInvalidate {
+    pub scope: String,
+    pub status: String,
+    pub at_secs: u64,
+    pub error: Option<String>,
+}
+
 pub struct AppState {
     pub start_time: u64,
     pub upstream_api_key: String,
     pub gateway: GatewayAdminClient,
+    pub last_invalidate: RwLock<Option<LastInvalidate>>,
     /// API key metadata indexed by key id (gateway-assigned).
     pub keys_meta: DashMap<String, KeyMetadata>,
     pub request_logs: RwLock<Vec<StoredRequestLog>>,
@@ -232,6 +241,7 @@ impl AppState {
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
             trace_entries: RwLock::new(Vec::new()),
+            last_invalidate: RwLock::new(None),
         }
     }
 }

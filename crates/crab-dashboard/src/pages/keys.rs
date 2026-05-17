@@ -95,7 +95,7 @@ pub fn KeysPage() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6 space-y-6">
+        <div class="page-content space-y-6">
             <div class="flex items-center justify-between">
                 <SectionHeader
                     title=t.keys_title()
@@ -113,7 +113,7 @@ pub fn KeysPage() -> impl IntoView {
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-6">
                         <div class="flex items-center gap-3">
-                            <span class="text-xs text-theme-muted font-semibold">"本地地址:"</span>
+                            <span class="text-xs text-theme-muted font-semibold">{t.keys_gateway_url_label()}</span>
                             <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
                                 {move || network_info.get().map(|n| n.gateway_url).unwrap_or_default()}
                             </code>
@@ -134,7 +134,7 @@ pub fn KeysPage() -> impl IntoView {
                                 if let Some(lan_url) = info.gateway_url_lan {
                                     view! {
                                         <div class="flex items-center gap-3">
-                                            <span class="text-xs text-theme-muted font-semibold">"局域网地址:"</span>
+                                            <span class="text-xs text-theme-muted font-semibold">{t.keys_lan_url_label()}</span>
                                             <code class="text-sm font-mono text-accent bg-accent/10 px-2 py-1 rounded">
                                                 {lan_url.clone()}
                                             </code>

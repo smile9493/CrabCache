@@ -1,0 +1,68 @@
+# CrabCache gateway config for Docker Compose (agent profile: gateway + Redis).
+# Required: set CRABCACHE_API_KEY (upstream DeepSeek key) in .env or compose environment.
+# Optional: CRABCACHE_GATEWAY_ADMIN_KEY, CRABCACHE_L1_REDIS_URL, CRABCACHE_MANAGEMENT_LISTEN
+
+listen_addr = "0.0.0.0:8080"
+metrics_addr = "0.0.0.0:9090"
+# Overridden by CRABCACHE_API_KEY at startup (required for production).
+api_key = "set-via-CRABCACHE_API_KEY-environment-variable"
+
+[management]
+listen_addr = "0.0.0.0:9080"
+admin_key = "set-via-CRABCACHE_GATEWAY_ADMIN_KEY"
+
+[limits]
+max_request_body_bytes = 4194304
+max_concurrent_requests = 512
+
+[upstream]
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+default_weight = 1
+deepseek_endpoints = ["api.deepseek.com:443"]
+
+[cache]
+default_ttl_secs = 3600
+l0_max_capacity = 10000
+l0_ttl_secs = 3600
+# Docker Compose service name "redis" (not 127.0.0.1).
+l1_redis_url = "redis://redis:6379"
+l1_pool_size = 16
+fingerprint_version = 1
+fingerprint_normalize_content = true
+
+[cache.model_ttl_overrides]
+"deepseek-v4-pro" = 7200
+"deepseek-v4-flash" = 3600
+
+[semantic]
+enabled = false
+model_path = "models/all-MiniLM-L6-v2.onnx"
+tokenizer_path = "models/tokenizer.json"
+qdrant_url = "http://qdrant:6334"
+collection_name = "crab_semantic_cache"
+similarity_threshold = 0.95
+ttl_secs = 86400
+
+[reasoning]
+thinking_mode = "enabled"
+reasoning_effort = "max"
+missing_reasoning_strategy = "recover"
+display_reasoning = true
+collapsible_reasoning = true
+cache_db_path = "/app/data/reasoning_content.sqlite3"
+cache_max_age_secs = 2592000
+cache_max_rows = 100000
+
+[connection]
+tcp_keepalive_idle_secs = 60
+tcp_keepalive_interval_secs = 10
+tcp_keepalive_count = 3
+idle_timeout_secs = 90
+h2_ping_interval_secs = 30
+
+[trace_logging]
+enabled = false
+path = "/app/logs/trace.jsonl"
+max_lines = 10000
+max_files = 5

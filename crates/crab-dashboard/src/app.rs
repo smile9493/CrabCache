@@ -2,8 +2,11 @@ use leptos::prelude::*;
 use leptos_router::components::*;
 use leptos_router::path;
 
-use crate::components::sidebar::Sidebar;
+use crate::auth::{is_authenticated, provide_admin_auth};
+use crate::components::auth_gate::AuthGate;
+use crate::components::sidebar::{provide_mobile_nav, MobileTopBar, Sidebar};
 use crate::locale::{provide_locale, use_translations};
+use crate::pages::cache_ops::CacheOpsPage;
 use crate::pages::keys::KeysPage;
 use crate::pages::logs::LogsPage;
 use crate::pages::models::ModelsPage;
@@ -17,10 +20,26 @@ use crate::theme::provide_theme;
 pub fn App() -> impl IntoView {
     provide_locale();
     provide_theme();
+    let admin_key = provide_admin_auth();
 
     view! {
+        {move || {
+            if is_authenticated(&admin_key) {
+                view! { <AuthenticatedShell /> }.into_any()
+            } else {
+                view! { <AuthGate /> }.into_any()
+            }
+        }}
+    }
+}
+
+#[component]
+fn AuthenticatedShell() -> impl IntoView {
+    provide_mobile_nav();
+    view! {
         <Router>
-            <div class="h-screen font-sans">
+            <div class="app-shell font-sans">
+                <MobileTopBar />
                 <Sidebar />
                 <main class="main-content overflow-y-auto theme-scrollbar">
                     <Routes fallback=|| view! { <NotFound /> }>
@@ -28,6 +47,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/keys") view=KeysPage />
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/routing") view=RoutingPage />
+                        <Route path=path!("/cache") view=CacheOpsPage />
                         <Route path=path!("/logs") view=LogsPage />
                         <Route path=path!("/trace") view=TracePage />
                         <Route path=path!("/upstream") view=UpstreamPage />
@@ -42,12 +62,14 @@ pub fn App() -> impl IntoView {
 fn NotFound() -> impl IntoView {
     let t = use_translations();
     view! {
-        <div class="flex flex-col items-center justify-center py-24 bg-theme">
-            <div class="text-6xl font-bold text-theme font-mono">{crate::locale::Translations::not_found_title()}</div>
-            <p class="mt-4 text-theme-muted">{t.not_found_desc()}</p>
-            <A href="/" attr:class="mt-6 text-sm text-accent hover:text-accent font-medium">
-                {t.not_found_back()}
-            </A>
+        <div class="page-content not-found-page">
+            <div class="not-found-card glass-card-raised">
+                <div class="not-found-code">{crate::locale::Translations::not_found_title()}</div>
+                <p class="not-found-desc">{t.not_found_desc()}</p>
+                <A href="/" attr:class="btn btn-primary text-sm">
+                    {t.not_found_back()}
+                </A>
+            </div>
         </div>
     }
 }

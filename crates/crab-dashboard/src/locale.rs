@@ -53,6 +53,12 @@ impl Translations {
             Locale::EnUS => "Routing & Cache",
         }
     }
+    pub fn sidebar_cache_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存运维",
+            Locale::EnUS => "Cache Ops",
+        }
+    }
     pub fn sidebar_models(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "模型列表",
@@ -81,6 +87,36 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "网关运行中",
             Locale::EnUS => "Gateway Online",
+        }
+    }
+    pub fn sidebar_gateway_checking(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查网关…",
+            Locale::EnUS => "Checking gateway…",
+        }
+    }
+    pub fn sidebar_gateway_offline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关不可达",
+            Locale::EnUS => "Gateway offline",
+        }
+    }
+    pub fn sidebar_group_monitor(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "监控",
+            Locale::EnUS => "Monitor",
+        }
+    }
+    pub fn sidebar_group_config(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置",
+            Locale::EnUS => "Configure",
+        }
+    }
+    pub fn sidebar_group_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维",
+            Locale::EnUS => "Operations",
         }
     }
 
@@ -410,6 +446,225 @@ impl Translations {
             Locale::EnUS => "Configure cache TTLs, semantic thresholds, and session affinity.",
         }
     }
+
+    pub fn cache_ops_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存运维",
+            Locale::EnUS => "Cache Operations",
+        }
+    }
+    pub fn cache_ops_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理指纹版本、流式缓存开关与缓存失效",
+            Locale::EnUS => "Manage fingerprint version, stream cache, and cache invalidation.",
+        }
+    }
+    pub fn cache_ops_fingerprint_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存键指纹",
+            Locale::EnUS => "Cache Key Fingerprint",
+        }
+    }
+    pub fn cache_ops_fingerprint_version(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "指纹版本",
+            Locale::EnUS => "Fingerprint version",
+        }
+    }
+    pub fn cache_ops_normalize(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "内容规范化 (NFC/空白)",
+            Locale::EnUS => "Normalize content (NFC/whitespace)",
+        }
+    }
+    pub fn cache_ops_stream_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式响应缓存",
+            Locale::EnUS => "Stream response cache",
+        }
+    }
+    pub fn cache_ops_invalidate_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存失效",
+            Locale::EnUS => "Cache invalidation",
+        }
+    }
+    pub fn cache_ops_scope(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "范围 (all / prefix:ns / key)",
+            Locale::EnUS => "Scope (all / prefix:ns / key)",
+        }
+    }
+    pub fn cache_ops_invalidate_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "执行失效",
+            Locale::EnUS => "Invalidate",
+        }
+    }
+    pub fn cache_ops_confirm_all_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认清空全部缓存？",
+            Locale::EnUS => "Invalidate entire cache?",
+        }
+    }
+    pub fn cache_ops_confirm_all_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "将清空 L0 与 L1（Redis SCAN）。此操作异步执行，状态为 accepted 表示已受理。",
+            Locale::EnUS => "Clears L0 and L1 (Redis SCAN). Runs asynchronously; accepted means the job was queued.",
+        }
+    }
+    pub fn cache_ops_confirm_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认",
+            Locale::EnUS => "Confirm",
+        }
+    }
+    pub fn cache_ops_confirm_cancel(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
+        }
+    }
+    pub fn cache_ops_last_invalidate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上次失效",
+            Locale::EnUS => "Last invalidation",
+        }
+    }
+    pub fn cache_ops_none(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无",
+            Locale::EnUS => "None",
+        }
+    }
+    pub fn cache_ops_invalidate_running(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全量失效进行中…",
+            Locale::EnUS => "Full invalidation in progress…",
+        }
+    }
+    pub fn cache_ops_invalidate_job(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Gateway 异步任务",
+            Locale::EnUS => "Gateway async job",
+        }
+    }
+    pub fn overview_semantic_guard(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义守卫",
+            Locale::EnUS => "Semantic guard",
+        }
+    }
+    pub fn overview_semantic_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中 / 拒绝 / 跳过（与 L2 tier 命中不同）",
+            Locale::EnUS => "hit / rejected / skipped (not L2 tier hits)",
+        }
+    }
+    pub fn overview_cache_hits(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存命中",
+            Locale::EnUS => "Cache hits",
+        }
+    }
+    pub fn overview_cache_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存 Token",
+            Locale::EnUS => "Cache tokens",
+        }
+    }
+    pub fn overview_token_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中",
+            Locale::EnUS => "Hit",
+        }
+    }
+    pub fn overview_token_miss(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未命中",
+            Locale::EnUS => "Miss",
+        }
+    }
+    pub fn overview_status_active(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运行中",
+            Locale::EnUS => "Active",
+        }
+    }
+    pub fn keys_lan_url_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "局域网地址",
+            Locale::EnUS => "LAN URL",
+        }
+    }
+    pub fn cache_ops_scope_required(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请填写失效范围",
+            Locale::EnUS => "Scope is required",
+        }
+    }
+    pub fn auth_tagline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "DeepSeek V4 高性能 API 网关控制台",
+            Locale::EnUS => "Control plane for the DeepSeek V4 API gateway",
+        }
+    }
+
+    pub fn auth_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Admin 登录",
+            Locale::EnUS => "Admin Sign In",
+        }
+    }
+    pub fn auth_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请输入与服务器 CRABCACHE_ADMIN_KEY 一致的密钥。",
+            Locale::EnUS => "Enter the key matching the server CRABCACHE_ADMIN_KEY.",
+        }
+    }
+    pub fn auth_key_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Admin API Key",
+            Locale::EnUS => "Admin API Key",
+        }
+    }
+    pub fn auth_key_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "x-admin-key",
+            Locale::EnUS => "x-admin-key",
+        }
+    }
+    pub fn auth_submit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "登录",
+            Locale::EnUS => "Sign In",
+        }
+    }
+    pub fn auth_dev_default(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "使用开发默认密钥 (admin)",
+            Locale::EnUS => "Use development default (admin)",
+        }
+    }
+    pub fn auth_error_empty(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请输入 Admin API Key",
+            Locale::EnUS => "Admin API Key is required",
+        }
+    }
+    pub fn auth_error_save(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法保存密钥（localStorage 不可用）",
+            Locale::EnUS => "Failed to save key (localStorage unavailable)",
+        }
+    }
+    pub fn sidebar_change_admin_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "更改 Admin 密钥",
+            Locale::EnUS => "Change Admin Key",
+        }
+    }
+
     pub fn routing_cache_config_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存 TTL 配置",
@@ -788,6 +1043,24 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "响应",
             Locale::EnUS => "Response",
+        }
+    }
+    pub fn logs_detail_route(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由后端",
+            Locale::EnUS => "Route backend",
+        }
+    }
+    pub fn logs_detail_cache_path(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存路径",
+            Locale::EnUS => "Cache path",
+        }
+    }
+    pub fn logs_select_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择一条请求查看详情",
+            Locale::EnUS => "Select a request to view details",
         }
     }
     pub fn logs_empty(self) -> &'static str {
