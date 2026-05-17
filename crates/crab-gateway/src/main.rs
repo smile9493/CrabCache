@@ -339,6 +339,9 @@ fn main() -> Result<()> {
         embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
     };
 
+    let request_semaphore =
+        Arc::new(tokio::sync::Semaphore::new(config.limits.max_concurrent_requests));
+
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -355,6 +358,8 @@ fn main() -> Result<()> {
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
         pricing: config.cache.pricing.clone().unwrap_or_default(),
         max_sse_cache_bytes: config.cache.max_sse_cache_bytes,
+        max_request_body_bytes: config.limits.max_request_body_bytes,
+        request_semaphore,
     });
 
     let proxy = GatewayProxy::new(state);

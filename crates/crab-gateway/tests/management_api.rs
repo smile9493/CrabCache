@@ -34,25 +34,21 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     )
 }
 
-async fn test_management_state() -> ManagementState {
+async fn test_management_state() -> Option<ManagementState> {
     let redis_url =
         std::env::var("CRABCACHE_TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     let pool = bb8::Pool::builder()
         .max_size(1)
+        .connection_timeout(std::time::Duration::from_secs(2))
         .build(
-            bb8_redis::RedisConnectionManager::new(redis_url)
-                .expect("redis manager"),
+            bb8_redis::RedisConnectionManager::new(redis_url).ok()?,
         )
         .await
-        .expect("redis pool (start Redis or set CRABCACHE_TEST_REDIS_URL)");
+        .ok()?;
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let tiered_cache = Arc::new(
-        TieredCache::new(pool, L0Config::default(), ttl)
-            .await
-            .expect("tiered cache"),
-    );
+    let tiered_cache = Arc::new(TieredCache::new(pool, L0Config::default(), ttl).await.ok()?);
 
-    ManagementState {
+    Some(ManagementState {
         runtime: test_runtime(),
         tiered_cache,
         admin_key: "test-admin".to_string(),
@@ -60,12 +56,36 @@ async fn test_management_state() -> ManagementState {
         invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(crab_gateway::management::InvalidateRateState::default())),
         invalidate_scan_timeout_secs: 300,
+    })
+}
+
+fn redis_required_in_ci() -> bool {
+    std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+}
+
+async fn require_management_state() -> Option<ManagementState> {
+    let state = test_management_state().await?;
+    if state.tiered_cache.ping().await {
+        Some(state)
+    } else {
+        None
     }
+}
+
+fn skip_or_panic_redis_unavailable() {
+    if redis_required_in_ci() {
+        panic!("Redis required for management API integration tests in CI");
+    }
+    eprintln!("SKIP: Redis not reachable");
 }
 
 #[tokio::test]
 async fn health_without_auth() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(
@@ -80,8 +100,39 @@ async fn health_without_auth() {
 }
 
 #[tokio::test]
+async fn ready_returns_ok_when_redis_up() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["ready"], true);
+    assert_eq!(json["redis"], "ok");
+}
+
+#[tokio::test]
 async fn create_and_list_keys() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let create = app
         .clone()
@@ -115,7 +166,11 @@ async fn create_and_list_keys() {
 
 #[tokio::test]
 async fn rejects_missing_admin_key() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(
@@ -131,7 +186,11 @@ async fn rejects_missing_admin_key() {
 
 #[tokio::test]
 async fn invalidate_all_requires_confirm_header() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(
@@ -150,7 +209,11 @@ async fn invalidate_all_requires_confirm_header() {
 
 #[tokio::test]
 async fn invalidate_all_accepts_with_confirm_header() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(
@@ -170,7 +233,11 @@ async fn invalidate_all_accepts_with_confirm_header() {
 
 #[tokio::test]
 async fn get_invalidate_status_without_job() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(
@@ -194,7 +261,11 @@ async fn get_invalidate_status_without_job() {
 
 #[tokio::test]
 async fn get_fingerprint_returns_runtime_config() {
-    let app = router(test_management_state().await);
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
 
     let resp = app
         .oneshot(

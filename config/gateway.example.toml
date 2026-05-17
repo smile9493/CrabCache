@@ -14,6 +14,12 @@ admin_key = "dev-only-gateway-admin-secret"
 # Max seconds for background Redis SCAN during POST /v1/cache/invalidate (default: 300)
 # invalidate_scan_timeout_secs = 300
 
+[limits]
+# Max inbound chat completion request body (default 4 MiB)
+max_request_body_bytes = 4194304
+# Max concurrent in-flight chat requests (default 512)
+max_concurrent_requests = 512
+
 [upstream]
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"

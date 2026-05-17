@@ -91,7 +91,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {
-    match state.gateway.health().await {
+    match state.gateway.ready().await {
         Ok(()) => match state.gateway.status().await {
             Ok(s) => Json(GatewayHealthView {
                 healthy: true,

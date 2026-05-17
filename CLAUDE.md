@@ -312,6 +312,10 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | PATCH | `/v1/keys/{token}` | 更新密钥（名称、启用状态） |
 | GET | `/v1/cache/ttl` | 获取缓存 TTL 配置 |
 | PUT | `/v1/cache/ttl` | 更新缓存 TTL 配置（动态生效） |
+| POST | `/v1/cache/invalidate` | 物理清理 L0+L1 缓存（scope: all / prefix:xxx / 单 key）；异步执行，返回 202 Accepted |
+| GET | `/v1/cache/invalidate/status` | 查询清理任务状态（all_in_progress + job snapshot） |
+| GET | `/v1/cache/fingerprint` | 获取指纹版本和标准化配置 |
+| PUT | `/v1/cache/fingerprint` | 更新指纹版本（升版本使旧键自然 miss，逻辑隔离，不扫 Redis） |
 | GET | `/v1/routing/backends` | 获取后端路由列表 |
 | PUT | `/v1/routing/backends` | 热更新后端路由端点 |
 

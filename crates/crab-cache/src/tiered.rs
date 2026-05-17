@@ -151,6 +151,19 @@ impl TieredCache {
         Ok(())
     }
 
+    /// Returns true if Redis responds to PING (used for readiness probes).
+    pub async fn ping(&self) -> bool {
+        let check = async {
+            let mut conn = self.l1_pool.get().await.ok()?;
+            let pong: String = cmd("PING").query_async(&mut *conn).await.ok()?;
+            Some(pong)
+        };
+        matches!(
+            tokio::time::timeout(Duration::from_secs(2), check).await,
+            Ok(Some(_))
+        )
+    }
+
     pub fn resolve_ttl(&self, model: &str, consumer: Option<&str>) -> u64 {
         self.ttl_config
             .read()

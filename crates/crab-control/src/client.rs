@@ -60,6 +60,17 @@ impl GatewayAdminClient {
         }
     }
 
+    /// Readiness probe: checks Redis via the gateway management API.
+    pub async fn ready(&self) -> Result<(), ControlError> {
+        let resp = self.http.get(format!("{}/v1/ready", self.base_url)).send().await?;
+        let status = resp.status().as_u16();
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(ControlError::Http { status, body })
+    }
+
     pub async fn status(&self) -> Result<GatewayStatus, ControlError> {
         let resp = self.authed(reqwest::Method::GET, "/v1/status").send().await?;
         let resp = Self::check(resp).await?;

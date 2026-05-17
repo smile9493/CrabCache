@@ -1,7 +1,7 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState};
 use crate::sse::{parse_sse_chunk, UsageData};
 use crate::trace_logger::SanitizedLogEntry;
-use crab_cache::{CacheEntry, UsageInfo};
+use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
 use crab_metrics::{global_metrics, CacheTier};
 use crab_semantic::{evaluate_semantic_gate, GateDecision};
 use crab_reasoning::{
@@ -56,6 +56,16 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        if req_header.uri.path() == "/ready" {
+            let status = if self.state.tiered_cache.ping().await {
+                200
+            } else {
+                503
+            };
+            let _ = session.respond_error(status).await;
+            return Ok(true);
+        }
+
         if is_models_endpoint(req_header.uri.path(), &req_header.method) {
             ctx.is_models_list = true;
             return Ok(false);
@@ -96,6 +106,15 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        match self.state.request_semaphore.clone().try_acquire_owned() {
+            Ok(permit) => ctx.request_permit = Some(permit),
+            Err(_) => {
+                global_metrics().record_rejected("overloaded");
+                let _ = session.respond_error(503).await;
+                return Ok(true);
+            }
+        }
+
         ctx.authorization = Some(auth.to_string());
         ctx.consumer = consumer_from_key.or_else(|| {
             req_header
@@ -112,9 +131,17 @@ impl ProxyHttp for GatewayProxy {
             .map(|s| s.to_string());
 
         let mut full_body = Vec::new();
+        let max_body = self.state.max_request_body_bytes;
         loop {
             match session.downstream_session.read_request_body().await? {
-                Some(data) => full_body.extend_from_slice(&data),
+                Some(data) => {
+                    if full_body.len() + data.len() > max_body {
+                        global_metrics().record_rejected("body_too_large");
+                        let _ = session.respond_error(413).await;
+                        return Ok(true);
+                    }
+                    full_body.extend_from_slice(&data);
+                }
                 None => break,
             }
             if session.is_body_done() {
@@ -247,7 +274,9 @@ impl ProxyHttp for GatewayProxy {
                     cost,
                 );
 
-                send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
+                if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await {
+                    let _ = session.respond_error(500).await;
+                }
 
                 return Ok(true);
             }
@@ -321,7 +350,17 @@ impl ProxyHttp for GatewayProxy {
                                             cost,
                                         );
 
-                                        send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, CacheTier::L2Semantic).await;
+                                        if !send_cached_response(
+                                            session,
+                                            &entry,
+                                            &ctx.model,
+                                            ctx.is_streaming,
+                                            CacheTier::L2Semantic,
+                                        )
+                                        .await
+                                        {
+                                            let _ = session.respond_error(500).await;
+                                        }
 
                                         return Ok(true);
                                     }
@@ -367,7 +406,10 @@ impl ProxyHttp for GatewayProxy {
                                 cost,
                             );
 
-                            send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await;
+                            if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await
+                            {
+                                let _ = session.respond_error(500).await;
+                            }
 
                             return Ok(true);
                         } else {
@@ -380,6 +422,11 @@ impl ProxyHttp for GatewayProxy {
                     } else {
                         ctx.coalesce_guard = Some(guard);
                     }
+                }
+                Err(CoalesceError::CapacityExceeded) => {
+                    global_metrics().record_rejected("coalesce_capacity");
+                    let _ = session.respond_error(503).await;
+                    return Ok(true);
                 }
                 Err(e) => {
                     warn!(
@@ -485,14 +532,12 @@ impl ProxyHttp for GatewayProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        upstream_request
-            .insert_header("x-request-id", ctx.request_id.clone())
-            .unwrap();
-
+        let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
         if let Some(ref new_body) = ctx.new_request_body {
-            upstream_request
-                .insert_header(http::header::CONTENT_LENGTH, new_body.len().to_string())
-                .unwrap();
+            let _ = upstream_request.insert_header(
+                http::header::CONTENT_LENGTH,
+                new_body.len().to_string(),
+            );
         }
 
         Ok(())
@@ -532,13 +577,8 @@ impl ProxyHttp for GatewayProxy {
             return Ok(());
         }
 
-        upstream_response
-            .insert_header("x-request-id", ctx.request_id.clone())
-            .unwrap();
-
-        upstream_response
-            .insert_header("x-cache-status", "miss")
-            .unwrap();
+        let _ = upstream_response.insert_header("x-request-id", ctx.request_id.clone());
+        let _ = upstream_response.insert_header("x-cache-status", "miss");
 
         ctx.upstream_start = Some(std::time::Instant::now());
 
@@ -563,12 +603,14 @@ impl ProxyHttp for GatewayProxy {
                 if ctx.ttft.is_none() {
                     if let Some(upstream_start) = ctx.upstream_start {
                         ctx.ttft = Some(upstream_start.elapsed());
-                        global_metrics().record_latency(
-                            crab_metrics::LatencyKind::TTFT,
-                            ctx.ttft.unwrap(),
-                            &ctx.model,
-                            Some(crab_metrics::CacheTier::Miss),
-                        );
+                        if let Some(ttft) = ctx.ttft {
+                            global_metrics().record_latency(
+                                crab_metrics::LatencyKind::TTFT,
+                                ttft,
+                                &ctx.model,
+                                Some(crab_metrics::CacheTier::Miss),
+                            );
+                        }
                     }
                 }
 
@@ -886,7 +928,7 @@ async fn send_cached_response(
     model: &str,
     is_streaming: bool,
     cache_tier: CacheTier,
-) {
+) -> bool {
     let response_body = &entry.response_body;
     if is_streaming {
         let sse_body = if let Some(ref saved) = entry.sse_body {
@@ -894,14 +936,33 @@ async fn send_cached_response(
         } else {
             json_to_sse_stream(response_body, model)
         };
-        let header = build_sse_response_header(sse_body.len(), cache_tier);
-        let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-        let _ = session.downstream_session.write_response_body(bytes::Bytes::from(sse_body), true).await;
+        let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
+            warn!("Failed to build SSE cache response header");
+            return false;
+        };
+        let _ = session
+            .downstream_session
+            .write_response_header(Box::new(header))
+            .await;
+        let _ = session
+            .downstream_session
+            .write_response_body(bytes::Bytes::from(sse_body), true)
+            .await;
     } else {
-        let header = build_json_response_header(response_body.len(), cache_tier);
-        let _ = session.downstream_session.write_response_header(Box::new(header)).await;
-        let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body.clone()), true).await;
+        let Some(header) = build_json_response_header(response_body.len(), cache_tier) else {
+            warn!("Failed to build JSON cache response header");
+            return false;
+        };
+        let _ = session
+            .downstream_session
+            .write_response_header(Box::new(header))
+            .await;
+        let _ = session
+            .downstream_session
+            .write_response_body(bytes::Bytes::from(response_body.clone()), true)
+            .await;
     }
+    true
 }
 
 /// Whether to persist raw SSE bytes alongside the synthesized JSON completion.
@@ -1003,25 +1064,47 @@ fn cache_status_header(tier: CacheTier) -> &'static str {
     }
 }
 
-fn build_json_response_header(body_len: usize, cache_tier: CacheTier) -> pingora_http::ResponseHeader {
-    use pingora_http::ResponseHeader;
-    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
-    header.insert_header(http::header::CONTENT_TYPE, "application/json").unwrap();
-    header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
-    header.insert_header("x-cache-status", cache_status_header(cache_tier)).unwrap();
-    header.insert_header(http::header::CONNECTION, "close").unwrap();
-    header
+fn insert_response_header(
+    header: &mut pingora_http::ResponseHeader,
+    name: &'static str,
+    value: impl ToString,
+) -> Option<()> {
+    header.insert_header(name, value.to_string()).ok()
 }
 
-fn build_sse_response_header(body_len: usize, cache_tier: CacheTier) -> pingora_http::ResponseHeader {
+fn build_json_response_header(
+    body_len: usize,
+    cache_tier: CacheTier,
+) -> Option<pingora_http::ResponseHeader> {
     use pingora_http::ResponseHeader;
-    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).unwrap();
-    header.insert_header(http::header::CONTENT_TYPE, "text/event-stream").unwrap();
-    header.insert_header(http::header::CONTENT_LENGTH, body_len.to_string()).unwrap();
-    header.insert_header(http::header::CACHE_CONTROL, "no-cache").unwrap();
-    header.insert_header("x-cache-status", cache_status_header(cache_tier)).unwrap();
-    header.insert_header(http::header::CONNECTION, "close").unwrap();
-    header
+    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
+    insert_response_header(&mut header, "content-type", "application/json")?;
+    insert_response_header(&mut header, "content-length", body_len.to_string())?;
+    insert_response_header(
+        &mut header,
+        "x-cache-status",
+        cache_status_header(cache_tier),
+    )?;
+    insert_response_header(&mut header, "connection", "close")?;
+    Some(header)
+}
+
+fn build_sse_response_header(
+    body_len: usize,
+    cache_tier: CacheTier,
+) -> Option<pingora_http::ResponseHeader> {
+    use pingora_http::ResponseHeader;
+    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
+    insert_response_header(&mut header, "content-type", "text/event-stream")?;
+    insert_response_header(&mut header, "content-length", body_len.to_string())?;
+    insert_response_header(&mut header, "cache-control", "no-cache")?;
+    insert_response_header(
+        &mut header,
+        "x-cache-status",
+        cache_status_header(cache_tier),
+    )?;
+    insert_response_header(&mut header, "connection", "close")?;
+    Some(header)
 }
 
 fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
@@ -1206,5 +1289,17 @@ mod tests {
         assert!(!should_store_sse_body(4_194_305, 4_194_304));
         assert!(!should_store_sse_body(100, 0));
         assert!(should_store_sse_body(0, 1024));
+    }
+
+    #[test]
+    fn test_build_json_response_header_ok() {
+        let header = build_json_response_header(42, CacheTier::L0Moka).expect("header");
+        assert_eq!(header.status.as_u16(), 200);
+    }
+
+    #[test]
+    fn test_build_sse_response_header_ok() {
+        let header = build_sse_response_header(100, CacheTier::L1Redis).expect("header");
+        assert_eq!(header.status.as_u16(), 200);
     }
 }

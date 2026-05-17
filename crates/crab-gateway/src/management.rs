@@ -80,6 +80,7 @@ impl InvalidateRateState {
 pub fn router(state: ManagementState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/ready", get(ready))
         .route("/v1/status", get(status))
         .route("/v1/keys", get(list_keys).post(create_key))
         .route("/v1/cache/invalidate", post(invalidate_cache))
@@ -379,6 +380,32 @@ async fn put_fingerprint(
 
 async fn health() -> StatusCode {
     StatusCode::OK
+}
+
+#[derive(serde::Serialize)]
+struct ReadyResponse {
+    ready: bool,
+    redis: &'static str,
+}
+
+async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyResponse>) {
+    if state.tiered_cache.ping().await {
+        (
+            StatusCode::OK,
+            Json(ReadyResponse {
+                ready: true,
+                redis: "ok",
+            }),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadyResponse {
+                ready: false,
+                redis: "unavailable",
+            }),
+        )
+    }
 }
 
 fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {

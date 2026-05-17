@@ -54,6 +54,7 @@ pub struct GatewayMetrics {
     pub cost_saved_usd: CounterVec,
     pub upstream_prompt_cache_tokens: IntCounterVec,
     pub stream_cache_sse_omitted: IntCounterVec,
+    pub rejected_requests: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -169,6 +170,14 @@ impl GatewayMetrics {
             &["reason"],
         )?;
 
+        let rejected_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_rejected_requests_total",
+                "Requests rejected before upstream (overload, body limit, etc.)",
+            ),
+            &["reason"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -183,6 +192,7 @@ impl GatewayMetrics {
             cost_saved_usd,
             upstream_prompt_cache_tokens,
             stream_cache_sse_omitted,
+            rejected_requests,
         })
     }
 
@@ -200,7 +210,12 @@ impl GatewayMetrics {
         registry.register(Box::new(self.cost_saved_usd.clone()))?;
         registry.register(Box::new(self.upstream_prompt_cache_tokens.clone()))?;
         registry.register(Box::new(self.stream_cache_sse_omitted.clone()))?;
+        registry.register(Box::new(self.rejected_requests.clone()))?;
         Ok(())
+    }
+
+    pub fn record_rejected(&self, reason: &str) {
+        self.rejected_requests.with_label_values(&[reason]).inc();
     }
 
     pub fn record_stream_cache_sse_omitted(&self, reason: &str) {

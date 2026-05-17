@@ -6,6 +6,12 @@ services:
     ports:
       - "8080:8080"
       - "9090:9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     volumes:
       - ./config/gateway.toml:/app/config/gateway.toml:ro
       - ./models:/app/models:ro

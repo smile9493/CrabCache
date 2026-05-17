@@ -10,7 +10,7 @@ mod types;
 #[cfg(test)]
 pub mod mock;
 
-pub use coalescing::{RequestCoalescer, CoalesceGuard};
+pub use coalescing::{CoalesceError, CoalesceGuard, RequestCoalescer};
 pub use hit_rate_sim::{
     parameter_sweep, simulate_cache_hit_rate, simulate_cache_with_l2, CacheStats, SemanticCache,
     SimEmbedder, SimulatedCache, SweepResult,
