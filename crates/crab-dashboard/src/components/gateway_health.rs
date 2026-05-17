@@ -1,0 +1,82 @@
+use leptos::prelude::*;
+use gloo_timers::future::TimeoutFuture;
+
+use crate::api;
+use crate::locale::use_translations;
+use crate::types::GatewayHealth;
+
+const POLL_INTERVAL_MS: u32 = 15_000;
+
+fn format_uptime(secs: u64) -> String {
+    if secs >= 86_400 {
+        format!("{}d", secs / 86_400)
+    } else if secs >= 3_600 {
+        format!("{}h", secs / 3_600)
+    } else if secs >= 60 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
+#[component]
+pub fn GatewayHealthIndicator() -> impl IntoView {
+    let t = use_translations();
+    let health: RwSignal<Option<GatewayHealth>> = RwSignal::new(None);
+
+    let poll = move || {
+        leptos::task::spawn_local(async move {
+            let next = match api::fetch_gateway_health().await {
+                Ok(h) => h,
+                Err(e) => GatewayHealth {
+                    healthy: false,
+                    error: Some(e),
+                    ..GatewayHealth::default()
+                },
+            };
+            health.set(Some(next));
+        });
+    };
+
+    poll();
+
+    leptos::task::spawn_local(async move {
+        loop {
+            TimeoutFuture::new(POLL_INTERVAL_MS).await;
+            poll();
+        }
+    });
+
+    view! {
+        <div class="gateway-health" title=move || {
+            health.get()
+                .and_then(|h| h.error.clone())
+                .unwrap_or_default()
+        }>
+            <span class=move || {
+                match health.get() {
+                    None => "online-dot checking",
+                    Some(h) if h.healthy => "online-dot",
+                    Some(_) => "online-dot offline",
+                }
+            }></span>
+            <span class="online-label">
+                {move || match health.get() {
+                    None => t.sidebar_gateway_checking().to_string(),
+                    Some(h) if h.healthy => {
+                        if h.uptime_secs > 0 {
+                            format!(
+                                "{} · {}",
+                                t.sidebar_online(),
+                                format_uptime(h.uptime_secs)
+                            )
+                        } else {
+                            t.sidebar_online().to_string()
+                        }
+                    }
+                    Some(_) => t.sidebar_gateway_offline().to_string(),
+                }}
+            </span>
+        </div>
+    }
+}

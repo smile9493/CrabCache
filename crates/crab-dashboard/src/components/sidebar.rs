@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::components::*;
 
 use crate::auth::{clear_admin_key, use_admin_key};
+use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{use_locale, use_translations, Translations};
 
@@ -98,10 +99,7 @@ pub fn Sidebar() -> impl IntoView {
             </nav>
 
             <div class="sidebar-footer">
-                <div class="flex items-center gap-2 mb-2">
-                    <span class="online-dot"></span>
-                    <span class="online-label">{move || use_translations().sidebar_online()}</span>
-                </div>
+                <GatewayHealthIndicator />
                 <button
                     on:click=toggle_locale
                     class="sidebar-footer-btn"

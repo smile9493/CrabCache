@@ -63,6 +63,7 @@ fn gateway_error_message(err: &crab_control::ControlError) -> String {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/gateway/health", get(get_gateway_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key))
@@ -87,6 +88,37 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .layer(middleware::from_fn(admin_auth))
         .with_state(state)
+}
+
+async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {
+    match state.gateway.health().await {
+        Ok(()) => match state.gateway.status().await {
+            Ok(s) => Json(GatewayHealthView {
+                healthy: true,
+                uptime_secs: s.uptime_secs,
+                active_keys: s.active_keys,
+                backend_count: s.backend_count,
+                stream_cache_enabled: s.stream_cache_enabled,
+                error: None,
+            }),
+            Err(e) => Json(GatewayHealthView {
+                healthy: true,
+                uptime_secs: 0,
+                active_keys: 0,
+                backend_count: 0,
+                stream_cache_enabled: false,
+                error: Some(gateway_error_message(&e)),
+            }),
+        },
+        Err(e) => Json(GatewayHealthView {
+            healthy: false,
+            uptime_secs: 0,
+            active_keys: 0,
+            backend_count: 0,
+            stream_cache_enabled: false,
+            error: Some(gateway_error_message(&e)),
+        }),
+    }
 }
 
 async fn get_network_info() -> Json<NetworkInfo> {

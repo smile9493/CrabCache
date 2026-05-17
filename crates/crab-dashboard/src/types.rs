@@ -1,5 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GatewayHealth {
+    pub healthy: bool,
+    #[serde(default)]
+    pub uptime_secs: u64,
+    #[serde(default)]
+    pub active_keys: u64,
+    #[serde(default)]
+    pub backend_count: usize,
+    #[serde(default)]
+    pub stream_cache_enabled: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInfo {
     pub primary_ip: Option<String>,

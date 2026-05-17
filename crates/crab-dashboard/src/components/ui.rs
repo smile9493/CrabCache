@@ -89,6 +89,76 @@ pub fn EmptyState(message: &'static str) -> impl IntoView {
 }
 
 #[component]
+pub fn ConfigRangeU64(
+    label: impl Fn() -> String + Send + Sync + 'static,
+    value: RwSignal<u64>,
+    min: u64,
+    max: u64,
+    min_hint: &'static str,
+    max_hint: &'static str,
+    accent: &'static str,
+) -> impl IntoView {
+    let range_class = format!("form-range form-range-{}", accent);
+    view! {
+        <div class="form-range-block">
+            <label class="form-range-label">{move || label()}</label>
+            <input
+                type="range"
+                min=min
+                max=max
+                prop:value=move || value.get()
+                on:input=move |ev| {
+                    if let Ok(v) = event_target_value(&ev).parse() {
+                        value.set(v);
+                    }
+                }
+                class=range_class.clone()
+            />
+            <div class="form-range-hints">
+                <span>{min_hint}</span>
+                <span>{max_hint}</span>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn ConfigRangeF64(
+    label: impl Fn() -> String + Send + Sync + 'static,
+    value: RwSignal<f64>,
+    min: f64,
+    max: f64,
+    step: f64,
+    min_hint: &'static str,
+    max_hint: &'static str,
+    accent: &'static str,
+) -> impl IntoView {
+    let range_class = format!("form-range form-range-{}", accent);
+    view! {
+        <div class="form-range-block">
+            <label class="form-range-label">{move || label()}</label>
+            <input
+                type="range"
+                min=min
+                max=max
+                step=step
+                prop:value=move || value.get()
+                on:input=move |ev| {
+                    if let Ok(v) = event_target_value(&ev).parse() {
+                        value.set(v);
+                    }
+                }
+                class=range_class.clone()
+            />
+            <div class="form-range-hints">
+                <span>{min_hint}</span>
+                <span>{max_hint}</span>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 pub fn Alert(variant: &'static str, message: Signal<String>) -> impl IntoView {
     let class = match variant {
         "success" => "alert alert-success",

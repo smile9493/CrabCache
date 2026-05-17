@@ -101,6 +101,10 @@ pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
 }
 
+pub async fn fetch_gateway_health() -> Result<GatewayHealth, String> {
+    fetch_json(&format!("{}/gateway/health", API_BASE)).await
+}
+
 pub async fn fetch_network_info() -> Result<NetworkInfo, String> {
     fetch_json(&format!("{}/network/info", API_BASE)).await
 }

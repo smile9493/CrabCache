@@ -164,6 +164,17 @@ pub struct RequestLog {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayHealthView {
+    pub healthy: bool,
+    pub uptime_secs: u64,
+    pub active_keys: u64,
+    pub backend_count: usize,
+    pub stream_cache_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestDetail {
     pub cache_path: String,
     pub request_payload: String,

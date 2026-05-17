@@ -89,6 +89,18 @@ impl Translations {
             Locale::EnUS => "Gateway Online",
         }
     }
+    pub fn sidebar_gateway_checking(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查网关…",
+            Locale::EnUS => "Checking gateway…",
+        }
+    }
+    pub fn sidebar_gateway_offline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关不可达",
+            Locale::EnUS => "Gateway offline",
+        }
+    }
     pub fn sidebar_group_monitor(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "监控",
@@ -1031,6 +1043,24 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "响应",
             Locale::EnUS => "Response",
+        }
+    }
+    pub fn logs_detail_route(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由后端",
+            Locale::EnUS => "Route backend",
+        }
+    }
+    pub fn logs_detail_cache_path(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存路径",
+            Locale::EnUS => "Cache path",
+        }
+    }
+    pub fn logs_select_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择一条请求查看详情",
+            Locale::EnUS => "Select a request to view details",
         }
     }
     pub fn logs_empty(self) -> &'static str {
