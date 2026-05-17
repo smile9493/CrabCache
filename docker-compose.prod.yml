@@ -1,0 +1,11 @@
+# Production override example: keep gateway bound to localhost for Nginx reverse proxy.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Ensure Redis and Management (9080) are not published to the public internet.
+
+services:
+  gateway:
+    ports:
+      - "127.0.0.1:8080:8080"
+      # Omit 9090 on public hosts or bind locally only:
+      - "127.0.0.1:9090:9090"

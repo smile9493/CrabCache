@@ -291,6 +291,11 @@ impl GatewayConfig {
                 config.api_key = SecretString::new(key);
             }
         }
+        if let Ok(url) = std::env::var("CRABCACHE_L1_REDIS_URL") {
+            if !url.is_empty() {
+                config.cache.l1_redis_url = url;
+            }
+        }
         if config.management.is_none() {
             config.management = Some(ManagementConfig::default());
         }
@@ -494,6 +499,37 @@ mod tests {
         let limits = LimitsConfig::default();
         assert_eq!(limits.max_request_body_bytes, 4_194_304);
         assert_eq!(limits.max_concurrent_requests, 512);
+    }
+
+    #[test]
+    fn test_l1_redis_url_env_override() {
+        let dir = std::env::temp_dir().join(format!("crabcache_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.toml");
+        std::fs::write(
+            &path,
+            r#"
+listen_addr = "127.0.0.1:8080"
+metrics_addr = "127.0.0.1:9090"
+api_key = "sk-test-key-1234567890"
+upstream = { deepseek_endpoints = ["127.0.0.1:443"] }
+cache = { l1_redis_url = "redis://127.0.0.1:6379" }
+semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url = "", collection_name = "" }
+"#,
+        )
+        .unwrap();
+
+        // SAFETY: test runs single-threaded; no concurrent env access.
+        unsafe {
+            std::env::set_var("CRABCACHE_L1_REDIS_URL", "redis://redis:6379");
+        }
+        let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        unsafe {
+            std::env::remove_var("CRABCACHE_L1_REDIS_URL");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+
+        assert_eq!(config.cache.l1_redis_url, "redis://redis:6379");
     }
 
     #[test]

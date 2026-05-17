@@ -44,6 +44,8 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
 l0_ttl_secs = 3600
+# Bare-metal / local dev: redis on localhost.
+# Docker Compose: use redis://redis:6379 (see config/gateway.docker.toml) or CRABCACHE_L1_REDIS_URL.
 l1_redis_url = "redis://127.0.0.1:6379"
 l1_pool_size = 16
 
