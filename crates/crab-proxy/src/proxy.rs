@@ -753,16 +753,28 @@ impl ProxyHttp for GatewayProxy {
                         let ttl_secs = self.state.tiered_cache.resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
                         let sse_body = ctx.accumulated_body.clone();
+                        let max_sse = self.state.max_sse_cache_bytes;
+                        let response_bytes = response_json.clone().into_bytes();
+                        let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
+                            build_cache_entry_with_sse(
+                                response_bytes.clone(),
+                                sse_body,
+                                ctx.model.clone(),
+                                ttl_secs,
+                            )
+                        } else {
+                            warn!(
+                                sse_len = sse_body.len(),
+                                limit = max_sse,
+                                "SSE body exceeds max_sse_cache_bytes; caching JSON only"
+                            );
+                            global_metrics().record_stream_cache_sse_omitted("over_limit");
+                            build_cache_entry(response_bytes, ctx.model.clone(), ttl_secs)
+                        };
                         let tiered_cache = self.state.tiered_cache.clone();
                         let cache_key = cache_key.clone();
                         let model = ctx.model.clone();
                         let consumer = ctx.consumer.clone();
-                        let entry_for_cache = build_cache_entry_with_sse(
-                            response_json.clone().into_bytes(),
-                            sse_body,
-                            ctx.model.clone(),
-                            ttl_secs,
-                        );
                         tokio::spawn(async move {
                             if let Err(e) = tiered_cache
                                 .put(&cache_key, entry_for_cache, &model, consumer.as_deref())
@@ -890,6 +902,11 @@ async fn send_cached_response(
         let _ = session.downstream_session.write_response_header(Box::new(header)).await;
         let _ = session.downstream_session.write_response_body(bytes::Bytes::from(response_body.clone()), true).await;
     }
+}
+
+/// Whether to persist raw SSE bytes alongside the synthesized JSON completion.
+pub fn should_store_sse_body(sse_len: usize, max_sse_cache_bytes: usize) -> bool {
+    max_sse_cache_bytes > 0 && sse_len <= max_sse_cache_bytes
 }
 
 fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
@@ -1181,5 +1198,13 @@ mod tests {
         ];
         let result = build_semantic_query_text(&messages);
         assert_eq!(result, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_should_store_sse_body() {
+        assert!(should_store_sse_body(100, 4_194_304));
+        assert!(!should_store_sse_body(4_194_305, 4_194_304));
+        assert!(!should_store_sse_body(100, 0));
+        assert!(should_store_sse_body(0, 1024));
     }
 }

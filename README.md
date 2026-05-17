@@ -304,6 +304,17 @@ max_lines = 10000                    # 每文件最大行数
 max_files = 5                        # 最大保留文件数
 ```
 
+### 两把钥匙（部署必读）
+
+CrabCache 使用**两套独立密钥**，不可混用：
+
+| 配置 / 环境变量 | HTTP 头 | 用途 |
+|-----------------|---------|------|
+| `api_key` / `CRABCACHE_API_KEY` | `Authorization: Bearer …` | 客户端访问网关；同时作为 bootstrap 上游 DeepSeek 密钥 |
+| `[management].admin_key` / `CRABCACHE_GATEWAY_ADMIN_KEY` | `x-gateway-admin-key` | Management API（清缓存、密钥 CRUD、TTL 等） |
+
+生产环境请同时更换两者。Docker 部署时务必设置 `CRABCACHE_GATEWAY_ADMIN_KEY`（示例配置中的 `dev-only-gateway-admin-secret` 仅用于本地开发）。启动时若仍为已知弱密钥，网关会输出 `Security warning` 日志。
+
 ### 环境变量覆盖
 
 | 环境变量 | 作用 | 默认值 |

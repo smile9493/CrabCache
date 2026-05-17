@@ -8,5 +8,5 @@ mod trace_logger;
 pub use context::{ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig, StoredKey};
 pub use runtime::RuntimeConfig;
 pub use error::ProxyError;
-pub use proxy::GatewayProxy;
+pub use proxy::{should_store_sse_body, GatewayProxy};
 pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};

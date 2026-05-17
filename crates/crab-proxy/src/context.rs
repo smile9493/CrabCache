@@ -181,4 +181,6 @@ pub struct GatewayState {
     pub trace_logger: Option<Arc<TraceLogger>>,
     pub cache_key_namespace: Option<String>,
     pub pricing: PricingConfig,
+    /// Max raw SSE bytes stored per stream cache entry (`0` = never store `sse_body`).
+    pub max_sse_cache_bytes: usize,
 }

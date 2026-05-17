@@ -1,5 +1,7 @@
 use crab_gateway::config::GatewayConfig;
-use crab_gateway::management::{serve as serve_management, ManagementState};
+use crab_gateway::management::{
+    serve as serve_management, InvalidateRateState, ManagementState,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
@@ -12,7 +14,8 @@ use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -115,6 +118,9 @@ fn main() -> Result<()> {
             tracing::error!("Configuration validation error: {}", err);
         }
         anyhow::bail!("Configuration validation failed with {} error(s)", errors.len());
+    }
+    for warning in config.security_warnings() {
+        tracing::warn!("Security warning: {}", warning);
     }
     info!("Configuration validated successfully");
 
@@ -309,7 +315,11 @@ fn main() -> Result<()> {
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
+        tiered_cache: tiered_cache.clone(),
         admin_key: mgmt_admin_key,
+        invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
+        invalidate_rate: Arc::new(Mutex::new(InvalidateRateState::default())),
+        invalidate_scan_timeout_secs: mgmt_cfg.invalidate_scan_timeout_secs,
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -343,6 +353,7 @@ fn main() -> Result<()> {
         trace_logger,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
         pricing: config.cache.pricing.clone().unwrap_or_default(),
+        max_sse_cache_bytes: config.cache.max_sse_cache_bytes,
     });
 
     let proxy = GatewayProxy::new(state);

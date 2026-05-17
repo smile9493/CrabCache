@@ -3,6 +3,12 @@ use std::collections::HashMap;
 
 pub const GATEWAY_ADMIN_KEY_HEADER: &str = "x-gateway-admin-key";
 
+/// Required when POST `/v1/cache/invalidate` uses `scope=all`.
+pub const CACHE_INVALIDATE_CONFIRM_HEADER: &str = "x-cache-invalidate-confirm";
+
+/// Header value that must accompany `scope=all`.
+pub const CACHE_INVALIDATE_CONFIRM_ALL: &str = "all";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayStatus {
     pub uptime_secs: u64,
@@ -115,6 +121,8 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Cache invalidation scope. Use `all` only with `x-cache-invalidate-confirm: all`.
+/// Prefix: `prefix:{namespace}`; single key: raw cache key string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvalidateCacheRequest {
     pub scope: String,
