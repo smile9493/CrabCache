@@ -86,7 +86,8 @@ impl FittedParameters {
             return Self::default();
         }
 
-        let unique_hashes: HashSet<&str> = entries.iter().map(|e| e.request_hash.as_str()).collect();
+        let unique_hashes: HashSet<&str> =
+            entries.iter().map(|e| e.request_hash.as_str()).collect();
         let unique_requests = unique_hashes.len();
 
         let repeat_ratio = 1.0 - (unique_requests as f64 / total_requests as f64);
@@ -129,7 +130,10 @@ impl FittedParameters {
         }
     }
 
-    fn estimate_zipf_alpha(cluster_counts: &std::collections::HashMap<usize, usize>, _total: usize) -> f64 {
+    fn estimate_zipf_alpha(
+        cluster_counts: &std::collections::HashMap<usize, usize>,
+        _total: usize,
+    ) -> f64 {
         let mut counts: Vec<usize> = cluster_counts.values().cloned().collect();
         counts.sort_by(|a, b| b.cmp(a));
 
@@ -174,8 +178,14 @@ impl FittedParameters {
         println!("Unique requests: {}", self.unique_requests);
         println!();
         println!("repeat_ratio:           {:5.1}%", self.repeat_ratio * 100.0);
-        println!("semantic_cluster_ratio: {:5.1}%", self.semantic_cluster_ratio * 100.0);
-        println!("conversation_ratio:     {:5.1}%", self.conversation_ratio * 100.0);
+        println!(
+            "semantic_cluster_ratio: {:5.1}%",
+            self.semantic_cluster_ratio * 100.0
+        );
+        println!(
+            "conversation_ratio:     {:5.1}%",
+            self.conversation_ratio * 100.0
+        );
         println!("estimated_zipf_alpha:   {:5.2}", self.estimated_zipf_alpha);
         println!();
         println!("avg_latency_ms:  {:6.1}ms", self.avg_latency_ms);
@@ -251,7 +261,14 @@ mod tests {
     #[test]
     fn test_fitted_parameters() {
         let entries = vec![
-            SanitizedLogEntry::from_request("Query A", Some("c1".to_string()), "m", 10, 100.0, false),
+            SanitizedLogEntry::from_request(
+                "Query A",
+                Some("c1".to_string()),
+                "m",
+                10,
+                100.0,
+                false,
+            ),
             SanitizedLogEntry::from_request("Query A", Some("c1".to_string()), "m", 10, 5.0, true),
             SanitizedLogEntry::from_request("Query B", None, "m", 10, 100.0, false),
             SanitizedLogEntry::from_request("Query C", None, "m", 10, 100.0, false),
@@ -268,11 +285,11 @@ mod tests {
     #[test]
     fn test_achievable_hit_rate_estimation() {
         let mut fitted = FittedParameters::default();
-        
+
         fitted.repeat_ratio = 0.9;
         fitted.semantic_cluster_ratio = 0.3;
         fitted.estimated_zipf_alpha = 1.5;
-        
+
         let achievable = fitted.estimate_achievable_hit_rate();
         println!("Achievable hit rate: {:.1}%", achievable * 100.0);
         assert!(achievable > 0.9);
@@ -281,12 +298,7 @@ mod tests {
     #[test]
     fn test_save_load_sanitized_log() {
         let entries = vec![SanitizedLogEntry::from_request(
-            "Test",
-            None,
-            "m",
-            5,
-            100.0,
-            false,
+            "Test", None, "m", 5, 100.0, false,
         )];
 
         let temp_path = "/tmp/test_sanitized.jsonl";

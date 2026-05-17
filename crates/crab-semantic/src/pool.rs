@@ -2,8 +2,8 @@ use anyhow::Result;
 use ort::session::Session;
 use ort::value::Tensor;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Semaphore;
 use tokenizers::Tokenizer;
+use tokio::sync::Semaphore;
 use tracing::debug;
 
 pub struct EmbedderPool {
@@ -121,7 +121,8 @@ mod tests {
 
     #[test]
     fn test_embedder_pool_creation_requires_files() {
-        let result = EmbedderPool::load("/nonexistent/model.onnx", "/nonexistent/tokenizer.json", 4);
+        let result =
+            EmbedderPool::load("/nonexistent/model.onnx", "/nonexistent/tokenizer.json", 4);
         assert!(result.is_err());
     }
 }

@@ -66,7 +66,9 @@ impl SemanticCache {
 
         let id = simple_hash(query_text);
 
-        self.store.upsert(&id, &vector, entry, self.ttl_secs).await?;
+        self.store
+            .upsert(&id, &vector, entry, self.ttl_secs)
+            .await?;
 
         debug!(
             query_len = query_text.len(),

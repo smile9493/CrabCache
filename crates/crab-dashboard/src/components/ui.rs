@@ -18,11 +18,7 @@ pub fn MetricCard(
 }
 
 #[component]
-pub fn ProgressBar(
-    label: &'static str,
-    value: Signal<f64>,
-    max: f64,
-) -> impl IntoView {
+pub fn ProgressBar(label: &'static str, value: Signal<f64>, max: f64) -> impl IntoView {
     view! {
         <div class="space-y-1.5">
             <div class="flex justify-between items-baseline">

@@ -4,11 +4,11 @@ mod state;
 mod types;
 
 use state::AppState;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing::info;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 struct ServerConfig {
@@ -20,11 +20,11 @@ struct ServerConfig {
 impl ServerConfig {
     fn from_args() -> Self {
         let args: Vec<String> = std::env::args().collect();
-        
+
         let mut listen_addr = "0.0.0.0:3000".to_string();
         let mut cert_path = None;
         let mut key_path = None;
-        
+
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
@@ -54,14 +54,14 @@ impl ServerConfig {
             }
             i += 1;
         }
-        
+
         ServerConfig {
             listen_addr,
             cert_path,
             key_path,
         }
     }
-    
+
     fn is_https(&self) -> bool {
         self.cert_path.is_some() && self.key_path.is_some()
     }
@@ -110,7 +110,10 @@ async fn main() -> anyhow::Result<()> {
                     },
                 );
             }
-            info!(count = state.keys_meta.len(), "Synced API keys from gateway");
+            info!(
+                count = state.keys_meta.len(),
+                "Synced API keys from gateway"
+            );
         }
         Err(e) => {
             tracing::warn!(
@@ -130,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(ServeDir::new("crates/crab-dashboard/dist"));
 
     let protocol = if config.is_https() { "https" } else { "http" };
-    
+
     info!(
         addr = config.listen_addr,
         protocol = protocol,
@@ -140,21 +143,18 @@ async fn main() -> anyhow::Result<()> {
     if config.is_https() {
         let cert_path = config.cert_path.unwrap();
         let key_path = config.key_path.unwrap();
-        
+
         info!(
             cert = %cert_path.display(),
             key = %key_path.display(),
             "Using HTTPS with self-signed certificate"
         );
-        
-        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-            cert_path,
-            key_path,
-        )
-        .await?;
-        
+
+        let tls_config =
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await?;
+
         let addr: std::net::SocketAddr = config.listen_addr.parse()?;
-        
+
         axum_server::bind_rustls(addr, tls_config)
             .serve(app.into_make_service())
             .await?;

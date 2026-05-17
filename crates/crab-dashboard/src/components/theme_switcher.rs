@@ -1,5 +1,5 @@
+use crate::theme::{Theme, use_theme_signal};
 use leptos::prelude::*;
-use crate::theme::{use_theme_signal, Theme};
 
 #[component]
 pub fn ThemeSwitcher() -> impl IntoView {

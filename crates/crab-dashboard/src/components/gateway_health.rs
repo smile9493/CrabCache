@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use gloo_timers::future::TimeoutFuture;
+use leptos::prelude::*;
 
 use crate::api;
 use crate::locale::use_translations;

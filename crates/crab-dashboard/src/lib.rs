@@ -1,6 +1,6 @@
 pub mod api;
-pub mod auth;
 pub mod app;
+pub mod auth;
 pub mod components;
 pub mod locale;
 pub mod pages;

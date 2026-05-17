@@ -13,7 +13,11 @@ pub struct ReasoningStore {
 }
 
 impl ReasoningStore {
-    pub fn new(path: &str, max_age_seconds: Option<u64>, max_rows: Option<usize>) -> anyhow::Result<Self> {
+    pub fn new(
+        path: &str,
+        max_age_seconds: Option<u64>,
+        max_rows: Option<usize>,
+    ) -> anyhow::Result<Self> {
         let conn = if path == ":memory:" {
             Connection::open_in_memory()?
         } else {
@@ -70,7 +74,9 @@ impl ReasoningStore {
 
     pub fn get(&self, key: &str) -> Option<String> {
         let conn = self.conn.lock().ok()?;
-        let mut stmt = conn.prepare("SELECT reasoning FROM reasoning_cache WHERE key = ?1").ok()?;
+        let mut stmt = conn
+            .prepare("SELECT reasoning FROM reasoning_cache WHERE key = ?1")
+            .ok()?;
         let mut rows = stmt.query(rusqlite::params![key]).ok()?;
         let row = rows.next().ok()??;
         row.get(0).ok()
@@ -93,7 +99,11 @@ impl ReasoningStore {
 
         let mut keys = scoped_reasoning_keys(message, scope);
         if !prior_messages.is_empty() {
-            keys.extend(portable_reasoning_keys(message, cache_namespace, prior_messages));
+            keys.extend(portable_reasoning_keys(
+                message,
+                cache_namespace,
+                prior_messages,
+            ));
         }
         keys.dedup();
 
@@ -114,7 +124,11 @@ impl ReasoningStore {
     ) -> Option<String> {
         let mut keys = scoped_reasoning_keys(message, scope);
         if !prior_messages.is_empty() {
-            keys.extend(portable_reasoning_keys(message, cache_namespace, prior_messages));
+            keys.extend(portable_reasoning_keys(
+                message,
+                cache_namespace,
+                prior_messages,
+            ));
         }
         for key in &keys {
             if let Some(reasoning) = self.get(key) {
@@ -212,7 +226,8 @@ mod tests {
     #[test]
     fn test_store_and_retrieve() {
         let store = ReasoningStore::new(":memory:", None, None).unwrap();
-        let msg = json!({"role": "assistant", "content": "test", "reasoning_content": "thinking..."});
+        let msg =
+            json!({"role": "assistant", "content": "test", "reasoning_content": "thinking..."});
         store.put("key1", "thinking...", &msg);
 
         let result = store.get("key1");
@@ -243,7 +258,8 @@ mod tests {
     #[test]
     fn test_non_assistant_message_ignored() {
         let store = ReasoningStore::new(":memory:", None, None).unwrap();
-        let msg = json!({"role": "user", "content": "hello", "reasoning_content": "should not store"});
+        let msg =
+            json!({"role": "user", "content": "hello", "reasoning_content": "should not store"});
         let count = store.store_assistant_message(&msg, "scope1", "", &[]);
         assert_eq!(count, 0);
     }

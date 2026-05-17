@@ -2,7 +2,7 @@ use crate::{CacheEntry, L0Config, TtlConfig};
 use anyhow::Result;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use crab_metrics::{global_metrics, CacheTier};
+use crab_metrics::{CacheTier, global_metrics};
 use moka::future::Cache;
 use redis::{AsyncCommands, cmd};
 use std::sync::Arc;
@@ -142,11 +142,7 @@ impl TieredCache {
             return Err(e.into());
         }
 
-        debug!(
-            key = key,
-            ttl_secs = ttl,
-            "Cache entry stored in L0 and L1"
-        );
+        debug!(key = key, ttl_secs = ttl, "Cache entry stored in L0 and L1");
 
         Ok(())
     }
@@ -278,7 +274,11 @@ impl TieredCache {
 
             if !keys.is_empty() {
                 let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-                match cmd("DEL").arg(&key_refs).query_async::<()>(&mut *conn).await {
+                match cmd("DEL")
+                    .arg(&key_refs)
+                    .query_async::<()>(&mut *conn)
+                    .await
+                {
                     Ok(_) => {
                         total += keys.len() as u64;
                     }
@@ -321,7 +321,11 @@ impl TieredCache {
             );
         }
 
-        debug!(scope = scope_label, total_deleted = total, "Cache invalidation finished");
+        debug!(
+            scope = scope_label,
+            total_deleted = total,
+            "Cache invalidation finished"
+        );
         Ok(())
     }
 }

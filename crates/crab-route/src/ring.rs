@@ -69,10 +69,7 @@ impl AffinityRouter {
 
         let backends: Vec<Arc<Backend>> = backends.iter().map(|b| Arc::new(b.clone())).collect();
 
-        debug!(
-            backend_count = backends.len(),
-            "AffinityRouter initialized"
-        );
+        debug!(backend_count = backends.len(), "AffinityRouter initialized");
 
         Ok(Self {
             continuum,
@@ -144,10 +141,7 @@ impl AffinityRouter {
         self.continuum = Continuum::new(&buckets);
         self.backends = backends.iter().map(|b| Arc::new(b.clone())).collect();
 
-        debug!(
-            backend_count = backends.len(),
-            "AffinityRouter updated"
-        );
+        debug!(backend_count = backends.len(), "AffinityRouter updated");
 
         Ok(())
     }
@@ -263,10 +257,6 @@ mod tests {
         }
 
         let drift_rate = changed as f64 / original_mapping.len() as f64;
-        assert!(
-            drift_rate < 0.4,
-            "Drift rate {} exceeds 40%",
-            drift_rate
-        );
+        assert!(drift_rate < 0.4, "Drift rate {} exceeds 40%", drift_rate);
     }
 }

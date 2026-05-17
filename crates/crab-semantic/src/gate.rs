@@ -72,10 +72,7 @@ pub fn evaluate_semantic_gate(
         return GateDecision::TooLong;
     }
 
-    debug!(
-        query_len = query_text.len(),
-        "Semantic gate: pass"
-    );
+    debug!(query_len = query_text.len(), "Semantic gate: pass");
     GateDecision::Pass
 }
 

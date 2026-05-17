@@ -45,7 +45,10 @@ impl TraceStats {
                 cache_hits += 1;
             }
 
-            *stats.prompt_frequency.entry(record.prompt.clone()).or_insert(0) += 1;
+            *stats
+                .prompt_frequency
+                .entry(record.prompt.clone())
+                .or_insert(0) += 1;
 
             if let Some(ref conv_id) = record.conversation_id {
                 *stats
@@ -99,9 +102,7 @@ impl TraceStats {
             return 1.0;
         }
 
-        let harmonic: f64 = (1..=freqs.len())
-            .map(|i| 1.0 / i as f64)
-            .sum();
+        let harmonic: f64 = (1..=freqs.len()).map(|i| 1.0 / i as f64).sum();
 
         let log_sum: f64 = freqs
             .iter()
@@ -184,7 +185,9 @@ impl ComparisonResult {
         );
         println!(
             "zipf_alpha        | {:8.2}   | {:8.2}   | {:+.2}",
-            self.real_zipf_alpha, self.sim_zipf_alpha, self.real_zipf_alpha - self.sim_zipf_alpha
+            self.real_zipf_alpha,
+            self.sim_zipf_alpha,
+            self.real_zipf_alpha - self.sim_zipf_alpha
         );
         println!(
             "conversation_ratio| {:8.1}%  | {:8.1}%  | {:+.1}%",

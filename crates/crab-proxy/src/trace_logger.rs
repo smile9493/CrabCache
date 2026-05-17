@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,13 +34,13 @@ impl SanitizedLogEntry {
         let mut hasher = Sha256::new();
         hasher.update(body);
         let full_hash = hex::encode(hasher.finalize());
-        
+
         let request_hash = if full_hash.len() >= 16 {
             full_hash[..16].to_string()
         } else {
             full_hash.clone()
         };
-        
+
         let semantic_cluster = if full_hash.len() >= 8 {
             u32::from_str_radix(&full_hash[..8], 16).unwrap_or(0) % 100
         } else {
@@ -95,17 +95,17 @@ struct LogWriter {
 impl LogWriter {
     async fn new(config: &TraceConfig) -> std::io::Result<Self> {
         let path = PathBuf::from(&config.path);
-        
+
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.ok();
         }
-        
+
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .await?;
-            
+
         Ok(Self {
             file,
             path,
@@ -128,14 +128,14 @@ impl LogWriter {
 
     async fn rotate(&mut self) -> std::io::Result<()> {
         self.file.sync_all().await?;
-        
+
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
             self.path.file_name().unwrap().to_str().unwrap(),
             timestamp
         ));
-        
+
         tokio::fs::rename(&self.path, &rotated).await?;
 
         self.cleanup_old_files().await?;
@@ -152,10 +152,10 @@ impl LogWriter {
     async fn cleanup_old_files(&mut self) -> std::io::Result<()> {
         let parent = self.path.parent().unwrap();
         let file_name = self.path.file_name().unwrap().to_str().unwrap();
-        
+
         let mut entries = tokio::fs::read_dir(parent).await?;
         let mut log_files = vec![];
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name();
             if let Some(name) = name.to_str() {
@@ -164,14 +164,14 @@ impl LogWriter {
                 }
             }
         }
-        
+
         log_files.sort();
-        
+
         while log_files.len() >= self.max_files {
             let oldest = log_files.remove(0);
             tokio::fs::remove_file(oldest).await?;
         }
-        
+
         Ok(())
     }
 }
@@ -182,9 +182,11 @@ pub struct TraceLogger {
 
 impl TraceLogger {
     pub fn init(config: TraceConfig) -> (Self, tokio::task::JoinHandle<()>) {
-        let (tx, mut rx): (UnboundedSender<SanitizedLogEntry>, UnboundedReceiver<SanitizedLogEntry>) = 
-            unbounded_channel();
-        
+        let (tx, mut rx): (
+            UnboundedSender<SanitizedLogEntry>,
+            UnboundedReceiver<SanitizedLogEntry>,
+        ) = unbounded_channel();
+
         let handle = tokio::spawn(async move {
             let mut writer = match LogWriter::new(&config).await {
                 Ok(w) => w,
@@ -193,14 +195,14 @@ impl TraceLogger {
                     return;
                 }
             };
-            
+
             while let Some(entry) = rx.recv().await {
                 if let Err(e) = writer.write_entry(&entry).await {
                     warn!("Shadow log write failed: {}", e);
                 }
             }
         });
-        
+
         (Self { sender: tx }, handle)
     }
 
@@ -240,7 +242,7 @@ mod tests {
         let body = b"identical request";
         let entry1 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false, None);
         let entry2 = SanitizedLogEntry::from_request(body, None, "model", 0, 0.0, false, None);
-        
+
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert_eq!(entry1.semantic_cluster, entry2.semantic_cluster);
     }

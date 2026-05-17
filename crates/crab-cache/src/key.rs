@@ -86,7 +86,11 @@ pub fn generate_namespaced_cache_key(
     request_body: &[u8],
     namespace: Option<&str>,
 ) -> Result<String> {
-    generate_namespaced_cache_key_with_fingerprint(request_body, namespace, &FingerprintConfig::legacy())
+    generate_namespaced_cache_key_with_fingerprint(
+        request_body,
+        namespace,
+        &FingerprintConfig::legacy(),
+    )
 }
 
 /// Generate a cache key from a request body with fingerprint normalization.
@@ -222,9 +226,7 @@ fn canonical_to_string(value: &Value) -> String {
             let items: Vec<String> = arr.iter().map(canonical_to_string).collect();
             format!("[{}]", items.join(","))
         }
-        Value::String(s) => {
-            serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
-        }
+        Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s)),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
@@ -321,7 +323,10 @@ mod tests {
         let key1 = generate_cache_key(&serde_json::to_vec(&body1).unwrap()).unwrap();
         let key2 = generate_cache_key(&serde_json::to_vec(&body2).unwrap()).unwrap();
 
-        assert_ne!(key1, key2, "Different message orders should produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Different message orders should produce different keys"
+        );
     }
 
     #[test]
@@ -343,7 +348,10 @@ mod tests {
         let key1 = generate_cache_key(&serde_json::to_vec(&body1).unwrap()).unwrap();
         let key2 = generate_cache_key(&serde_json::to_vec(&body2).unwrap()).unwrap();
 
-        assert_eq!(key1, key2, "Different key orders should produce same key with canonical JSON");
+        assert_eq!(
+            key1, key2,
+            "Different key orders should produce same key with canonical JSON"
+        );
     }
 
     #[test]
@@ -365,7 +373,10 @@ mod tests {
         let key1 = generate_cache_key(&serde_json::to_vec(&body1).unwrap()).unwrap();
         let key2 = generate_cache_key(&serde_json::to_vec(&body2).unwrap()).unwrap();
 
-        assert_eq!(key1, key2, "Different nested key orders should produce same key");
+        assert_eq!(
+            key1, key2,
+            "Different nested key orders should produce same key"
+        );
     }
 
     #[test]
@@ -413,7 +424,10 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
         let diff_key = generate_cache_key(&serde_json::to_vec(&diff_model).unwrap()).unwrap();
-        assert_ne!(diff_key, base_key, "Different model should produce different key");
+        assert_ne!(
+            diff_key, base_key,
+            "Different model should produce different key"
+        );
     }
 
     #[test]
@@ -439,7 +453,10 @@ mod tests {
 
         let s1 = canonical_to_string(&obj1);
         let s2 = canonical_to_string(&obj2);
-        assert_eq!(s1, s2, "Canonical representation should be key-order independent");
+        assert_eq!(
+            s1, s2,
+            "Canonical representation should be key-order independent"
+        );
     }
 
     // ── Fingerprint tests ──────────────────────────────────────────────────
@@ -460,14 +477,17 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
-        assert_eq!(key1, key2, "Whitespace differences should produce same key with fingerprint normalization");
+        assert_eq!(
+            key1, key2,
+            "Whitespace differences should produce same key with fingerprint normalization"
+        );
     }
 
     #[test]
@@ -486,12 +506,12 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
         assert_eq!(key1, key2, "\\r\\n vs \\n should produce same key");
     }
@@ -514,14 +534,17 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
-        assert_ne!(key1, key2, "Different system text must produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Different system text must produce different keys"
+        );
     }
 
     #[test]
@@ -534,13 +557,22 @@ mod tests {
         });
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
-        let v1 = FingerprintConfig { version: 1, normalize_content: true };
-        let v2 = FingerprintConfig { version: 2, normalize_content: true };
+        let v1 = FingerprintConfig {
+            version: 1,
+            normalize_content: true,
+        };
+        let v2 = FingerprintConfig {
+            version: 2,
+            normalize_content: true,
+        };
 
         let key1 = generate_cache_key_with_fingerprint(&body_bytes, &v1).unwrap();
         let key2 = generate_cache_key_with_fingerprint(&body_bytes, &v2).unwrap();
 
-        assert_ne!(key1, key2, "Different fingerprint versions must produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Different fingerprint versions must produce different keys"
+        );
     }
 
     #[test]
@@ -558,26 +590,42 @@ mod tests {
             ]
         });
 
-        let config_no_norm = FingerprintConfig { version: 1, normalize_content: false };
-        let config_norm = FingerprintConfig { version: 1, normalize_content: true };
+        let config_no_norm = FingerprintConfig {
+            version: 1,
+            normalize_content: false,
+        };
+        let config_norm = FingerprintConfig {
+            version: 1,
+            normalize_content: true,
+        };
 
         // Without normalization, whitespace should produce different keys
         let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config_no_norm,
-        ).unwrap();
+            &serde_json::to_vec(&body1).unwrap(),
+            &config_no_norm,
+        )
+        .unwrap();
         let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config_no_norm,
-        ).unwrap();
-        assert_ne!(key1, key2, "normalize_content=false should preserve whitespace differences");
+            &serde_json::to_vec(&body2).unwrap(),
+            &config_no_norm,
+        )
+        .unwrap();
+        assert_ne!(
+            key1, key2,
+            "normalize_content=false should preserve whitespace differences"
+        );
 
         // With normalization, same content should produce same key
-        let key3 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config_norm,
-        ).unwrap();
-        let key4 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config_norm,
-        ).unwrap();
-        assert_eq!(key3, key4, "normalize_content=true should collapse whitespace differences");
+        let key3 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config_norm)
+                .unwrap();
+        let key4 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config_norm)
+                .unwrap();
+        assert_eq!(
+            key3, key4,
+            "normalize_content=true should collapse whitespace differences"
+        );
     }
 
     #[test]
@@ -600,12 +648,12 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
         assert_eq!(key1, key2, "Multimodal content text should be normalized");
     }
@@ -620,16 +668,18 @@ mod tests {
         });
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
-        let legacy_key = generate_cache_key_with_fingerprint(
-            &body_bytes, &FingerprintConfig::legacy(),
-        ).unwrap();
-        let v1_key = generate_cache_key_with_fingerprint(
-            &body_bytes, &FingerprintConfig::default_v1(),
-        ).unwrap();
+        let legacy_key =
+            generate_cache_key_with_fingerprint(&body_bytes, &FingerprintConfig::legacy()).unwrap();
+        let v1_key =
+            generate_cache_key_with_fingerprint(&body_bytes, &FingerprintConfig::default_v1())
+                .unwrap();
 
         // Legacy (no normalize, version 0) vs v1 (normalize, version 1) should differ
         // because: different version numbers AND different content (trimmed vs not)
-        assert_ne!(legacy_key, v1_key, "Legacy and v1 fingerprints should differ");
+        assert_ne!(
+            legacy_key, v1_key,
+            "Legacy and v1 fingerprints should differ"
+        );
     }
 
     #[test]
@@ -650,14 +700,17 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
-        assert_ne!(key1, key2, "Message order must still affect key with fingerprint");
+        assert_ne!(
+            key1, key2,
+            "Message order must still affect key with fingerprint"
+        );
     }
 
     #[test]
@@ -672,12 +725,12 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
         assert_ne!(key1, key2, "Different models must produce different keys");
     }
@@ -691,12 +744,11 @@ mod tests {
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
         let config = FingerprintConfig::default_v1();
-        let key_no_ns = generate_namespaced_cache_key_with_fingerprint(
-            &body_bytes, None, &config,
-        ).unwrap();
-        let key_with_ns = generate_namespaced_cache_key_with_fingerprint(
-            &body_bytes, Some("tenant-a"), &config,
-        ).unwrap();
+        let key_no_ns =
+            generate_namespaced_cache_key_with_fingerprint(&body_bytes, None, &config).unwrap();
+        let key_with_ns =
+            generate_namespaced_cache_key_with_fingerprint(&body_bytes, Some("tenant-a"), &config)
+                .unwrap();
 
         assert_eq!(key_no_ns.len(), 64);
         assert!(key_with_ns.starts_with("tenant-a:"));
@@ -722,14 +774,17 @@ mod tests {
         });
 
         let config = FingerprintConfig::default_v1();
-        let key1 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body1).unwrap(), &config,
-        ).unwrap();
-        let key2 = generate_cache_key_with_fingerprint(
-            &serde_json::to_vec(&body2).unwrap(), &config,
-        ).unwrap();
+        let key1 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body1).unwrap(), &config)
+                .unwrap();
+        let key2 =
+            generate_cache_key_with_fingerprint(&serde_json::to_vec(&body2).unwrap(), &config)
+                .unwrap();
 
-        assert_eq!(key1, key2, "NFC normalization should unify precomposed and decomposed forms");
+        assert_eq!(
+            key1, key2,
+            "NFC normalization should unify precomposed and decomposed forms"
+        );
     }
 
     #[test]
@@ -742,10 +797,12 @@ mod tests {
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
         let old_key = generate_cache_key(&body_bytes).unwrap();
-        let new_key = generate_cache_key_with_fingerprint(
-            &body_bytes, &FingerprintConfig::legacy(),
-        ).unwrap();
+        let new_key =
+            generate_cache_key_with_fingerprint(&body_bytes, &FingerprintConfig::legacy()).unwrap();
 
-        assert_eq!(old_key, new_key, "Old API must delegate correctly to new API");
+        assert_eq!(
+            old_key, new_key,
+            "Old API must delegate correctly to new API"
+        );
     }
 }
