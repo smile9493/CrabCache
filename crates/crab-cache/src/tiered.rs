@@ -7,8 +7,24 @@ use moka::future::Cache;
 use redis::{AsyncCommands, cmd};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Duration;
-use tracing::{debug, warn};
+use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
+
+/// Options for Redis SCAN during cache invalidation.
+#[derive(Clone, Debug, Default)]
+pub struct InvalidateScanOptions {
+    pub max_duration: Option<Duration>,
+}
+
+impl InvalidateScanOptions {
+    pub fn from_timeout_secs(secs: u64) -> Self {
+        Self {
+            max_duration: Some(Duration::from_secs(secs)),
+        }
+    }
+}
+
+const SCAN_PROGRESS_EVERY_BATCHES: u64 = 10;
 
 pub struct TieredCache {
     l0: Cache<String, CacheEntry>,
@@ -25,6 +41,7 @@ impl TieredCache {
         let l0 = Cache::builder()
             .max_capacity(l0_config.max_capacity)
             .time_to_live(Duration::from_secs(l0_config.ttl_secs))
+            .support_invalidation_closures()
             .build();
 
         Ok(Self {
@@ -167,98 +184,84 @@ impl TieredCache {
     }
 
     /// Invalidate all cache entries (L0 + L1 scan and delete).
-    pub async fn invalidate_all(&self) -> Result<()> {
-        // Invalidate L0
+    pub async fn invalidate_all(&self, scan: InvalidateScanOptions) -> Result<()> {
         self.l0.invalidate_all();
-
-        // Scan and delete L1 cache entries
-        let mut conn = match self.l1_pool.get().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Failed to get Redis connection for invalidate_all");
-                return Err(e.into());
-            }
-        };
-
-        let pattern = "cache:*".to_string();
-        let mut cursor = 0u64;
-        let batch_size = 100i64;
-        let mut total = 0u64;
-
-        loop {
-            let result: (u64, Vec<String>) = cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(&pattern)
-                .arg("COUNT")
-                .arg(batch_size)
-                .query_async(&mut *conn)
-                .await
-                .map_err(|e| {
-                    warn!(error = %e, "Redis SCAN failed during invalidate_all");
-                    anyhow::anyhow!("Redis SCAN failed: {}", e)
-                })?;
-
-            cursor = result.0;
-            let keys = result.1;
-
-            if !keys.is_empty() {
-                let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-                match cmd("DEL").arg(&key_refs).query_async::<()>(&mut *conn).await {
-                    Ok(_) => {
-                        total += keys.len() as u64;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, count = keys.len(), "Redis DEL batch failed during invalidate_all");
-                    }
-                }
-            }
-
-            if cursor == 0 {
-                break;
-            }
-        }
-
-        debug!(total_deleted = total, "Cache invalidate_all completed");
-        Ok(())
+        self.scan_delete_l1("cache:*", "all", scan).await
     }
 
     /// Invalidate cache entries matching a prefix pattern in the cache key.
-    /// The prefix is appended as "cache:{prefix}*" for Redis SCAN.
-    pub async fn invalidate_prefix(&self, prefix: &str) -> Result<()> {
-        // Invalidate L0 - with a prefix we can't efficiently find all matching entries,
-        // but future L1 gets will repopulate L0.
-        // For now, just invalidate L1.
+    pub async fn invalidate_prefix(&self, prefix: &str, scan: InvalidateScanOptions) -> Result<()> {
+        let prefix_owned = prefix.to_string();
+        if let Err(e) = self
+            .l0
+            .invalidate_entries_if(move |k, _| k.starts_with(&prefix_owned))
+        {
+            warn!(error = %e, prefix = prefix, "L0 invalidate_entries_if failed during invalidate_prefix");
+        }
 
+        let pattern = format!("cache:{}*", prefix);
+        self.scan_delete_l1(&pattern, prefix, scan).await
+    }
+
+    async fn scan_delete_l1(
+        &self,
+        pattern: &str,
+        scope_label: &str,
+        scan: InvalidateScanOptions,
+    ) -> Result<()> {
         let mut conn = match self.l1_pool.get().await {
             Ok(c) => c,
             Err(e) => {
-                warn!(error = %e, prefix = prefix, "Failed to get Redis connection for invalidate_prefix");
+                warn!(
+                    error = %e,
+                    scope = scope_label,
+                    "Failed to get Redis connection for cache invalidation scan"
+                );
                 return Err(e.into());
             }
         };
 
-        let pattern = format!("cache:{}*", prefix);
+        let started = Instant::now();
         let mut cursor = 0u64;
         let batch_size = 100i64;
         let mut total = 0u64;
+        let mut batch_count = 0u64;
+        let mut timed_out = false;
 
         loop {
+            if let Some(max) = scan.max_duration
+                && started.elapsed() >= max
+            {
+                timed_out = true;
+                warn!(
+                    scope = scope_label,
+                    deleted_so_far = total,
+                    elapsed_secs = started.elapsed().as_secs(),
+                    "Cache invalidation scan timed out; L0 already cleared, L1 may be partially deleted"
+                );
+                break;
+            }
+
             let result: (u64, Vec<String>) = cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
-                .arg(&pattern)
+                .arg(pattern)
                 .arg("COUNT")
                 .arg(batch_size)
                 .query_async(&mut *conn)
                 .await
                 .map_err(|e| {
-                    warn!(error = %e, prefix = prefix, "Redis SCAN failed during invalidate_prefix");
+                    warn!(
+                        error = %e,
+                        scope = scope_label,
+                        "Redis SCAN failed during cache invalidation"
+                    );
                     anyhow::anyhow!("Redis SCAN failed: {}", e)
                 })?;
 
             cursor = result.0;
             let keys = result.1;
+            batch_count += 1;
 
             if !keys.is_empty() {
                 let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
@@ -267,9 +270,23 @@ impl TieredCache {
                         total += keys.len() as u64;
                     }
                     Err(e) => {
-                        warn!(error = %e, count = keys.len(), "Redis DEL batch failed during invalidate_prefix");
+                        warn!(
+                            error = %e,
+                            count = keys.len(),
+                            scope = scope_label,
+                            "Redis DEL batch failed during cache invalidation"
+                        );
                     }
                 }
+            }
+
+            if batch_count.is_multiple_of(SCAN_PROGRESS_EVERY_BATCHES) {
+                info!(
+                    scope = scope_label,
+                    deleted_so_far = total,
+                    batches = batch_count,
+                    "Cache invalidation scan in progress"
+                );
             }
 
             if cursor == 0 {
@@ -277,7 +294,21 @@ impl TieredCache {
             }
         }
 
-        debug!(prefix = prefix, total_deleted = total, "Cache invalidate_prefix completed");
+        if timed_out {
+            warn!(
+                scope = scope_label,
+                deleted_so_far = total,
+                "Cache invalidation scan ended early due to timeout"
+            );
+        } else {
+            info!(
+                scope = scope_label,
+                total_deleted = total,
+                "Cache invalidation scan completed"
+            );
+        }
+
+        debug!(scope = scope_label, total_deleted = total, "Cache invalidation finished");
         Ok(())
     }
 }

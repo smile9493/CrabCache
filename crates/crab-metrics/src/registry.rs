@@ -53,6 +53,7 @@ pub struct GatewayMetrics {
     pub coalesced_requests: IntCounter,
     pub cost_saved_usd: CounterVec,
     pub upstream_prompt_cache_tokens: IntCounterVec,
+    pub stream_cache_sse_omitted: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -160,6 +161,14 @@ impl GatewayMetrics {
             &["status", "model", "consumer"],
         )?;
 
+        let stream_cache_sse_omitted = IntCounterVec::new(
+            Opts::new(
+                "gateway_stream_cache_sse_omitted_total",
+                "Stream cache writes that omitted raw SSE body",
+            ),
+            &["reason"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -173,6 +182,7 @@ impl GatewayMetrics {
             coalesced_requests,
             cost_saved_usd,
             upstream_prompt_cache_tokens,
+            stream_cache_sse_omitted,
         })
     }
 
@@ -189,7 +199,14 @@ impl GatewayMetrics {
         registry.register(Box::new(self.coalesced_requests.clone()))?;
         registry.register(Box::new(self.cost_saved_usd.clone()))?;
         registry.register(Box::new(self.upstream_prompt_cache_tokens.clone()))?;
+        registry.register(Box::new(self.stream_cache_sse_omitted.clone()))?;
         Ok(())
+    }
+
+    pub fn record_stream_cache_sse_omitted(&self, reason: &str) {
+        self.stream_cache_sse_omitted
+            .with_label_values(&[reason])
+            .inc();
     }
 
     pub fn record_cache_hit(&self, tier: CacheTier, model: &str, consumer: Option<&str>) {

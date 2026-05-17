@@ -9,7 +9,10 @@ api_key = "sk-your-deepseek-api-key-here"
 # In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
 [management]
 listen_addr = "127.0.0.1:9080"
+# Management API key (x-gateway-admin-key). NOT the client api_key above — use a strong secret in production.
 admin_key = "dev-only-gateway-admin-secret"
+# Max seconds for background Redis SCAN during POST /v1/cache/invalidate (default: 300)
+# invalidate_scan_timeout_secs = 300
 
 [upstream]
 base_url = "https://api.deepseek.com"
@@ -41,6 +44,8 @@ l1_pool_size = 16
 # When true, streaming responses are cached (stores raw SSE bytes for exact replay).
 # Defaults to false; when disabled avoids synthetic SSE on hit.
 # stream_cache_enabled = true
+# Max raw SSE bytes stored per stream cache entry (default: 4194304 = 4 MiB). 0 = JSON-only + synthetic SSE on hit.
+# max_sse_cache_bytes = 4194304
 
 # Fingerprint normalization version for cache keys.
 # Bump this when fingerprint normalization rules change to safely

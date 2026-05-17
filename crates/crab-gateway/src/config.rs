@@ -95,11 +95,25 @@ fn default_management_admin_key() -> SecretString {
     SecretString::new("change-me-in-production".to_string())
 }
 
+fn default_invalidate_scan_timeout_secs() -> u64 {
+    300
+}
+
+pub const WEAK_ADMIN_KEYS: &[&str] = &[
+    "change-me-in-production",
+    "dev-only-gateway-admin-secret",
+];
+
+pub const WEAK_API_KEY_PREFIXES: &[&str] = &["sk-your-"];
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ManagementConfig {
     pub listen_addr: String,
     #[serde(default = "default_management_admin_key")]
     pub admin_key: SecretString,
+    /// Max seconds for a background Redis SCAN during cache invalidation.
+    #[serde(default = "default_invalidate_scan_timeout_secs")]
+    pub invalidate_scan_timeout_secs: u64,
 }
 
 impl Default for ManagementConfig {
@@ -107,6 +121,7 @@ impl Default for ManagementConfig {
         Self {
             listen_addr: "127.0.0.1:9080".to_string(),
             admin_key: default_management_admin_key(),
+            invalidate_scan_timeout_secs: default_invalidate_scan_timeout_secs(),
         }
     }
 }
@@ -189,7 +204,16 @@ pub struct CacheConfig {
     /// When omitted, default DeepSeek v3 pricing is used.
     #[serde(default)]
     pub pricing: Option<PricingConfig>,
+    /// Max raw SSE bytes stored per stream cache entry. `0` disables storing `sse_body`.
+    #[serde(default = "default_max_sse_cache_bytes")]
+    pub max_sse_cache_bytes: usize,
 }
+
+fn default_max_sse_cache_bytes() -> usize {
+    4_194_304
+}
+
+const MAX_SSE_CACHE_BYTES_CAP: usize = 64 * 1024 * 1024;
 
 fn default_fingerprint_version() -> u32 {
     1
@@ -342,11 +366,53 @@ impl GatewayConfig {
             }
         }
 
+        if self.cache.max_sse_cache_bytes > MAX_SSE_CACHE_BYTES_CAP {
+            errors.push(format!(
+                "cache.max_sse_cache_bytes must be <= {} (64 MiB)",
+                MAX_SSE_CACHE_BYTES_CAP
+            ));
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
             Err(errors)
         }
+    }
+
+    /// Non-fatal deployment warnings (logged at startup).
+    pub fn security_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        let api_key = self.api_key.inner();
+        for prefix in WEAK_API_KEY_PREFIXES {
+            if api_key.starts_with(prefix) {
+                warnings.push(format!(
+                    "api_key looks like a placeholder (prefix '{prefix}'); set CRABCACHE_API_KEY or a real DeepSeek key"
+                ));
+                break;
+            }
+        }
+        if api_key.len() < 16 && !api_key.is_empty() {
+            warnings.push("api_key is unusually short for production".into());
+        }
+
+        if let Some(mgmt) = &self.management {
+            let admin_key = mgmt.admin_key.inner();
+            if WEAK_ADMIN_KEYS.contains(&admin_key) {
+                warnings.push(format!(
+                    "management.admin_key is a known weak/default value ({admin_key}); set a strong key via config or CRABCACHE_GATEWAY_ADMIN_KEY"
+                ));
+                if std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY").is_err() {
+                    warnings.push(
+                        "CRABCACHE_GATEWAY_ADMIN_KEY is not set; management API is using the weak key from the config file"
+                            .into(),
+                    );
+                }
+            }
+        }
+
+        warnings
     }
 }
 
@@ -364,5 +430,69 @@ mod tests {
     fn test_management_defaults() {
         let mgmt = ManagementConfig::default();
         assert_eq!(mgmt.listen_addr, "127.0.0.1:9080");
+        assert_eq!(mgmt.invalidate_scan_timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_default_max_sse_cache_bytes() {
+        assert_eq!(default_max_sse_cache_bytes(), 4_194_304);
+    }
+
+    #[test]
+    fn test_security_warnings_weak_admin() {
+        let config = GatewayConfig {
+            listen_addr: "127.0.0.1:8080".into(),
+            metrics_addr: "127.0.0.1:9090".into(),
+            api_key: SecretString::new("sk-real-key-12345678".into()),
+            upstream: UpstreamConfig {
+                deepseek_endpoints: vec!["127.0.0.1:443".into()],
+                default_weight: None,
+                base_url: None,
+                model: None,
+                tls_sni: None,
+                health_check_interval_secs: 30,
+                max_coalesce_inflight: None,
+                coalesce_timeout_secs: None,
+            },
+            cache: CacheConfig {
+                l0_max_capacity: None,
+                l0_ttl_secs: None,
+                l1_redis_url: "redis://127.0.0.1".into(),
+                l1_pool_size: None,
+                default_ttl_secs: None,
+                model_ttl_overrides: None,
+                consumer_ttl_overrides: None,
+                stream_cache_enabled: false,
+                cache_key_namespace: None,
+                fingerprint_version: 1,
+                fingerprint_normalize_content: true,
+                pricing: None,
+                max_sse_cache_bytes: default_max_sse_cache_bytes(),
+            },
+            semantic: SemanticConfig {
+                enabled: false,
+                model_path: String::new(),
+                tokenizer_path: String::new(),
+                qdrant_url: String::new(),
+                collection_name: String::new(),
+                vector_size: None,
+                similarity_threshold: None,
+                ttl_secs: None,
+                min_query_chars: 32,
+                max_query_chars: 8192,
+                max_concurrent_embeds: 4,
+                embed_only_on_exact_miss: true,
+            },
+            connection: None,
+            reasoning: None,
+            trace_logging: None,
+            management: Some(ManagementConfig {
+                listen_addr: "127.0.0.1:9080".into(),
+                admin_key: SecretString::new("dev-only-gateway-admin-secret".into()),
+                invalidate_scan_timeout_secs: 300,
+            }),
+        };
+        let warnings = config.security_warnings();
+        assert!(warnings.iter().any(|w| w.contains("admin_key")));
     }
 }

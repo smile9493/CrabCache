@@ -5,19 +5,66 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     parse_backend_endpoints, ApiKeySpec, BackendSpec, CreateGatewayKeyRequest,
     CreateGatewayKeyResponse, ErrorResponse, GatewayStatus, PatchGatewayKeyRequest,
     PutBackendsRequest, PutTtlConfigRequest, RoutingBackendsView, StreamCacheConfig,
-    TtlConfigView, GATEWAY_ADMIN_KEY_HEADER,
+    CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER, TtlConfigView,
+    GATEWAY_ADMIN_KEY_HEADER,
 };
 use crab_proxy::{RuntimeConfig, StoredKey};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
+const INVALIDATE_MAX_PER_WINDOW: usize = 10;
+const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct ManagementState {
     pub runtime: Arc<RuntimeConfig>,
+    pub tiered_cache: Arc<TieredCache>,
     pub admin_key: String,
+    pub invalidate_all_in_progress: Arc<AtomicBool>,
+    pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
+    pub invalidate_scan_timeout_secs: u64,
+}
+
+#[derive(Default)]
+pub struct InvalidateRateState {
+    recent: VecDeque<Instant>,
+    last_all_at: Option<Instant>,
+}
+
+impl InvalidateRateState {
+    fn check(&mut self, is_all: bool) -> Result<(), &'static str> {
+        let now = Instant::now();
+        while let Some(front) = self.recent.front() {
+            if now.duration_since(*front) > INVALIDATE_WINDOW {
+                self.recent.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.recent.len() >= INVALIDATE_MAX_PER_WINDOW {
+            return Err("cache invalidate rate limit exceeded (10 per 60s)");
+        }
+        if is_all {
+            if let Some(last) = self.last_all_at {
+                if now.duration_since(last) < INVALIDATE_ALL_COOLDOWN {
+                    return Err("full cache invalidation is rate limited to once per 60s");
+                }
+            }
+        }
+        self.recent.push_back(now);
+        if is_all {
+            self.last_all_at = Some(now);
+        }
+        Ok(())
+    }
 }
 
 pub fn router(state: ManagementState) -> Router {
@@ -36,12 +83,7 @@ pub fn router(state: ManagementState) -> Router {
 
 #[derive(serde::Deserialize)]
 struct InvalidateRequest {
-    #[serde(default = "default_invalidate_scope")]
     scope: String,
-}
-
-fn default_invalidate_scope() -> String {
-    "all".to_string()
 }
 
 #[derive(serde::Serialize)]
@@ -61,6 +103,48 @@ fn default_fingerprint_normalize() -> bool {
     true
 }
 
+pub(crate) enum InvalidateAction {
+    All,
+    Prefix(String),
+    Key(String),
+}
+
+fn parse_invalidate_scope(scope: &str) -> Result<InvalidateAction, String> {
+    let trimmed = scope.trim();
+    if trimmed.is_empty() {
+        return Err("scope cannot be empty".to_string());
+    }
+    if trimmed == "all" {
+        return Ok(InvalidateAction::All);
+    }
+    if let Some(prefix) = trimmed.strip_prefix("prefix:") {
+        if prefix.is_empty() {
+            return Err("prefix cannot be empty".to_string());
+        }
+        return Ok(InvalidateAction::Prefix(prefix.to_string()));
+    }
+    Ok(InvalidateAction::Key(trimmed.to_string()))
+}
+
+/// `scope=all` requires `x-cache-invalidate-confirm: all`.
+pub fn require_invalidate_confirm(action: &InvalidateAction, headers: &HeaderMap) -> Result<(), String> {
+    if !matches!(action, InvalidateAction::All) {
+        return Ok(());
+    }
+    let confirmed = headers
+        .get(CACHE_INVALIDATE_CONFIRM_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim() == CACHE_INVALIDATE_CONFIRM_ALL)
+        .unwrap_or(false);
+    if confirmed {
+        Ok(())
+    } else {
+        Err(format!(
+            "scope=all requires header {CACHE_INVALIDATE_CONFIRM_HEADER}: {CACHE_INVALIDATE_CONFIRM_ALL}"
+        ))
+    }
+}
+
 async fn invalidate_cache(
     State(state): State<ManagementState>,
     headers: HeaderMap,
@@ -68,20 +152,105 @@ async fn invalidate_cache(
 ) -> Result<Json<InvalidateResponse>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    // The management state doesn't have direct access to TieredCache,
-    // so we log the request and let the admin handle it via TieredCache.
-    // For now, we rely on the gateway having its own invalidation logic
-    // through the cache key namespace + fingerprint version approach.
-    tracing::info!(scope = %req.scope, "Cache invalidation requested");
+    let action = parse_invalidate_scope(&req.scope).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+            .into_response()
+    })?;
 
-    // Note: Full invalidation requires access to TieredCache.
-    // The gateway will reload fingerprint_version which effectively
-    // isolates new entries from old ones.
-    // To actually free Redis memory, invalidate via the TieredCache directly.
+    require_invalidate_confirm(&action, &headers).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+            .into_response()
+    })?;
+
+    let is_all = matches!(action, InvalidateAction::All);
+
+    {
+        let mut rate = state.invalidate_rate.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "invalidate rate limit lock poisoned".to_string(),
+                }),
+            )
+                .into_response()
+        })?;
+        rate.check(is_all).map_err(|e| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        })?;
+    }
+
+    if is_all
+        && state
+            .invalidate_all_in_progress
+            .swap(true, Ordering::SeqCst)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "a full cache invalidation is already in progress".to_string(),
+            }),
+        )
+            .into_response());
+    }
+
+    let tiered_cache = state.tiered_cache.clone();
+    let in_progress = state.invalidate_all_in_progress.clone();
+    let scope_label = req.scope.clone();
+    let scan_opts = InvalidateScanOptions::from_timeout_secs(state.invalidate_scan_timeout_secs);
+
+    tokio::spawn(async move {
+        let result = match action {
+            InvalidateAction::All => {
+                tracing::info!(scope = %scope_label, "Starting full cache invalidation");
+                let r = tiered_cache.invalidate_all(scan_opts).await;
+                match &r {
+                    Ok(_) => tracing::info!(scope = %scope_label, "Full cache invalidation completed"),
+                    Err(e) => tracing::warn!(scope = %scope_label, error = %e, "Full cache invalidation failed"),
+                }
+                r
+            }
+            InvalidateAction::Prefix(p) => {
+                tracing::info!(scope = %scope_label, prefix = %p, "Starting prefix cache invalidation");
+                let r = tiered_cache.invalidate_prefix(&p, scan_opts).await;
+                match &r {
+                    Ok(_) => tracing::info!(scope = %scope_label, prefix = %p, "Prefix cache invalidation completed"),
+                    Err(e) => tracing::warn!(scope = %scope_label, prefix = %p, error = %e, "Prefix cache invalidation failed"),
+                }
+                r
+            }
+            InvalidateAction::Key(k) => {
+                tracing::info!(scope = %scope_label, key = %k, "Starting single key cache invalidation");
+                let r = tiered_cache.invalidate(&k).await;
+                match &r {
+                    Ok(_) => tracing::info!(scope = %scope_label, key = %k, "Single key cache invalidation completed"),
+                    Err(e) => tracing::warn!(scope = %scope_label, key = %k, error = %e, "Single key cache invalidation failed"),
+                }
+                r
+            }
+        };
+
+        if is_all {
+            in_progress.store(false, Ordering::SeqCst);
+        }
+
+        drop(result);
+    });
 
     Ok(Json(InvalidateResponse {
         scope: req.scope,
-        status: "acknowledged".to_string(),
+        status: "accepted".to_string(),
     }))
 }
 
@@ -409,7 +578,6 @@ async fn put_backends(
             .into_response()
     })?;
 
-    // Reset health for new backends
     if let Ok(mut health) = state.runtime.backend_health.write() {
         health.clear();
         for b in router.backends() {
@@ -441,4 +609,44 @@ pub async fn serve(listen_addr: &str, state: ManagementState) -> anyhow::Result<
     tracing::info!(addr = %listen_addr, "Management API listening");
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn require_confirm_rejects_all_without_header() {
+        let action = InvalidateAction::All;
+        let headers = HeaderMap::new();
+        assert!(require_invalidate_confirm(&action, &headers).is_err());
+    }
+
+    #[test]
+    fn require_confirm_accepts_all_with_header() {
+        let action = InvalidateAction::All;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CACHE_INVALIDATE_CONFIRM_HEADER,
+            HeaderValue::from_static(CACHE_INVALIDATE_CONFIRM_ALL),
+        );
+        assert!(require_invalidate_confirm(&action, &headers).is_ok());
+    }
+
+    #[test]
+    fn require_confirm_ignores_key_scope() {
+        let action = InvalidateAction::Key("abc".to_string());
+        let headers = HeaderMap::new();
+        assert!(require_invalidate_confirm(&action, &headers).is_ok());
+    }
+
+    #[test]
+    fn invalidate_rate_limits_burst() {
+        let mut rate = InvalidateRateState::default();
+        for _ in 0..INVALIDATE_MAX_PER_WINDOW {
+            assert!(rate.check(false).is_ok());
+        }
+        assert!(rate.check(false).is_err());
+    }
 }
