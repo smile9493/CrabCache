@@ -163,3 +163,19 @@ pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {
 pub async fn fetch_trace_analysis() -> Result<TraceAnalysis, String> {
     fetch_json(&format!("{}/trace/analysis", API_BASE)).await
 }
+
+pub async fn fetch_cache_ops() -> Result<CacheOpsView, String> {
+    fetch_json(&format!("{}/cache/ops", API_BASE)).await
+}
+
+pub async fn invalidate_cache(req: &InvalidateCacheBody) -> Result<InvalidateCacheResult, String> {
+    post_json(&format!("{}/cache/invalidate", API_BASE), req).await
+}
+
+pub async fn update_fingerprint(req: &FingerprintConfigBody) -> Result<FingerprintConfigBody, String> {
+    put_json(&format!("{}/cache/fingerprint", API_BASE), req).await
+}
+
+pub async fn update_stream_cache(req: &StreamCacheToggle) -> Result<StreamCacheToggle, String> {
+    put_json(&format!("{}/cache/stream_cache", API_BASE), req).await
+}

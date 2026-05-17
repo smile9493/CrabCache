@@ -73,7 +73,10 @@ pub fn router(state: ManagementState) -> Router {
         .route("/v1/status", get(status))
         .route("/v1/keys", get(list_keys).post(create_key))
         .route("/v1/cache/invalidate", post(invalidate_cache))
-        .route("/v1/cache/fingerprint", put(put_fingerprint))
+        .route(
+            "/v1/cache/fingerprint",
+            get(get_fingerprint).put(put_fingerprint),
+        )
         .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
         .route("/v1/cache/ttl", get(get_ttl).put(put_ttl))
         .route("/v1/runtime/stream_cache", get(get_stream_cache).put(put_stream_cache))
@@ -251,6 +254,24 @@ async fn invalidate_cache(
     Ok(Json(InvalidateResponse {
         scope: req.scope,
         status: "accepted".to_string(),
+    }))
+}
+
+async fn get_fingerprint(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<FingerprintRequest>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let cfg = state
+        .runtime
+        .fingerprint
+        .read()
+        .map_err(|_| internal_error("fingerprint lock poisoned"))?;
+
+    Ok(Json(FingerprintRequest {
+        version: cfg.version,
+        normalize_content: cfg.normalize_content,
     }))
 }
 

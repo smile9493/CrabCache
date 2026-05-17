@@ -146,9 +146,23 @@ impl GatewayAdminClient {
     }
 
     pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
-        let resp = self
+        let mut builder = self
             .authed(reqwest::Method::POST, "/v1/cache/invalidate")
-            .json(req)
+            .json(req);
+        if req.scope.trim() == "all" {
+            builder = builder.header(
+                CACHE_INVALIDATE_CONFIRM_HEADER,
+                CACHE_INVALIDATE_CONFIRM_ALL,
+            );
+        }
+        let resp = builder.send().await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_fingerprint(&self) -> Result<FingerprintConfigRequest, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/cache/fingerprint")
             .send()
             .await?;
         let resp = Self::check(resp).await?;

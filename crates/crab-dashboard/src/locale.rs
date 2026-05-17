@@ -53,6 +53,12 @@ impl Translations {
             Locale::EnUS => "Routing & Cache",
         }
     }
+    pub fn sidebar_cache_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存运维",
+            Locale::EnUS => "Cache Ops",
+        }
+    }
     pub fn sidebar_models(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "模型列表",
@@ -410,6 +416,98 @@ impl Translations {
             Locale::EnUS => "Configure cache TTLs, semantic thresholds, and session affinity.",
         }
     }
+
+    pub fn cache_ops_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存运维",
+            Locale::EnUS => "Cache Operations",
+        }
+    }
+    pub fn cache_ops_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理指纹版本、流式缓存开关与缓存失效",
+            Locale::EnUS => "Manage fingerprint version, stream cache, and cache invalidation.",
+        }
+    }
+    pub fn cache_ops_fingerprint_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存键指纹",
+            Locale::EnUS => "Cache Key Fingerprint",
+        }
+    }
+    pub fn cache_ops_fingerprint_version(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "指纹版本",
+            Locale::EnUS => "Fingerprint version",
+        }
+    }
+    pub fn cache_ops_normalize(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "内容规范化 (NFC/空白)",
+            Locale::EnUS => "Normalize content (NFC/whitespace)",
+        }
+    }
+    pub fn cache_ops_stream_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式响应缓存",
+            Locale::EnUS => "Stream response cache",
+        }
+    }
+    pub fn cache_ops_invalidate_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存失效",
+            Locale::EnUS => "Cache invalidation",
+        }
+    }
+    pub fn cache_ops_scope(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "范围 (all / prefix:ns / key)",
+            Locale::EnUS => "Scope (all / prefix:ns / key)",
+        }
+    }
+    pub fn cache_ops_invalidate_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "执行失效",
+            Locale::EnUS => "Invalidate",
+        }
+    }
+    pub fn cache_ops_confirm_all_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认清空全部缓存？",
+            Locale::EnUS => "Invalidate entire cache?",
+        }
+    }
+    pub fn cache_ops_confirm_all_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "将清空 L0 与 L1（Redis SCAN）。此操作异步执行，状态为 accepted 表示已受理。",
+            Locale::EnUS => "Clears L0 and L1 (Redis SCAN). Runs asynchronously; accepted means the job was queued.",
+        }
+    }
+    pub fn cache_ops_confirm_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认",
+            Locale::EnUS => "Confirm",
+        }
+    }
+    pub fn cache_ops_confirm_cancel(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
+        }
+    }
+    pub fn cache_ops_last_invalidate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上次失效",
+            Locale::EnUS => "Last invalidation",
+        }
+    }
+    pub fn cache_ops_none(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无",
+            Locale::EnUS => "None",
+        }
+    }
+
     pub fn routing_cache_config_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存 TTL 配置",

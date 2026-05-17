@@ -161,11 +161,17 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                         {format!("{}h", metrics.uptime_hours)}
                     </div>
                     <div class="metric-card-sub">{t.overview_uptime_sub()}</div>
-                    <div class="mt-3 pt-3 border-t border-theme">
+                    <div class="mt-3 pt-3 border-t border-theme space-y-1">
                         <div class="flex justify-between text-xs">
                             <span class="text-theme-muted">"Cache Hits"</span>
                             <span class="font-mono tabular-nums text-accent">
                                 {format!("{}", total_hits)}
+                            </span>
+                        </div>
+                        <div class="flex justify-between text-xs text-theme-muted">
+                            <span>"Semantic (guard)"</span>
+                            <span class="font-mono tabular-nums">
+                                {format!("{} / {} skip", metrics.semantic_hits, metrics.semantic_skipped)}
                             </span>
                         </div>
                     </div>

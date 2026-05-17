@@ -166,3 +166,20 @@ async fn invalidate_all_accepts_with_confirm_header() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn get_fingerprint_returns_runtime_config() {
+    let app = router(test_management_state().await);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/cache/fingerprint")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}

@@ -4,6 +4,7 @@ use leptos_router::path;
 
 use crate::components::sidebar::Sidebar;
 use crate::locale::{provide_locale, use_translations};
+use crate::pages::cache_ops::CacheOpsPage;
 use crate::pages::keys::KeysPage;
 use crate::pages::logs::LogsPage;
 use crate::pages::models::ModelsPage;
@@ -28,6 +29,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/keys") view=KeysPage />
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/routing") view=RoutingPage />
+                        <Route path=path!("/cache") view=CacheOpsPage />
                         <Route path=path!("/logs") view=LogsPage />
                         <Route path=path!("/trace") view=TracePage />
                         <Route path=path!("/upstream") view=UpstreamPage />
