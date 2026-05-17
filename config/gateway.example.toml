@@ -22,6 +22,15 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # Optional: TLS SNI override for upstream connections (defaults to "api.deepseek.com")
 # tls_sni = "api.deepseek.com"
 
+# Health check interval in seconds for upstream backends (default: 30)
+# health_check_interval_secs = 30
+
+# Coalescer configuration
+# Max concurrent inflight coalesce requests (default: 1000)
+# max_coalesce_inflight = 1000
+# Coalesce wait timeout in seconds (default: 60)
+# coalesce_timeout_secs = 60
+
 [cache]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
@@ -29,9 +38,9 @@ l0_ttl_secs = 3600
 l1_redis_url = "redis://127.0.0.1:6379"
 l1_pool_size = 16
 
-# When false, streaming responses are not cached (avoids synthetic SSE on hit).
-# Defaults to true (preserving current synthetic stream cache behavior).
-# stream_cache_enabled = false
+# When true, streaming responses are cached (stores raw SSE bytes for exact replay).
+# Defaults to false; when disabled avoids synthetic SSE on hit.
+# stream_cache_enabled = true
 
 # Fingerprint normalization version for cache keys.
 # Bump this when fingerprint normalization rules change to safely
@@ -71,6 +80,16 @@ qdrant_url = "http://127.0.0.1:6334"
 collection_name = "crab_semantic_cache"
 similarity_threshold = 0.95
 ttl_secs = 86400
+# Minimum query length (characters) to trigger L2 semantic search.
+# Queries shorter than this skip embedding entirely.
+# min_query_chars = 32
+# Maximum query length (characters) to trigger L2 semantic search.
+# Queries longer than this skip embedding entirely.
+# max_query_chars = 8192
+# Maximum concurrent ONNX embed operations (semaphore).
+# max_concurrent_embeds = 4
+# When true, L2 search is only attempted when L0/L1 exact cache misses.
+# embed_only_on_exact_miss = true
 
 [reasoning]
 thinking_mode = "enabled"

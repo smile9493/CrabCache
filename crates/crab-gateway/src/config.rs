@@ -147,7 +147,17 @@ pub struct UpstreamConfig {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub tls_sni: Option<String>,
+    #[serde(default = "default_health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+    #[serde(default = "default_max_coalesce_inflight")]
+    pub max_coalesce_inflight: Option<usize>,
+    #[serde(default = "default_coalesce_timeout_secs")]
+    pub coalesce_timeout_secs: Option<u64>,
 }
+
+fn default_health_check_interval_secs() -> u64 { 30 }
+fn default_max_coalesce_inflight() -> Option<usize> { None }
+fn default_coalesce_timeout_secs() -> Option<u64> { None }
 
 #[derive(Debug, Deserialize)]
 pub struct CacheConfig {
@@ -190,7 +200,7 @@ fn default_fingerprint_normalize_content() -> bool {
 }
 
 fn default_stream_cache_enabled() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,7 +213,20 @@ pub struct SemanticConfig {
     pub vector_size: Option<u64>,
     pub similarity_threshold: Option<f32>,
     pub ttl_secs: Option<u64>,
+    #[serde(default = "default_semantic_min_query_chars")]
+    pub min_query_chars: usize,
+    #[serde(default = "default_semantic_max_query_chars")]
+    pub max_query_chars: usize,
+    #[serde(default = "default_semantic_max_concurrent_embeds")]
+    pub max_concurrent_embeds: usize,
+    #[serde(default = "default_semantic_embed_only_on_exact_miss")]
+    pub embed_only_on_exact_miss: bool,
 }
+
+fn default_semantic_min_query_chars() -> usize { 32 }
+fn default_semantic_max_query_chars() -> usize { 8192 }
+fn default_semantic_max_concurrent_embeds() -> usize { 4 }
+fn default_semantic_embed_only_on_exact_miss() -> bool { true }
 
 impl GatewayConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {

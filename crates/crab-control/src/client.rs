@@ -126,6 +126,45 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn get_stream_cache(&self) -> Result<StreamCacheConfig, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/runtime/stream_cache")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_stream_cache(&self, req: &StreamCacheConfig) -> Result<StreamCacheConfig, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/runtime/stream_cache")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn invalidate_cache(&self, req: &InvalidateCacheRequest) -> Result<InvalidateCacheResponse, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::POST, "/v1/cache/invalidate")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_fingerprint(&self, req: &FingerprintConfigRequest) -> Result<FingerprintConfigRequest, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/cache/fingerprint")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn get_backends(&self) -> Result<RoutingBackendsView, ControlError> {
         let resp = self
             .authed(reqwest::Method::GET, "/v1/routing/backends")

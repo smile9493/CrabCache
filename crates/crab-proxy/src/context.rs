@@ -3,7 +3,7 @@ use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator,
 };
-use crab_semantic::SemanticCache;
+use crab_semantic::{SemanticCache, SemanticGateConfig};
 use crab_metrics::CacheTier;
 use crate::TraceLogger;
 use serde::Deserialize;
@@ -174,6 +174,7 @@ pub struct GatewayState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
     pub semantic_cache: Option<Arc<SemanticCache>>,
+    pub semantic_gate: SemanticGateConfig,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningStore>,
     pub reasoning_config: ReasoningConfig,

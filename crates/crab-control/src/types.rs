@@ -73,7 +73,15 @@ pub struct BackendSpec {
     pub addr: String,
     pub weight: u32,
     pub tls_sni: String,
+    #[serde(default = "default_backend_healthy")]
+    pub healthy: bool,
+    #[serde(default)]
+    pub last_check_ms: u64,
+    #[serde(default)]
+    pub latency_ms: u64,
 }
+
+fn default_backend_healthy() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingBackendsView {
@@ -98,6 +106,31 @@ fn default_tls_sni() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamCacheConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateCacheRequest {
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidateCacheResponse {
+    pub scope: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FingerprintConfigRequest {
+    pub version: u32,
+    #[serde(default = "default_fingerprint_normalize")]
+    pub normalize_content: bool,
+}
+
+fn default_fingerprint_normalize() -> bool { true }

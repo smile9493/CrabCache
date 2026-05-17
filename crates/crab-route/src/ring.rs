@@ -3,6 +3,7 @@ use pingora_ketama::{Bucket, Continuum};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::debug;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -19,6 +20,31 @@ impl Backend {
             addr,
             weight,
             tls_sni,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BackendHealth {
+    pub healthy: bool,
+    pub last_check_ms: u64,
+    pub latency_ms: u64,
+}
+
+impl BackendHealth {
+    pub fn new_healthy() -> Self {
+        Self {
+            healthy: true,
+            last_check_ms: 0,
+            latency_ms: 0,
+        }
+    }
+
+    pub fn new_unhealthy() -> Self {
+        Self {
+            healthy: false,
+            last_check_ms: 0,
+            latency_ms: 0,
         }
     }
 }
@@ -57,6 +83,48 @@ impl AffinityRouter {
     pub fn select(&self, key: &[u8]) -> Option<&Backend> {
         let addr = self.continuum.node(key)?;
 
+        self.backends
+            .iter()
+            .find(|b| b.addr == addr)
+            .map(|b| b.as_ref())
+    }
+
+    /// Select a backend using the consistent hash ring, filtering by health.
+    ///
+    /// Iterates through backends in hash-ring order until a healthy one is found.
+    /// If no backends are healthy, falls back to all backends with a warning.
+    pub fn select_healthy<F>(&self, key: &[u8], is_healthy: F) -> Option<&Backend>
+    where
+        F: Fn(&str) -> bool,
+    {
+        // Check all backends for health
+        let healthy_count = self.backends.iter().filter(|b| is_healthy(&b.name)).count();
+        let total = self.backends.len();
+
+        let addr = self.continuum.node(key)?;
+
+        // Find the selected backend by addr
+        if let Some(selected) = self.backends.iter().find(|b| b.addr == addr) {
+            if is_healthy(&selected.name) {
+                return Some(selected.as_ref());
+            }
+        }
+
+        // Selected backend is unhealthy - try to find any healthy backend
+        if healthy_count > 0 {
+            for b in &self.backends {
+                if is_healthy(&b.name) {
+                    return Some(b.as_ref());
+                }
+            }
+        }
+
+        // All backends unhealthy - fall back to original selection with warning
+        tracing::warn!(
+            healthy = healthy_count,
+            total = total,
+            "All backends unhealthy, falling back to original selection"
+        );
         self.backends
             .iter()
             .find(|b| b.addr == addr)
