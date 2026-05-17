@@ -15,6 +15,44 @@ pub struct GatewayStatus {
     pub active_keys: u64,
     pub backend_count: usize,
     pub stream_cache_enabled: bool,
+    pub upstream_key_count: usize,
+    pub upstream_keys_available: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyView {
+    pub id: String,
+    pub preview: String,
+    pub enabled: bool,
+    pub inflight: usize,
+    pub cooldown_remaining_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeysView {
+    pub keys: Vec<UpstreamKeyView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyInput {
+    #[serde(default)]
+    pub id: String,
+    pub secret: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamKeysRequest {
+    pub keys: Vec<UpstreamKeyInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchUpstreamKeyRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +125,9 @@ pub struct BackendSpec {
     pub latency_ms: u64,
 }
 
-fn default_backend_healthy() -> bool { true }
+fn default_backend_healthy() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingBackendsView {
@@ -156,4 +196,6 @@ pub struct FingerprintConfigRequest {
     pub normalize_content: bool,
 }
 
-fn default_fingerprint_normalize() -> bool { true }
+fn default_fingerprint_normalize() -> bool {
+    true
+}

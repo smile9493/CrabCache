@@ -1,17 +1,17 @@
+use crate::network::NetworkInfo;
 use crate::state::{AppState, KeyMetadata};
 use crate::types::*;
-use crate::network::NetworkInfo;
-use crab_control::{
-    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
-    PutBackendsRequest, PutTtlConfigRequest,
-};
 use axum::{
     Json, Router,
     extract::{Path, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::Response,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
+};
+use crab_control::{
+    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest, PutBackendsRequest,
+    PutTtlConfigRequest,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -45,7 +45,9 @@ fn gateway_status_code(err: &crab_control::ControlError) -> StatusCode {
         crab_control::ControlError::Http { status, .. } if *status == 429 => {
             StatusCode::TOO_MANY_REQUESTS
         }
-        crab_control::ControlError::Http { status, .. } if *status == 400 => StatusCode::BAD_REQUEST,
+        crab_control::ControlError::Http { status, .. } if *status == 400 => {
+            StatusCode::BAD_REQUEST
+        }
         crab_control::ControlError::Http { status, .. } if (400..500).contains(status) => {
             StatusCode::BAD_GATEWAY
         }
@@ -67,20 +69,37 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key))
-        .route("/api/admin/cache/config", get(get_cache_config).put(update_cache_config))
+        .route(
+            "/api/admin/cache/config",
+            get(get_cache_config).put(update_cache_config),
+        )
         .route("/api/admin/cache/ops", get(get_cache_ops))
         .route("/api/admin/cache/invalidate", post(post_cache_invalidate))
-        .route(
-            "/api/admin/cache/fingerprint",
-            put(put_cache_fingerprint),
-        )
+        .route("/api/admin/cache/fingerprint", put(put_cache_fingerprint))
         .route(
             "/api/admin/cache/stream_cache",
             get(get_stream_cache).put(put_stream_cache),
         )
-        .route("/api/admin/semantic/config", get(get_semantic_config).put(update_semantic_config))
-        .route("/api/admin/connection/config", get(get_connection_config).put(update_connection_config))
-        .route("/api/admin/upstream/config", get(get_upstream_config).put(update_upstream_config))
+        .route(
+            "/api/admin/semantic/config",
+            get(get_semantic_config).put(update_semantic_config),
+        )
+        .route(
+            "/api/admin/connection/config",
+            get(get_connection_config).put(update_connection_config),
+        )
+        .route(
+            "/api/admin/upstream/config",
+            get(get_upstream_config).put(update_upstream_config),
+        )
+        .route(
+            "/api/admin/upstream/keys",
+            get(get_upstream_keys_pool).put(put_upstream_keys_pool),
+        )
+        .route(
+            "/api/admin/upstream/keys/{id}",
+            patch(patch_upstream_key_pool),
+        )
         .route("/api/admin/models", get(get_models).post(sync_models))
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/logs", get(get_logs))
@@ -128,7 +147,9 @@ async fn get_network_info() -> Json<NetworkInfo> {
     Json(NetworkInfo::new(8080, use_https))
 }
 
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsSnapshot>, StatusCode> {
+async fn get_metrics(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<MetricsSnapshot>, StatusCode> {
     let metrics_url = std::env::var("CRABCACHE_GATEWAY_METRICS_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9090/metrics".to_string());
 
@@ -142,7 +163,10 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
         StatusCode::SERVICE_UNAVAILABLE
     })?;
 
-    let body = resp.text().await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     // l2_hits = tier L2_semantic; semantic_* = semantic guard status (different meaning).
     let l0_hits = sum_prometheus_counter(
@@ -175,7 +199,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
         "gateway_deepseek_input_tokens_total",
         &[("cache_status", "miss")],
     );
-    let total_output_tokens = sum_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", &[]);
+    let total_output_tokens =
+        sum_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", &[]);
     let semantic_hits = sum_prometheus_counter(
         &body,
         "gateway_semantic_cache_requests_total",
@@ -206,15 +231,36 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
     };
 
     let tps = if uptime_secs > 0 {
-        (total_input_tokens_hit + total_input_tokens_miss + total_output_tokens) as f64 / uptime_secs as f64
+        (total_input_tokens_hit + total_input_tokens_miss + total_output_tokens) as f64
+            / uptime_secs as f64
     } else {
         0.0
     };
 
-    let hourly_stats = generate_hourly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
-    let daily_stats = generate_daily_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
-    let weekly_stats = generate_weekly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
-    let monthly_stats = generate_monthly_stats_mock(uptime_secs, total_requests, total_input_tokens_hit + total_input_tokens_miss + total_output_tokens, l0_hits + l1_hits + l2_hits);
+    let hourly_stats = generate_hourly_stats_mock(
+        uptime_secs,
+        total_requests,
+        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
+        l0_hits + l1_hits + l2_hits,
+    );
+    let daily_stats = generate_daily_stats_mock(
+        uptime_secs,
+        total_requests,
+        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
+        l0_hits + l1_hits + l2_hits,
+    );
+    let weekly_stats = generate_weekly_stats_mock(
+        uptime_secs,
+        total_requests,
+        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
+        l0_hits + l1_hits + l2_hits,
+    );
+    let monthly_stats = generate_monthly_stats_mock(
+        uptime_secs,
+        total_requests,
+        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
+        l0_hits + l1_hits + l2_hits,
+    );
 
     Ok(Json(MetricsSnapshot {
         qps,
@@ -243,7 +289,11 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<MetricsS
             "gateway_cache_fetch_latency_seconds",
             &[("tier", "L2_semantic")],
         ),
-        latency_upstream_ms: avg_prometheus_histogram_ms(&body, "gateway_upstream_latency_seconds", &[]),
+        latency_upstream_ms: avg_prometheus_histogram_ms(
+            &body,
+            "gateway_upstream_latency_seconds",
+            &[],
+        ),
         active_keys: state.keys_meta.len() as u64,
         uptime_hours: uptime_secs / 3600,
         hourly_stats,
@@ -343,11 +393,19 @@ gateway_deepseek_input_tokens_total{cache_status="hit",model="m2",consumer="c"} 
 gateway_deepseek_input_tokens_total{cache_status="miss",model="m1",consumer="c"} 5
 "#;
         assert_eq!(
-            sum_prometheus_counter(body, "gateway_deepseek_input_tokens_total", &[("cache_status", "hit")]),
+            sum_prometheus_counter(
+                body,
+                "gateway_deepseek_input_tokens_total",
+                &[("cache_status", "hit")]
+            ),
             30
         );
         assert_eq!(
-            sum_prometheus_counter(body, "gateway_deepseek_input_tokens_total", &[("cache_status", "miss")]),
+            sum_prometheus_counter(
+                body,
+                "gateway_deepseek_input_tokens_total",
+                &[("cache_status", "miss")]
+            ),
             5
         );
     }
@@ -370,7 +428,12 @@ gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
     }
 }
 
-fn generate_hourly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+fn generate_hourly_stats_mock(
+    uptime_secs: u64,
+    total_requests: u64,
+    total_tokens: u64,
+    total_cache_hits: u64,
+) -> Vec<TimeSeriesPoint> {
     let hours = (uptime_secs / 3600).min(24) as usize;
     let mut stats = Vec::new();
     for i in 0..hours {
@@ -379,16 +442,33 @@ fn generate_hourly_stats_mock(uptime_secs: u64, total_requests: u64, total_token
         let divisor = (hours as u64).max(1);
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%H:00").to_string(),
-            requests: if i == 0 { total_requests } else { total_requests / divisor },
-            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
-            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            requests: if i == 0 {
+                total_requests
+            } else {
+                total_requests / divisor
+            },
+            tokens: if i == 0 {
+                total_tokens
+            } else {
+                total_tokens / divisor
+            },
+            cache_hits: if i == 0 {
+                total_cache_hits
+            } else {
+                total_cache_hits / divisor
+            },
             avg_latency_ms: 0.0,
         });
     }
     stats
 }
 
-fn generate_daily_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+fn generate_daily_stats_mock(
+    uptime_secs: u64,
+    total_requests: u64,
+    total_tokens: u64,
+    total_cache_hits: u64,
+) -> Vec<TimeSeriesPoint> {
     let days = (uptime_secs / 86400).min(7) as usize;
     let mut stats = Vec::new();
     for i in 0..days {
@@ -397,16 +477,33 @@ fn generate_daily_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens
         let divisor = (days as u64).max(1);
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%m-%d").to_string(),
-            requests: if i == 0 { total_requests } else { total_requests / divisor },
-            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
-            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            requests: if i == 0 {
+                total_requests
+            } else {
+                total_requests / divisor
+            },
+            tokens: if i == 0 {
+                total_tokens
+            } else {
+                total_tokens / divisor
+            },
+            cache_hits: if i == 0 {
+                total_cache_hits
+            } else {
+                total_cache_hits / divisor
+            },
             avg_latency_ms: 0.0,
         });
     }
     stats
 }
 
-fn generate_weekly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+fn generate_weekly_stats_mock(
+    uptime_secs: u64,
+    total_requests: u64,
+    total_tokens: u64,
+    total_cache_hits: u64,
+) -> Vec<TimeSeriesPoint> {
     let weeks = (uptime_secs / 604800).min(4) as usize;
     let mut stats = Vec::new();
     for i in 0..weeks {
@@ -415,16 +512,33 @@ fn generate_weekly_stats_mock(uptime_secs: u64, total_requests: u64, total_token
         let divisor = (weeks as u64).max(1);
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("W%U").to_string(),
-            requests: if i == 0 { total_requests } else { total_requests / divisor },
-            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
-            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            requests: if i == 0 {
+                total_requests
+            } else {
+                total_requests / divisor
+            },
+            tokens: if i == 0 {
+                total_tokens
+            } else {
+                total_tokens / divisor
+            },
+            cache_hits: if i == 0 {
+                total_cache_hits
+            } else {
+                total_cache_hits / divisor
+            },
             avg_latency_ms: 0.0,
         });
     }
     stats
 }
 
-fn generate_monthly_stats_mock(uptime_secs: u64, total_requests: u64, total_tokens: u64, total_cache_hits: u64) -> Vec<TimeSeriesPoint> {
+fn generate_monthly_stats_mock(
+    uptime_secs: u64,
+    total_requests: u64,
+    total_tokens: u64,
+    total_cache_hits: u64,
+) -> Vec<TimeSeriesPoint> {
     let months = (uptime_secs / 2592000).min(12) as usize;
     let mut stats = Vec::new();
     for i in 0..months {
@@ -433,32 +547,59 @@ fn generate_monthly_stats_mock(uptime_secs: u64, total_requests: u64, total_toke
         let divisor = (months as u64).max(1);
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%Y-%m").to_string(),
-            requests: if i == 0 { total_requests } else { total_requests / divisor },
-            tokens: if i == 0 { total_tokens } else { total_tokens / divisor },
-            cache_hits: if i == 0 { total_cache_hits } else { total_cache_hits / divisor },
+            requests: if i == 0 {
+                total_requests
+            } else {
+                total_requests / divisor
+            },
+            tokens: if i == 0 {
+                total_tokens
+            } else {
+                total_tokens / divisor
+            },
+            cache_hits: if i == 0 {
+                total_cache_hits
+            } else {
+                total_cache_hits / divisor
+            },
             avg_latency_ms: 0.0,
         });
     }
     stats
 }
 
-fn generate_hourly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+fn generate_hourly_stats(
+    metrics: &crate::state::StoredMetrics,
+    uptime_secs: u64,
+) -> Vec<TimeSeriesPoint> {
     let hours = (uptime_secs / 3600).min(24) as usize;
     let mut stats = Vec::new();
-    
+
     for i in 0..hours {
         let hour_ago = hours - i - 1;
         let timestamp = chrono::Utc::now() - chrono::Duration::hours(hour_ago as i64);
-        
-        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (hours as u64).max(1) };
-        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (hours as u64).max(1) };
-        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (hours as u64).max(1) };
+
+        let requests = if i == 0 {
+            metrics.total_requests
+        } else {
+            metrics.total_requests / (hours as u64).max(1)
+        };
+        let tokens = if i == 0 {
+            metrics.total_input_tokens + metrics.total_output_tokens
+        } else {
+            (metrics.total_input_tokens + metrics.total_output_tokens) / (hours as u64).max(1)
+        };
+        let cache_hits = if i == 0 {
+            metrics.l0_hits + metrics.l1_hits + metrics.l2_hits
+        } else {
+            (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (hours as u64).max(1)
+        };
         let avg_latency_ms = if metrics.upstream_latency_count > 0 {
             metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
         } else {
             0.0
         };
-        
+
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%H:00").to_string(),
             requests,
@@ -467,27 +608,42 @@ fn generate_hourly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64
             avg_latency_ms,
         });
     }
-    
+
     stats
 }
 
-fn generate_daily_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+fn generate_daily_stats(
+    metrics: &crate::state::StoredMetrics,
+    uptime_secs: u64,
+) -> Vec<TimeSeriesPoint> {
     let days = (uptime_secs / 86400).min(7) as usize;
     let mut stats = Vec::new();
-    
+
     for i in 0..days {
         let day_ago = days - i - 1;
         let timestamp = chrono::Utc::now() - chrono::Duration::days(day_ago as i64);
-        
-        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (days as u64).max(1) };
-        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (days as u64).max(1) };
-        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (days as u64).max(1) };
+
+        let requests = if i == 0 {
+            metrics.total_requests
+        } else {
+            metrics.total_requests / (days as u64).max(1)
+        };
+        let tokens = if i == 0 {
+            metrics.total_input_tokens + metrics.total_output_tokens
+        } else {
+            (metrics.total_input_tokens + metrics.total_output_tokens) / (days as u64).max(1)
+        };
+        let cache_hits = if i == 0 {
+            metrics.l0_hits + metrics.l1_hits + metrics.l2_hits
+        } else {
+            (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (days as u64).max(1)
+        };
         let avg_latency_ms = if metrics.upstream_latency_count > 0 {
             metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
         } else {
             0.0
         };
-        
+
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%m-%d").to_string(),
             requests,
@@ -496,27 +652,42 @@ fn generate_daily_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64)
             avg_latency_ms,
         });
     }
-    
+
     stats
 }
 
-fn generate_weekly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+fn generate_weekly_stats(
+    metrics: &crate::state::StoredMetrics,
+    uptime_secs: u64,
+) -> Vec<TimeSeriesPoint> {
     let weeks = (uptime_secs / 604800).min(4) as usize;
     let mut stats = Vec::new();
-    
+
     for i in 0..weeks {
         let week_ago = weeks - i - 1;
         let timestamp = chrono::Utc::now() - chrono::Duration::weeks(week_ago as i64);
-        
-        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (weeks as u64).max(1) };
-        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (weeks as u64).max(1) };
-        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (weeks as u64).max(1) };
+
+        let requests = if i == 0 {
+            metrics.total_requests
+        } else {
+            metrics.total_requests / (weeks as u64).max(1)
+        };
+        let tokens = if i == 0 {
+            metrics.total_input_tokens + metrics.total_output_tokens
+        } else {
+            (metrics.total_input_tokens + metrics.total_output_tokens) / (weeks as u64).max(1)
+        };
+        let cache_hits = if i == 0 {
+            metrics.l0_hits + metrics.l1_hits + metrics.l2_hits
+        } else {
+            (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (weeks as u64).max(1)
+        };
         let avg_latency_ms = if metrics.upstream_latency_count > 0 {
             metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
         } else {
             0.0
         };
-        
+
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("W%U").to_string(),
             requests,
@@ -525,27 +696,42 @@ fn generate_weekly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64
             avg_latency_ms,
         });
     }
-    
+
     stats
 }
 
-fn generate_monthly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u64) -> Vec<TimeSeriesPoint> {
+fn generate_monthly_stats(
+    metrics: &crate::state::StoredMetrics,
+    uptime_secs: u64,
+) -> Vec<TimeSeriesPoint> {
     let months = (uptime_secs / 2592000).min(12) as usize;
     let mut stats = Vec::new();
-    
+
     for i in 0..months {
         let month_ago = months - i - 1;
         let timestamp = chrono::Utc::now() - chrono::Duration::days((month_ago * 30) as i64);
-        
-        let requests = if i == 0 { metrics.total_requests } else { metrics.total_requests / (months as u64).max(1) };
-        let tokens = if i == 0 { metrics.total_input_tokens + metrics.total_output_tokens } else { (metrics.total_input_tokens + metrics.total_output_tokens) / (months as u64).max(1) };
-        let cache_hits = if i == 0 { metrics.l0_hits + metrics.l1_hits + metrics.l2_hits } else { (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (months as u64).max(1) };
+
+        let requests = if i == 0 {
+            metrics.total_requests
+        } else {
+            metrics.total_requests / (months as u64).max(1)
+        };
+        let tokens = if i == 0 {
+            metrics.total_input_tokens + metrics.total_output_tokens
+        } else {
+            (metrics.total_input_tokens + metrics.total_output_tokens) / (months as u64).max(1)
+        };
+        let cache_hits = if i == 0 {
+            metrics.l0_hits + metrics.l1_hits + metrics.l2_hits
+        } else {
+            (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) / (months as u64).max(1)
+        };
         let avg_latency_ms = if metrics.upstream_latency_count > 0 {
             metrics.upstream_latency_sum_ms / metrics.upstream_latency_count as f64
         } else {
             0.0
         };
-        
+
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%Y-%m").to_string(),
             requests,
@@ -554,13 +740,11 @@ fn generate_monthly_stats(metrics: &crate::state::StoredMetrics, uptime_secs: u6
             avg_latency_ms,
         });
     }
-    
+
     stats
 }
 
-async fn list_keys(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<ApiKey>>, StatusCode> {
+async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey>>, StatusCode> {
     let specs = state
         .gateway
         .list_keys()
@@ -587,24 +771,15 @@ async fn list_keys(
                     .or(spec.key_full),
                 active: spec.enabled,
                 rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
-                monthly_token_budget: meta
-                    .as_ref()
-                    .map(|m| m.monthly_token_limit)
-                    .unwrap_or(0),
-                tokens_used_this_month: meta
-                    .as_ref()
-                    .map(|m| m.tokens_this_month)
-                    .unwrap_or(0),
+                monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
+                tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
                 expired_at: meta.as_ref().and_then(|m| m.expired_at),
                 model_limits: meta
                     .as_ref()
                     .map(|m| m.model_limits.clone())
                     .unwrap_or_default(),
                 remain_quota: meta.as_ref().map(|m| m.remain_quota).unwrap_or(-1),
-                unlimited_quota: meta
-                    .as_ref()
-                    .map(|m| m.unlimited_quota)
-                    .unwrap_or(true),
+                unlimited_quota: meta.as_ref().map(|m| m.unlimited_quota).unwrap_or(true),
             }
         })
         .collect();
@@ -696,12 +871,16 @@ async fn get_cache_ops(
         .await
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
 
-    let last_invalidate = state.last_invalidate.read().clone().map(|li| LastInvalidateView {
-        scope: li.scope,
-        status: li.status,
-        at_secs: li.at_secs,
-        error: li.error,
-    });
+    let last_invalidate = state
+        .last_invalidate
+        .read()
+        .clone()
+        .map(|li| LastInvalidateView {
+            scope: li.scope,
+            status: li.status,
+            at_secs: li.at_secs,
+            error: li.error,
+        });
 
     let invalidate_status = state
         .gateway
@@ -932,7 +1111,8 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
                 latency_ms: log.duration_ms as u64,
                 total_tokens: log.input_tokens + log.output_tokens,
                 cache_status: log.cache_tier.clone(),
-                request_payload: serde_json::to_string_pretty(&log.request_payload).unwrap_or_default(),
+                request_payload: serde_json::to_string_pretty(&log.request_payload)
+                    .unwrap_or_default(),
                 response_preview: log.response_body.chars().take(200).collect(),
             }
         })
@@ -946,7 +1126,10 @@ async fn get_log_detail(
     Path(id): Path<String>,
 ) -> Result<Json<RequestDetail>, StatusCode> {
     let logs = state.request_logs.read().clone();
-    let log = logs.iter().find(|l| l.id == id).ok_or(StatusCode::NOT_FOUND)?;
+    let log = logs
+        .iter()
+        .find(|l| l.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(RequestDetail {
         cache_path: log.cache_path.join(" → "),
@@ -989,39 +1172,61 @@ async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListRespons
     })
 }
 
-async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResult>, (StatusCode, String)> {
+async fn sync_models(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SyncResult>, (StatusCode, String)> {
     let upstream_config = state.upstream_config.read().clone();
-    let upstream_url = format!("{}/v1/models", upstream_config.base_url.trim_end_matches('/'));
-    let api_key = upstream_config.api_key.clone();
+    let upstream_url = format!(
+        "{}/v1/models",
+        upstream_config.base_url.trim_end_matches('/')
+    );
+    let api_key = state.pick_sync_api_key().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Configure upstream key pool (Dashboard → Upstream → Key pool) or set a sync API key on the upstream page.".into(),
+        )
+    })?;
 
     tracing::info!(url = %upstream_url, "Syncing models from upstream");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create HTTP client: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create HTTP client: {}", e),
+            )
+        })?;
 
     let mut request = client.get(&upstream_url);
-    if api_key.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Please configure upstream API key first in the Upstream settings page.".into()));
-    }
     request = request.header("Authorization", format!("Bearer {}", &api_key));
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!(url = %upstream_url, error = %e, "Upstream request failed");
-            (StatusCode::BAD_GATEWAY, format!("Cannot reach upstream: {}", e))
-        })?;
+    let resp = request.send().await.map_err(|e| {
+        tracing::error!(url = %upstream_url, error = %e, "Upstream request failed");
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Cannot reach upstream: {}", e),
+        )
+    })?;
 
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         tracing::error!(url = %upstream_url, status = %status, body = %body, "Upstream returned error");
         let msg = match status.as_u16() {
-            401 | 403 => format!("Upstream authentication failed ({}). Check your API key.", status.as_u16()),
-            404 => format!("Models endpoint not found at {}. Check the Base URL.", upstream_url),
-            _ => format!("Upstream returned {}: {}", status.as_u16(), body.chars().take(200).collect::<String>()),
+            401 | 403 => format!(
+                "Upstream authentication failed ({}). Check your API key.",
+                status.as_u16()
+            ),
+            404 => format!(
+                "Models endpoint not found at {}. Check the Base URL.",
+                upstream_url
+            ),
+            _ => format!(
+                "Upstream returned {}: {}",
+                status.as_u16(),
+                body.chars().take(200).collect::<String>()
+            ),
         };
         return Err((StatusCode::BAD_GATEWAY, msg));
     }
@@ -1075,10 +1280,18 @@ async fn sync_models(State(state): State<Arc<AppState>>) -> Result<Json<SyncResu
     let total = upstream_models.len();
     stored.models = upstream_models;
     stored.synced_at = Some(
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string(),
     );
 
-    tracing::info!(added = added.len(), removed = removed.len(), unchanged, total, "Models synced successfully");
+    tracing::info!(
+        added = added.len(),
+        removed = removed.len(),
+        unchanged,
+        total,
+        "Models synced successfully"
+    );
 
     Ok(Json(SyncResult {
         added,
@@ -1106,6 +1319,43 @@ async fn update_connection_config(
         idle_timeout_secs: config.idle_timeout_secs,
         h2_ping_interval_secs: config.h2_ping_interval_secs,
     })
+}
+
+async fn get_upstream_keys_pool(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<UpstreamKeysView>, (StatusCode, String)> {
+    state
+        .gateway
+        .get_upstream_keys()
+        .await
+        .map(Json)
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
+}
+
+async fn put_upstream_keys_pool(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PutUpstreamKeysRequest>,
+) -> Result<Json<UpstreamKeysView>, (StatusCode, String)> {
+    state.replace_upstream_pool_secrets(&req.keys);
+    state
+        .gateway
+        .put_upstream_keys(&req)
+        .await
+        .map(Json)
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
+}
+
+async fn patch_upstream_key_pool(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<PatchUpstreamKeyRequest>,
+) -> Result<Json<UpstreamKeyView>, (StatusCode, String)> {
+    state
+        .gateway
+        .patch_upstream_key(&id, &req)
+        .await
+        .map(Json)
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
 
 async fn get_upstream_config(
@@ -1179,14 +1429,14 @@ fn mask_api_key(key: &str) -> String {
     if key.len() <= 8 {
         return "****".to_string();
     }
-    format!("{}****{}", &key[..4], &key[key.len()-4..])
+    format!("{}****{}", &key[..4], &key[key.len() - 4..])
 }
 
 async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAnalysis> {
     use std::collections::HashMap;
-    
+
     let trace_entries = state.trace_entries.read().clone();
-    
+
     if trace_entries.is_empty() {
         return Json(TraceAnalysis {
             total_requests: 0,
@@ -1202,7 +1452,7 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
             cluster_distribution: vec![],
         });
     }
-    
+
     let total_requests = trace_entries.len();
     let mut hash_counts: HashMap<String, usize> = HashMap::new();
     let mut cluster_counts: HashMap<usize, usize> = HashMap::new();
@@ -1210,7 +1460,7 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
     let mut total_latency = 0.0;
     let mut total_prompt_tokens = 0;
     let mut cache_hits = 0;
-    
+
     for entry in &trace_entries {
         *hash_counts.entry(entry.request_hash.clone()).or_insert(0) += 1;
         *cluster_counts.entry(entry.semantic_cluster).or_insert(0) += 1;
@@ -1221,23 +1471,23 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
             cache_hits += 1;
         }
     }
-    
+
     let unique_requests = hash_counts.len();
     let repeat_ratio = if total_requests > 0 {
         1.0 - (unique_requests as f64 / total_requests as f64)
     } else {
         0.0
     };
-    
+
     let multi_member_clusters: usize = cluster_counts.values().filter(|&&c| c > 1).sum();
     let semantic_cluster_ratio = if total_requests > 0 {
         multi_member_clusters as f64 / total_requests as f64
     } else {
         0.0
     };
-    
+
     let estimated_hit_rate = repeat_ratio + (1.0 - repeat_ratio) * semantic_cluster_ratio;
-    
+
     let mut freqs: Vec<usize> = hash_counts.values().cloned().collect();
     freqs.sort_by(|a, b| b.cmp(a));
     let estimated_zipf_alpha = if freqs.len() >= 2 {
@@ -1245,25 +1495,25 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
     } else {
         0.0
     };
-    
+
     let avg_latency_ms = if total_requests > 0 {
         total_latency / total_requests as f64
     } else {
         0.0
     };
-    
+
     let avg_prompt_tokens = if total_requests > 0 {
         total_prompt_tokens as f64 / total_requests as f64
     } else {
         0.0
     };
-    
+
     let cache_hit_ratio = if total_requests > 0 {
         cache_hits as f64 / total_requests as f64
     } else {
         0.0
     };
-    
+
     let mut top_models: Vec<ModelUsage> = model_counts
         .into_iter()
         .map(|(model, count)| ModelUsage {
@@ -1278,7 +1528,7 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
         .collect();
     top_models.sort_by(|a, b| b.count.cmp(&a.count));
     top_models.truncate(5);
-    
+
     let mut cluster_distribution: Vec<ClusterInfo> = cluster_counts
         .into_iter()
         .map(|(cluster_id, count)| ClusterInfo {
@@ -1293,7 +1543,7 @@ async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAna
         .collect();
     cluster_distribution.sort_by(|a, b| b.count.cmp(&a.count));
     cluster_distribution.truncate(10);
-    
+
     Json(TraceAnalysis {
         total_requests,
         unique_requests,
@@ -1313,13 +1563,13 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
     if freqs.len() < 2 {
         return 0.0;
     }
-    
+
     let n = freqs.len();
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
     let mut sum_xy = 0.0;
     let mut sum_xx = 0.0;
-    
+
     for (rank, &freq) in freqs.iter().enumerate() {
         if freq == 0 {
             continue;
@@ -1328,18 +1578,18 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
         let f = freq as f64;
         let log_r = r.ln();
         let log_f = f.ln();
-        
+
         sum_x += log_r;
         sum_y += log_f;
         sum_xy += log_r * log_f;
         sum_xx += log_r * log_r;
     }
-    
+
     let denominator = n as f64 * sum_xx - sum_x * sum_x;
     if denominator == 0.0 {
         return 0.0;
     }
-    
+
     let alpha = (n as f64 * sum_xy - sum_x * sum_y) / denominator;
     -alpha
 }

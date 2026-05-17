@@ -226,6 +226,46 @@ pub struct UpdateConnectionConfigRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyView {
+    pub id: String,
+    pub preview: String,
+    pub enabled: bool,
+    pub inflight: usize,
+    pub cooldown_remaining_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeysView {
+    pub keys: Vec<UpstreamKeyView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyInput {
+    #[serde(default)]
+    pub id: String,
+    pub secret: String,
+    #[serde(default = "default_key_enabled")]
+    pub enabled: bool,
+}
+
+fn default_key_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamKeysRequest {
+    pub keys: Vec<UpstreamKeyInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchUpstreamKeyRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
     pub base_url: String,
     pub api_key: String,

@@ -1,5 +1,3 @@
 mod registry;
 
-pub use registry::{
-    global_metrics, CacheTier, GatewayMetrics, LatencyKind,
-};
+pub use registry::{CacheTier, GatewayMetrics, LatencyKind, global_metrics};

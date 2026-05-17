@@ -306,12 +306,15 @@ max_files = 5                        # 最大保留文件数
 
 ### 两把钥匙（部署必读）
 
-CrabCache 使用**两套独立密钥**，不可混用：
+CrabCache 使用**三套独立密钥**，不可混用：
 
 | 配置 / 环境变量 | HTTP 头 | 用途 |
 |-----------------|---------|------|
-| `api_key` / `CRABCACHE_API_KEY` | `Authorization: Bearer …` | 客户端访问网关；同时作为 bootstrap 上游 DeepSeek 密钥 |
-| `[management].admin_key` / `CRABCACHE_GATEWAY_ADMIN_KEY` | `x-gateway-admin-key` | Management API（清缓存、密钥 CRUD、TTL 等） |
+| Management 创建的 `sk-cc-*` | `Authorization: Bearer …` | **客户端**访问网关（Agent / IDE） |
+| `upstream.keys` / `CRABCACHE_UPSTREAM_KEYS` / `CRABCACHE_API_KEY` | （仅服务端） | **上游** DeepSeek 配额池；网关出站轮换，勿发给客户端 |
+| `[management].admin_key` / `CRABCACHE_GATEWAY_ADMIN_KEY` | `x-gateway-admin-key` | Management API（清缓存、密钥 CRUD、上游 Key 池等） |
+
+可选：`[gateway].legacy_api_key_as_client_auth = true` 时仍允许用 `api_key` 当客户端 Bearer（不推荐生产）。
 
 生产环境请同时更换两者。Docker 部署时务必设置 `CRABCACHE_GATEWAY_ADMIN_KEY`（示例配置中的 `dev-only-gateway-admin-secret` 仅用于本地开发）。启动时若仍为已知弱密钥，网关会输出 `Security warning` 日志。
 
@@ -319,7 +322,8 @@ CrabCache 使用**两套独立密钥**，不可混用：
 
 | 环境变量 | 作用 | 默认值 |
 |----------|------|--------|
-| `CRABCACHE_API_KEY` | 覆盖配置文件的 `api_key` | — |
+| `CRABCACHE_API_KEY` | 覆盖配置文件的 `api_key`（单 Key 兼容） | — |
+| `CRABCACHE_UPSTREAM_KEYS` | 逗号分隔的上游 DeepSeek Key 池 | — |
 | `CRABCACHE_GATEWAY_ADMIN_KEY` | 管理 API 认证密钥 | `change-me-in-production` |
 | `CRABCACHE_MANAGEMENT_LISTEN` | 管理 API 监听地址 | `127.0.0.1:9080` |
 | `CRABCACHE_ADMIN_KEY` | Admin Dashboard 认证密钥 | `admin` |
@@ -471,13 +475,13 @@ sum(increase(gateway_cache_cost_saved_usd_total[24h]))
 
 ```bash
 cp .env.example .env
-# 编辑 .env：设置 CRABCACHE_API_KEY（上游 DeepSeek 密钥）
+# 编辑 .env：CRABCACHE_API_KEY 或 CRABCACHE_UPSTREAM_KEYS（上游 DeepSeek 密钥池）
 
 docker compose up -d --build
 docker compose ps   # gateway 应为 healthy（/ready 依赖 Redis）
 
-# 验收（使用与上游相同的 bootstrap key，或 Management 创建的 sk-cc-*）
-export CRABCACHE_API_KEY=your-deepseek-key
+# 创建客户端 sk-cc-*，再验收（勿把 DeepSeek 密钥当 CLIENT_API_KEY）
+export CLIENT_API_KEY=sk-cc-...   # 来自 POST /v1/keys
 ./scripts/verify_deployment.sh
 ```
 
@@ -488,7 +492,7 @@ export CRABCACHE_API_KEY=your-deepseek-key
 | 字段 | 值 |
 |------|-----|
 | Base URL | `https://你的域名/v1`（OpenAI SDK 会自动请求 `/chat/completions`） |
-| API Key | Management `POST /v1/keys` 颁发的 `sk-cc-*`，或运维配置的 bootstrap key |
+| API Key | Management `POST /v1/keys` 颁发的 `sk-cc-*`（推荐） |
 | Model | 请求体中的 `model` 字段（如 `deepseek-v4-pro`） |
 
 创建客户端密钥（在服务器上，Management 默认容器内 `0.0.0.0:9080`）：
@@ -509,6 +513,15 @@ docker compose exec gateway curl -s -X POST http://127.0.0.1:9080/v1/keys \
 | `qdrant` | `--profile semantic` | 无 | L2 可选 |
 
 环境变量见 [`.env.example`](.env.example)。可选生产覆盖：[`docker-compose.prod.yml`](docker-compose.prod.yml)。
+
+可选 Admin Dashboard（需先 [`scripts/build_dashboard.sh`](scripts/build_dashboard.sh) 构建前端）：
+
+```bash
+docker compose --profile admin up -d --build
+# http://127.0.0.1:3000  (CRABCACHE_ADMIN_KEY)
+```
+
+客户端 Key 迁移说明：[`docs/AGENT_CLIENT_KEY_MIGRATION.md`](docs/AGENT_CLIENT_KEY_MIGRATION.md)。Prometheus 告警示例：[`deploy/prometheus/alerts.example.yml`](deploy/prometheus/alerts.example.yml)。
 
 > **注意**: 生产环境建议 Prometheus/Grafana 采集 `9090` 指标（绑定本机，勿对公网开放）。
 

@@ -28,7 +28,9 @@ pub struct Translations {
 }
 
 impl Translations {
-    pub const fn sidebar_brand() -> &'static str { "CrabCache" }
+    pub const fn sidebar_brand() -> &'static str {
+        "CrabCache"
+    }
     pub fn sidebar_subtitle(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "DeepSeek V4 网关",
@@ -127,7 +129,9 @@ impl Translations {
         }
     }
 
-    pub const fn not_found_title() -> &'static str { "404" }
+    pub const fn not_found_title() -> &'static str {
+        "404"
+    }
     pub fn not_found_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "页面未找到",
@@ -153,14 +157,18 @@ impl Translations {
             Locale::EnUS => "Real-time gateway health and cost efficiency metrics.",
         }
     }
-    pub const fn overview_qps() -> &'static str { "QPS" }
+    pub const fn overview_qps() -> &'static str {
+        "QPS"
+    }
     pub fn overview_qps_sub(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "每秒请求数",
             Locale::EnUS => "Requests per second",
         }
     }
-    pub const fn overview_tps() -> &'static str { "TPS" }
+    pub const fn overview_tps() -> &'static str {
+        "TPS"
+    }
     pub fn overview_tps_sub(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "每秒 Token 数",
@@ -197,9 +205,15 @@ impl Translations {
             Locale::EnUS => "Cache Hit Distribution",
         }
     }
-    pub const fn overview_l0_label() -> &'static str { "L0 (Moka)" }
-    pub const fn overview_l1_label() -> &'static str { "L1 (Redis)" }
-    pub const fn overview_l2_label() -> &'static str { "L2 (Semantic)" }
+    pub const fn overview_l0_label() -> &'static str {
+        "L0 (Moka)"
+    }
+    pub const fn overview_l1_label() -> &'static str {
+        "L1 (Redis)"
+    }
+    pub const fn overview_l2_label() -> &'static str {
+        "L2 (Semantic)"
+    }
     pub fn overview_miss_label(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "未命中",
@@ -242,9 +256,15 @@ impl Translations {
             Locale::EnUS => "Latency Breakdown (P99)",
         }
     }
-    pub const fn overview_latency_l0() -> &'static str { "L0 Moka" }
-    pub const fn overview_latency_l1() -> &'static str { "L1 Redis" }
-    pub const fn overview_latency_l2() -> &'static str { "L2 Qdrant" }
+    pub const fn overview_latency_l0() -> &'static str {
+        "L0 Moka"
+    }
+    pub const fn overview_latency_l1() -> &'static str {
+        "L1 Redis"
+    }
+    pub const fn overview_latency_l2() -> &'static str {
+        "L2 Qdrant"
+    }
     pub fn overview_latency_upstream(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游服务",
@@ -330,7 +350,9 @@ impl Translations {
             Locale::EnUS => "Key",
         }
     }
-    pub const fn keys_col_rpm() -> &'static str { "RPM" }
+    pub const fn keys_col_rpm() -> &'static str {
+        "RPM"
+    }
     pub fn keys_col_tokens(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "已用 Token",
@@ -509,8 +531,12 @@ impl Translations {
     }
     pub fn cache_ops_confirm_all_body(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "将清空 L0 与 L1（Redis SCAN）。此操作异步执行，状态为 accepted 表示已受理。",
-            Locale::EnUS => "Clears L0 and L1 (Redis SCAN). Runs asynchronously; accepted means the job was queued.",
+            Locale::ZhCN => {
+                "将清空 L0 与 L1（Redis SCAN）。此操作异步执行，状态为 accepted 表示已受理。"
+            }
+            Locale::EnUS => {
+                "Clears L0 and L1 (Redis SCAN). Runs asynchronously; accepted means the job was queued."
+            }
         }
     }
     pub fn cache_ops_confirm_ok(self) -> &'static str {
@@ -1173,7 +1199,9 @@ impl Translations {
         }
     }
 
-    pub const fn empty_state_icon() -> &'static str { "—" }
+    pub const fn empty_state_icon() -> &'static str {
+        "—"
+    }
 
     pub fn upstream_title(self) -> &'static str {
         match self.locale {
@@ -1207,8 +1235,8 @@ impl Translations {
     }
     pub fn upstream_api_key_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "用于向上游服务发起请求的密钥",
-            Locale::EnUS => "The API key used to authenticate with the upstream service",
+            Locale::ZhCN => "仅用于 Dashboard「同步模型列表」；网关转发请使用下方 Key 池",
+            Locale::EnUS => "For Dashboard model sync only; gateway proxy uses the key pool below",
         }
     }
     pub fn upstream_api_key_masked_hint(self) -> &'static str {
@@ -1265,119 +1293,185 @@ impl Translations {
             Locale::EnUS => "Failed to load upstream config",
         }
     }
-    
+    pub fn upstream_pool_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "DeepSeek 上游 Key 池",
+            Locale::EnUS => "DeepSeek upstream key pool",
+        }
+    }
+    pub fn upstream_pool_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配额聚合：网关在缓存未命中时轮换使用以下 Key。客户端请使用 sk-cc-*，勿使用 DeepSeek Key。",
+            Locale::EnUS => "Quota pool: gateway rotates these keys on cache miss. Clients must use sk-cc-* keys, not DeepSeek keys.",
+        }
+    }
+    pub fn upstream_pool_col_id(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "ID",
+            Locale::EnUS => "ID",
+        }
+    }
+    pub fn upstream_pool_col_preview(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "预览",
+            Locale::EnUS => "Preview",
+        }
+    }
+    pub fn upstream_pool_col_enabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "启用",
+            Locale::EnUS => "Enabled",
+        }
+    }
+    pub fn upstream_pool_col_inflight(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "进行中",
+            Locale::EnUS => "Inflight",
+        }
+    }
+    pub fn upstream_pool_col_cooldown(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "冷却 (秒)",
+            Locale::EnUS => "Cooldown (s)",
+        }
+    }
+    pub fn upstream_pool_replace_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "替换 Key 池（每行一个 secret）",
+            Locale::EnUS => "Replace key pool (one secret per line)",
+        }
+    }
+    pub fn upstream_pool_save_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存 Key 池",
+            Locale::EnUS => "Save key pool",
+        }
+    }
+    pub fn upstream_pool_saving(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存中...",
+            Locale::EnUS => "Saving...",
+        }
+    }
+    pub fn upstream_pool_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已保存",
+            Locale::EnUS => "Saved",
+        }
+    }
+
     pub fn overview_token_stats(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "Token 统计",
             Locale::EnUS => "Token Statistics",
         }
     }
-    
+
     pub fn overview_input_tokens(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "输入 Token",
             Locale::EnUS => "Input Tokens",
         }
     }
-    
+
     pub fn overview_output_tokens(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "输出 Token",
             Locale::EnUS => "Output Tokens",
         }
     }
-    
+
     pub fn overview_total_tokens(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "总 Token",
             Locale::EnUS => "Total Tokens",
         }
     }
-    
+
     pub fn overview_usage_trends(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "使用趋势",
             Locale::EnUS => "Usage Trends",
         }
     }
-    
+
     pub fn overview_hourly(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "小时",
             Locale::EnUS => "Hourly",
         }
     }
-    
+
     pub fn overview_daily(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "日",
             Locale::EnUS => "Daily",
         }
     }
-    
+
     pub fn overview_weekly(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "周",
             Locale::EnUS => "Weekly",
         }
     }
-    
+
     pub fn overview_monthly(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "月",
             Locale::EnUS => "Monthly",
         }
     }
-    
+
     pub fn overview_no_data(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "此时间范围暂无数据",
             Locale::EnUS => "No data available for this time range",
         }
     }
-    
+
     pub fn overview_requests(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "请求",
             Locale::EnUS => "req",
         }
     }
-    
+
     pub fn overview_hits(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "命中",
             Locale::EnUS => "hits",
         }
     }
-    
+
     pub fn overview_auto_refresh(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "自动刷新",
             Locale::EnUS => "Auto refresh",
         }
     }
-    
+
     pub fn overview_last_update(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "最后更新",
             Locale::EnUS => "Last update",
         }
     }
-    
+
     pub fn overview_refresh(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "刷新",
             Locale::EnUS => "Refresh",
         }
     }
-    
+
     pub fn keys_search_placeholder(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "搜索密钥...",
             Locale::EnUS => "Search keys...",
         }
     }
-    
+
     pub fn keys_no_results(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "没有匹配的密钥",

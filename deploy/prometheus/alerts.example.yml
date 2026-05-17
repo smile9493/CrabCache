@@ -1,0 +1,39 @@
+# Example Prometheus alert rules for CrabCache upstream key pool.
+# Mount or merge into your Prometheus rule_files.
+
+groups:
+  - name: crabcache_upstream_keys
+    rules:
+      - alert: CrabCacheUpstreamKeysExhausted
+        expr: |
+          increase(gateway_rejected_requests_total{reason="upstream_key_exhausted"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CrabCache has no available upstream DeepSeek keys"
+          description: "All keys may be in cooldown or disabled. New upstream requests return 503."
+
+      - alert: CrabCacheUpstreamKeyRateLimited
+        expr: |
+          (
+            sum by (key_id) (rate(gateway_upstream_key_requests_total{result="rate_limited"}[5m]))
+            /
+            clamp_min(sum by (key_id) (rate(gateway_upstream_key_requests_total[5m])), 1e-9)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache upstream key {{ $labels.key_id }} heavily rate limited"
+          description: "More than 50% of requests on this key_id received HTTP 429 in the last 10m."
+
+      - alert: CrabCacheUpstreamKeyErrors
+        expr: |
+          sum(rate(gateway_upstream_key_requests_total{result="error"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache upstream key errors elevated"
+          description: "Check for 401-disabled keys or upstream outages."

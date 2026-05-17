@@ -1,5 +1,5 @@
 # CrabCache gateway config for Docker Compose (agent profile: gateway + Redis).
-# Required: set CRABCACHE_API_KEY (upstream DeepSeek key) in .env or compose environment.
+# Required: CRABCACHE_API_KEY or CRABCACHE_UPSTREAM_KEYS (upstream DeepSeek key pool).
 # Optional: CRABCACHE_GATEWAY_ADMIN_KEY, CRABCACHE_L1_REDIS_URL, CRABCACHE_MANAGEMENT_LISTEN
 
 listen_addr = "0.0.0.0:8080"
@@ -20,6 +20,7 @@ base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 default_weight = 1
 deepseek_endpoints = ["api.deepseek.com:443"]
+# keys = ["sk-ds-1", "sk-ds-2"]  # or CRABCACHE_UPSTREAM_KEYS in .env
 
 [cache]
 default_ttl_secs = 3600

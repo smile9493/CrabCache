@@ -97,6 +97,26 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Parse error: {}", e))
 }
 
+async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
+    url: &str,
+    body: &B,
+) -> Result<T, String> {
+    let resp = apply_admin_auth(Request::patch(url))
+        .json(body)
+        .map_err(|e| format!("Serialization error: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.ok() {
+        return Err(http_error(resp).await);
+    }
+
+    resp.json::<T>()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))
+}
+
 pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
 }
@@ -159,6 +179,21 @@ pub async fn update_upstream_config(
     put_json(&format!("{}/upstream/config", API_BASE), req).await
 }
 
+pub async fn fetch_upstream_keys() -> Result<UpstreamKeysView, String> {
+    fetch_json(&format!("{}/upstream/keys", API_BASE)).await
+}
+
+pub async fn put_upstream_keys(req: &PutUpstreamKeysRequest) -> Result<UpstreamKeysView, String> {
+    put_json(&format!("{}/upstream/keys", API_BASE), req).await
+}
+
+pub async fn patch_upstream_key(
+    id: &str,
+    req: &PatchUpstreamKeyRequest,
+) -> Result<UpstreamKeyView, String> {
+    patch_json(&format!("{}/upstream/keys/{id}", API_BASE), req).await
+}
+
 pub async fn fetch_models() -> Result<ModelListResponse, String> {
     fetch_json(&format!("{}/models", API_BASE)).await
 }
@@ -202,7 +237,9 @@ pub async fn invalidate_cache(req: &InvalidateCacheBody) -> Result<InvalidateCac
     post_json(&format!("{}/cache/invalidate", API_BASE), req).await
 }
 
-pub async fn update_fingerprint(req: &FingerprintConfigBody) -> Result<FingerprintConfigBody, String> {
+pub async fn update_fingerprint(
+    req: &FingerprintConfigBody,
+) -> Result<FingerprintConfigBody, String> {
     put_json(&format!("{}/cache/fingerprint", API_BASE), req).await
 }
 

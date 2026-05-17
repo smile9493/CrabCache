@@ -1,15 +1,13 @@
-use crab_gateway::config::GatewayConfig;
-use crab_gateway::management::{
-    serve as serve_management, InvalidateRateState, ManagementState,
-};
 use anyhow::Result;
 use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
+use crab_gateway::config::GatewayConfig;
+use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
 use crab_proxy::{GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningStore;
 use crab_route::AffinityRouter;
-use crab_semantic::{EmbedderPool, SemanticGateConfig, SemanticCache, VectorStore};
+use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
 use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
@@ -48,7 +46,9 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
 
             let encoder = prometheus::TextEncoder::new();
             let metric_families = self.registry.gather();
-            let output = encoder.encode_to_string(&metric_families).unwrap_or_default();
+            let output = encoder
+                .encode_to_string(&metric_families)
+                .unwrap_or_default();
 
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n{}",
@@ -117,7 +117,10 @@ fn main() -> Result<()> {
         for err in &errors {
             tracing::error!("Configuration validation error: {}", err);
         }
-        anyhow::bail!("Configuration validation failed with {} error(s)", errors.len());
+        anyhow::bail!(
+            "Configuration validation failed with {} error(s)",
+            errors.len()
+        );
     }
     for warning in config.security_warnings() {
         tracing::warn!("Security warning: {}", warning);
@@ -155,7 +158,11 @@ fn main() -> Result<()> {
     let ttl_config = Arc::new(RwLock::new(TtlConfig {
         default_ttl_secs: config.cache.default_ttl_secs.unwrap_or(3600),
         model_overrides: config.cache.model_ttl_overrides.clone().unwrap_or_default(),
-        consumer_overrides: config.cache.consumer_ttl_overrides.clone().unwrap_or_default(),
+        consumer_overrides: config
+            .cache
+            .consumer_ttl_overrides
+            .clone()
+            .unwrap_or_default(),
     }));
 
     let l0_config = crab_cache::L0Config {
@@ -209,7 +216,22 @@ fn main() -> Result<()> {
     let mgmt_listen = mgmt_cfg.listen_addr.clone();
     let mgmt_admin_key = mgmt_cfg.admin_key.into_inner();
 
-    let bootstrap_api_key = config.api_key.into_inner();
+    let upstream_key_secrets = config.upstream_key_secrets();
+    let upstream_pool = crab_proxy::UpstreamKeyPool::from_secrets(
+        upstream_key_secrets,
+        config.upstream_key_cooldown_secs(),
+    );
+    info!(
+        upstream_key_count = upstream_pool.len(),
+        "Upstream DeepSeek key pool initialized"
+    );
+
+    let mut legacy_client_tokens = std::collections::HashSet::new();
+    let api_key = config.api_key.inner();
+    if !api_key.is_empty() {
+        legacy_client_tokens.insert(api_key.to_string());
+    }
+    let legacy_api_key_as_client_auth = config.gateway.legacy_api_key_as_client_auth;
 
     info!(
         thinking_mode = %reasoning_config.thinking_mode,
@@ -253,9 +275,10 @@ fn main() -> Result<()> {
         },
         upstream_base_url,
         fallback_model,
-        bootstrap_api_key.clone(),
+        upstream_pool,
+        legacy_api_key_as_client_auth,
+        legacy_client_tokens,
     );
-    runtime.insert_bootstrap_key(&bootstrap_api_key, "default");
 
     // Background task: TCP health check for upstream backends
     {
@@ -339,8 +362,9 @@ fn main() -> Result<()> {
         embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
     };
 
-    let request_semaphore =
-        Arc::new(tokio::sync::Semaphore::new(config.limits.max_concurrent_requests));
+    let request_semaphore = Arc::new(tokio::sync::Semaphore::new(
+        config.limits.max_concurrent_requests,
+    ));
 
     let state = Arc::new(GatewayState {
         runtime,

@@ -3,7 +3,13 @@
 
 listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
+# Legacy single-key alias; used when [upstream].keys is empty. Prefer upstream.keys or CRABCACHE_UPSTREAM_KEYS.
 api_key = "sk-your-deepseek-api-key-here"
+
+# Client auth: when false (default), only sk-cc-* keys from Management API may call the gateway.
+# When true, api_key may still be used as a client Bearer (not recommended in production).
+[gateway]
+legacy_api_key_as_client_auth = false
 
 # Management HTTP API (Admin / control plane). Default binds loopback only.
 # In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
@@ -24,6 +30,11 @@ max_concurrent_requests = 512
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 default_weight = 1
+
+# DeepSeek upstream API key pool (quota aggregation). If empty, top-level api_key is used.
+# keys = ["sk-ds-account-1", "sk-ds-account-2"]
+# Cooldown seconds after HTTP 429 before reusing a key (default 60)
+# key_cooldown_secs = 60
 
 # DeepSeek API endpoint addresses (for Ketama routing)
 deepseek_endpoints = ["api.deepseek.com:443"]

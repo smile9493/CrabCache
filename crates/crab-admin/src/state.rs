@@ -28,9 +28,19 @@ pub struct LastInvalidate {
     pub error: Option<String>,
 }
 
+/// Cached DeepSeek secrets for model sync (populated via Dashboard PUT upstream keys).
+#[derive(Debug, Clone)]
+pub struct UpstreamPoolSecret {
+    pub id: String,
+    pub secret: String,
+    pub enabled: bool,
+}
+
 pub struct AppState {
     pub start_time: u64,
     pub upstream_api_key: String,
+    /// Secrets last pushed to the gateway key pool (used by sync_models).
+    pub upstream_pool_secrets: RwLock<Vec<UpstreamPoolSecret>>,
     pub gateway: GatewayAdminClient,
     pub last_invalidate: RwLock<Option<LastInvalidate>>,
     /// API key metadata indexed by key id (gateway-assigned).
@@ -203,9 +213,30 @@ impl AppState {
             .unwrap_or_default()
             .as_secs();
 
+        let upstream_api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("CRABCACHE_API_KEY"))
+            .unwrap_or_default();
+        let mut pool_secrets = Vec::new();
+        if let Ok(csv) = std::env::var("CRABCACHE_UPSTREAM_KEYS") {
+            for (i, secret) in csv.split(',').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
+                pool_secrets.push(UpstreamPoolSecret {
+                    id: format!("key-{}", i + 1),
+                    secret: secret.to_string(),
+                    enabled: true,
+                });
+            }
+        } else if !upstream_api_key.is_empty() {
+            pool_secrets.push(UpstreamPoolSecret {
+                id: "key-1".to_string(),
+                secret: upstream_api_key.clone(),
+                enabled: true,
+            });
+        }
+
         Self {
             start_time: now,
-            upstream_api_key: std::env::var("DEEPSEEK_API_KEY").unwrap_or_default(),
+            upstream_api_key,
+            upstream_pool_secrets: RwLock::new(pool_secrets),
             gateway: GatewayAdminClient::from_env(),
             keys_meta: DashMap::new(),
             request_logs: RwLock::new(Vec::new()),
@@ -243,5 +274,39 @@ impl AppState {
             trace_entries: RwLock::new(Vec::new()),
             last_invalidate: RwLock::new(None),
         }
+    }
+
+    pub fn replace_upstream_pool_secrets(&self, keys: &[crab_control::UpstreamKeyInput]) {
+        let secrets: Vec<UpstreamPoolSecret> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| UpstreamPoolSecret {
+                id: if k.id.is_empty() {
+                    format!("key-{}", i + 1)
+                } else {
+                    k.id.clone()
+                },
+                secret: k.secret.clone(),
+                enabled: k.enabled,
+            })
+            .collect();
+        *self.upstream_pool_secrets.write() = secrets;
+    }
+
+    /// Pick a DeepSeek API key for upstream model list sync.
+    pub fn pick_sync_api_key(&self) -> Option<String> {
+        let pool = self.upstream_pool_secrets.read();
+        if let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty()) {
+            return Some(s.secret.clone());
+        }
+        drop(pool);
+        let cfg = self.upstream_config.read();
+        if !cfg.api_key.is_empty() && !cfg.api_key.contains("****") {
+            return Some(cfg.api_key.clone());
+        }
+        if !self.upstream_api_key.is_empty() {
+            return Some(self.upstream_api_key.clone());
+        }
+        None
     }
 }

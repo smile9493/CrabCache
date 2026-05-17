@@ -1,19 +1,19 @@
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
-    Json, Router,
+    routing::{delete, get, patch, post, put},
 };
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
-    parse_backend_endpoints, ApiKeySpec, BackendSpec, CreateGatewayKeyRequest,
-    CreateGatewayKeyResponse, ErrorResponse, GatewayStatus, PatchGatewayKeyRequest,
-    PutBackendsRequest, PutTtlConfigRequest, RoutingBackendsView, StreamCacheConfig,
-    CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER, TtlConfigView,
-    GATEWAY_ADMIN_KEY_HEADER,
+    ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
+    CreateGatewayKeyRequest, CreateGatewayKeyResponse, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER,
+    GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PutBackendsRequest,
+    PutTtlConfigRequest, PutUpstreamKeysRequest, RoutingBackendsView, StreamCacheConfig,
+    TtlConfigView, UpstreamKeyView, UpstreamKeysView, parse_backend_endpoints,
 };
-use crab_proxy::{RuntimeConfig, StoredKey};
+use crab_proxy::{RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -91,8 +91,16 @@ pub fn router(state: ManagementState) -> Router {
         )
         .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
         .route("/v1/cache/ttl", get(get_ttl).put(put_ttl))
-        .route("/v1/runtime/stream_cache", get(get_stream_cache).put(put_stream_cache))
+        .route(
+            "/v1/runtime/stream_cache",
+            get(get_stream_cache).put(put_stream_cache),
+        )
         .route("/v1/routing/backends", get(get_backends).put(put_backends))
+        .route(
+            "/v1/upstream/keys",
+            get(get_upstream_keys).put(put_upstream_keys),
+        )
+        .route("/v1/upstream/keys/{id}", patch(patch_upstream_key))
         .with_state(state)
 }
 
@@ -173,7 +181,10 @@ fn parse_invalidate_scope(scope: &str) -> Result<InvalidateAction, String> {
 }
 
 /// `scope=all` requires `x-cache-invalidate-confirm: all`.
-pub fn require_invalidate_confirm(action: &InvalidateAction, headers: &HeaderMap) -> Result<(), String> {
+pub fn require_invalidate_confirm(
+    action: &InvalidateAction,
+    headers: &HeaderMap,
+) -> Result<(), String> {
     if !matches!(action, InvalidateAction::All) {
         return Ok(());
     }
@@ -198,21 +209,11 @@ async fn invalidate_cache(
 ) -> Result<Json<InvalidateResponse>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let action = parse_invalidate_scope(&req.scope).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: e }),
-        )
-            .into_response()
-    })?;
+    let action = parse_invalidate_scope(&req.scope)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response())?;
 
-    require_invalidate_confirm(&action, &headers).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: e }),
-        )
-            .into_response()
-    })?;
+    require_invalidate_confirm(&action, &headers)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response())?;
 
     let is_all = matches!(action, InvalidateAction::All);
 
@@ -274,8 +275,12 @@ async fn invalidate_cache(
                 tracing::info!(scope = %scope_label, "Starting full cache invalidation");
                 let r = tiered_cache.invalidate_all(scan_opts).await;
                 match &r {
-                    Ok(_) => tracing::info!(scope = %scope_label, "Full cache invalidation completed"),
-                    Err(e) => tracing::warn!(scope = %scope_label, error = %e, "Full cache invalidation failed"),
+                    Ok(_) => {
+                        tracing::info!(scope = %scope_label, "Full cache invalidation completed")
+                    }
+                    Err(e) => {
+                        tracing::warn!(scope = %scope_label, error = %e, "Full cache invalidation failed")
+                    }
                 }
                 r
             }
@@ -283,8 +288,12 @@ async fn invalidate_cache(
                 tracing::info!(scope = %scope_label, prefix = %p, "Starting prefix cache invalidation");
                 let r = tiered_cache.invalidate_prefix(&p, scan_opts).await;
                 match &r {
-                    Ok(_) => tracing::info!(scope = %scope_label, prefix = %p, "Prefix cache invalidation completed"),
-                    Err(e) => tracing::warn!(scope = %scope_label, prefix = %p, error = %e, "Prefix cache invalidation failed"),
+                    Ok(_) => {
+                        tracing::info!(scope = %scope_label, prefix = %p, "Prefix cache invalidation completed")
+                    }
+                    Err(e) => {
+                        tracing::warn!(scope = %scope_label, prefix = %p, error = %e, "Prefix cache invalidation failed")
+                    }
                 }
                 r
             }
@@ -292,8 +301,12 @@ async fn invalidate_cache(
                 tracing::info!(scope = %scope_label, key = %k, "Starting single key cache invalidation");
                 let r = tiered_cache.invalidate(&k).await;
                 match &r {
-                    Ok(_) => tracing::info!(scope = %scope_label, key = %k, "Single key cache invalidation completed"),
-                    Err(e) => tracing::warn!(scope = %scope_label, key = %k, error = %e, "Single key cache invalidation failed"),
+                    Ok(_) => {
+                        tracing::info!(scope = %scope_label, key = %k, "Single key cache invalidation completed")
+                    }
+                    Err(e) => {
+                        tracing::warn!(scope = %scope_label, key = %k, error = %e, "Single key cache invalidation failed")
+                    }
                 }
                 r
             }
@@ -436,12 +449,142 @@ async fn status(
         .read()
         .map(|r| r.backends().len())
         .unwrap_or(0);
+    let pool = state.runtime.upstream_pool();
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
         backend_count,
         stream_cache_enabled: state.runtime.stream_cache_enabled(),
+        upstream_key_count: pool.len(),
+        upstream_keys_available: pool.available_count(),
     }))
+}
+
+async fn get_upstream_keys(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<UpstreamKeysView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(upstream_keys_view(&state.runtime)))
+}
+
+async fn put_upstream_keys(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PutUpstreamKeysRequest>,
+) -> Result<Json<UpstreamKeysView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    if req.keys.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "at least one upstream key is required".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    for (i, k) in req.keys.iter().enumerate() {
+        if k.secret.trim().is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("upstream key #{} secret must not be empty", i + 1),
+                }),
+            )
+                .into_response());
+        }
+    }
+    let specs: Vec<UpstreamKeySpec> = req
+        .keys
+        .into_iter()
+        .map(|k| UpstreamKeySpec {
+            id: k.id,
+            secret: k.secret,
+            enabled: k.enabled,
+        })
+        .collect();
+    let current = state.runtime.upstream_pool();
+    let new_pool = UpstreamKeyPool::hot_replace(&current, specs);
+    state.runtime.replace_upstream_pool(new_pool);
+    Ok(Json(upstream_keys_view(&state.runtime)))
+}
+
+async fn patch_upstream_key(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<PatchUpstreamKeyRequest>,
+) -> Result<Json<UpstreamKeyView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let pool = state.runtime.upstream_pool();
+    if req.enabled.is_none() && req.secret.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "no fields to update".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    if let Some(enabled) = req.enabled {
+        if !pool.set_enabled(&id, enabled) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("upstream key '{id}' not found"),
+                }),
+            )
+                .into_response());
+        }
+    }
+    if req.secret.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "rotating secret via PATCH is not supported; use PUT /v1/upstream/keys"
+                    .to_string(),
+            }),
+        )
+            .into_response());
+    }
+    let view = pool
+        .list_status()
+        .into_iter()
+        .find(|k| k.id == id)
+        .map(|k| UpstreamKeyView {
+            id: k.id,
+            preview: k.preview,
+            enabled: k.enabled,
+            inflight: k.inflight,
+            cooldown_remaining_secs: k.cooldown_remaining_secs,
+        })
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("upstream key '{id}' not found"),
+                }),
+            )
+                .into_response()
+        })?;
+    Ok(Json(view))
+}
+
+fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
+    let pool = runtime.upstream_pool();
+    UpstreamKeysView {
+        keys: pool
+            .list_status()
+            .into_iter()
+            .map(|k| UpstreamKeyView {
+                id: k.id,
+                preview: k.preview,
+                enabled: k.enabled,
+                inflight: k.inflight,
+                cooldown_remaining_secs: k.cooldown_remaining_secs,
+            })
+            .collect(),
+    }
 }
 
 fn key_preview(token: &str) -> String {
@@ -629,7 +772,10 @@ async fn put_stream_cache(
     }))
 }
 
-fn backend_to_spec(b: &crab_route::Backend, health: Option<&crab_route::BackendHealth>) -> BackendSpec {
+fn backend_to_spec(
+    b: &crab_route::Backend,
+    health: Option<&crab_route::BackendHealth>,
+) -> BackendSpec {
     let (healthy, last_check_ms, latency_ms) = match health {
         Some(h) => (h.healthy, h.last_check_ms, h.latency_ms),
         None => (true, 0, 0),
