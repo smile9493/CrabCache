@@ -1041,9 +1041,7 @@ pub fn prepare_upstream_request(
         missing_indexes = result.missing_indexes;
     }
 
-    if missing_reasoning_strategy == "fill_only"
-        && missing_reasoning_on_fill_only == "omit_reasoning"
-    {
+    if fill_only && missing_reasoning_on_fill_only == "omit_reasoning" {
         missing_indexes.clear();
     }
 

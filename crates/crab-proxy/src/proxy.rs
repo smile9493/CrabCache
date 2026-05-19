@@ -841,11 +841,13 @@ impl ProxyHttp for GatewayProxy {
                             };
                             ctx.total_tokens +=
                                 usage_data.prompt_tokens + usage_data.completion_tokens;
-                            record_usage(
+                            ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
+                            ctx.last_prompt_cache_miss_tokens =
+                                usage_data.prompt_cache_miss_tokens;
+                            record_usage_metrics(
                                 &usage_data,
                                 &ctx.model,
                                 ctx.consumer.as_deref(),
-                                ctx,
                             );
                         }
                     }
@@ -855,7 +857,9 @@ impl ProxyHttp for GatewayProxy {
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
                         ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
-                        record_usage(&usage, &ctx.model, ctx.consumer.as_deref(), ctx);
+                        ctx.last_prompt_cache_hit_tokens = usage.prompt_cache_hit_tokens;
+                        ctx.last_prompt_cache_miss_tokens = usage.prompt_cache_miss_tokens;
+                        record_usage_metrics(&usage, &ctx.model, ctx.consumer.as_deref());
                     }
                 }
             }
@@ -934,7 +938,9 @@ impl ProxyHttp for GatewayProxy {
                             .unwrap_or(0),
                     };
                     ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
-                    record_usage(&usage_data, &ctx.model, ctx.consumer.as_deref(), ctx);
+                    ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
+                    ctx.last_prompt_cache_miss_tokens = usage_data.prompt_cache_miss_tokens;
+                    record_usage_metrics(&usage_data, &ctx.model, ctx.consumer.as_deref());
                 }
 
                 if let Some(cache_key) = &ctx.cache_key {
@@ -1371,9 +1377,7 @@ fn build_cache_entry_with_sse(
     }
 }
 
-fn record_usage(usage: &UsageData, model: &str, consumer: Option<&str>, ctx: &mut GatewayContext) {
-    ctx.last_prompt_cache_hit_tokens = usage.prompt_cache_hit_tokens;
-    ctx.last_prompt_cache_miss_tokens = usage.prompt_cache_miss_tokens;
+fn record_usage_metrics(usage: &UsageData, model: &str, consumer: Option<&str>) {
     global_metrics().record_upstream_usage(
         usage.prompt_tokens,
         usage.completion_tokens,
