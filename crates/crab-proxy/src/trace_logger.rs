@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +19,12 @@ pub struct SanitizedLogEntry {
     pub latency_ms: f64,
     pub cache_hit: bool,
     pub cache_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retired_prefix_messages: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_ratio: Option<f64>,
 }
 
 impl SanitizedLogEntry {
@@ -61,6 +67,9 @@ impl SanitizedLogEntry {
             latency_ms,
             cache_hit,
             cache_tier,
+            retired_prefix_messages: None,
+            reasoning_strategy: None,
+            prompt_cache_hit_ratio: None,
         }
     }
 }
@@ -93,18 +102,17 @@ struct LogWriter {
 }
 
 impl LogWriter {
-    async fn new(config: &TraceConfig) -> std::io::Result<Self> {
+    fn new(config: &TraceConfig) -> std::io::Result<Self> {
         let path = PathBuf::from(&config.path);
 
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            std::fs::create_dir_all(parent).ok();
         }
 
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)
-            .await?;
+            .open(&path)?;
 
         Ok(Self {
             file,
@@ -115,19 +123,19 @@ impl LogWriter {
         })
     }
 
-    async fn write_entry(&mut self, entry: &SanitizedLogEntry) -> std::io::Result<()> {
+    fn write_entry(&mut self, entry: &SanitizedLogEntry) -> std::io::Result<()> {
         let line = serde_json::to_string(entry)? + "\n";
-        self.file.write_all(line.as_bytes()).await?;
+        self.file.write_all(line.as_bytes())?;
         self.line_count += 1;
 
         if self.line_count >= self.max_lines {
-            self.rotate().await?;
+            self.rotate()?;
         }
         Ok(())
     }
 
-    async fn rotate(&mut self) -> std::io::Result<()> {
-        self.file.sync_all().await?;
+    fn rotate(&mut self) -> std::io::Result<()> {
+        self.file.sync_all()?;
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
@@ -136,40 +144,38 @@ impl LogWriter {
             timestamp
         ));
 
-        tokio::fs::rename(&self.path, &rotated).await?;
+        std::fs::rename(&self.path, &rotated)?;
 
-        self.cleanup_old_files().await?;
+        self.cleanup_old_files()?;
 
         self.file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)
-            .await?;
+            .open(&self.path)?;
         self.line_count = 0;
         Ok(())
     }
 
-    async fn cleanup_old_files(&mut self) -> std::io::Result<()> {
+    fn cleanup_old_files(&mut self) -> std::io::Result<()> {
         let parent = self.path.parent().unwrap();
         let file_name = self.path.file_name().unwrap().to_str().unwrap();
 
-        let mut entries = tokio::fs::read_dir(parent).await?;
-        let mut log_files = vec![];
-
-        while let Some(entry) = entries.next_entry().await? {
-            let name = entry.file_name();
-            if let Some(name) = name.to_str() {
-                if name.starts_with(file_name) && name != file_name {
-                    log_files.push(entry.path());
-                }
-            }
-        }
+        let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|name| name.starts_with(file_name) && name != file_name)
+                    .unwrap_or(false)
+            })
+            .map(|e| e.path())
+            .collect();
 
         log_files.sort();
 
         while log_files.len() >= self.max_files {
             let oldest = log_files.remove(0);
-            tokio::fs::remove_file(oldest).await?;
+            std::fs::remove_file(oldest)?;
         }
 
         Ok(())
@@ -177,33 +183,33 @@ impl LogWriter {
 }
 
 pub struct TraceLogger {
-    sender: UnboundedSender<SanitizedLogEntry>,
+    sender: mpsc::Sender<SanitizedLogEntry>,
 }
 
 impl TraceLogger {
-    pub fn init(config: TraceConfig) -> (Self, tokio::task::JoinHandle<()>) {
-        let (tx, mut rx): (
-            UnboundedSender<SanitizedLogEntry>,
-            UnboundedReceiver<SanitizedLogEntry>,
-        ) = unbounded_channel();
+    pub fn init(config: TraceConfig) -> Self {
+        let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
 
-        let handle = tokio::spawn(async move {
-            let mut writer = match LogWriter::new(&config).await {
-                Ok(w) => w,
-                Err(e) => {
-                    warn!("Failed to initialize trace logger: {}", e);
-                    return;
+        std::thread::Builder::new()
+            .name("crab-trace-writer".into())
+            .spawn(move || {
+                let mut writer = match LogWriter::new(&config) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        warn!("Failed to initialize trace logger: {}", e);
+                        return;
+                    }
+                };
+
+                while let Ok(entry) = rx.recv() {
+                    if let Err(e) = writer.write_entry(&entry) {
+                        warn!("Shadow log write failed: {}", e);
+                    }
                 }
-            };
+            })
+            .expect("Failed to spawn trace logger thread");
 
-            while let Some(entry) = rx.recv().await {
-                if let Err(e) = writer.write_entry(&entry).await {
-                    warn!("Shadow log write failed: {}", e);
-                }
-            }
-        });
-
-        (Self { sender: tx }, handle)
+        Self { sender: tx }
     }
 
     pub fn log(&self, entry: SanitizedLogEntry) {

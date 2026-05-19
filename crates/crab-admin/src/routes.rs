@@ -10,8 +10,9 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use crab_control::{
-    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest, PutBackendsRequest,
-    PutTtlConfigRequest,
+    parse_upstream_base_url, validate_deepseek_key, CreateGatewayKeyRequest,
+    FingerprintConfigRequest, InvalidateCacheRequest, PutBackendsRequest, PutTtlConfigRequest,
+    PutUpstreamKeysRequest, UpstreamKeyInput, UpstreamKeysPutMode,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,7 +23,7 @@ fn admin_api_key() -> String {
 }
 
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
-async fn admin_auth(mut req: Request, next: Next) -> Result<Response, StatusCode> {
+async fn admin_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
     let expected_key = admin_api_key();
     let provided_key = req
         .headers()
@@ -65,6 +66,7 @@ fn gateway_error_message(err: &crab_control::ControlError) -> String {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/metrics/prefix-cache", get(get_prefix_cache_metrics))
         .route("/api/admin/gateway/health", get(get_gateway_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
@@ -92,6 +94,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/upstream/config",
             get(get_upstream_config).put(update_upstream_config),
         )
+        .route("/api/admin/upstream/test", post(post_upstream_test))
         .route(
             "/api/admin/upstream/keys",
             get(get_upstream_keys_pool).put(put_upstream_keys_pool),
@@ -101,6 +104,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             patch(patch_upstream_key_pool),
         )
         .route("/api/admin/models", get(get_models).post(sync_models))
+        .route("/api/admin/models/detect", post(post_models_detect))
+        .route("/api/admin/models/apply", post(post_models_apply))
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
@@ -155,6 +160,7 @@ async fn get_metrics(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        .http1_only()
         .build()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -216,6 +222,18 @@ async fn get_metrics(
         &[("status", "rejected_by_guard")],
     );
     let semantic_skipped = sum_prometheus_counter(&body, "gateway_semantic_skipped_total", &[]);
+
+    let prefix_cache_hit_tokens = sum_prometheus_counter(
+        &body,
+        "gateway_upstream_prompt_cache_tokens_total",
+        &[("status", "hit")],
+    );
+    let prefix_cache_miss_tokens = sum_prometheus_counter(
+        &body,
+        "gateway_upstream_prompt_cache_tokens_total",
+        &[("status", "miss")],
+    );
+    let prefix_cache_hit_ratio = prefix_hit_ratio(prefix_cache_hit_tokens, prefix_cache_miss_tokens);
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -303,7 +321,111 @@ async fn get_metrics(
         semantic_hits,
         semantic_rejected,
         semantic_skipped,
+        prefix_cache_hit_tokens,
+        prefix_cache_miss_tokens,
+        prefix_cache_hit_ratio,
     }))
+}
+
+async fn get_prefix_cache_metrics(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PrefixCacheMetricsSnapshot>, StatusCode> {
+    let metrics_url = std::env::var("CRABCACHE_GATEWAY_METRICS_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9090/metrics".to_string());
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .http1_only()
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let resp = client.get(&metrics_url).send().await.map_err(|e| {
+        tracing::warn!(url = %metrics_url, error = %e, "Failed to fetch gateway metrics");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    let body = resp
+        .text()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let hit_tokens = sum_prometheus_counter(
+        &body,
+        "gateway_upstream_prompt_cache_tokens_total",
+        &[("status", "hit")],
+    );
+    let miss_tokens = sum_prometheus_counter(
+        &body,
+        "gateway_upstream_prompt_cache_tokens_total",
+        &[("status", "miss")],
+    );
+    let by_model = prefix_cache_by_model(&body);
+
+    let _ = state;
+
+    Ok(Json(PrefixCacheMetricsSnapshot {
+        hit_tokens,
+        miss_tokens,
+        hit_ratio: prefix_hit_ratio(hit_tokens, miss_tokens),
+        by_model,
+    }))
+}
+
+fn prefix_hit_ratio(hit: u64, miss: u64) -> f64 {
+    let total = hit + miss;
+    if total == 0 {
+        0.0
+    } else {
+        hit as f64 / total as f64
+    }
+}
+
+fn prefix_cache_by_model(body: &str) -> Vec<PrefixCacheModelBucket> {
+    use std::collections::HashMap;
+    let mut per_model: HashMap<String, (u64, u64)> = HashMap::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_upstream_prompt_cache_tokens_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let status = label_value(labels, "status");
+        let model = label_value(labels, "model").unwrap_or_else(|| "unknown".to_string());
+        let value_part = line[close + 1..].trim();
+        let Ok(tokens) = value_part.parse::<u64>() else {
+            continue;
+        };
+        let entry = per_model.entry(model).or_insert((0, 0));
+        match status.as_deref() {
+            Some("hit") => entry.0 += tokens,
+            Some("miss") => entry.1 += tokens,
+            _ => {}
+        }
+    }
+    let mut buckets: Vec<PrefixCacheModelBucket> = per_model
+        .into_iter()
+        .map(|(model, (hit, miss))| PrefixCacheModelBucket {
+            hit_tokens: hit,
+            miss_tokens: miss,
+            hit_ratio: prefix_hit_ratio(hit, miss),
+            model,
+        })
+        .collect();
+    buckets.sort_by(|a, b| a.model.cmp(&b.model));
+    buckets
+}
+
+fn label_value(labels: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=\"");
+    let start = labels.find(&needle)? + needle.len();
+    let rest = &labels[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 fn labels_match(labels: &str, required: &[(&str, &str)]) -> bool {
@@ -379,53 +501,6 @@ fn sum_prometheus_counter(body: &str, metric: &str, required: &[(&str, &str)]) -
         }
     }
     total
-}
-
-#[cfg(test)]
-mod metrics_tests {
-    use super::sum_prometheus_counter;
-
-    #[test]
-    fn sum_across_multiple_model_labels() {
-        let body = r#"
-gateway_deepseek_input_tokens_total{cache_status="hit",model="m1",consumer="c"} 10
-gateway_deepseek_input_tokens_total{cache_status="hit",model="m2",consumer="c"} 20
-gateway_deepseek_input_tokens_total{cache_status="miss",model="m1",consumer="c"} 5
-"#;
-        assert_eq!(
-            sum_prometheus_counter(
-                body,
-                "gateway_deepseek_input_tokens_total",
-                &[("cache_status", "hit")]
-            ),
-            30
-        );
-        assert_eq!(
-            sum_prometheus_counter(
-                body,
-                "gateway_deepseek_input_tokens_total",
-                &[("cache_status", "miss")]
-            ),
-            5
-        );
-    }
-
-    #[test]
-    fn avg_histogram_across_models() {
-        let body = r#"
-gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m1"} 0.002
-gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m2"} 0.004
-gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m1"} 10
-gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
-"#;
-        let avg = super::avg_prometheus_histogram_ms(
-            body,
-            "gateway_cache_fetch_latency_seconds",
-            &[("tier", "L0_moka")],
-        );
-        // (0.006 / 40) * 1000 = 0.15 ms
-        assert!((avg - 0.15).abs() < 1e-6);
-    }
 }
 
 fn generate_hourly_stats_mock(
@@ -1175,130 +1250,37 @@ async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListRespons
 async fn sync_models(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    let upstream_config = state.upstream_config.read().clone();
-    let upstream_url = format!(
-        "{}/v1/models",
-        upstream_config.base_url.trim_end_matches('/')
-    );
-    let api_key = state.pick_sync_api_key().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Configure upstream key pool (Dashboard → Upstream → Key pool) or set a sync API key on the upstream page.".into(),
-        )
-    })?;
-
-    tracing::info!(url = %upstream_url, "Syncing models from upstream");
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create HTTP client: {}", e),
-            )
-        })?;
-
-    let mut request = client.get(&upstream_url);
-    request = request.header("Authorization", format!("Bearer {}", &api_key));
-    let resp = request.send().await.map_err(|e| {
-        tracing::error!(url = %upstream_url, error = %e, "Upstream request failed");
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("Cannot reach upstream: {}", e),
-        )
-    })?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        tracing::error!(url = %upstream_url, status = %status, body = %body, "Upstream returned error");
-        let msg = match status.as_u16() {
-            401 | 403 => format!(
-                "Upstream authentication failed ({}). Check your API key.",
-                status.as_u16()
-            ),
-            404 => format!(
-                "Models endpoint not found at {}. Check the Base URL.",
-                upstream_url
-            ),
-            _ => format!(
-                "Upstream returned {}: {}",
-                status.as_u16(),
-                body.chars().take(200).collect::<String>()
-            ),
-        };
-        return Err((StatusCode::BAD_GATEWAY, msg));
-    }
-
-    let upstream: UpstreamModelsResponse = resp
-        .json()
+    crate::upstream::sync_models_internal(&state)
         .await
-        .map_err(|e| {
-            tracing::error!(url = %upstream_url, error = %e, "Failed to parse upstream models response");
-            (StatusCode::BAD_GATEWAY, format!("Failed to parse upstream response: {}", e))
-        })?;
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
 
-    let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
+async fn post_models_detect(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<crate::types::ModelDetectResponse>, (StatusCode, String)> {
+    crate::upstream::detect_models_internal(&state)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
 
-    let mut stored = state.models.write();
-    let existing_ids: Vec<String> = stored.models.iter().map(|m| m.id.clone()).collect();
+async fn post_models_apply(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::types::ModelApplyBody>,
+) -> Result<Json<SyncResult>, StatusCode> {
+    let result = crate::upstream::apply_models_internal(&state, body.add, body.remove);
+    Ok(Json(result))
+}
 
-    let added: Vec<String> = upstream_ids
-        .iter()
-        .filter(|id| !existing_ids.contains(id))
-        .cloned()
-        .collect();
-
-    let removed: Vec<String> = existing_ids
-        .iter()
-        .filter(|id| !upstream_ids.contains(id))
-        .cloned()
-        .collect();
-
-    let unchanged = upstream_ids
-        .iter()
-        .filter(|id| existing_ids.contains(id))
-        .count();
-
-    let upstream_models: Vec<crate::state::StoredModel> = upstream
-        .data
-        .into_iter()
-        .map(|m| {
-            let existing = stored.models.iter().find(|e| e.id == m.id);
-            crate::state::StoredModel {
-                id: m.id,
-                owned_by: m.owned_by,
-                context_length: existing.and_then(|e| e.context_length),
-                input_price_per_mtok: existing.and_then(|e| e.input_price_per_mtok),
-                output_price_per_mtok: existing.and_then(|e| e.output_price_per_mtok),
-                available: true,
-            }
-        })
-        .collect();
-
-    let total = upstream_models.len();
-    stored.models = upstream_models;
-    stored.synced_at = Some(
-        chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M:%S UTC")
-            .to_string(),
-    );
-
-    tracing::info!(
-        added = added.len(),
-        removed = removed.len(),
-        unchanged,
-        total,
-        "Models synced successfully"
-    );
-
-    Ok(Json(SyncResult {
-        added,
-        removed,
-        unchanged,
-        total,
-    }))
+async fn post_upstream_test(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::types::UpstreamTestBody>,
+) -> Json<crab_control::UpstreamTestResult> {
+    let result = crate::upstream::test_upstream_connection(&body.base_url, &body.api_key).await;
+    *state.last_upstream_test.write() = Some(result.clone());
+    state.flush_persist();
+    Json(result)
 }
 
 async fn update_connection_config(
@@ -1336,13 +1318,52 @@ async fn put_upstream_keys_pool(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PutUpstreamKeysRequest>,
 ) -> Result<Json<UpstreamKeysView>, (StatusCode, String)> {
-    state.replace_upstream_pool_secrets(&req.keys);
-    state
+    for (i, k) in req.keys.iter().enumerate() {
+        if let Err(e) = validate_deepseek_key(&k.secret) {
+            return Err((StatusCode::BAD_REQUEST, format!("key #{}: {e}", i + 1)));
+        }
+    }
+
+    if req.mode == UpstreamKeysPutMode::Replace {
+        state.replace_upstream_pool_secrets(&req.keys);
+    } else {
+        let mut merged = state.upstream_pool_secrets.read().clone();
+        let mut seen: std::collections::HashSet<String> =
+            merged.iter().map(|s| s.secret.clone()).collect();
+        for k in &req.keys {
+            let secret = k.secret.trim().to_string();
+            if secret.is_empty() || seen.contains(&secret) {
+                continue;
+            }
+            seen.insert(secret.clone());
+            merged.push(crate::state::UpstreamPoolSecret {
+                id: if k.id.is_empty() {
+                    format!("key-{}", merged.len() + 1)
+                } else {
+                    k.id.clone()
+                },
+                secret,
+                enabled: k.enabled,
+            });
+        }
+        let inputs: Vec<UpstreamKeyInput> = merged
+            .iter()
+            .map(|s| UpstreamKeyInput {
+                id: s.id.clone(),
+                secret: s.secret.clone(),
+                enabled: s.enabled,
+            })
+            .collect();
+        state.replace_upstream_pool_secrets(&inputs);
+    }
+
+    let view = state
         .gateway
         .put_upstream_keys(&req)
         .await
-        .map(Json)
-        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    state.flush_persist();
+    Ok(Json(view))
 }
 
 async fn patch_upstream_key_pool(
@@ -1358,46 +1379,134 @@ async fn patch_upstream_key_pool(
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
 
+fn build_upstream_config_view(state: &AppState) -> UpstreamConfig {
+    let config = state.upstream_config.read().clone();
+    let key_pool_count = state
+        .upstream_pool_secrets
+        .read()
+        .iter()
+        .filter(|k| k.enabled && !k.secret.is_empty())
+        .count();
+    UpstreamConfig {
+        base_url: config.base_url,
+        model: config.model,
+        endpoints: config.endpoints,
+        key_pool_count,
+        gateway_reachable: *state.gateway_reachable.read(),
+        last_test: state.last_upstream_test.read().clone(),
+        api_key: String::new(),
+        api_key_masked: String::new(),
+    }
+}
+
 async fn get_upstream_config(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<UpstreamConfig>, StatusCode> {
-    let config = state.upstream_config.read().clone();
-    let api_key_masked = mask_api_key(&config.api_key);
-    Ok(Json(UpstreamConfig {
-        base_url: config.base_url,
-        api_key: api_key_masked.clone(),
-        api_key_masked,
-        endpoints: config.endpoints,
-    }))
+) -> Json<UpstreamConfig> {
+    state.reconcile_upstream_from_gateway().await;
+    Json(build_upstream_config_view(&state))
 }
 
 async fn update_upstream_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UpdateUpstreamConfigRequest>,
-) -> Result<Json<UpstreamConfig>, StatusCode> {
-    let put_req = {
-        let mut config = state.upstream_config.write();
-        config.base_url = req.base_url.clone();
-        if let Some(key) = &req.api_key {
-            if !key.is_empty() && !key.contains("****") {
-                config.api_key = key.clone();
-            }
-        }
-        config.endpoints = req.endpoints.clone();
-        PutBackendsRequest {
-            endpoints: req.endpoints.clone(),
-            default_weight: 1,
-            tls_sni: "api.deepseek.com".to_string(),
-        }
+) -> Result<Json<crate::types::UpdateUpstreamConfigResponse>, (StatusCode, String)> {
+    let parsed = parse_upstream_base_url(&req.base_url).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    let model = req.model.trim();
+    if model.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "model must not be empty".to_string()));
+    }
+
+    let endpoints = if req.endpoints.is_empty() {
+        None
+    } else {
+        Some(req.endpoints.clone())
+    };
+
+    let relay_req = crab_control::PutUpstreamRelayConfigRequest {
+        base_url: parsed.normalized.clone(),
+        model: Some(model.to_string()),
+        endpoints,
+        tls_sni: Some(parsed.tls_sni.clone()),
     };
 
     state
         .gateway
-        .put_backends(&put_req)
+        .put_upstream_relay(&relay_req)
         .await
-        .map_err(|e| gateway_status_code(&e))?;
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
 
-    let response = {
+    {
+        let mut config = state.upstream_config.write();
+        config.base_url = parsed.normalized.clone();
+        config.model = model.to_string();
+        if req.endpoints.is_empty() {
+            config.endpoints = vec![parsed.endpoint.clone()];
+        } else {
+            config.endpoints = req.endpoints.clone();
+        }
+        if let Some(key) = &req.api_key {
+            if !key.is_empty() && !key.contains("****") {
+                if let Err(e) = validate_deepseek_key(key) {
+                    return Err((StatusCode::BAD_REQUEST, e));
+                }
+                config.api_key = key.clone();
+            }
+        }
+    }
+
+    let mut keys_to_push: Vec<String> = req.keys_to_append.clone();
+    if let Some(key) = &req.api_key {
+        if !key.is_empty() && !key.contains("****") {
+            keys_to_push.push(key.clone());
+        }
+    }
+    keys_to_push.retain(|k| !k.trim().is_empty());
+    if !keys_to_push.is_empty() {
+        let inputs: Vec<UpstreamKeyInput> = keys_to_push
+            .into_iter()
+            .enumerate()
+            .map(|(i, secret)| UpstreamKeyInput {
+                id: format!("key-{}", i + 1),
+                secret,
+                enabled: true,
+            })
+            .collect();
+        let put_req = PutUpstreamKeysRequest {
+            keys: inputs.clone(),
+            mode: UpstreamKeysPutMode::Append,
+        };
+        let mut merged = state.upstream_pool_secrets.read().clone();
+        let mut seen: std::collections::HashSet<String> =
+            merged.iter().map(|s| s.secret.clone()).collect();
+        for k in &inputs {
+            if k.secret.is_empty() || seen.contains(&k.secret) {
+                continue;
+            }
+            seen.insert(k.secret.clone());
+            merged.push(crate::state::UpstreamPoolSecret {
+                id: if k.id.is_empty() {
+                    format!("key-{}", merged.len() + 1)
+                } else {
+                    k.id.clone()
+                },
+                secret: k.secret.clone(),
+                enabled: k.enabled,
+            });
+        }
+        let merged_inputs: Vec<UpstreamKeyInput> = merged
+            .iter()
+            .map(|s| UpstreamKeyInput {
+                id: s.id.clone(),
+                secret: s.secret.clone(),
+                enabled: s.enabled,
+            })
+            .collect();
+        state.replace_upstream_pool_secrets(&merged_inputs);
+        let _ = state.gateway.put_upstream_keys(&put_req).await;
+    }
+
+    {
         let config = state.upstream_config.read().clone();
         let mut backends = state.backends.write();
         *backends = config
@@ -1412,30 +1521,71 @@ async fn update_upstream_config(
                 request_count: 0,
             })
             .collect();
+    }
 
-        let api_key_masked = mask_api_key(&config.api_key);
-        UpstreamConfig {
-            base_url: config.base_url,
-            api_key: api_key_masked.clone(),
-            api_key_masked,
-            endpoints: config.endpoints,
+    *state.gateway_reachable.write() = true;
+
+    let sync = if state.pick_sync_api_key().is_some() {
+        match crate::upstream::sync_models_internal(&state).await {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!(error = %e, "Auto model sync after upstream save failed");
+                None
+            }
         }
+    } else {
+        None
     };
 
-    Ok(Json(response))
+    state.flush_persist();
+
+    Ok(Json(crate::types::UpdateUpstreamConfigResponse {
+        config: build_upstream_config_view(&state),
+        sync,
+    }))
 }
 
-fn mask_api_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "****".to_string();
-    }
-    format!("{}****{}", &key[..4], &key[key.len() - 4..])
-}
-
-async fn get_trace_analysis(State(state): State<Arc<AppState>>) -> Json<TraceAnalysis> {
+async fn get_trace_analysis(State(_state): State<Arc<AppState>>) -> Json<TraceAnalysis> {
     use std::collections::HashMap;
 
-    let trace_entries = state.trace_entries.read().clone();
+    let trace_path = std::env::var("CRABCACHE_TRACE_LOG_PATH")
+        .unwrap_or_else(|_| "/app/logs/trace.jsonl".to_string());
+
+    let trace_entries: Vec<crate::state::StoredTraceEntry> = match std::fs::read_to_string(&trace_path) {
+        Ok(content) => content
+            .lines()
+            .filter_map(|line| {
+                let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+                Some(crate::state::StoredTraceEntry {
+                    timestamp_ms: entry.get("timestamp_ms")?.as_u64()?,
+                    request_hash: entry.get("request_hash")?.as_str()?.to_string(),
+                    content_length: entry.get("content_length")?.as_u64()? as usize,
+                    semantic_cluster: entry.get("semantic_cluster")?.as_u64()? as usize,
+                    conversation_id: entry.get("conversation_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    model: entry.get("model")?.as_str()?.to_string(),
+                    prompt_tokens: entry.get("prompt_tokens")?.as_u64()? as usize,
+                    latency_ms: entry.get("latency_ms")?.as_f64()?,
+                    cache_hit: entry.get("cache_hit")?.as_bool()?,
+                })
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("Failed to read trace log file {}: {}", trace_path, e);
+            return Json(TraceAnalysis {
+                total_requests: 0,
+                unique_requests: 0,
+                repeat_ratio: 0.0,
+                semantic_cluster_ratio: 0.0,
+                estimated_zipf_alpha: 0.0,
+                estimated_hit_rate: 0.0,
+                avg_latency_ms: 0.0,
+                avg_prompt_tokens: 0.0,
+                cache_hit_ratio: 0.0,
+                top_models: vec![],
+                cluster_distribution: vec![],
+            });
+        }
+    };
 
     if trace_entries.is_empty() {
         return Json(TraceAnalysis {
@@ -1592,4 +1742,51 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
 
     let alpha = (n as f64 * sum_xy - sum_x * sum_y) / denominator;
     -alpha
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::sum_prometheus_counter;
+
+    #[test]
+    fn sum_across_multiple_model_labels() {
+        let body = r#"
+gateway_deepseek_input_tokens_total{cache_status="hit",model="m1",consumer="c"} 10
+gateway_deepseek_input_tokens_total{cache_status="hit",model="m2",consumer="c"} 20
+gateway_deepseek_input_tokens_total{cache_status="miss",model="m1",consumer="c"} 5
+"#;
+        assert_eq!(
+            sum_prometheus_counter(
+                body,
+                "gateway_deepseek_input_tokens_total",
+                &[("cache_status", "hit")]
+            ),
+            30
+        );
+        assert_eq!(
+            sum_prometheus_counter(
+                body,
+                "gateway_deepseek_input_tokens_total",
+                &[("cache_status", "miss")]
+            ),
+            5
+        );
+    }
+
+    #[test]
+    fn avg_histogram_across_models() {
+        let body = r#"
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m1"} 0.002
+gateway_cache_fetch_latency_seconds_sum{tier="L0_moka",model="m2"} 0.004
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m1"} 10
+gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
+"#;
+        let avg = super::avg_prometheus_histogram_ms(
+            body,
+            "gateway_cache_fetch_latency_seconds",
+            &[("tier", "L0_moka")],
+        );
+        // (0.006 / 40) * 1000 = 0.15 ms
+        assert!((avg - 0.15).abs() < 1e-6);
+    }
 }

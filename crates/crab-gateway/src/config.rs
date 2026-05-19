@@ -1,7 +1,8 @@
+use crab_control::parse_upstream_base_url;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 
@@ -100,6 +101,9 @@ pub struct GatewaySection {
     /// When true, `api_key` may still be used as a client Bearer (not recommended in production).
     #[serde(default)]
     pub legacy_api_key_as_client_auth: bool,
+    /// When true, respond to CORS preflight and allow cross-origin API calls.
+    #[serde(default)]
+    pub cors_enabled: bool,
 }
 
 fn default_max_request_body_bytes() -> usize {
@@ -351,15 +355,49 @@ impl GatewayConfig {
                 }
             }
         }
+        if let Ok(url) = std::env::var("CRABCACHE_UPSTREAM_BASE_URL") {
+            if !url.is_empty() {
+                config.upstream.base_url = Some(url);
+            }
+        }
+        if let Ok(model) = std::env::var("CRABCACHE_UPSTREAM_MODEL") {
+            if !model.is_empty() {
+                config.upstream.model = Some(model);
+            }
+        }
+        config.apply_upstream_defaults()?;
         Ok(config)
     }
 
-    pub fn parse_endpoints(&self) -> Vec<crab_route::Backend> {
-        let tls_sni = self
-            .upstream
+    /// Derive routing peers and TLS SNI from `[upstream].base_url` when omitted (new-api style).
+    pub fn apply_upstream_defaults(&mut self) -> anyhow::Result<()> {
+        let parsed = parse_upstream_base_url(self.upstream_base_url())
+            .map_err(|e| anyhow::anyhow!(e))?;
+        self.upstream.base_url = Some(parsed.normalized.clone());
+        if self.upstream.deepseek_endpoints.is_empty() {
+            self.upstream
+                .deepseek_endpoints
+                .push(parsed.endpoint.clone());
+        }
+        if self.upstream.tls_sni.is_none() {
+            self.upstream.tls_sni = Some(parsed.tls_sni.clone());
+        }
+        Ok(())
+    }
+
+    pub fn resolved_tls_sni(&self) -> String {
+        self.upstream
             .tls_sni
             .clone()
-            .unwrap_or_else(|| "api.deepseek.com".to_string());
+            .unwrap_or_else(|| {
+                parse_upstream_base_url(self.upstream_base_url())
+                    .map(|p| p.tls_sni)
+                    .unwrap_or_else(|_| "api.deepseek.com".to_string())
+            })
+    }
+
+    pub fn parse_endpoints(&self) -> Vec<crab_route::Backend> {
+        let tls_sni = self.resolved_tls_sni();
         crab_control::parse_backend_endpoints(
             &self.upstream.deepseek_endpoints,
             self.upstream.default_weight.unwrap_or(1),
@@ -432,16 +470,22 @@ impl GatewayConfig {
             }
         }
 
+        if let Err(e) = parse_upstream_base_url(self.upstream_base_url()) {
+            errors.push(format!("invalid upstream base_url: {e}"));
+        }
+
         if self.upstream.deepseek_endpoints.is_empty() {
             errors.push(
-                "At least one upstream endpoint is required in [upstream].deepseek_endpoints"
+                "At least one upstream endpoint is required in [upstream].deepseek_endpoints (or set base_url to auto-derive)"
                     .into(),
             );
         }
 
         for ep in &self.upstream.deepseek_endpoints {
-            if ep.parse::<SocketAddr>().is_err() {
-                errors.push(format!("Invalid upstream endpoint address: '{}'", ep));
+            if ep.parse::<SocketAddr>().is_err()
+                && ep.to_socket_addrs().is_err()
+            {
+                errors.push(format!("Invalid upstream endpoint address: '{ep}'"));
             }
         }
 
@@ -479,8 +523,7 @@ impl GatewayConfig {
 
         if self.cache.max_sse_cache_bytes > MAX_SSE_CACHE_BYTES_CAP {
             errors.push(format!(
-                "cache.max_sse_cache_bytes must be <= {} (64 MiB)",
-                MAX_SSE_CACHE_BYTES_CAP
+                "cache.max_sse_cache_bytes must be <= {MAX_SSE_CACHE_BYTES_CAP} (64 MiB)"
             ));
         }
 
@@ -488,13 +531,33 @@ impl GatewayConfig {
             errors.push("limits.max_request_body_bytes must be > 0".into());
         } else if self.limits.max_request_body_bytes > MAX_REQUEST_BODY_BYTES_CAP {
             errors.push(format!(
-                "limits.max_request_body_bytes must be <= {} (64 MiB)",
-                MAX_REQUEST_BODY_BYTES_CAP
+                "limits.max_request_body_bytes must be <= {MAX_REQUEST_BODY_BYTES_CAP} (64 MiB)"
             ));
         }
 
         if self.limits.max_concurrent_requests == 0 {
             errors.push("limits.max_concurrent_requests must be > 0".into());
+        }
+
+        if let Some(reasoning) = &self.reasoning {
+            let strategy = reasoning.missing_reasoning_strategy.as_str();
+            if strategy != "recover" && strategy != "reject" && strategy != "fill_only" {
+                errors.push(format!(
+                    "reasoning.missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\", got \"{strategy}\""
+                ));
+            }
+            let on_fill = reasoning.missing_reasoning_on_fill_only.as_str();
+            if on_fill != "omit_reasoning" && on_fill != "reject" {
+                errors.push(format!(
+                    "reasoning.missing_reasoning_on_fill_only must be \"omit_reasoning\" or \"reject\", got \"{on_fill}\""
+                ));
+            }
+            if reasoning.thinking_mode != "enabled" && reasoning.thinking_mode != "disabled" {
+                errors.push(format!(
+                    "reasoning.thinking_mode must be \"enabled\" or \"disabled\", got \"{}\"",
+                    reasoning.thinking_mode
+                ));
+            }
         }
 
         if let Some(coalesce_max) = self.upstream.max_coalesce_inflight {
@@ -576,6 +639,47 @@ mod tests {
         let limits = LimitsConfig::default();
         assert_eq!(limits.max_request_body_bytes, 4_194_304);
         assert_eq!(limits.max_concurrent_requests, 512);
+    }
+
+    #[test]
+    fn test_upstream_base_url_env_override() {
+        let dir = std::env::temp_dir().join(format!("crabcache_cfg_bu_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.toml");
+        std::fs::write(
+            &path,
+            r#"
+listen_addr = "127.0.0.1:8080"
+metrics_addr = "127.0.0.1:9090"
+api_key = "sk-test-key-1234567890"
+[upstream]
+base_url = "https://api.deepseek.com"
+deepseek_endpoints = ["api.deepseek.com:443"]
+[cache]
+l1_redis_url = "redis://127.0.0.1:6379"
+[semantic]
+enabled = false
+model_path = ""
+tokenizer_path = ""
+qdrant_url = ""
+collection_name = ""
+"#,
+        )
+        .unwrap();
+
+        unsafe {
+            std::env::set_var(
+                "CRABCACHE_UPSTREAM_BASE_URL",
+                "https://api.openai.com",
+            );
+        }
+        let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        unsafe {
+            std::env::remove_var("CRABCACHE_UPSTREAM_BASE_URL");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+
+        assert_eq!(config.upstream_base_url(), "https://api.openai.com");
     }
 
     #[test]

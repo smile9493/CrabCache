@@ -9,16 +9,18 @@ api_key = "set-via-CRABCACHE_API_KEY-environment-variable"
 
 [management]
 listen_addr = "0.0.0.0:9080"
-admin_key = "set-via-CRABCACHE_GATEWAY_ADMIN_KEY"
+admin_key = "CrabCache-Admin-Secret-2026"
 
 [limits]
 max_request_body_bytes = 4194304
 max_concurrent_requests = 512
 
 [upstream]
+# Origin only (no /v1). Override with CRABCACHE_UPSTREAM_BASE_URL / CRABCACHE_UPSTREAM_MODEL.
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 default_weight = 1
+# Omit deepseek_endpoints to auto-derive host:443 from base_url.
 deepseek_endpoints = ["api.deepseek.com:443"]
 # keys = ["sk-ds-1", "sk-ds-2"]  # or CRABCACHE_UPSTREAM_KEYS in .env
 
@@ -26,7 +28,7 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
 l0_ttl_secs = 3600
-# Docker Compose service name "redis" (not 127.0.0.1).
+stream_cache_enabled = true
 l1_redis_url = "redis://redis:6379"
 l1_pool_size = 16
 fingerprint_version = 1
@@ -48,6 +50,7 @@ ttl_secs = 86400
 [reasoning]
 thinking_mode = "enabled"
 reasoning_effort = "max"
+# recover | reject (strict: HTTP 409 when reasoning_content cannot be restored)
 missing_reasoning_strategy = "recover"
 display_reasoning = true
 collapsible_reasoning = true
@@ -63,7 +66,7 @@ idle_timeout_secs = 90
 h2_ping_interval_secs = 30
 
 [trace_logging]
-enabled = false
+enabled = true
 path = "/app/logs/trace.jsonl"
 max_lines = 10000
 max_files = 5

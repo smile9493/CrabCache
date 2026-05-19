@@ -1,0 +1,16 @@
+# Optional overlay: attach gateway and admin to an external OpenResty / Nginx Docker network.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.openresty.yml up -d
+
+services:
+  gateway:
+    networks:
+      - openresty
+
+  admin:
+    networks:
+      - openresty
+
+networks:
+  openresty:
+    name: openresty_network
+    external: true

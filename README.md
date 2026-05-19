@@ -46,7 +46,7 @@ CrabCache 是一个生产级的 Rust API 网关，通过三级缓存架构、会
 ### 🔄 智能路由
 
 - **Ketama 一致性哈希**: 最大化 DeepSeek V4 前缀缓存命中率
-- **会话亲和性**: 相同 `conversation_id` / `x-conversation-id` 路由到同一后端节点
+- **会话亲和性**: `x-conversation-id` / `x-prompt-cache-key` / body `prompt_cache_key` 粘滞到同一 DeepSeek peer，配合上游 L3 前缀缓存
 - **动态权重**: 支持后端节点动态扩缩容（通过管理 API 热更新）
 
 ### 🧠 推理内容管理
@@ -54,7 +54,7 @@ CrabCache 是一个生产级的 Rust API 网关，通过三级缓存架构、会
 - **推理内容缓存**: SQLite 持久化缓存 DeepSeek 推理过程，避免重复计算
 - **流式推理恢复**: SSE 流中实时检测和恢复缺失的推理内容
 - **Cursor 兼容**: 支持 Cursor IDE 的推理内容显示协议（可折叠区块）
-- **多种策略**: 支持 `recover` / `ignore` / `fail` 三种缺失推理处理策略
+- **多种策略**: `recover` / `fill_only` / `reject`；`fill_only` 保持 messages 前缀稳定以提升 DeepSeek L3 命中率（见 [`docs/DEEPSEEK_PREFIX_CACHE.md`](docs/DEEPSEEK_PREFIX_CACHE.md)）
 
 ### 🛡️ 企业级特性
 
@@ -156,8 +156,10 @@ metrics_addr = "0.0.0.0:9090"
 api_key = "sk-your-deepseek-api-key"
 
 [upstream]
+# 上游中转根地址（不含 /v1，与 new-api 渠道 base_url 一致）
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
+# 可省略，将从 base_url 自动推导 host:443
 deepseek_endpoints = ["api.deepseek.com:443"]
 
 [cache]
@@ -275,7 +277,7 @@ ttl_secs = 86400                     # 语义缓存 TTL
 [reasoning]
 thinking_mode = "enabled"            # enabled / disabled
 reasoning_effort = "max"             # low / medium / high / max
-missing_reasoning_strategy = "recover" # recover / ignore / fail
+missing_reasoning_strategy = "recover" # recover | reject
 display_reasoning = true             # 在响应中展示推理过程
 collapsible_reasoning = true         # 使用可折叠区块展示
 cache_db_path = "data/reasoning_content.sqlite3"
@@ -475,7 +477,10 @@ sum(increase(gateway_cache_cost_saved_usd_total[24h]))
 
 ```bash
 cp .env.example .env
-# 编辑 .env：CRABCACHE_API_KEY 或 CRABCACHE_UPSTREAM_KEYS（上游 DeepSeek 密钥池）
+# 编辑 .env：
+#   CRABCACHE_API_KEY 或 CRABCACHE_UPSTREAM_KEYS（上游 DeepSeek 密钥池）
+#   CRABCACHE_GATEWAY_ADMIN_KEY（Management API）
+# 可选：CRABCACHE_UPSTREAM_BASE_URL / CRABCACHE_UPSTREAM_MODEL（覆盖 TOML 中的中转地址）
 
 docker compose up -d --build
 docker compose ps   # gateway 应为 healthy（/ready 依赖 Redis）
@@ -512,7 +517,13 @@ docker compose exec gateway curl -s -X POST http://127.0.0.1:9080/v1/keys \
 | `redis` | 是 | 无（仅 Docker 网络） | L1 缓存 |
 | `qdrant` | `--profile semantic` | 无 | L2 可选 |
 
-环境变量见 [`.env.example`](.env.example)。可选生产覆盖：[`docker-compose.prod.yml`](docker-compose.prod.yml)。
+环境变量见 [`.env.example`](.env.example)。可选生产覆盖：[`docker-compose.prod.yml`](docker-compose.prod.yml)。若需接入外部 OpenResty 网络：`docker compose -f docker-compose.yml -f docker-compose.openresty.yml up -d`。
+
+**上游中转（热更新）**：Management `GET/PUT /v1/upstream/relay`（`base_url`、`model`、`endpoints`）；Admin 面板上游配置会同步到网关运行时。
+
+**Cursor + DeepSeek thinking**：参见 [`docs/CURSOR_SETUP.md`](docs/CURSOR_SETUP.md)。**上游 L3 前缀缓存**：参见 [`docs/DEEPSEEK_PREFIX_CACHE.md`](docs/DEEPSEEK_PREFIX_CACHE.md)。清空 reasoning SQLite：`crab-gateway --clear-reasoning-cache config/gateway.toml` 或 `DELETE /v1/reasoning/cache`。
+
+**Admin 辅助持久化**：`CRABCACHE_ADMIN_STATE_PATH`（默认 `data/admin-state.json`）保存模型列表元数据、上次连通性测试结果等；运行时 relay 与 Key 池以 Gateway 为准，Admin 启动时会与 Gateway 对齐。
 
 可选 Admin Dashboard（需先 [`scripts/build_dashboard.sh`](scripts/build_dashboard.sh) 构建前端）：
 
@@ -644,7 +655,19 @@ mkdir -p models
 # 从 Hugging Face 下载 all-MiniLM-L6-v2.onnx 和 tokenizer.json 到 models/ 目录
 ```
 
-#### 3. 内存分配器
+#### 3. Git 与本地工具链目录
+
+请勿在仓库根目录安装 Rust 工具链（避免产生 `.rustup/`、`.cargo/` 等数万未跟踪文件）。应使用系统默认路径：
+
+```bash
+# 推荐：工具链在用户主目录
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+```
+
+构建产物位于 `target/`（已在 `.gitignore` 中）。若误在仓库内生成 `.rustup/`，删除该目录即可：`rm -rf .rustup .cargo`。
+
+#### 4. 内存分配器
 生产环境使用 jemalloc：
 ```rust
 #[global_allocator]

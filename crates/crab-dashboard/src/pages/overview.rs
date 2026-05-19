@@ -5,12 +5,13 @@ use crate::api;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
-use crate::types::MetricsSnapshot;
+use crate::types::{MetricsSnapshot, UpstreamConfig};
 
 #[component]
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
     let metrics: RwSignal<Option<Result<MetricsSnapshot, String>>> = RwSignal::new(None);
+    let upstream: RwSignal<Option<Result<UpstreamConfig, String>>> = RwSignal::new(None);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
 
@@ -27,6 +28,13 @@ pub fn OverviewPage() -> impl IntoView {
     };
 
     load_metrics();
+
+    leptos::task::spawn_local(async move {
+        match api::fetch_upstream_config().await {
+            Ok(c) => upstream.set(Some(Ok(c))),
+            Err(e) => upstream.set(Some(Err(e))),
+        }
+    });
 
     leptos::task::spawn_local(async move {
         loop {
@@ -65,6 +73,18 @@ pub fn OverviewPage() -> impl IntoView {
                 </div>
             </PageHeader>
 
+            {move || match upstream.get() {
+                Some(Ok(c)) if c.key_pool_count == 0 => view! {
+                    <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
+                        <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
+                        <a href="/upstream" class="btn btn-primary text-sm">
+                            {t.overview_setup_upstream_link()}
+                        </a>
+                    </div>
+                }.into_any(),
+                _ => view! { <span></span> }.into_any(),
+            }}
+
             {move || match metrics.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => view! {
@@ -75,6 +95,7 @@ pub fn OverviewPage() -> impl IntoView {
                 Some(Ok(m)) => view! {
                     <div class="space-y-6">
                         <MetricsBento metrics=m.clone() />
+                        <PrefixCacheCard metrics=m.clone() />
                         <TokenStats metrics=m.clone() />
                         <TimeSeriesChart metrics=m.clone() />
                         <div class="bento-grid-3">
@@ -91,6 +112,35 @@ pub fn OverviewPage() -> impl IntoView {
                     </div>
                 }.into_any(),
             }}
+        </div>
+    }
+}
+
+#[component]
+fn PrefixCacheCard(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let ratio_pct = metrics.prefix_cache_hit_ratio * 100.0;
+    let total = metrics.prefix_cache_hit_tokens + metrics.prefix_cache_miss_tokens;
+
+    view! {
+        <div class="glass-card">
+            <h3 class="text-sm font-medium text-theme-secondary mb-1">
+                {t.overview_prefix_cache_title()}
+            </h3>
+            <p class="text-xs text-theme-muted mb-4">{t.overview_prefix_cache_desc()}</p>
+            <div class="flex flex-wrap items-end gap-6">
+                <div>
+                    <div class="text-3xl font-mono tabular-nums text-accent font-semibold">
+                        {format!("{:.1}%", ratio_pct)}
+                    </div>
+                    <div class="text-xs text-theme-muted mt-1">"L3 hit ratio"</div>
+                </div>
+                <div class="text-sm font-mono tabular-nums text-theme-secondary space-y-1">
+                    <div>{format!("hit: {}", metrics.prefix_cache_hit_tokens)}</div>
+                    <div>{format!("miss: {}", metrics.prefix_cache_miss_tokens)}</div>
+                    <div class="text-theme-muted">{format!("total tokens: {}", total)}</div>
+                </div>
+            </div>
         </div>
     }
 }

@@ -11,7 +11,7 @@ pub struct Embedder {
 impl Embedder {
     pub fn load(model_path: &str, tokenizer_path: &str) -> Result<Self> {
         let tokenizer = Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))?;
 
         debug!(model_path = model_path, "Embedder model path configured");
 
@@ -25,7 +25,7 @@ impl Embedder {
         let encoding = self
             .tokenizer
             .encode(text, true)
-            .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
 
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
         let attention_mask: Vec<i64> = encoding

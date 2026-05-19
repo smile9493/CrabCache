@@ -2,9 +2,12 @@ use crate::keys::{
     conversation_scope, message_signature, tool_call_ids, tool_call_names, tool_call_signature,
 };
 use crate::store::ReasoningStore;
+use crab_metrics::global_metrics;
 use regex::Regex;
 use serde_json::Value;
-use std::sync::LazyLock;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 static CURSOR_THINKING_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:<(?:think|thinking)\b[^>]*>[\s\S]*?(?:</(?:think|thinking)>|$)|<details\b[^>]*>\s*<summary\b[^>]*>\s*Thinking\s*</summary>[\s\S]*?(?:</details>|$))\s*").unwrap()
@@ -449,7 +452,7 @@ fn normalize_message(
             Value::Array(
                 tool_calls
                     .iter()
-                    .map(|tc| normalize_tool_call(tc))
+                    .map(normalize_tool_call)
                     .collect(),
             ),
         );
@@ -593,7 +596,7 @@ fn leading_system_messages(messages: &[Value]) -> Vec<Value> {
 fn active_messages_from_recovery_boundary(
     messages: &[Value],
 ) -> Option<(Vec<Value>, usize, serde_json::Value)> {
-    let recovery_boundary_index = messages.iter().rposition(|m| has_recovery_notice(m))?;
+    let recovery_boundary_index = messages.iter().rposition(has_recovery_notice)?;
 
     let context_user_index = messages[..recovery_boundary_index]
         .iter()
@@ -633,11 +636,10 @@ fn recover_messages_from_missing_reasoning(
         has_recovery_notice(m)
             && missing_indexes.iter().any(|&idx| {
                 idx < messages.len()
-                    && messages
+                    && !messages
                         .get(idx)
-                        .map(|mi| has_recovery_notice(mi))
+                        .map(has_recovery_notice)
                         .unwrap_or(false)
-                        == false
             })
     });
 
@@ -738,6 +740,104 @@ fn reasoning_model_family(upstream_model: &str) -> &str {
     }
 }
 
+#[derive(Clone)]
+struct PrefixSnapshot {
+    message_count: usize,
+    hash: String,
+}
+
+static PREFIX_SNAPSHOTS: LazyLock<Mutex<HashMap<String, PrefixSnapshot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static IMMUTABLE_PREFIX_BLOCKS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn messages_prefix_hash(messages: &[Value], len: usize) -> String {
+    let end = len.min(messages.len());
+    let slice = &messages[..end];
+    let encoded = serde_json::to_string(slice).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(encoded.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn validate_prefix_append_only(scope: &str, messages: &[Value]) {
+    let Ok(mut guard) = PREFIX_SNAPSHOTS.lock() else {
+        return;
+    };
+    if let Some(snap) = guard.get(scope) {
+        if messages.len() > snap.message_count {
+            let current = messages_prefix_hash(messages, snap.message_count);
+            if current != snap.hash {
+                global_metrics().record_prefix_break();
+                tracing::warn!(
+                    scope = scope,
+                    expected_len = snap.message_count,
+                    "Non-append-only message prefix detected"
+                );
+            }
+        }
+    }
+    if !messages.is_empty() {
+        guard.insert(
+            scope.to_string(),
+            PrefixSnapshot {
+                message_count: messages.len(),
+                hash: messages_prefix_hash(messages, messages.len()),
+            },
+        );
+    }
+}
+
+fn immutable_prefix_block_hash(messages: &[Value], tools: Option<&Value>) -> String {
+    let mut hasher = Sha256::new();
+    for msg in messages
+        .iter()
+        .take_while(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+    {
+        if let Ok(bytes) = serde_json::to_vec(msg) {
+            hasher.update(&bytes);
+        }
+    }
+    if let Some(tools) = tools {
+        if let Ok(bytes) = serde_json::to_vec(tools) {
+            hasher.update(&bytes);
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn track_immutable_prefix_block(scope: &str, block_hash: &str) {
+    let Ok(mut guard) = IMMUTABLE_PREFIX_BLOCKS.lock() else {
+        return;
+    };
+    if let Some(prev) = guard.get(scope) {
+        if prev != block_hash {
+            global_metrics().record_prefix_block_drift();
+            tracing::warn!(
+                scope = scope,
+                "Immutable system/tools prefix block drifted"
+            );
+        }
+    }
+    guard.insert(scope.to_string(), block_hash.to_string());
+}
+
+fn maybe_append_context_summary(messages: &mut Vec<Value>, threshold: usize) {
+    if threshold == 0 || messages.len() <= threshold {
+        return;
+    }
+    let summary = format!(
+        "[CrabCache] Long context ({} messages). Earlier turns are preserved above for upstream prefix cache; continue from this summary if needed.",
+        messages.len()
+    );
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": summary,
+    }));
+    global_metrics().record_context_summary_appended();
+}
+
 pub fn upstream_model_for(original_model: &str, fallback_model: &str) -> String {
     if original_model.starts_with("deepseek-") {
         original_model.to_string()
@@ -771,6 +871,9 @@ pub fn prepare_upstream_request(
     thinking_mode: &str,
     reasoning_effort: &str,
     missing_reasoning_strategy: &str,
+    missing_reasoning_on_fill_only: &str,
+    context_summary_message_threshold: usize,
+    prefix_validate: bool,
     authorization: Option<&str>,
 ) -> PreparedRequest {
     let original_model = payload
@@ -815,7 +918,7 @@ pub fn prepare_upstream_request(
     if let Some(tools) = prepared.get("tools").and_then(|t| t.as_array()).cloned() {
         prepared.insert(
             "tools".into(),
-            Value::Array(tools.iter().map(|t| normalize_tool(t)).collect()),
+            Value::Array(tools.iter().map(normalize_tool).collect()),
         );
     } else if let Some(functions) = payload.get("functions").and_then(|f| f.as_array()).cloned() {
         prepared.insert(
@@ -823,7 +926,7 @@ pub fn prepare_upstream_request(
             Value::Array(
                 functions
                     .iter()
-                    .map(|f| legacy_function_to_tool(f))
+                    .map(legacy_function_to_tool)
                     .collect(),
             ),
         );
@@ -898,6 +1001,14 @@ pub fn prepare_upstream_request(
         }
     }
 
+    let tools_for_block = prepared.get("tools").cloned();
+    let block_hash = immutable_prefix_block_hash(&pre_repair.messages, tools_for_block.as_ref());
+    track_immutable_prefix_block(&record_response_scope, &block_hash);
+
+    if prefix_validate {
+        validate_prefix_append_only(&record_response_scope, &pre_repair.messages);
+    }
+
     let mut result = normalize_messages(
         &messages_for_repair,
         store,
@@ -928,18 +1039,30 @@ pub fn prepare_upstream_request(
         missing_indexes = result.missing_indexes;
     }
 
-    let active_scope = conversation_scope(&result.messages, &cache_namespace);
+    if missing_reasoning_strategy == "fill_only"
+        && missing_reasoning_on_fill_only == "omit_reasoning"
+    {
+        missing_indexes.clear();
+    }
+
+    let mut final_messages = result.messages.clone();
+    maybe_append_context_summary(
+        &mut final_messages,
+        context_summary_message_threshold,
+    );
+
+    let active_scope = conversation_scope(&final_messages, &cache_namespace);
     let mut record_response_contexts = Vec::new();
     record_response_contexts.push((
         record_response_scope.clone(),
         record_response_messages.clone(),
     ));
     if active_scope != record_response_scope {
-        record_response_contexts.push((active_scope, result.messages.clone()));
+        record_response_contexts.push((active_scope, final_messages.clone()));
     }
 
-    let final_messages = strip_recovery_notice_for_upstream(&result.messages);
-    prepared.insert("messages".into(), Value::Array(final_messages));
+    let upstream_messages = strip_recovery_notice_for_upstream(&final_messages);
+    prepared.insert("messages".into(), Value::Array(upstream_messages));
 
     PreparedRequest {
         payload: Value::Object(prepared),
@@ -1014,11 +1137,48 @@ mod tests {
             "enabled",
             "max",
             "recover",
+            "omit_reasoning",
+            0,
+            false,
             None,
         );
         assert_eq!(result.original_model, "deepseek-v4-pro");
         assert_eq!(result.upstream_model, "deepseek-v4-pro");
         assert_eq!(result.missing_reasoning_messages, 0);
+    }
+
+    #[test]
+    fn test_prepare_upstream_reject_does_not_recover_missing() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "plan"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                }
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "reject",
+            "omit_reasoning",
+            0,
+            false,
+            None,
+        );
+        assert!(result.missing_reasoning_messages > 0);
+        assert_eq!(result.recovered_reasoning_messages, 0);
     }
 
     #[test]
@@ -1037,6 +1197,9 @@ mod tests {
             "enabled",
             "max",
             "recover",
+            "omit_reasoning",
+            0,
+            false,
             None,
         );
         let tools = result
@@ -1046,5 +1209,50 @@ mod tests {
             .unwrap();
         assert_eq!(tools.len(), 1);
         assert!(result.payload.get("tool_choice").is_some());
+    }
+
+    #[test]
+    fn test_fill_only_preserves_message_count_without_recovery_system() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "system", "content": "fixed agent prefix"},
+                {"role": "user", "content": "plan"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                },
+                {"role": "user", "content": "continue"}
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "fill_only",
+            "omit_reasoning",
+            0,
+            false,
+            None,
+        );
+        let msgs = result.payload.get("messages").and_then(|m| m.as_array()).unwrap();
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(result.retired_prefix_messages, 0);
+        assert_eq!(result.recovered_reasoning_messages, 0);
+        assert!(!msgs.iter().any(|m| {
+            m.get("role").and_then(|r| r.as_str()) == Some("system")
+                && m.get("content")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.contains("deepseek-cursor-proxy recovered"))
+                    .unwrap_or(false)
+        }));
     }
 }

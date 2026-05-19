@@ -11,7 +11,7 @@ pub use context::{
     StoredKey,
 };
 pub use error::ProxyError;
-pub use proxy::{GatewayProxy, should_store_sse_body};
+pub use proxy::{GatewayProxy, flush_streaming_reasoning, should_store_sse_body};
 pub use runtime::RuntimeConfig;
 pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
 pub use upstream_pool::{

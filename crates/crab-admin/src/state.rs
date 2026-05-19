@@ -1,6 +1,9 @@
+use crate::persist::{self, PersistHandle};
 use crab_control::GatewayAdminClient;
+use crab_control::UpstreamTestResult;
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Extended metadata for an API key (quota/UI fields not stored on the gateway).
@@ -41,6 +44,10 @@ pub struct AppState {
     pub upstream_api_key: String,
     /// Secrets last pushed to the gateway key pool (used by sync_models).
     pub upstream_pool_secrets: RwLock<Vec<UpstreamPoolSecret>>,
+    pub upstream_notes: RwLock<Option<String>>,
+    pub last_upstream_test: RwLock<Option<UpstreamTestResult>>,
+    pub gateway_reachable: RwLock<bool>,
+    pub persist: Arc<PersistHandle>,
     pub gateway: GatewayAdminClient,
     pub last_invalidate: RwLock<Option<LastInvalidate>>,
     /// API key metadata indexed by key id (gateway-assigned).
@@ -105,6 +112,7 @@ pub struct StoredBackend {
 #[derive(Debug, Clone)]
 pub struct StoredUpstreamConfig {
     pub base_url: String,
+    pub model: String,
     pub api_key: String,
     pub endpoints: Vec<String>,
 }
@@ -113,6 +121,7 @@ impl Default for StoredUpstreamConfig {
     fn default() -> Self {
         Self {
             base_url: "https://api.deepseek.com".to_string(),
+            model: "deepseek-v4-pro".to_string(),
             api_key: String::new(),
             endpoints: vec!["api.deepseek.com:443".to_string()],
         }
@@ -233,10 +242,24 @@ impl AppState {
             });
         }
 
+        let persist = Arc::new(PersistHandle::new());
+        let loaded = persist.load();
+        let models = StoredModelList::from(loaded.models);
+        let mut upstream_cfg = StoredUpstreamConfig::default();
+        if let Some(snap) = loaded.upstream_snapshot {
+            upstream_cfg.base_url = snap.base_url;
+            upstream_cfg.model = snap.model;
+            upstream_cfg.endpoints = snap.endpoints;
+        }
+
         Self {
             start_time: now,
             upstream_api_key,
             upstream_pool_secrets: RwLock::new(pool_secrets),
+            upstream_notes: RwLock::new(loaded.upstream_notes),
+            last_upstream_test: RwLock::new(loaded.last_upstream_test),
+            gateway_reachable: RwLock::new(false),
+            persist,
             gateway: GatewayAdminClient::from_env(),
             keys_meta: DashMap::new(),
             request_logs: RwLock::new(Vec::new()),
@@ -264,11 +287,8 @@ impl AppState {
                 idle_timeout_secs: 90,
                 h2_ping_interval_secs: 30,
             }),
-            upstream_config: RwLock::new(StoredUpstreamConfig::default()),
-            models: RwLock::new(StoredModelList {
-                models: Vec::new(),
-                synced_at: None,
-            }),
+            upstream_config: RwLock::new(upstream_cfg),
+            models: RwLock::new(models),
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
             trace_entries: RwLock::new(Vec::new()),
@@ -291,6 +311,57 @@ impl AppState {
             })
             .collect();
         *self.upstream_pool_secrets.write() = secrets;
+    }
+
+    pub fn flush_persist(&self) {
+        let file = persist::build_state_file(
+            &self.models.read(),
+            &self.upstream_config.read(),
+            self.last_upstream_test.read().clone(),
+            self.upstream_notes.read().clone(),
+        );
+        self.persist.save_debounced(file);
+    }
+
+    /// Merge gateway relay + backends into stored upstream config (gateway wins).
+    pub async fn reconcile_upstream_from_gateway(&self) {
+        match self.gateway.get_upstream_relay().await {
+            Ok(relay) => {
+                *self.gateway_reachable.write() = true;
+                let mut cfg = self.upstream_config.write();
+                cfg.base_url = relay.base_url;
+                cfg.model = relay.model;
+            }
+            Err(e) => {
+                *self.gateway_reachable.write() = false;
+                tracing::warn!(error = %e, "Could not fetch upstream relay from gateway");
+            }
+        }
+
+        if let Ok(backends) = self.gateway.get_backends().await {
+            let endpoints: Vec<String> = backends.backends.iter().map(|b| b.addr.clone()).collect();
+            if !endpoints.is_empty() {
+                self.upstream_config.write().endpoints = endpoints;
+            }
+        }
+
+        if let Ok(keys) = self.gateway.get_upstream_keys().await {
+            self.replace_upstream_pool_from_views(&keys.keys);
+        }
+    }
+
+    fn replace_upstream_pool_from_views(&self, views: &[crab_control::UpstreamKeyView]) {
+        if views.is_empty() {
+            return;
+        }
+        let secrets: Vec<UpstreamPoolSecret> = self.upstream_pool_secrets.read().clone();
+        if secrets.iter().any(|s| !s.secret.is_empty()) {
+            return;
+        }
+        tracing::info!(
+            count = views.len(),
+            "Gateway key pool has entries but admin has no secrets; enable keys via dashboard replace"
+        );
     }
 
     /// Pick a DeepSeek API key for upstream model list sync.

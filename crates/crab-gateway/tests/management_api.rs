@@ -7,7 +7,8 @@ use crab_control::{
     CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER, GATEWAY_ADMIN_KEY_HEADER,
 };
 use crab_gateway::management::{ManagementState, router};
-use crab_proxy::{ConnectionConfig, RuntimeConfig, UpstreamKeyPool};
+use crab_proxy::{ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool};
+use crab_reasoning::ReasoningStore;
 use crab_route::AffinityRouter;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
@@ -54,9 +55,15 @@ async fn test_management_state() -> Option<ManagementState> {
             .ok()?,
     );
 
+    let reasoning_store = Arc::new(
+        ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("reasoning store"),
+    );
+
     Some(ManagementState {
         runtime: test_runtime(),
         tiered_cache,
+        reasoning_store,
+        reasoning_config: Arc::new(RwLock::new(ReasoningConfig::default())),
         admin_key: "test-admin".to_string(),
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
         invalidate_job: Arc::new(Mutex::new(None)),
@@ -358,6 +365,71 @@ async fn status_includes_upstream_key_fields() {
     assert!(json.get("upstream_key_count").is_some());
     assert!(json.get("upstream_keys_available").is_some());
     assert_eq!(json["upstream_key_count"].as_u64(), Some(1));
+}
+
+#[tokio::test]
+async fn put_upstream_relay_updates_model() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let body = serde_json::json!({
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "endpoints": ["api.deepseek.com:443"]
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/relay")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["model"].as_str(), Some("deepseek-chat"));
+}
+
+#[tokio::test]
+async fn put_upstream_keys_append_mode() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let body = serde_json::json!({
+        "mode": "append",
+        "keys": [{"secret": "sk-second-key-1234567890", "enabled": true}]
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["keys"].as_array().map(|a| a.len()), Some(2));
 }
 
 #[tokio::test]

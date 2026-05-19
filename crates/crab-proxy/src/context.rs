@@ -9,7 +9,7 @@ use crab_reasoning::{
 use crab_semantic::{SemanticCache, SemanticGateConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -28,6 +28,13 @@ pub struct ConnectionConfig {
     pub tcp_keepalive_count: Option<usize>,
     pub idle_timeout_secs: Option<u64>,
     pub h2_ping_interval_secs: Option<u64>,
+    /// Max seconds waiting for upstream response bytes (0 = no limit).
+    #[serde(default = "default_upstream_request_timeout_secs")]
+    pub upstream_request_timeout_secs: Option<u64>,
+}
+
+fn default_upstream_request_timeout_secs() -> Option<u64> {
+    Some(300)
 }
 
 impl Default for ConnectionConfig {
@@ -38,6 +45,7 @@ impl Default for ConnectionConfig {
             tcp_keepalive_count: Some(3),
             idle_timeout_secs: Some(90),
             h2_ping_interval_secs: Some(30),
+            upstream_request_timeout_secs: default_upstream_request_timeout_secs(),
         }
     }
 }
@@ -47,11 +55,24 @@ pub struct ReasoningConfig {
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub missing_reasoning_strategy: String,
+    /// When `missing_reasoning_strategy = "fill_only"`: `omit_reasoning` (default) or `reject`.
+    #[serde(default = "default_missing_reasoning_on_fill_only")]
+    pub missing_reasoning_on_fill_only: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
     pub cache_db_path: String,
     pub cache_max_age_secs: Option<u64>,
     pub cache_max_rows: Option<usize>,
+    /// Append a tail summary user message when message count exceeds this (0 = disabled).
+    #[serde(default)]
+    pub context_summary_message_threshold: usize,
+    /// When true, log/metric non-append-only prefix changes (does not block requests).
+    #[serde(default)]
+    pub prefix_validate: bool,
+}
+
+fn default_missing_reasoning_on_fill_only() -> String {
+    "omit_reasoning".to_string()
 }
 
 impl Default for ReasoningConfig {
@@ -60,11 +81,14 @@ impl Default for ReasoningConfig {
             thinking_mode: "enabled".to_string(),
             reasoning_effort: "max".to_string(),
             missing_reasoning_strategy: "recover".to_string(),
+            missing_reasoning_on_fill_only: default_missing_reasoning_on_fill_only(),
             display_reasoning: true,
             collapsible_reasoning: true,
             cache_db_path: ":memory:".to_string(),
             cache_max_age_secs: Some(30 * 24 * 3600),
             cache_max_rows: Some(100_000),
+            context_summary_message_threshold: 0,
+            prefix_validate: false,
         }
     }
 }
@@ -122,6 +146,8 @@ pub struct GatewayContext {
     pub cache_tier: Option<CacheTier>,
     pub is_streaming: bool,
     pub is_models_list: bool,
+    /// HTTP `Host` / TLS SNI for the selected upstream peer.
+    pub upstream_host: Option<String>,
     pub model: String,
     pub consumer: Option<String>,
     pub request_start: Instant,
@@ -141,11 +167,17 @@ pub struct GatewayContext {
     pub content_length: usize,
     pub total_tokens: u64,
     pub conversation_id: Option<String>,
+    /// OpenAI-style `prompt_cache_key` from request body (affinity + L3 stickiness).
+    pub prompt_cache_key: Option<String>,
+    pub last_prompt_cache_hit_tokens: u64,
+    pub last_prompt_cache_miss_tokens: u64,
     pub request_permit: Option<OwnedSemaphorePermit>,
     pub upstream_key_guard: Option<UpstreamKeyGuard>,
     pub upstream_miss: bool,
     /// Remaining same-request upstream retries after 429 (non-streaming only).
     pub upstream_retry_budget: u8,
+    /// Set when streaming SSE receives upstream `[DONE]` and reasoning was stored.
+    pub stream_reasoning_finalized: bool,
 }
 
 impl GatewayContext {
@@ -157,6 +189,7 @@ impl GatewayContext {
             cache_tier: None,
             is_streaming: false,
             is_models_list: false,
+            upstream_host: None,
             model: String::new(),
             consumer: None,
             request_start: Instant::now(),
@@ -176,10 +209,14 @@ impl GatewayContext {
             content_length: 0,
             total_tokens: 0,
             conversation_id: None,
+            prompt_cache_key: None,
+            last_prompt_cache_hit_tokens: 0,
+            last_prompt_cache_miss_tokens: 0,
             request_permit: None,
             upstream_key_guard: None,
             upstream_miss: false,
             upstream_retry_budget: 1,
+            stream_reasoning_finalized: false,
         }
     }
 }
@@ -191,7 +228,8 @@ pub struct GatewayState {
     pub semantic_gate: SemanticGateConfig,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningStore>,
-    pub reasoning_config: ReasoningConfig,
+    pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
+    pub cors_enabled: bool,
     pub trace_logger: Option<Arc<TraceLogger>>,
     pub cache_key_namespace: Option<String>,
     pub pricing: PricingConfig,

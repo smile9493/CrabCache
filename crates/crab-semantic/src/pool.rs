@@ -17,7 +17,7 @@ pub struct EmbedderPool {
 impl EmbedderPool {
     pub fn load(model_path: &str, tokenizer_path: &str, max_concurrent: usize) -> Result<Self> {
         let tokenizer = Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))?;
 
         let session = Session::builder()?.commit_from_file(model_path)?;
 
@@ -42,7 +42,7 @@ impl EmbedderPool {
         let encoding = self
             .tokenizer
             .encode(text, true)
-            .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
 
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
         let attention_mask: Vec<i64> = encoding
@@ -63,7 +63,7 @@ impl EmbedderPool {
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
             let mut session = session
                 .lock()
-                .map_err(|e| anyhow::anyhow!("Session lock poisoned: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Session lock poisoned: {e}"))?;
 
             let shape = vec![1i64, seq_len as i64];
 

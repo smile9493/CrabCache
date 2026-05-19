@@ -1,4 +1,4 @@
-FROM rust:1.85-slim AS builder
+FROM rust:1.88-slim AS builder
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -49,6 +49,6 @@ RUN mkdir -p /app/data /app/logs /app/config
 COPY --from=builder /app/target/release/crab-gateway /app/crab-gateway
 COPY config/gateway.docker.toml /app/config/gateway.toml
 
-EXPOSE 8080 9090
+EXPOSE 8080 9080 9090
 
 CMD ["/app/crab-gateway", "/app/config/gateway.toml"]

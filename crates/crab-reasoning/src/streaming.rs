@@ -47,6 +47,12 @@ pub struct StreamAccumulator {
     stored_choices: HashMap<(usize, String), String>,
 }
 
+impl Default for StreamAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamAccumulator {
     pub fn new() -> Self {
         Self {
@@ -132,7 +138,7 @@ impl StreamAccumulator {
                                         Value::String(if existing.is_empty() {
                                             name.to_string()
                                         } else {
-                                            format!("{}{}", existing, name)
+                                            format!("{existing}{name}")
                                         }),
                                     );
                                 }
@@ -145,7 +151,7 @@ impl StreamAccumulator {
                                     let new_args = args.as_str().unwrap_or("");
                                     func_obj.insert(
                                         "arguments".into(),
-                                        Value::String(format!("{}{}", existing, new_args)),
+                                        Value::String(format!("{existing}{new_args}")),
                                     );
                                 }
                             }
@@ -199,9 +205,9 @@ impl StreamAccumulator {
         let mut stored = 0;
         for (index, msg) in messages.iter().enumerate() {
             let choice = self.choices.get(&index);
-            let stage = if choice.map_or(false, |c| c.finish_reason.is_some()) {
+            let stage = if choice.is_some_and(|c| c.finish_reason.is_some()) {
                 "final"
-            } else if choice.map_or(false, |c| has_identified_tool_calls(c)) {
+            } else if choice.is_some_and(has_identified_tool_calls) {
                 "tool_call"
             } else {
                 continue;
@@ -435,8 +441,7 @@ pub fn fold_reasoning_into_content(response_payload: &mut Value, collapsible: bo
                 obj.insert(
                     "content".into(),
                     Value::String(format!(
-                        "{}{}{}{}",
-                        block_start, reasoning, block_end, content
+                        "{block_start}{reasoning}{block_end}{content}"
                     )),
                 );
             }

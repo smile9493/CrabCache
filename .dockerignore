@@ -1,0 +1,25 @@
+# Docker build context — exclude local toolchains and build artifacts
+.git
+.github
+target
+target_docker
+.rustup
+.cargo
+.cargo_home
+node_modules
+crates/crab-dashboard/dist
+.trae
+.idea
+.vscode
+data
+docker/data
+*.log
+*.sqlite3
+.env
+config/gateway.toml
+models/*.onnx
+certs
+doc_content.txt
+read_doc.ps1
+tests/*.png
+tests/__pycache__

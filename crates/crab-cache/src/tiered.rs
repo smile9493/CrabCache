@@ -67,7 +67,7 @@ impl TieredCache {
             }
         };
 
-        let result: Option<String> = match conn.get(format!("cache:{}", key)).await {
+        let result: Option<String> = match conn.get(format!("cache:{key}")).await {
             Ok(val) => val,
             Err(e) => {
                 warn!(error = %e, key = key, "Redis GET failed for cache key");
@@ -94,7 +94,7 @@ impl TieredCache {
                         "Failed to deserialize cache entry from Redis, deleting bad entry"
                     );
                     // Delete the bad entry to prevent permanent stale data
-                    let cache_key = format!("cache:{}", key);
+                    let cache_key = format!("cache:{key}");
                     if let Err(del_err) = conn.del::<&str, ()>(&cache_key).await {
                         warn!(
                             error = %del_err,
@@ -121,7 +121,7 @@ impl TieredCache {
         let ttl = self
             .ttl_config
             .read()
-            .map_err(|e| anyhow::anyhow!("TTL config lock poisoned: {}", e))?
+            .map_err(|e| anyhow::anyhow!("TTL config lock poisoned: {e}"))?
             .resolve(model, consumer);
 
         self.l0.insert(key.to_string(), entry.clone()).await;
@@ -135,7 +135,7 @@ impl TieredCache {
         };
 
         let json = serde_json::to_string(&entry)?;
-        let cache_key = format!("cache:{}", key);
+        let cache_key = format!("cache:{key}");
 
         if let Err(e) = conn.set_ex::<&str, &str, ()>(&cache_key, &json, ttl).await {
             warn!(error = %e, key = key, "Redis SETEX failed for cache put");
@@ -182,7 +182,7 @@ impl TieredCache {
             }
         };
 
-        let cache_key = format!("cache:{}", key);
+        let cache_key = format!("cache:{key}");
         if let Err(e) = conn.del::<&str, ()>(&cache_key).await {
             warn!(error = %e, key = key, "Redis DEL failed for cache invalidate");
             return Err(e.into());
@@ -208,7 +208,7 @@ impl TieredCache {
             warn!(error = %e, prefix = prefix, "L0 invalidate_entries_if failed during invalidate_prefix");
         }
 
-        let pattern = format!("cache:{}*", prefix);
+        let pattern = format!("cache:{prefix}*");
         self.scan_delete_l1(&pattern, prefix, scan).await
     }
 
@@ -265,7 +265,7 @@ impl TieredCache {
                         scope = scope_label,
                         "Redis SCAN failed during cache invalidation"
                     );
-                    anyhow::anyhow!("Redis SCAN failed: {}", e)
+                    anyhow::anyhow!("Redis SCAN failed: {e}")
                 })?;
 
             cursor = result.0;

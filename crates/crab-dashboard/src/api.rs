@@ -25,6 +25,9 @@ async fn http_error(resp: Response) -> String {
             return msg.to_string();
         }
     }
+    if !body.is_empty() {
+        return body;
+    }
 
     format!("HTTP {}", status)
 }
@@ -117,6 +120,10 @@ async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Parse error: {}", e))
 }
 
+pub async fn fetch_prefix_cache_metrics() -> Result<PrefixCacheMetricsSnapshot, String> {
+    fetch_json(&format!("{API_BASE}/metrics/prefix-cache")).await
+}
+
 pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
 }
@@ -175,8 +182,22 @@ pub async fn fetch_upstream_config() -> Result<UpstreamConfig, String> {
 
 pub async fn update_upstream_config(
     req: &UpdateUpstreamConfigRequest,
-) -> Result<UpstreamConfig, String> {
+) -> Result<UpdateUpstreamConfigResponse, String> {
     put_json(&format!("{}/upstream/config", API_BASE), req).await
+}
+
+pub async fn test_upstream_connection(body: &UpstreamTestBody) -> Result<UpstreamTestResult, String> {
+    post_json(&format!("{}/upstream/test", API_BASE), body).await
+}
+
+pub async fn detect_models() -> Result<ModelDetectResponse, String> {
+    #[derive(serde::Serialize)]
+    struct EmptyBody {}
+    post_json(&format!("{}/models/detect", API_BASE), &EmptyBody {}).await
+}
+
+pub async fn apply_models(body: &ModelApplyBody) -> Result<SyncResult, String> {
+    post_json(&format!("{}/models/apply", API_BASE), body).await
 }
 
 pub async fn fetch_upstream_keys() -> Result<UpstreamKeysView, String> {

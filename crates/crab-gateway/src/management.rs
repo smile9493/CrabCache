@@ -3,20 +3,23 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, patch, post},
 };
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
-    CreateGatewayKeyRequest, CreateGatewayKeyResponse, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER,
-    GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PutBackendsRequest,
-    PutTtlConfigRequest, PutUpstreamKeysRequest, RoutingBackendsView, StreamCacheConfig,
-    TtlConfigView, UpstreamKeyView, UpstreamKeysView, parse_backend_endpoints,
+    ClearReasoningCacheResponse, CreateGatewayKeyRequest, CreateGatewayKeyResponse,
+    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest,
+    PatchUpstreamKeyRequest, PutBackendsRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
+    PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
+    StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView,
+    UpstreamRelayConfigView, parse_backend_endpoints, parse_upstream_base_url,
 };
-use crab_proxy::{RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
+use crab_proxy::{ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
+use crab_reasoning::ReasoningStore;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
@@ -27,6 +30,8 @@ const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
 pub struct ManagementState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
+    pub reasoning_store: Arc<ReasoningStore>,
+    pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
     pub admin_key: String,
     pub invalidate_all_in_progress: Arc<AtomicBool>,
     pub invalidate_job: Arc<Mutex<Option<InvalidateJobSnapshot>>>,
@@ -95,12 +100,21 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/runtime/stream_cache",
             get(get_stream_cache).put(put_stream_cache),
         )
+        .route(
+            "/v1/runtime/reasoning",
+            get(get_reasoning_runtime).put(put_reasoning_runtime),
+        )
+        .route("/v1/reasoning/cache", delete(clear_reasoning_cache))
         .route("/v1/routing/backends", get(get_backends).put(put_backends))
         .route(
             "/v1/upstream/keys",
             get(get_upstream_keys).put(put_upstream_keys),
         )
         .route("/v1/upstream/keys/{id}", patch(patch_upstream_key))
+        .route(
+            "/v1/upstream/relay",
+            get(get_upstream_relay).put(put_upstream_relay),
+        )
         .with_state(state)
 }
 
@@ -450,6 +464,18 @@ async fn status(
         .map(|r| r.backends().len())
         .unwrap_or(0);
     let pool = state.runtime.upstream_pool();
+    let upstream_base_url = state
+        .runtime
+        .upstream_base_url
+        .read()
+        .map(|u| u.clone())
+        .ok();
+    let upstream_model = state
+        .runtime
+        .fallback_model
+        .read()
+        .map(|m| m.clone())
+        .ok();
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
@@ -457,7 +483,122 @@ async fn status(
         stream_cache_enabled: state.runtime.stream_cache_enabled(),
         upstream_key_count: pool.len(),
         upstream_keys_available: pool.available_count(),
+        upstream_base_url,
+        upstream_model,
     }))
+}
+
+fn upstream_relay_view(runtime: &RuntimeConfig) -> UpstreamRelayConfigView {
+    let base_url = runtime
+        .upstream_base_url
+        .read()
+        .map(|u| u.clone())
+        .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
+    let model = runtime
+        .fallback_model
+        .read()
+        .map(|m| m.clone())
+        .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+    UpstreamRelayConfigView { base_url, model }
+}
+
+async fn get_upstream_relay(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<UpstreamRelayConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(upstream_relay_view(&state.runtime)))
+}
+
+async fn put_upstream_relay(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PutUpstreamRelayConfigRequest>,
+) -> Result<Json<UpstreamRelayConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let parsed = parse_upstream_base_url(&req.base_url).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+            .into_response()
+    })?;
+
+    {
+        let mut base = state
+            .runtime
+            .upstream_base_url
+            .write()
+            .map_err(|_| internal_error("upstream_base_url lock poisoned"))?;
+        *base = parsed.normalized.clone();
+    }
+
+    if let Some(model) = &req.model {
+        if model.trim().is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "model must not be empty when provided".to_string(),
+                }),
+            )
+                .into_response());
+        }
+        let mut fallback = state
+            .runtime
+            .fallback_model
+            .write()
+            .map_err(|_| internal_error("fallback_model lock poisoned"))?;
+        *fallback = model.trim().to_string();
+    }
+
+    let endpoints = req.endpoints.clone().unwrap_or_else(|| vec![parsed.endpoint.clone()]);
+    let tls_sni = req
+        .tls_sni
+        .clone()
+        .unwrap_or_else(|| parsed.tls_sni.clone());
+
+    let parsed_backends =
+        parse_backend_endpoints(&endpoints, 1, &tls_sni).map_err(|errors| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: errors.join("; "),
+                }),
+            )
+                .into_response()
+        })?;
+
+    let mut router = state
+        .runtime
+        .router
+        .write()
+        .map_err(|_| internal_error("router lock poisoned"))?;
+    router.update(&parsed_backends).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response()
+    })?;
+
+    if let Ok(mut health) = state.runtime.backend_health.write() {
+        health.clear();
+        for b in router.backends() {
+            health.insert(b.name.clone(), crab_route::BackendHealth::new_healthy());
+        }
+    }
+
+    tracing::info!(
+        base_url = %parsed.normalized,
+        endpoints = ?endpoints,
+        tls_sni = %tls_sni,
+        "Upstream relay config updated"
+    );
+
+    Ok(Json(upstream_relay_view(&state.runtime)))
 }
 
 async fn get_upstream_keys(
@@ -504,7 +645,10 @@ async fn put_upstream_keys(
         })
         .collect();
     let current = state.runtime.upstream_pool();
-    let new_pool = UpstreamKeyPool::hot_replace(&current, specs);
+    let new_pool = match req.mode {
+        UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
+        UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
+    };
     state.runtime.replace_upstream_pool(new_pool);
     Ok(Json(upstream_keys_view(&state.runtime)))
 }
@@ -770,6 +914,94 @@ async fn put_stream_cache(
     Ok(Json(StreamCacheConfig {
         enabled: state.runtime.stream_cache_enabled(),
     }))
+}
+
+fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigView {
+    ReasoningRuntimeConfigView {
+        thinking_mode: config.thinking_mode.clone(),
+        reasoning_effort: config.reasoning_effort.clone(),
+        missing_reasoning_strategy: config.missing_reasoning_strategy.clone(),
+        missing_reasoning_on_fill_only: config.missing_reasoning_on_fill_only.clone(),
+        display_reasoning: config.display_reasoning,
+        collapsible_reasoning: config.collapsible_reasoning,
+    }
+}
+
+async fn get_reasoning_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<ReasoningRuntimeConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let cfg = state
+        .reasoning_config
+        .read()
+        .map_err(|_| internal_error("reasoning config lock poisoned"))?;
+    Ok(Json(reasoning_runtime_view(&cfg)))
+}
+
+async fn put_reasoning_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<ReasoningRuntimeConfigView>,
+) -> Result<Json<ReasoningRuntimeConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    if req.thinking_mode != "enabled" && req.thinking_mode != "disabled" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "thinking_mode must be \"enabled\" or \"disabled\"".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    if req.missing_reasoning_strategy != "recover"
+        && req.missing_reasoning_strategy != "reject"
+        && req.missing_reasoning_strategy != "fill_only"
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\""
+                    .to_string(),
+            }),
+        )
+            .into_response());
+    }
+
+    let mut cfg = state
+        .reasoning_config
+        .write()
+        .map_err(|_| internal_error("reasoning config lock poisoned"))?;
+    cfg.thinking_mode = req.thinking_mode;
+    cfg.reasoning_effort = req.reasoning_effort;
+    cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
+    if !req.missing_reasoning_on_fill_only.is_empty() {
+        cfg.missing_reasoning_on_fill_only = req.missing_reasoning_on_fill_only;
+    }
+    cfg.display_reasoning = req.display_reasoning;
+    cfg.collapsible_reasoning = req.collapsible_reasoning;
+
+    tracing::info!(
+        thinking_mode = %cfg.thinking_mode,
+        missing_reasoning_strategy = %cfg.missing_reasoning_strategy,
+        "Reasoning runtime config updated"
+    );
+
+    Ok(Json(reasoning_runtime_view(&cfg)))
+}
+
+async fn clear_reasoning_cache(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<ClearReasoningCacheResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let deleted = state
+        .reasoning_store
+        .clear()
+        .map_err(|e| internal_error(&e.to_string()))?;
+    tracing::info!(deleted, "Reasoning cache cleared via management API");
+    Ok(Json(ClearReasoningCacheResponse { deleted }))
 }
 
 fn backend_to_spec(

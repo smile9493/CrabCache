@@ -1017,6 +1017,7 @@ name = "crab-reasoning"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crab-metrics",
  "hex",
  "regex",
  "rusqlite",
@@ -2977,6 +2978,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "openssl-src"
+version = "300.6.0+3.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8e8cbfd3a4a8c8f089147fd7aaa33cf8c7450c4d09f8f80698a0cf093abeff4"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2984,6 +2994,7 @@ checksum = "158fe5b292746440aa6e7a7e690e55aeb72d41505e2804c23c6973ad0e9c9781"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -3123,8 +3134,10 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "844a13b16e556293f4ea96dc5ac0923ac6f36855a9dfc13b640d0da183f6b5b7"
 dependencies = [
+ "pingora-cache",
  "pingora-core",
  "pingora-http",
+ "pingora-load-balancing",
  "pingora-proxy",
  "pingora-timeout",
 ]
@@ -3197,6 +3210,7 @@ dependencies = [
  "percent-encoding",
  "pingora-error",
  "pingora-http",
+ "pingora-openssl",
  "pingora-pool",
  "pingora-runtime",
  "pingora-timeout",
@@ -3260,6 +3274,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingora-load-balancing"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2606e9e22e72927a69772cefe56b0d41d251c3ffdfcd548a6020fe157fb79ad"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "derivative",
+ "fnv",
+ "futures",
+ "http",
+ "log",
+ "pingora-core",
+ "pingora-error",
+ "pingora-http",
+ "pingora-ketama",
+ "pingora-runtime",
+ "rand 0.8.6",
+ "tokio",
+]
+
+[[package]]
 name = "pingora-lru"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3269,6 +3305,19 @@ dependencies = [
  "hashbrown 0.17.1",
  "parking_lot",
  "rand 0.8.6",
+]
+
+[[package]]
+name = "pingora-openssl"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cb7f135948a5c5a28a634e40fabd40c2588c757372f8a358bfca634a56514a6"
+dependencies = [
+ "foreign-types",
+ "libc",
+ "openssl",
+ "openssl-sys",
+ "tokio-openssl",
 ]
 
 [[package]]
@@ -4755,6 +4804,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tokio-openssl"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59df6849caa43bb7567f9a36f863c447d95a11d5903c9cc334ba32576a27eadd"
+dependencies = [
+ "openssl",
+ "openssl-sys",
+ "tokio",
 ]
 
 [[package]]
