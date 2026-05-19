@@ -992,6 +992,8 @@ pub fn prepare_upstream_request(
     let mut recovery_dropped_messages = 0;
     let mut recovery_notice = None;
 
+    let fill_only = missing_reasoning_strategy == "fill_only";
+
     if thinking_enabled && missing_reasoning_strategy == "recover" {
         if let Some((active, retired, _step)) =
             active_messages_from_recovery_boundary(&pre_repair.messages)
