@@ -17,6 +17,29 @@ pub struct GatewayStatus {
     pub stream_cache_enabled: bool,
     pub upstream_key_count: usize,
     pub upstream_keys_available: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+}
+
+/// Runtime upstream relay target (hot-reloadable via Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamRelayConfigView {
+    pub base_url: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamRelayConfigRequest {
+    pub base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// When set, replaces Ketama peer list and TLS SNI derived from `base_url`.
+    #[serde(default)]
+    pub endpoints: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_sni: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,9 +65,19 @@ pub struct UpstreamKeyInput {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamKeysPutMode {
+    #[default]
+    Replace,
+    Append,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PutUpstreamKeysRequest {
     pub keys: Vec<UpstreamKeyInput>,
+    #[serde(default)]
+    pub mode: UpstreamKeysPutMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +187,27 @@ fn default_tls_sni() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamCacheConfig {
     pub enabled: bool,
+}
+
+/// Hot-reloadable reasoning / Cursor compatibility settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningRuntimeConfigView {
+    pub thinking_mode: String,
+    pub reasoning_effort: String,
+    pub missing_reasoning_strategy: String,
+    #[serde(default = "default_missing_reasoning_on_fill_only")]
+    pub missing_reasoning_on_fill_only: String,
+    pub display_reasoning: bool,
+    pub collapsible_reasoning: bool,
+}
+
+fn default_missing_reasoning_on_fill_only() -> String {
+    "omit_reasoning".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearReasoningCacheResponse {
+    pub deleted: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

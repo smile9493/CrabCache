@@ -1,4 +1,5 @@
 use crate::keys::{portable_reasoning_keys, scoped_reasoning_keys};
+use crab_metrics::global_metrics;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::Path;
@@ -79,7 +80,9 @@ impl ReasoningStore {
             .ok()?;
         let mut rows = stmt.query(rusqlite::params![key]).ok()?;
         let row = rows.next().ok()??;
-        row.get(0).ok()
+        let value: Option<String> = row.get(0).ok();
+        global_metrics().record_reasoning_store_lookup(value.is_some());
+        value
     }
 
     pub fn store_assistant_message(
@@ -166,7 +169,7 @@ impl ReasoningStore {
     }
 
     pub fn clear(&self) -> anyhow::Result<usize> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
         let count: usize = conn
             .query_row("SELECT COUNT(*) FROM reasoning_cache", [], |row| row.get(0))
             .unwrap_or(0);
@@ -175,7 +178,7 @@ impl ReasoningStore {
     }
 
     pub fn prune(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
         self.prune_locked(&conn)?;
         Ok(())
     }

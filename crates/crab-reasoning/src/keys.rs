@@ -112,7 +112,7 @@ pub fn message_signature(message: &Value) -> String {
         .map(|arr| {
             arr.iter()
                 .filter(|tc| tc.is_object())
-                .map(|tc| normalize_tool_call_for_signature(tc))
+                .map(normalize_tool_call_for_signature)
                 .collect()
         })
         .unwrap_or_default();
@@ -134,7 +134,7 @@ fn canonical_scope_message(message: &Value) -> Value {
         let normalized: Vec<Value> = tool_calls
             .iter()
             .filter(|tc| tc.is_object())
-            .map(|tc| normalize_tool_call_for_signature(tc))
+            .map(normalize_tool_call_for_signature)
             .collect();
         if !normalized.is_empty() {
             canonical.insert("tool_calls".into(), Value::Array(normalized));
@@ -146,7 +146,7 @@ fn canonical_scope_message(message: &Value) -> Value {
 pub fn conversation_scope(messages: &[Value], namespace: &str) -> String {
     let scope_messages: Vec<Value> = messages
         .iter()
-        .map(|m| canonical_scope_message(m))
+        .map(canonical_scope_message)
         .collect();
     let payload = if namespace.is_empty() {
         Value::Array(scope_messages)
@@ -181,7 +181,7 @@ pub fn turn_context_signature(prior_messages: &[Value]) -> String {
     let context_messages: Vec<Value> = prior_messages[start_index..]
         .iter()
         .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
-        .map(|m| canonical_scope_message(m))
+        .map(canonical_scope_message)
         .collect();
 
     sha256_json(&Value::Array(context_messages))
@@ -195,7 +195,7 @@ pub fn scoped_reasoning_keys(message: &Value, scope: &str) -> Vec<String> {
         message_signature(message)
     ));
     for tc_id in tool_call_ids(message) {
-        keys.push(format!("scope:{}:tool_call:{}", scope, tc_id));
+        keys.push(format!("scope:{scope}:tool_call:{tc_id}"));
     }
     if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
         for tc in tool_calls {
@@ -209,7 +209,7 @@ pub fn scoped_reasoning_keys(message: &Value, scope: &str) -> Vec<String> {
         }
     }
     for name in tool_call_names(message) {
-        keys.push(format!("scope:{}:tool_name:{}", scope, name));
+        keys.push(format!("scope:{scope}:tool_name:{name}"));
     }
     keys
 }
@@ -235,8 +235,7 @@ pub fn portable_reasoning_keys(
 
     for tc_id in tool_call_ids(message) {
         keys.push(format!(
-            "namespace:{}:turn:{}:tool_call:{}",
-            cache_namespace, turn_sig, tc_id
+            "namespace:{cache_namespace}:turn:{turn_sig}:tool_call:{tc_id}"
         ));
     }
 
@@ -255,8 +254,7 @@ pub fn portable_reasoning_keys(
 
     for name in tool_call_names(message) {
         keys.push(format!(
-            "namespace:{}:turn:{}:tool_name:{}",
-            cache_namespace, turn_sig, name
+            "namespace:{cache_namespace}:turn:{turn_sig}:tool_name:{name}"
         ));
     }
 

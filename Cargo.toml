@@ -21,7 +21,7 @@ repository = "https://github.com/smile9493/CrabCache"
 
 [workspace.dependencies]
 # -- Pingora core --
-pingora        = { version = "0.8", features = ["proxy"] }
+pingora        = { version = "0.8", features = ["proxy", "openssl"] }
 pingora-core   = "0.8"
 pingora-proxy  = "0.8"
 pingora-ketama = "0.8"

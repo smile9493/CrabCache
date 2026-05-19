@@ -152,6 +152,36 @@ impl UpstreamKeyPool {
             .collect()
     }
 
+    pub fn to_specs(&self) -> Vec<UpstreamKeySpec> {
+        self.slots
+            .iter()
+            .map(|s| UpstreamKeySpec {
+                id: s.id.clone(),
+                secret: s.secret.to_string(),
+                enabled: s.enabled.load(Ordering::Relaxed),
+            })
+            .collect()
+    }
+
+    /// Append keys by secret (dedupe); preserve existing slots.
+    pub fn merge_append(pool: &Arc<Self>, incoming: Vec<UpstreamKeySpec>) -> Arc<Self> {
+        let mut specs = pool.to_specs();
+        let mut seen: std::collections::HashSet<String> =
+            specs.iter().map(|s| s.secret.clone()).collect();
+        for mut k in incoming {
+            k.secret = k.secret.trim().to_string();
+            if k.secret.is_empty() || seen.contains(&k.secret) {
+                continue;
+            }
+            seen.insert(k.secret.clone());
+            if k.id.is_empty() {
+                k.id = format!("key-{}", specs.len() + 1);
+            }
+            specs.push(k);
+        }
+        Self::hot_replace(pool, specs)
+    }
+
     /// Hot-replace the key pool, preserving inflight/cooldown for matching ids.
     pub fn hot_replace(pool: &Arc<Self>, specs: Vec<UpstreamKeySpec>) -> Arc<Self> {
         let old = pool;
@@ -293,6 +323,29 @@ mod tests {
     fn empty_pool_returns_none() {
         let pool = UpstreamKeyPool::new(vec![], 60);
         assert!(pool.acquire().is_none());
+    }
+
+    #[test]
+    fn merge_append_dedupes_secrets() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60);
+        let merged = UpstreamKeyPool::merge_append(
+            &pool,
+            vec![UpstreamKeySpec {
+                id: String::new(),
+                secret: "sk-bbbbbbbbbbbb".into(),
+                enabled: true,
+            }],
+        );
+        assert_eq!(merged.len(), 2);
+        let merged2 = UpstreamKeyPool::merge_append(
+            &merged,
+            vec![UpstreamKeySpec {
+                id: String::new(),
+                secret: "sk-bbbbbbbbbbbb".into(),
+                enabled: true,
+            }],
+        );
+        assert_eq!(merged2.len(), 2);
     }
 
     #[test]

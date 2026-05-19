@@ -599,6 +599,24 @@ impl Translations {
             Locale::EnUS => "Cache tokens",
         }
     }
+    pub fn overview_prefix_cache_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游前缀缓存 (L3)",
+            Locale::EnUS => "Upstream prefix cache (L3)",
+        }
+    }
+    pub fn overview_prefix_cache_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "DeepSeek prompt_cache_hit_tokens / (hit+miss)。与 L0/L1/L2 网关响应缓存无关。",
+            Locale::EnUS => "DeepSeek prompt_cache_hit_tokens / (hit+miss). Separate from L0/L1/L2 gateway response cache.",
+        }
+    }
+    pub fn upstream_l3_affinity_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Ketama + x-conversation-id / x-prompt-cache-key 将同一会话固定到同一上游 peer，提升 L3 命中率。详见 docs/DEEPSEEK_PREFIX_CACHE.md",
+            Locale::EnUS => "Ketama plus x-conversation-id / x-prompt-cache-key stick sessions to one upstream peer for higher L3 hit rate. See docs/DEEPSEEK_PREFIX_CACHE.md",
+        }
+    }
     pub fn overview_token_hit(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "命中",
@@ -1211,8 +1229,8 @@ impl Translations {
     }
     pub fn upstream_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "配置 CrabCache 连接上游 LLM API 服务的地址与认证密钥",
-            Locale::EnUS => "Configure CrabCache upstream LLM API endpoint and authentication.",
+            Locale::ZhCN => "配置 DeepSeek 官方或 OpenAI 兼容中转的 relay 地址与 Key 池",
+            Locale::EnUS => "Configure DeepSeek official or OpenAI-compatible relay and key pool.",
         }
     }
     pub fn upstream_base_url_label(self) -> &'static str {
@@ -1357,6 +1375,90 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "已保存",
             Locale::EnUS => "Saved",
+        }
+    }
+    pub fn upstream_test_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试连接",
+            Locale::EnUS => "Test connection",
+        }
+    }
+    pub fn upstream_testing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试中...",
+            Locale::EnUS => "Testing...",
+        }
+    }
+    pub fn upstream_preset_official(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "DeepSeek 官方",
+            Locale::EnUS => "DeepSeek official",
+        }
+    }
+    pub fn upstream_preset_custom(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自定义中转",
+            Locale::EnUS => "Custom relay",
+        }
+    }
+    pub fn upstream_show_advanced(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "显示高级选项（Ketama 端点）",
+            Locale::EnUS => "Show advanced (Ketama endpoints)",
+        }
+    }
+    pub fn upstream_hide_advanced(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "隐藏高级选项",
+            Locale::EnUS => "Hide advanced",
+        }
+    }
+    pub fn upstream_gateway_unreachable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法连接网关管理 API，显示的是上次保存的配置快照。",
+            Locale::EnUS => "Gateway management API unreachable; showing last saved snapshot.",
+        }
+    }
+    pub fn upstream_pool_append_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "追加 Key（每行一个 secret）",
+            Locale::EnUS => "Append keys (one secret per line)",
+        }
+    }
+    pub fn upstream_pool_replace_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "替换整个 Key 池（取消勾选则为追加）",
+            Locale::EnUS => "Replace entire key pool (uncheck to append)",
+        }
+    }
+    pub fn overview_setup_upstream_cta(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "尚未配置 DeepSeek 上游 Key 池，请前往上游配置。",
+            Locale::EnUS => "DeepSeek upstream key pool is empty. Configure upstream.",
+        }
+    }
+    pub fn overview_setup_upstream_link(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置上游",
+            Locale::EnUS => "Configure upstream",
+        }
+    }
+    pub fn models_detect_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检测差异",
+            Locale::EnUS => "Detect changes",
+        }
+    }
+    pub fn models_apply_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "应用所选",
+            Locale::EnUS => "Apply selected",
+        }
+    }
+    pub fn models_detect_result(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型差异预览",
+            Locale::EnUS => "Model diff preview",
         }
     }
 

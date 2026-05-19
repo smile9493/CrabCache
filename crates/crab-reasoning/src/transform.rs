@@ -98,7 +98,7 @@ fn prefix_response_content(
                 .to_string();
             obj.insert(
                 "content".into(),
-                Value::String(format!("{}{}", prefix, content)),
+                Value::String(format!("{prefix}{content}")),
             );
             return true;
         }
@@ -115,7 +115,7 @@ pub struct SseRewriteResult {
 
 fn sse_data(payload: &Value) -> Vec<u8> {
     let json = serde_json::to_string(payload).unwrap_or_default();
-    format!("data: {}\n\n", json).into_bytes()
+    format!("data: {json}\n\n").into_bytes()
 }
 
 fn recovery_notice_chunk(model: &str, notice: &str) -> Value {
@@ -163,7 +163,7 @@ fn inject_recovery_notice(chunk: &mut Value, notice: &str) -> bool {
                     .to_string();
                 obj.insert(
                     "content".into(),
-                    Value::String(format!("{}{}", notice, existing)),
+                    Value::String(format!("{notice}{existing}")),
                 );
                 return true;
             }
@@ -272,11 +272,10 @@ pub fn rewrite_sse_chunk(
     }
 
     let mut notice = pending_recovery_notice.map(String::from);
-    if notice.is_some() {
-        if inject_recovery_notice(&mut chunk, notice.as_deref().unwrap_or("")) {
+    if notice.is_some()
+        && inject_recovery_notice(&mut chunk, notice.as_deref().unwrap_or("")) {
             notice = None;
         }
-    }
     accumulator.ingest_chunk(&chunk);
     if let Some(store) = store {
         let stored: usize = response_contexts
@@ -305,7 +304,7 @@ pub fn rewrite_sse_chunk(
         "\n"
     };
     let json = serde_json::to_string(&chunk).unwrap_or_default();
-    let rewritten = format!("data: {}{}", json, ending).into_bytes();
+    let rewritten = format!("data: {json}{ending}").into_bytes();
 
     SseRewriteResult {
         rewritten_line: rewritten,

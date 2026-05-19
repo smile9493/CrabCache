@@ -193,7 +193,7 @@ impl TraceGenerator {
         (0..pattern.unique_queries)
             .map(|i| {
                 let topic = topics[i % topics.len()];
-                format!("Explain {} concept {}", topic, i)
+                format!("Explain {topic} concept {i}")
             })
             .collect()
     }
@@ -282,8 +282,7 @@ mod tests {
 
         assert!(
             (ratio - 0.5).abs() < 0.1,
-            "Conversation ratio should be approximately 0.5, got {}",
-            ratio
+            "Conversation ratio should be approximately 0.5, got {ratio}"
         );
     }
 }

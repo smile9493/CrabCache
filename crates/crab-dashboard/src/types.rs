@@ -59,6 +59,28 @@ pub struct MetricsSnapshot {
     pub semantic_rejected: u64,
     #[serde(default)]
     pub semantic_skipped: u64,
+    #[serde(default)]
+    pub prefix_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_miss_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_hit_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefixCacheMetricsSnapshot {
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
+    pub by_model: Vec<PrefixCacheModelBucket>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefixCacheModelBucket {
+    pub model: String,
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,11 +275,6 @@ fn default_key_enabled() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PutUpstreamKeysRequest {
-    pub keys: Vec<UpstreamKeyInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchUpstreamKeyRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
@@ -266,18 +283,80 @@ pub struct PatchUpstreamKeyRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpstreamConfig {
+pub struct UpstreamTestResult {
+    pub ok: bool,
+    pub status_code: u16,
+    pub latency_ms: u64,
+    pub model_count: Option<usize>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamTestBody {
     pub base_url: String,
     pub api_key: String,
-    pub api_key_masked: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    pub base_url: String,
+    pub model: String,
     pub endpoints: Vec<String>,
+    pub key_pool_count: usize,
+    pub gateway_reachable: bool,
+    pub last_test: Option<UpstreamTestResult>,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_key_masked: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUpstreamConfigRequest {
     pub base_url: String,
+    pub model: String,
+    #[serde(default)]
     pub api_key: Option<String>,
     pub endpoints: Vec<String>,
+    #[serde(default)]
+    pub keys_to_append: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUpstreamConfigResponse {
+    pub config: UpstreamConfig,
+    pub sync: Option<SyncResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamKeysPutMode {
+    #[default]
+    Replace,
+    Append,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamKeysRequest {
+    pub keys: Vec<UpstreamKeyInput>,
+    #[serde(default)]
+    pub mode: UpstreamKeysPutMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelDetectResponse {
+    pub to_add: Vec<String>,
+    pub to_remove: Vec<String>,
+    pub unchanged: usize,
+    pub upstream_total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelApplyBody {
+    #[serde(default)]
+    pub add: Vec<String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

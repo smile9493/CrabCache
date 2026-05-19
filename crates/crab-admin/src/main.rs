@@ -1,13 +1,15 @@
 mod network;
+mod persist;
 mod routes;
 mod state;
 mod types;
+mod upstream;
 
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -88,6 +90,36 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
+    state.reconcile_upstream_from_gateway().await;
+
+    if std::env::var("CRABCACHE_MODEL_SYNC_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&s| s > 0)
+        .is_some()
+    {
+        let bg = Arc::clone(&state);
+        tokio::spawn(async move {
+            let interval_secs = std::env::var("CRABCACHE_MODEL_SYNC_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(3600);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                match crate::upstream::detect_models_internal(&bg).await {
+                    Ok(diff) if !diff.to_add.is_empty() || !diff.to_remove.is_empty() => {
+                        tracing::info!(
+                            add = diff.to_add.len(),
+                            remove = diff.to_remove.len(),
+                            "Upstream model drift detected (apply via dashboard)"
+                        );
+                    }
+                    Err(e) => tracing::warn!(error = %e, "Periodic model detect failed"),
+                    _ => {}
+                }
+            }
+        });
+    }
 
     match state.gateway.list_keys().await {
         Ok(specs) => {
@@ -130,7 +162,10 @@ async fn main() -> anyhow::Result<()> {
 
     let app = routes::router(state)
         .layer(cors)
-        .fallback_service(ServeDir::new("crates/crab-dashboard/dist"));
+        .fallback_service(
+            ServeDir::new("crates/crab-dashboard/dist")
+                .fallback(ServeFile::new("crates/crab-dashboard/dist/index.html"))
+        );
 
     let protocol = if config.is_https() { "https" } else { "http" };
 

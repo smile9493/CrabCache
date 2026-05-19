@@ -3,7 +3,6 @@ use pingora_ketama::{Bucket, Continuum};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::debug;
-use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -214,7 +213,7 @@ mod tests {
         let mut backend_counts = std::collections::HashMap::new();
 
         for i in 0..100 {
-            let key = format!("conversation-{}", i);
+            let key = format!("conversation-{i}");
             if let Some(backend) = router.select(key.as_bytes()) {
                 *backend_counts.entry(backend.name.clone()).or_insert(0) += 1;
             }
@@ -230,7 +229,7 @@ mod tests {
 
         let mut original_mapping = std::collections::HashMap::new();
         for i in 0..100 {
-            let key = format!("conversation-{}", i);
+            let key = format!("conversation-{i}");
             if let Some(backend) = router.select(key.as_bytes()) {
                 original_mapping.insert(key, backend.name.clone());
             }
@@ -257,6 +256,6 @@ mod tests {
         }
 
         let drift_rate = changed as f64 / original_mapping.len() as f64;
-        assert!(drift_rate < 0.4, "Drift rate {} exceeds 40%", drift_rate);
+        assert!(drift_rate < 0.4, "Drift rate {drift_rate} exceeds 40%");
     }
 }

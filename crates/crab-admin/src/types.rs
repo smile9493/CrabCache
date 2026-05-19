@@ -27,6 +27,29 @@ pub struct MetricsSnapshot {
     pub semantic_hits: u64,
     pub semantic_rejected: u64,
     pub semantic_skipped: u64,
+    /// Upstream DeepSeek prefix cache (L3): prompt_cache_hit_tokens total.
+    #[serde(default)]
+    pub prefix_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_miss_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_hit_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefixCacheModelBucket {
+    pub model: String,
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefixCacheMetricsSnapshot {
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
+    pub by_model: Vec<PrefixCacheModelBucket>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,23 +226,65 @@ pub struct UpdateConnectionConfigRequest {
 }
 
 pub use crab_control::{
-    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyInput, UpstreamKeyView,
+    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyView,
     UpstreamKeysView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
     pub base_url: String,
-    pub api_key: String,
-    pub api_key_masked: String,
+    pub model: String,
     pub endpoints: Vec<String>,
+    pub key_pool_count: usize,
+    pub gateway_reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_test: Option<crab_control::UpstreamTestResult>,
+    /// Deprecated: use key pool. Kept empty for backward compatibility.
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_key_masked: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateUpstreamConfigRequest {
     pub base_url: String,
+    pub model: String,
+    #[serde(default)]
     pub api_key: Option<String>,
     pub endpoints: Vec<String>,
+    /// When set, append these keys to the pool after relay save.
+    #[serde(default)]
+    pub keys_to_append: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUpstreamConfigResponse {
+    pub config: UpstreamConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<SyncResult>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpstreamTestBody {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelDetectResponse {
+    pub to_add: Vec<String>,
+    pub to_remove: Vec<String>,
+    pub unchanged: usize,
+    pub upstream_total: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelApplyBody {
+    #[serde(default)]
+    pub add: Vec<String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

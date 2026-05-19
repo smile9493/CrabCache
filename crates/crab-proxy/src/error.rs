@@ -29,6 +29,6 @@ pub enum ProxyError {
 
 impl From<ProxyError> for PingoraError {
     fn from(err: ProxyError) -> Self {
-        *PingoraError::explain(pingora_core::ErrorType::InternalError, format!("{:#}", err))
+        *PingoraError::explain(pingora_core::ErrorType::InternalError, format!("{err:#}"))
     }
 }

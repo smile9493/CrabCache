@@ -10,6 +10,7 @@ api_key = "sk-your-deepseek-api-key-here"
 # When true, api_key may still be used as a client Bearer (not recommended in production).
 [gateway]
 legacy_api_key_as_client_auth = false
+# cors_enabled = false
 
 # Management HTTP API (Admin / control plane). Default binds loopback only.
 # In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
@@ -27,6 +28,9 @@ max_request_body_bytes = 4194304
 max_concurrent_requests = 512
 
 [upstream]
+# Upstream relay origin (OpenAI-compatible). Do not include /v1 — paths are appended by the gateway.
+# Override at runtime: CRABCACHE_UPSTREAM_BASE_URL, CRABCACHE_UPSTREAM_MODEL
+# Hot-reload via Management API: PUT /v1/upstream/relay
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 default_weight = 1
@@ -36,10 +40,10 @@ default_weight = 1
 # Cooldown seconds after HTTP 429 before reusing a key (default 60)
 # key_cooldown_secs = 60
 
-# DeepSeek API endpoint addresses (for Ketama routing)
+# Ketama peer addresses (host:port). When omitted, derived from base_url host (port 443/80).
 deepseek_endpoints = ["api.deepseek.com:443"]
 
-# Optional: TLS SNI override for upstream connections (defaults to "api.deepseek.com")
+# Optional: TLS SNI override (defaults to hostname from base_url)
 # tls_sni = "api.deepseek.com"
 
 # Health check interval in seconds for upstream backends (default: 30)
@@ -83,7 +87,7 @@ fingerprint_normalize_content = true
 "deepseek-v4-flash" = 3600
 
 # Per-consumer TTL overrides (seconds)
-[cache.consumer_overrides]
+[cache.consumer_ttl_overrides]
 "reporting-job" = 1800
 
 # Optional cost-saved pricing for Prometheus metrics (gateway_cache_cost_saved_usd_total).
@@ -118,7 +122,15 @@ ttl_secs = 86400
 [reasoning]
 thinking_mode = "enabled"
 reasoning_effort = "max"
+# recover (default): auto-truncate and patch missing reasoning_content (hurts L3 prefix cache)
+# fill_only: only fill from ReasoningStore, no truncation (recommended for high L3)
+# reject: HTTP 409 when cached reasoning cannot be restored (debug)
 missing_reasoning_strategy = "recover"
+# When fill_only: omit_reasoning (forward without reasoning) | reject (409)
+missing_reasoning_on_fill_only = "omit_reasoning"
+# Append tail summary when message count exceeds threshold (0 = disabled, L3-safe append-only)
+# context_summary_message_threshold = 0
+# prefix_validate = false
 display_reasoning = true
 collapsible_reasoning = true
 cache_db_path = "data/reasoning_content.sqlite3"
@@ -131,6 +143,7 @@ tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
 h2_ping_interval_secs = 30
+# upstream_request_timeout_secs = 300
 
 [trace_logging]
 enabled = true

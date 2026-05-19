@@ -276,4 +276,57 @@ impl GatewayAdminClient {
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
+
+    pub async fn get_upstream_relay(&self) -> Result<UpstreamRelayConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/upstream/relay")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_upstream_relay(
+        &self,
+        req: &PutUpstreamRelayConfigRequest,
+    ) -> Result<UpstreamRelayConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/upstream/relay")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_reasoning_runtime(&self) -> Result<ReasoningRuntimeConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/runtime/reasoning")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_reasoning_runtime(
+        &self,
+        req: &ReasoningRuntimeConfigView,
+    ) -> Result<ReasoningRuntimeConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/runtime/reasoning")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn clear_reasoning_cache(&self) -> Result<ClearReasoningCacheResponse, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::DELETE, "/v1/reasoning/cache")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
 }

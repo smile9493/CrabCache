@@ -1,15 +1,26 @@
-# Agent middleware stack (default): gateway + Redis.
+# CrabCache gateway stack (new-api style: gateway + Redis, env-driven upstream).
+#
+# Quick start:
+#   cp .env.example .env
+#   # set CRABCACHE_API_KEY, CRABCACHE_GATEWAY_ADMIN_KEY
 #   docker compose up -d
-# Optional semantic cache (Qdrant + ONNX models):
+#
+# Optional admin dashboard:
+#   docker compose --profile admin up -d
+#
+# Optional semantic cache (Qdrant):
 #   docker compose --profile semantic up -d
 #
-# Copy .env.example to .env and set CRABCACHE_API_KEY before starting.
+# Optional: attach to an external reverse-proxy network (e.g. OpenResty):
+#   docker compose -f docker-compose.yml -f docker-compose.openresty.yml up -d
 
 services:
   gateway:
     build: .
+    container_name: crabcache-gateway
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9080:9080"
       - "127.0.0.1:9090:9090"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/ready"]
@@ -25,9 +36,11 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=${RUST_LOG:-info}
       - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:?Set CRABCACHE_API_KEY in .env}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
+      - CRABCACHE_UPSTREAM_BASE_URL=${CRABCACHE_UPSTREAM_BASE_URL:-}
+      - CRABCACHE_UPSTREAM_MODEL=${CRABCACHE_UPSTREAM_MODEL:-}
       - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}
       - CRABCACHE_L1_REDIS_URL=${CRABCACHE_L1_REDIS_URL:-redis://redis:6379}
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
@@ -39,11 +52,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.admin
+    container_name: crabcache-admin
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:18001:3000"
+    volumes:
+      - gateway_logs:/app/logs:ro
     environment:
       - RUST_LOG=info
       - CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
+      - CRABCACHE_GATEWAY_METRICS_URL=http://gateway:9090/metrics
       - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}
       - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-admin}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
@@ -55,6 +72,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: crabcache-redis
     expose:
       - "6379"
     volumes:
@@ -70,6 +88,7 @@ services:
     profiles:
       - semantic
     image: qdrant/qdrant:latest
+    container_name: crabcache-qdrant
     expose:
       - "6333"
       - "6334"

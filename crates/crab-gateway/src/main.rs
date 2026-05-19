@@ -106,12 +106,26 @@ fn main() -> Result<()> {
         .with(stdout_layer)
         .init();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "config/gateway.toml".to_string());
+    let (config_path, clear_reasoning_cache) = parse_cli_args();
 
     let config = GatewayConfig::load(&config_path)?;
     info!(config_path = %config_path, "Configuration loaded");
+
+    if clear_reasoning_cache {
+        let reasoning_config = config.reasoning.clone().unwrap_or_default();
+        let store = ReasoningStore::new(
+            &reasoning_config.cache_db_path,
+            reasoning_config.cache_max_age_secs,
+            reasoning_config.cache_max_rows,
+        )?;
+        let deleted = store.clear()?;
+        info!(
+            deleted,
+            path = %reasoning_config.cache_db_path,
+            "Reasoning cache cleared"
+        );
+        return Ok(());
+    }
 
     if let Err(errors) = config.validate() {
         for err in &errors {
@@ -244,7 +258,7 @@ fn main() -> Result<()> {
 
     let trace_logger = if let Some(trace_config) = &config.trace_logging {
         if trace_config.enabled {
-            let (logger, _handle) = crab_proxy::TraceLogger::init(crab_proxy::TraceConfig {
+            let logger = crab_proxy::TraceLogger::init(crab_proxy::TraceConfig {
                 enabled: trace_config.enabled,
                 path: trace_config.path.clone(),
                 max_lines: trace_config.max_lines,
@@ -336,9 +350,13 @@ fn main() -> Result<()> {
         });
     }
 
+    let reasoning_config_shared = Arc::new(RwLock::new(reasoning_config));
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
+        reasoning_store: reasoning_store.clone(),
+        reasoning_config: reasoning_config_shared.clone(),
         admin_key: mgmt_admin_key,
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
         invalidate_job: Arc::new(Mutex::new(None)),
@@ -377,7 +395,8 @@ fn main() -> Result<()> {
             Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
         },
         reasoning_store,
-        reasoning_config,
+        reasoning_config: reasoning_config_shared,
+        cors_enabled: config.gateway.cors_enabled,
         trace_logger,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
         pricing: config.cache.pricing.clone().unwrap_or_default(),
@@ -400,4 +419,17 @@ fn main() -> Result<()> {
     );
 
     server.run_forever();
+}
+
+fn parse_cli_args() -> (String, bool) {
+    let mut config_path = "config/gateway.toml".to_string();
+    let mut clear_reasoning_cache = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--clear-reasoning-cache" {
+            clear_reasoning_cache = true;
+        } else if !arg.starts_with('-') {
+            config_path = arg;
+        }
+    }
+    (config_path, clear_reasoning_cache)
 }

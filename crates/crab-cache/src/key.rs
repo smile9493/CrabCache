@@ -143,7 +143,7 @@ pub fn generate_namespaced_cache_key_with_fingerprint(
 ) -> Result<String> {
     let base = generate_cache_key_with_fingerprint(request_body, config)?;
     match namespace {
-        Some(ns) if !ns.is_empty() => Ok(format!("{}:{}", ns, base)),
+        Some(ns) if !ns.is_empty() => Ok(format!("{ns}:{base}")),
         _ => Ok(base),
     }
 }
@@ -217,7 +217,7 @@ fn canonical_to_string(value: &Value) -> String {
                 .map(|k| {
                     let key_json = canonical_to_string(&Value::String(k.clone()));
                     let val_json = canonical_to_string(&map[k]);
-                    format!("{}:{}", key_json, val_json)
+                    format!("{key_json}:{val_json}")
                 })
                 .collect();
             format!("{{{}}}", pairs.join(","))
@@ -226,7 +226,7 @@ fn canonical_to_string(value: &Value) -> String {
             let items: Vec<String> = arr.iter().map(canonical_to_string).collect();
             format!("[{}]", items.join(","))
         }
-        Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s)),
+        Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| format!("\"{s}\"")),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
@@ -405,8 +405,7 @@ mod tests {
             let key = generate_cache_key(&serde_json::to_vec(&body).unwrap()).unwrap();
             assert_eq!(
                 key, base_key,
-                "Field '{}' should be stripped and not affect key",
-                field
+                "Field '{field}' should be stripped and not affect key"
             );
         }
     }

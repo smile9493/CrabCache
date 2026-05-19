@@ -335,7 +335,7 @@ mod tests {
     use super::*;
 
     fn print_stats(name: &str, stats: &CacheStats) {
-        println!("\n{}", name);
+        println!("\n{name}");
         println!("  Total requests: {}", stats.total_requests);
         println!(
             "  L0 hits: {} ({:.1}%)",

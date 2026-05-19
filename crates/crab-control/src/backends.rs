@@ -1,5 +1,18 @@
 use crab_route::Backend;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
+
+fn resolve_endpoint(endpoint: &str) -> Result<SocketAddr, String> {
+    if let Ok(addr) = endpoint.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    match endpoint.to_socket_addrs() {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => Ok(addr),
+            None => Err(format!("No addresses resolved for '{endpoint}'")),
+        },
+        Err(e) => Err(format!("Cannot resolve '{endpoint}': {e}")),
+    }
+}
 
 pub fn parse_backend_endpoints(
     endpoints: &[String],
@@ -10,7 +23,7 @@ pub fn parse_backend_endpoints(
     let mut backends = Vec::new();
 
     for (i, endpoint) in endpoints.iter().enumerate() {
-        match endpoint.parse::<SocketAddr>() {
+        match resolve_endpoint(endpoint) {
             Ok(addr) => {
                 backends.push(Backend::new(
                     format!("backend-{}", i + 1),
@@ -19,7 +32,7 @@ pub fn parse_backend_endpoints(
                     tls_sni.to_string(),
                 ));
             }
-            Err(e) => errors.push(format!("Invalid endpoint '{}': {}", endpoint, e)),
+            Err(e) => errors.push(format!("Invalid endpoint '{endpoint}': {e}")),
         }
     }
 
@@ -42,6 +55,14 @@ mod tests {
         let backends = parse_backend_endpoints(&eps, 2, "api.deepseek.com").unwrap();
         assert_eq!(backends.len(), 2);
         assert_eq!(backends[0].weight, 2);
+    }
+
+    #[test]
+    fn parse_valid_domain_endpoint() {
+        let eps = vec!["api.deepseek.com:443".to_string()];
+        let backends = parse_backend_endpoints(&eps, 1, "api.deepseek.com").unwrap();
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].addr.port(), 443);
     }
 
     #[test]

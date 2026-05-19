@@ -1,16 +1,20 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
-use crate::types::{ModelListResponse, SyncResult};
+use crate::types::{ModelApplyBody, ModelDetectResponse, ModelListResponse, SyncResult};
 
 #[component]
 pub fn ModelsPage() -> impl IntoView {
     let t = use_translations();
     let models: RwSignal<Option<Result<ModelListResponse, String>>> = RwSignal::new(None);
     let sync_result: RwSignal<Option<SyncResult>> = RwSignal::new(None);
+    let detect_result: RwSignal<Option<Result<ModelDetectResponse, String>>> = RwSignal::new(None);
     let syncing: RwSignal<bool> = RwSignal::new(false);
+    let detecting: RwSignal<bool> = RwSignal::new(false);
+    let applying: RwSignal<bool> = RwSignal::new(false);
 
     leptos::task::spawn_local(async move {
         match api::fetch_models().await {
@@ -18,6 +22,42 @@ pub fn ModelsPage() -> impl IntoView {
             Err(e) => models.set(Some(Err(e))),
         }
     });
+
+    let on_detect = move |_| {
+        detecting.set(true);
+        detect_result.set(None);
+        leptos::task::spawn_local(async move {
+            match api::detect_models().await {
+                Ok(d) => detect_result.set(Some(Ok(d))),
+                Err(e) => detect_result.set(Some(Err(e))),
+            }
+            detecting.set(false);
+        });
+    };
+
+    let on_apply = move |_| {
+        let Some(Ok(diff)) = detect_result.get() else {
+            return;
+        };
+        applying.set(true);
+        let body = ModelApplyBody {
+            add: diff.to_add.clone(),
+            remove: diff.to_remove.clone(),
+        };
+        leptos::task::spawn_local(async move {
+            match api::apply_models(&body).await {
+                Ok(result) => {
+                    sync_result.set(Some(result));
+                    detect_result.set(None);
+                    if let Ok(m) = api::fetch_models().await {
+                        models.set(Some(Ok(m)));
+                    }
+                }
+                Err(e) => detect_result.set(Some(Err(e))),
+            }
+            applying.set(false);
+        });
+    };
 
     let on_sync = move |_| {
         syncing.set(true);
@@ -54,6 +94,13 @@ pub fn ModelsPage() -> impl IntoView {
                         _ => view! { <span></span> }.into_any(),
                     }}
                     <button
+                        on:click=on_detect
+                        disabled=move || detecting.get()
+                        class="btn btn-secondary text-sm"
+                    >
+                        {move || if detecting.get() { "..." } else { t.models_detect_btn() }}
+                    </button>
+                    <button
                         on:click=on_sync
                         disabled=move || syncing.get()
                         class=move || {
@@ -69,58 +116,33 @@ pub fn ModelsPage() -> impl IntoView {
                 </div>
             </div>
 
-            {move || match sync_result.get() {
-                Some(result) => view! {
-                    <div class="glass-card">
-                        <h4 class="text-sm font-semibold text-accent mb-4">{t.models_sync_result()}</h4>
-                        <div class="sync-grid">
-                            <div>
-                                <div class="sync-stat-label">{t.models_added()}</div>
-                                <div class="sync-stat-value text-accent">{result.added.len()}</div>
-                                {if !result.added.is_empty() {
-                                    view! {
-                                        <div class="mt-2 text-xs text-theme-secondary space-y-0.5">
-                                            {result.added.iter().map(|id| {
-                                                let id = id.clone();
-                                                view! { <div class="truncate">{id}</div> }
-                                            }).collect::<Vec<_>>()}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
-                            </div>
-                            <div>
-                                <div class="sync-stat-label">{t.models_removed()}</div>
-                                <div class="sync-stat-value text-error">{result.removed.len()}</div>
-                                {if !result.removed.is_empty() {
-                                    view! {
-                                        <div class="mt-2 text-xs text-theme-secondary space-y-0.5">
-                                            {result.removed.iter().map(|id| {
-                                                let id = id.clone();
-                                                view! { <div class="truncate">{id}</div> }
-                                            }).collect::<Vec<_>>()}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
-                            </div>
-                            <div>
-                                <div class="sync-stat-label">{t.models_unchanged()}</div>
-                                <div class="sync-stat-value text-warning">{result.unchanged}</div>
-                            </div>
-                            <div>
-                                <div class="sync-stat-label">{t.models_col_status()}</div>
-                                <div class="sync-stat-value text-theme">{result.total}</div>
-                            </div>
-                        </div>
+            {move || sync_result.get().map(|r| view! { <SyncResultCard result=r /> })}
+
+            {move || match detect_result.get() {
+                Some(Ok(diff)) => view! {
+                    <div class="glass-card space-y-3">
+                        <h4 class="text-sm font-semibold text-theme">{t.models_detect_result()}</h4>
+                        <p class="text-xs text-theme-muted">
+                            "+ " {diff.to_add.len()} " / - " {diff.to_remove.len()} " / = " {diff.unchanged}
+                        </p>
+                        {(!diff.to_add.is_empty() || !diff.to_remove.is_empty()).then(|| view! {
+                            <button
+                                on:click=on_apply
+                                disabled=move || applying.get()
+                                class="btn btn-primary text-sm"
+                            >
+                                {t.models_apply_btn()}
+                            </button>
+                        })}
                     </div>
+                }.into_any(),
+                Some(Err(e)) => view! {
+                    <div class="glass-card text-error text-sm">{e}</div>
                 }.into_any(),
                 None => view! { <span></span> }.into_any(),
             }}
 
-            {move || match models.get() {
+{move || match models.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">

@@ -1,69 +1,68 @@
-# Build artifacts
-/target/
-**/*.rs.bk
+# =============================================================================
+# CrabCache .gitignore
+# Keep Rust toolchains and Cargo caches OUT of the repo tree (use ~/.rustup,
+# ~/.cargo). Local installs under the project cause 10k+ untracked files.
+# =============================================================================
 
-# IDE
+# --- Rust / Cargo (build & toolchains) ---
+/target/
+/target_docker/
+**/*.rs.bk
+.rustup/
+.cargo/
+.cargo_home/
+
+# --- Frontend / WASM ---
+node_modules/
+crates/crab-dashboard/dist/
+dist/
+build/
+pkg/
+
+# --- IDE / editor (not project source) ---
 .idea/
 .vscode/
 *.swp
 *.swo
+.trae/
 
-# OS
+# --- OS ---
 .DS_Store
 Thumbs.db
 
-# ONNX models (too large for git)
+# --- Secrets & local config ---
+config/gateway.toml
+.env
+.env.*
+!.env.example
+
+# --- Runtime data & logs ---
+data/
+*.log
+*.sqlite3
+docker/data/
+gateway_logs/
+
+# --- Large model artifacts ---
 models/*.onnx
 
-# Config with secrets
-config/gateway.toml
-
-# SSL certificates (security)
+# --- TLS (local dev certs) ---
 certs/
 
-# Docker volumes
-docker/data/
-
-# Dashboard build output
-crates/crab-dashboard/dist/
-
-# Node modules
-node_modules/
-
-# Trae skills (IDE tooling, not project code)
-.trae/skills/adapt/
-.trae/skills/animate/
-.trae/skills/arrange/
-.trae/skills/audit/
-.trae/skills/bolder/
-.trae/skills/clarify/
-.trae/skills/colorize/
-.trae/skills/critique/
-.trae/skills/delight/
-.trae/skills/distill/
-.trae/skills/extract/
-.trae/skills/frontend-design/
-.trae/skills/harden/
-.trae/skills/normalize/
-.trae/skills/onboard/
-.trae/skills/optimize/
-.trae/skills/overdrive/
-.trae/skills/polish/
-.trae/skills/quieter/
-.trae/skills/teach-impeccable/
-.trae/skills/typeset/
-
-# Test outputs
+# --- Test / Python artifacts ---
 tests/*.png
-tests/*.md
 tests/__pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 
-# Misc
+# --- Coverage & profiling ---
+coverage/
+*.profraw
+tarpaulin-report.html
+lcov.info
+
+# --- Misc local scratch ---
 doc_content.txt
 read_doc.ps1
-data/
-*.log
-*.sqlite3
+tests/*.md

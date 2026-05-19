@@ -59,6 +59,11 @@ pub struct GatewayMetrics {
     pub upstream_key_requests: IntCounterVec,
     pub upstream_key_inflight: IntGaugeVec,
     pub upstream_key_retries: IntCounterVec,
+    pub reasoning_store_lookups: IntCounterVec,
+    pub reasoning_recovery_fallback: IntCounter,
+    pub prefix_break: IntCounter,
+    pub prefix_block_drift: IntCounter,
+    pub context_summary_appended: IntCounter,
 }
 
 impl GatewayMetrics {
@@ -208,6 +213,34 @@ impl GatewayMetrics {
             &["outcome"],
         )?;
 
+        let reasoning_store_lookups = IntCounterVec::new(
+            Opts::new(
+                "gateway_reasoning_store_lookups_total",
+                "ReasoningStore get() results during message normalization",
+            ),
+            &["result"],
+        )?;
+
+        let reasoning_recovery_fallback = IntCounter::new(
+            "gateway_reasoning_recovery_fallback_total",
+            "fill_only last-resort recovery system insertions (hurts L3 prefix)",
+        )?;
+
+        let prefix_break = IntCounter::new(
+            "gateway_prefix_break_total",
+            "Detected non-append-only message prefix changes vs cached scope",
+        )?;
+
+        let prefix_block_drift = IntCounter::new(
+            "gateway_prefix_block_drift_total",
+            "Immutable leading system/tools block hash drift for a conversation scope",
+        )?;
+
+        let context_summary_appended = IntCounter::new(
+            "gateway_context_summary_appended_total",
+            "Context summary messages appended at tail (strategy B)",
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -226,6 +259,11 @@ impl GatewayMetrics {
             upstream_key_requests,
             upstream_key_inflight,
             upstream_key_retries,
+            reasoning_store_lookups,
+            reasoning_recovery_fallback,
+            prefix_break,
+            prefix_block_drift,
+            context_summary_appended,
         })
     }
 
@@ -247,7 +285,35 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_key_requests.clone()))?;
         registry.register(Box::new(self.upstream_key_inflight.clone()))?;
         registry.register(Box::new(self.upstream_key_retries.clone()))?;
+        registry.register(Box::new(self.reasoning_store_lookups.clone()))?;
+        registry.register(Box::new(self.reasoning_recovery_fallback.clone()))?;
+        registry.register(Box::new(self.prefix_break.clone()))?;
+        registry.register(Box::new(self.prefix_block_drift.clone()))?;
+        registry.register(Box::new(self.context_summary_appended.clone()))?;
         Ok(())
+    }
+
+    pub fn record_reasoning_store_lookup(&self, hit: bool) {
+        let result = if hit { "hit" } else { "miss" };
+        self.reasoning_store_lookups
+            .with_label_values(&[result])
+            .inc();
+    }
+
+    pub fn record_reasoning_recovery_fallback(&self) {
+        self.reasoning_recovery_fallback.inc();
+    }
+
+    pub fn record_prefix_break(&self) {
+        self.prefix_break.inc();
+    }
+
+    pub fn record_prefix_block_drift(&self) {
+        self.prefix_block_drift.inc();
+    }
+
+    pub fn record_context_summary_appended(&self) {
+        self.context_summary_appended.inc();
     }
 
     pub fn set_upstream_key_inflight(&self, key_id: &str, inflight: i64) {

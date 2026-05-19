@@ -37,3 +37,24 @@ groups:
         annotations:
           summary: "CrabCache upstream key errors elevated"
           description: "Check for 401-disabled keys or upstream outages."
+
+  - name: crabcache_l3_prefix_cache
+    rules:
+      - alert: CrabCacheL3PrefixCacheHitRateLow
+        expr: |
+          (
+            sum(increase(gateway_upstream_prompt_cache_tokens_total{status="hit"}[1h]))
+            /
+            clamp_min(
+              sum(increase(gateway_upstream_prompt_cache_tokens_total[1h])),
+              1
+            )
+          ) < 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache L3 upstream prefix cache hit rate below 85% (1h)"
+          description: |
+            Check x-conversation-id stickiness, reasoning strategy (prefer fill_only),
+            and whether clients mutate message prefixes. See docs/DEEPSEEK_PREFIX_CACHE.md.

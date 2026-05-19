@@ -71,7 +71,7 @@ pub fn reconstruct_sse_data(events: &[SseEvent]) -> Bytes {
     let mut result = Vec::new();
     for event in events {
         if let Some(ref evt) = event.event {
-            result.extend_from_slice(format!("event: {}\n", evt).as_bytes());
+            result.extend_from_slice(format!("event: {evt}\n").as_bytes());
         }
         result.extend_from_slice(format!("data: {}\n\n", event.data).as_bytes());
     }

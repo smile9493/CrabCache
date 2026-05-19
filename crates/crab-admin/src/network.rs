@@ -75,10 +75,10 @@ impl NetworkInfo {
 
         let protocol = if use_https { "https" } else { "http" };
 
-        let gateway_url = format!("{}://127.0.0.1:{}", protocol, gateway_port);
+        let gateway_url = format!("{protocol}://127.0.0.1:{gateway_port}");
 
         let gateway_url_lan =
-            primary_ip.map(|ip| format!("{}://{}:{}", protocol, ip, gateway_port));
+            primary_ip.map(|ip| format!("{protocol}://{ip}:{gateway_port}"));
 
         NetworkInfo {
             primary_ip: primary_ip_str,
