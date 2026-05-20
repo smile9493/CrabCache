@@ -10,6 +10,9 @@ pub struct CacheEntry {
     pub ttl_secs: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sse_body: Option<Vec<u8>>,
+    /// Whether this entry was stored from a streaming (`stream: true`) request.
+    #[serde(default)]
+    pub is_stream: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

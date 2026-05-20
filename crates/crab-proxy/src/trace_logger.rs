@@ -109,10 +109,7 @@ impl LogWriter {
             std::fs::create_dir_all(parent).ok();
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
             file,

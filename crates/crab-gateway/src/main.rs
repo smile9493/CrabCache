@@ -239,7 +239,6 @@ fn main() -> Result<()> {
         upstream_key_count = upstream_pool.len(),
         "Upstream DeepSeek key pool initialized"
     );
-
     let mut legacy_client_tokens = std::collections::HashSet::new();
     let api_key = config.api_key.inner();
     if !api_key.is_empty() {

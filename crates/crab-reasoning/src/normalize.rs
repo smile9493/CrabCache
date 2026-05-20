@@ -840,6 +840,38 @@ fn maybe_append_context_summary(messages: &mut Vec<Value>, threshold: usize) {
     global_metrics().record_context_summary_appended();
 }
 
+/// Parsed DeepSeek V4 model suffix (`-max` / `-none`), aligned with new-api `ParseDeepSeekV4ThinkingSuffix`.
+#[derive(Debug, Clone, Default)]
+pub struct DeepSeekV4SuffixParse {
+    pub base_model: String,
+    pub thinking_mode_override: Option<String>,
+    pub reasoning_effort_override: Option<String>,
+    pub matched: bool,
+}
+
+/// Strip `-max` or `-none` from `deepseek-v4-*` model names and map to thinking settings.
+pub fn parse_deepseek_v4_thinking_suffix(model_name: &str) -> DeepSeekV4SuffixParse {
+    for (suffix, thinking, effort) in [
+        ("-none", "disabled", None),
+        ("-max", "enabled", Some("max")),
+    ] {
+        if let Some(base) = model_name.strip_suffix(suffix) {
+            if base.starts_with("deepseek-v4-") {
+                return DeepSeekV4SuffixParse {
+                    base_model: base.to_string(),
+                    thinking_mode_override: Some(thinking.to_string()),
+                    reasoning_effort_override: effort.map(str::to_string),
+                    matched: true,
+                };
+            }
+        }
+    }
+    DeepSeekV4SuffixParse {
+        base_model: model_name.to_string(),
+        ..Default::default()
+    }
+}
+
 pub fn upstream_model_for(original_model: &str, fallback_model: &str) -> String {
     if original_model.starts_with("deepseek-") {
         original_model.to_string()
@@ -883,7 +915,16 @@ pub fn prepare_upstream_request(
         .and_then(|m| m.as_str())
         .unwrap_or(fallback_model)
         .to_string();
-    let upstream_model = upstream_model_for(&original_model, fallback_model);
+    let v4_suffix = parse_deepseek_v4_thinking_suffix(&original_model);
+    let upstream_model = upstream_model_for(&v4_suffix.base_model, fallback_model);
+    let thinking_mode = v4_suffix
+        .thinking_mode_override
+        .as_deref()
+        .unwrap_or(thinking_mode);
+    let reasoning_effort = v4_suffix
+        .reasoning_effort_override
+        .as_deref()
+        .unwrap_or(reasoning_effort);
 
     let supported_set: std::collections::HashSet<&str> =
         SUPPORTED_REQUEST_FIELDS.iter().copied().collect();
@@ -1038,7 +1079,34 @@ pub fn prepare_upstream_request(
         missing_indexes = result.missing_indexes;
     }
 
-    if fill_only && missing_reasoning_on_fill_only == "omit_reasoning" {
+    // fill_only + omit_reasoning: fill from ReasoningStore first; if still missing under
+    // thinking mode, DeepSeek requires reasoning_content — recover history (do not forward bare).
+    if fill_only
+        && missing_reasoning_on_fill_only == "omit_reasoning"
+        && thinking_enabled
+        && !missing_indexes.is_empty()
+    {
+        while !missing_indexes.is_empty() {
+            let (recovered, dropped, notice, _step) =
+                recover_messages_from_missing_reasoning(&result.messages, &missing_indexes);
+            if dropped == 0 {
+                break;
+            }
+            recovered_count += missing_indexes.len();
+            recovery_dropped_messages += dropped;
+            if notice.is_some() {
+                recovery_notice = notice;
+            }
+            result = normalize_messages(
+                &recovered,
+                store,
+                &cache_namespace,
+                thinking_enabled,
+                !thinking_disabled,
+            );
+            missing_indexes = result.missing_indexes;
+        }
+    } else if fill_only && missing_reasoning_on_fill_only == "omit_reasoning" {
         missing_indexes.clear();
     }
 
@@ -1146,6 +1214,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_deepseek_v4_thinking_suffix() {
+        let max = parse_deepseek_v4_thinking_suffix("deepseek-v4-flash-max");
+        assert!(max.matched);
+        assert_eq!(max.base_model, "deepseek-v4-flash");
+        assert_eq!(max.thinking_mode_override.as_deref(), Some("enabled"));
+        assert_eq!(max.reasoning_effort_override.as_deref(), Some("max"));
+
+        let none = parse_deepseek_v4_thinking_suffix("deepseek-v4-pro-none");
+        assert!(none.matched);
+        assert_eq!(none.base_model, "deepseek-v4-pro");
+        assert_eq!(none.thinking_mode_override.as_deref(), Some("disabled"));
+        assert!(none.reasoning_effort_override.is_none());
+
+        let plain = parse_deepseek_v4_thinking_suffix("deepseek-v4-flash");
+        assert!(!plain.matched);
+        assert_eq!(plain.base_model, "deepseek-v4-flash");
+    }
+
+    #[test]
     fn test_upstream_model_for() {
         assert_eq!(
             upstream_model_for("deepseek-v4-pro", "fallback"),
@@ -1247,7 +1334,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_only_preserves_message_count_without_recovery_system() {
+    fn test_fill_only_recovers_when_store_miss_under_thinking() {
         let payload = serde_json::json!({
             "model": "deepseek-v4-pro",
             "messages": [
@@ -1278,20 +1365,53 @@ mod tests {
             false,
             None,
         );
+        assert!(result.recovered_reasoning_messages > 0);
+        assert!(result.recovery_dropped_messages > 0);
+        assert_eq!(result.missing_reasoning_messages, 0);
         let msgs = result
             .payload
             .get("messages")
             .and_then(|m| m.as_array())
             .unwrap();
-        assert_eq!(msgs.len(), 4);
-        assert_eq!(result.retired_prefix_messages, 0);
-        assert_eq!(result.recovered_reasoning_messages, 0);
-        assert!(!msgs.iter().any(|m| {
+        assert!(msgs.iter().any(|m| {
             m.get("role").and_then(|r| r.as_str()) == Some("system")
                 && m.get("content")
                     .and_then(|c| c.as_str())
                     .map(|s| s.contains("CrabCache recovered"))
                     .unwrap_or(false)
         }));
+    }
+
+    #[test]
+    fn test_fill_only_omit_clears_missing_when_thinking_disabled() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "plan"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                }
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "disabled",
+            "medium",
+            "fill_only",
+            "omit_reasoning",
+            0,
+            false,
+            None,
+        );
+        assert_eq!(result.missing_reasoning_messages, 0);
     }
 }

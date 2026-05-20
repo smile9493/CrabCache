@@ -350,10 +350,7 @@ mod tests {
 
     #[test]
     fn bearer_secret_is_upstream_not_client_token() {
-        let pool = UpstreamKeyPool::from_secrets(
-            vec!["sk-deepseek-upstream-secret".into()],
-            60,
-        );
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-deepseek-upstream-secret".into()], 60);
         let guard = pool.acquire().expect("key");
         assert_eq!(guard.bearer_secret(), "sk-deepseek-upstream-secret");
         assert!(!guard.bearer_secret().starts_with("sk-cc-"));

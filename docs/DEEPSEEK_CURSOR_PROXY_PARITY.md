@@ -18,7 +18,7 @@
 | 命名空间隔离 | `authorization_hash` | 客户端 `Authorization` 哈希（`reasoning_cache_namespace`） |
 | 缺失策略 recover / fill_only / reject | 支持 | 支持，默认 **recover** |
 | 流式 partial 落库 | server finally | `flush_streaming_reasoning` |
-| L0/L1/L2 缓存、合并、路由 | 无 | 有 |
+| L0/L1/L2 缓存、合并、路由 | 无 | 有（`stream` 参与精确缓存键，避免流式/非流式混用） |
 | 内置 ngrok | 有 | 无（OpenResty / Cloudflare Tunnel） |
 
 ## 刻意差异（流式）

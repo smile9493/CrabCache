@@ -45,33 +45,45 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 
 | 选项 | 说明 |
 |------|------|
-| `missing_reasoning_strategy = "recover"` | 默认：自动截断不可恢复历史并注入缓存的 reasoning（**降低 L3 前缀命中率**） |
-| `missing_reasoning_strategy = "fill_only"` | 仅从 ReasoningStore 补全，不截断历史（**推荐冲 L3**，见 [`DEEPSEEK_PREFIX_CACHE.md`](DEEPSEEK_PREFIX_CACHE.md)） |
-| `missing_reasoning_on_fill_only` | `omit_reasoning`（默认）或 `reject`（fill_only 时仍缺 reasoning） |
+| `missing_reasoning_strategy = "fill_only"` | **Cursor / Agent 推荐**：仅从 ReasoningStore 补全，不截断历史（多轮 tool 稳定） |
+| `missing_reasoning_strategy = "recover"` | 自动截断不可恢复历史并注入 reasoning（**降低 L3**，仅调试） |
+| `missing_reasoning_on_fill_only` | `omit_reasoning`（默认）：Store 未命中时在 **thinking 模式** 自动 `recover`；仍缺则 **409**（不再裸发 DeepSeek 400） |
 | `missing_reasoning_strategy = "reject"` | 严格模式：无法恢复时返回 **HTTP 409**（调试用） |
 | `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：仅增量 `delta.content`，不下发 `reasoning_content`（避免 Cursor 断连） |
 | `stream_cache_enabled`（`[cache]`） | 流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning |
 
 公网域名+端口部署时 Base URL 须包含端口，例如 `https://v4.example.com:18000/v1`（不是无端口 URL）。
 
-### 推荐配置（二选一）
-
-**高 Cursor 兼容（牺牲 L3）**
+### 推荐配置（Cursor 默认）
 
 ```toml
 [reasoning]
-missing_reasoning_strategy = "recover"
-```
-
-请求头建议：`x-conversation-id: <stable-id>`
-
-**高 L3 前缀命中（Agent / 固定 system + 只追加）**
-
-```toml
-[reasoning]
+thinking_mode = "enabled"
+reasoning_effort = "max"
 missing_reasoning_strategy = "fill_only"
 missing_reasoning_on_fill_only = "omit_reasoning"
+display_reasoning = true
+collapsible_reasoning = true
+
+[cache]
+stream_cache_enabled = true
 ```
+
+部署或升级网关后，**务必清理一次 L0/L1 旧缓存**（旧条目可能混用 `stream:true/false` 键）：
+
+```bash
+curl -s -X POST "http://127.0.0.1:9080/v1/cache/invalidate" \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
+  -H "x-cache-invalidate-confirm: all" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"all"}'
+```
+
+可选：将 `fingerprint_version` 加 1（`PUT /v1/cache/fingerprint`）使旧精确缓存键自然 miss。
+
+**仅调试**时可改用 `missing_reasoning_strategy = "recover"`（牺牲 L3 前缀命中）。请求头建议：`x-conversation-id: <stable-id>`。
+
+**高 L3 前缀命中**（固定 system + 只追加消息）同样使用 `fill_only`，并配合 `x-conversation-id` 或 `x-prompt-cache-key`（见 [`DEEPSEEK_PREFIX_CACHE.md`](DEEPSEEK_PREFIX_CACHE.md)）。
 
 请求头建议：`x-conversation-id` 或 `x-prompt-cache-key`（与 body `prompt_cache_key` 二选一即可）。
 
@@ -133,3 +145,85 @@ VERIFY_MODEL=deepseek-v4-flash CLIENT_API_KEY=sk-cc-... bash scripts/verify_doma
 ```
 
 脚本会校验流式响应中**不得**出现 `reasoning_content` 且包含 `data: [DONE]`。
+
+一键 Cursor 验收：
+
+```bash
+export DOMAIN=v4.example.com
+export CLIENT_API_KEY=sk-cc-...
+export CRABCACHE_GATEWAY_ADMIN_KEY=...
+bash scripts/verify_cursor_e2e.sh
+```
+
+## 生产检查清单（跑通 Cursor）
+
+| 步骤 | 命令 / 配置 |
+|------|-------------|
+| 多上游 Key | `.env` 设置 `CRABCACHE_UPSTREAM_KEYS=sk-1,sk-2,...` |
+| 客户端 Key | `POST /v1/keys` 创建 `sk-cc-*`，Cursor 仅填此 Key |
+| TLS | `curl -sS https://<domain>:18000/ready` 无 `-k` 返回 200 |
+| 清缓存 | `POST /v1/cache/invalidate` + `x-cache-invalidate-confirm: all` |
+| 上游池状态 | `GET /v1/upstream/keys` → `cooldown_remaining_secs` 应为 0 |
+
+## 限流排查（`User API Key Rate limit exceeded`）
+
+该错误来自 **DeepSeek 上游账号**（`CRABCACHE_UPSTREAM_KEYS`），不是 Cursor 里的 `sk-cc-*`。
+
+1. 确认 `.env` 中上游 Key 与手动 `curl api.deepseek.com` 测试用的是**同一批新 Key**。
+2. `curl -s http://127.0.0.1:9080/v1/upstream/keys -H "x-gateway-admin-key: ..." | jq` 查看 `cooldown_remaining_secs`。
+3. 增加 `CRABCACHE_UPSTREAM_KEYS` 条目（对齐 new-api 渠道 MultiKey）。
+4. 将 `reasoning_effort` 降为 `medium`（热更新见上文）。
+5. 高峰仍不足时：临时 `missing_reasoning_strategy=recover`（省 token，牺牲 L3 前缀命中）。
+6. 网关 Coalescing：Leader 上游失败时 Follower **不会**再打上游（避免雪崩）；日志中不应再出现大量 `falling through to upstream` 紧随 429。
+
+从 new-api 迁移：见 [`NEW_API_MIGRATION.md`](NEW_API_MIGRATION.md)。
+
+## 模型后缀（对齐 new-api）
+
+Cursor 可使用：
+
+- `deepseek-v4-flash` + 配置中的 `reasoning_effort`
+- `deepseek-v4-flash-max` → 自动映射为 `flash` + `thinking.enabled` + `reasoning_effort=max`
+- `deepseek-v4-pro-none` → `thinking.disabled`
+
+实现：`crates/crab-reasoning/src/normalize.rs` 中 `parse_deepseek_v4_thinking_suffix`。
+
+## 上游 ~15s `ConnectionClosed`（0 字节响应）
+
+日志形如 `Upstream ConnectionClosed ... bytes already read: 0 ... duration_ms≈15000` 时，按优先级排查：
+
+| 原因 | 说明 |
+|------|------|
+| **Chunked + Content-Length 冲突** | Cursor 经 OpenResty 多为 HTTP/2 入站；Pingora 转上游 H1 时可能带 `Transfer-Encoding: chunked`，网关已在 `upstream_request_filter` **去掉 TE、只保留 Content-Length**（`upstream_headers.rs`）。 |
+| **>64KiB body 未发到上游** | `request_filter` 读光 body 后 Pingora retry buffer 仅 64KiB；超限则跳过首次 `send_body_to_pipe`，导致只发头不发 body。已 patch `third_party/pingora-proxy`（`retry_buffer_truncated` 时仍触发 body filter）+ `request_body_filter` 注入 `new_request_body`。 |
+| DeepSeek 限流 / WAF | 对端在返回 HTTP 头前关连接；文案常为 `User API Key Rate limit exceeded` → 加 `CRABCACHE_UPSTREAM_KEYS` |
+| Coalescing 雪崩 | 已修复：Leader 失败时 Follower **不再** `falling through to upstream` |
+
+网关对替换后的上游请求还会：
+
+- `User-Agent: curl/8.7.1`、`Accept-Encoding: identity`（对齐 curl / deepseek-cursor-proxy）
+- 流式：`Accept: text/event-stream`；非流式：`Accept: application/json`
+
+**JA3 / TLS 指纹**：一般无需改；若 TE/CL 与请求头顺滑后仍断连，再考虑上游 TLS 套件调优（最后手段）。
+
+确认修复（`CRABCACHE_DEBUG_LOG_PATH`）：
+
+```bash
+docker compose build gateway && docker compose up -d gateway
+cat .cursor/debug-3f9816.log | jq -c 'select(.hypothesisId=="H3")'
+# 期望：had_transfer_encoding 可为 true，但 header_names 中无 transfer-encoding
+cat .cursor/debug-3f9816.log | jq -c 'select(.hypothesisId=="R1")'
+# header_to_body_ms 应 < 50ms
+cat .cursor/debug-3f9816.log | jq -c 'select(.hypothesisId=="H1")'
+# alpn 应为 "H1"
+```
+
+`[connection]` 推荐（已写入 `gateway.docker.toml`）：
+
+```toml
+upstream_force_http1 = true
+upstream_request_timeout_secs = 300
+upstream_write_timeout_secs = 300
+upstream_connection_timeout_secs = 60
+upstream_disable_keepalive = true
+```

@@ -496,7 +496,7 @@ export CLIENT_API_KEY=sk-cc-...   # 来自 POST /v1/keys
 # 公网域名+端口：CLIENT_API_KEY=sk-... bash scripts/verify_domain_port.sh
 ```
 
-Cursor + DeepSeek 对照说明：[`docs/DEEPSEEK_CURSOR_PROXY_PARITY.md`](docs/DEEPSEEK_CURSOR_PROXY_PARITY.md)、[`docs/CURSOR_SETUP.md`](docs/CURSOR_SETUP.md)。
+Cursor + DeepSeek 对照说明：[`docs/DEEPSEEK_CURSOR_PROXY_PARITY.md`](docs/DEEPSEEK_CURSOR_PROXY_PARITY.md)、[`docs/CURSOR_SETUP.md`](docs/CURSOR_SETUP.md)。验收：`CLIENT_API_KEY=sk-cc-... bash scripts/verify_cursor_e2e.sh`。从 new-api 迁移：[`docs/NEW_API_MIGRATION.md`](docs/NEW_API_MIGRATION.md)。
 
 公网入口：用 Nginx 反代本机 `127.0.0.1:8080`，参考 [`deploy/nginx/crabcache-api.conf.example`](deploy/nginx/crabcache-api.conf.example)（需 `proxy_buffering off` 以支持流式）。**不要**将 Management `:9080` 或 Redis 暴露到公网。
 

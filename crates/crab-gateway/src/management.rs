@@ -8,12 +8,12 @@ use axum::{
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
-    ClearReasoningCacheResponse, CreateGatewayKeyRequest, CreateGatewayKeyResponse,
-    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest,
-    PatchUpstreamKeyRequest, PutBackendsRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
-    PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
-    StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView,
-    UpstreamRelayConfigView, parse_backend_endpoints, parse_upstream_base_url,
+    ClearReasoningCacheResponse, CreateGatewayKeyRequest, CreateGatewayKeyResponse, ErrorResponse,
+    GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
+    PutBackendsRequest, PutTtlConfigRequest, PutUpstreamKeysRequest, PutUpstreamRelayConfigRequest,
+    ReasoningRuntimeConfigView, RoutingBackendsView, StreamCacheConfig, TtlConfigView,
+    UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView,
+    parse_backend_endpoints, parse_upstream_base_url,
 };
 use crab_proxy::{ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
 use crab_reasoning::ReasoningStore;
@@ -470,12 +470,7 @@ async fn status(
         .read()
         .map(|u| u.clone())
         .ok();
-    let upstream_model = state
-        .runtime
-        .fallback_model
-        .read()
-        .map(|m| m.clone())
-        .ok();
+    let upstream_model = state.runtime.fallback_model.read().map(|m| m.clone()).ok();
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
@@ -517,13 +512,8 @@ async fn put_upstream_relay(
 ) -> Result<Json<UpstreamRelayConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let parsed = parse_upstream_base_url(&req.base_url).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: e }),
-        )
-            .into_response()
-    })?;
+    let parsed = parse_upstream_base_url(&req.base_url)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response())?;
 
     {
         let mut base = state
@@ -552,22 +542,24 @@ async fn put_upstream_relay(
         *fallback = model.trim().to_string();
     }
 
-    let endpoints = req.endpoints.clone().unwrap_or_else(|| vec![parsed.endpoint.clone()]);
+    let endpoints = req
+        .endpoints
+        .clone()
+        .unwrap_or_else(|| vec![parsed.endpoint.clone()]);
     let tls_sni = req
         .tls_sni
         .clone()
         .unwrap_or_else(|| parsed.tls_sni.clone());
 
-    let parsed_backends =
-        parse_backend_endpoints(&endpoints, 1, &tls_sni).map_err(|errors| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse {
-                    error: errors.join("; "),
-                }),
-            )
-                .into_response()
-        })?;
+    let parsed_backends = parse_backend_endpoints(&endpoints, 1, &tls_sni).map_err(|errors| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: errors.join("; "),
+            }),
+        )
+            .into_response()
+    })?;
 
     let mut router = state
         .runtime
@@ -962,8 +954,9 @@ async fn put_reasoning_runtime(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: "missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\""
-                    .to_string(),
+                error:
+                    "missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\""
+                        .to_string(),
             }),
         )
             .into_response());

@@ -1,5 +1,12 @@
 # CrabCache Gateway Configuration
 # Copy this file to gateway.toml and fill in your API keys.
+#
+# Cursor production preset:
+#   - CRABCACHE_UPSTREAM_KEYS with 2+ DeepSeek keys (comma-separated in .env)
+#   - Cursor uses sk-cc-* only; upstream sk-ds-* stays on the server
+#   - [reasoning] reasoning_effort = "medium", missing_reasoning_strategy = "fill_only"
+#   - Models: deepseek-v4-flash or deepseek-v4-flash-max (suffix auto-mapped)
+#   - See docs/CURSOR_SETUP.md and scripts/verify_cursor_e2e.sh
 
 listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
@@ -122,10 +129,10 @@ ttl_secs = 86400
 [reasoning]
 thinking_mode = "enabled"
 reasoning_effort = "max"
-# recover (default): auto-truncate and patch missing reasoning_content (hurts L3 prefix cache)
-# fill_only: only fill from ReasoningStore, no truncation (recommended for high L3)
+# fill_only (recommended for Cursor Agent + tools): fill from ReasoningStore only, no history truncation
+# recover: auto-truncate and patch missing reasoning (debug / sacrifices L3 prefix cache)
 # reject: HTTP 409 when cached reasoning cannot be restored (debug)
-missing_reasoning_strategy = "recover"
+missing_reasoning_strategy = "fill_only"
 # When fill_only: omit_reasoning (forward without reasoning) | reject (409)
 missing_reasoning_on_fill_only = "omit_reasoning"
 # Append tail summary when message count exceeds threshold (0 = disabled, L3-safe append-only)
@@ -142,8 +149,13 @@ tcp_keepalive_idle_secs = 60
 tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
+# Force HTTP/1.1 to api.deepseek.com (recommended for Cursor; avoids H2 edge cases on large bodies)
+upstream_force_http1 = true
+upstream_disable_keepalive = true
 h2_ping_interval_secs = 30
-# upstream_request_timeout_secs = 300
+upstream_request_timeout_secs = 300
+upstream_write_timeout_secs = 300
+upstream_connection_timeout_secs = 60
 
 [trace_logging]
 enabled = true

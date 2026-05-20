@@ -1,7 +1,6 @@
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts,
-    Registry,
+    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
 };
 use std::time::Duration;
 

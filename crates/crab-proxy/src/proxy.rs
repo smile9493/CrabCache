@@ -1,4 +1,11 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
+use crate::debug_agent_log;
+use crate::upstream_body::apply_prepared_upstream_body;
+use crate::upstream_headers::{
+    normalize_replaced_body_headers, smooth_upstream_client_headers, upstream_header_names,
+};
+use crate::upstream_pool::UpstreamKeyPool;
+use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
@@ -17,7 +24,7 @@ use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 fn sanitize_for_trace(value: Option<&str>) -> Option<String> {
@@ -66,7 +73,8 @@ impl GatewayProxy {
         if ctx.upstream_key_guard.is_some() {
             return true;
         }
-        match self.state.runtime.upstream_pool().acquire() {
+        let pool = self.state.runtime.upstream_pool();
+        match pool.acquire() {
             Some(guard) => {
                 ctx.upstream_miss = true;
                 ctx.upstream_key_guard = Some(guard);
@@ -132,7 +140,17 @@ impl ProxyHttp for GatewayProxy {
             ctx.consumer = consumer_from_key;
             ctx.is_models_list = true;
             if !self.try_acquire_upstream_key(ctx) {
-                let _ = session.respond_error(503).await;
+                let body = upstream_pool_exhausted_error_json();
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    &body,
+                    60,
+                )
+                .await
+                {
+                    let _ = session.respond_error(503).await;
+                }
                 return Ok(true);
             }
             return Ok(false);
@@ -293,11 +311,9 @@ impl ProxyHttp for GatewayProxy {
             "Prepared upstream request"
         );
 
+        // Thinking mode requires reasoning_content on tool-call history; never forward gaps.
         let reject_missing = reasoning_cfg.thinking_mode == "enabled"
-            && prepared.missing_reasoning_messages > 0
-            && (reasoning_cfg.missing_reasoning_strategy == "reject"
-                || (reasoning_cfg.missing_reasoning_strategy == "fill_only"
-                    && reasoning_cfg.missing_reasoning_on_fill_only == "reject"));
+            && prepared.missing_reasoning_messages > 0;
 
         if reject_missing {
             warn!(
@@ -324,7 +340,37 @@ impl ProxyHttp for GatewayProxy {
         ctx.pending_recovery_notice = prepared.recovery_notice.clone();
 
         let new_body = serde_json::to_vec(&prepared.payload).unwrap_or_default();
+        ctx.upstream_outbound_body_len = new_body.len();
         ctx.new_request_body = Some(new_body);
+        ctx.upstream_retry_buffer_truncated = session.retry_buffer_truncated();
+        if ctx.upstream_retry_buffer_truncated {
+            debug_agent_log(
+                "H4",
+                "proxy.rs:request_filter",
+                "retry buffer truncated; upstream body will use request_body_filter",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "inbound_bytes": ctx.content_length,
+                    "outbound_bytes": ctx.upstream_outbound_body_len,
+                }),
+            );
+        }
+        // #region agent log
+        if ctx.upstream_outbound_body_len > 50_000 {
+            debug_agent_log(
+                "E",
+                "proxy.rs:request_filter",
+                "large upstream outbound body",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "inbound_bytes": ctx.content_length,
+                    "outbound_bytes": ctx.upstream_outbound_body_len,
+                    "model": ctx.model,
+                    "is_streaming": ctx.is_streaming,
+                }),
+            );
+        }
+        // #endregion
 
         let fingerprint = self
             .state
@@ -341,35 +387,56 @@ impl ProxyHttp for GatewayProxy {
             ctx.cache_key = Some(cache_key.clone());
 
             if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
-                info!(
-                    request_id = %ctx.request_id,
-                    cache_key = %cache_key,
-                    tier = ?tier,
-                    "Cache hit, returning cached response"
-                );
+                if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+                    info!(
+                        request_id = %ctx.request_id,
+                        cache_key = %cache_key,
+                        tier = ?tier,
+                        "Cache hit, returning cached response"
+                    );
+                    ctx.cache_tier = Some(tier);
+                    ctx.cache_hit = Some(entry.clone());
+                    global_metrics().record_latency(
+                        crab_metrics::LatencyKind::CacheFetch,
+                        ctx.request_start.elapsed(),
+                        &ctx.model,
+                        Some(tier),
+                    );
 
-                ctx.cache_tier = Some(tier);
-                ctx.cache_hit = Some(entry.clone());
-                global_metrics().record_latency(
-                    crab_metrics::LatencyKind::CacheFetch,
-                    ctx.request_start.elapsed(),
-                    &ctx.model,
-                    Some(tier),
-                );
+                    let cost = self.state.pricing.cost_saved_usd(
+                        &ctx.model,
+                        entry.usage.prompt_tokens,
+                        entry.usage.completion_tokens,
+                    );
+                    global_metrics().record_cost_saved(
+                        &ctx.model,
+                        ctx.consumer.as_deref(),
+                        tier,
+                        cost,
+                    );
 
-                let cost = self.state.pricing.cost_saved_usd(
-                    &ctx.model,
-                    entry.usage.prompt_tokens,
-                    entry.usage.completion_tokens,
-                );
-                global_metrics().record_cost_saved(&ctx.model, ctx.consumer.as_deref(), tier, cost);
+                    if !send_cached_response(
+                        session,
+                        &entry,
+                        &ctx.model,
+                        ctx.is_streaming,
+                        tier,
+                    )
+                    .await
+                    {
+                        let _ = session.respond_error(500).await;
+                    }
 
-                if !send_cached_response(session, &entry, &ctx.model, ctx.is_streaming, tier).await
-                {
-                    let _ = session.respond_error(500).await;
+                    return Ok(true);
+                } else {
+                    debug!(
+                        request_id = %ctx.request_id,
+                        cache_key = %cache_key,
+                        entry_is_stream = entry.is_stream,
+                        request_is_streaming = ctx.is_streaming,
+                        "Exact cache hit ignored: stream mode mismatch"
+                    );
                 }
-
-                return Ok(true);
             }
 
             if let Some(semantic_cache) = &self.state.semantic_cache {
@@ -412,6 +479,14 @@ impl ProxyHttp for GatewayProxy {
                                             cached_model = %entry.model,
                                             request_model = %ctx.model,
                                             "Semantic cache candidate rejected by model guard",
+                                        );
+                                    } else if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming)
+                                    {
+                                        debug!(
+                                            request_id = %ctx.request_id,
+                                            entry_is_stream = entry.is_stream,
+                                            request_is_streaming = ctx.is_streaming,
+                                            "Semantic cache hit ignored: stream mode mismatch"
                                         );
                                     } else {
                                         info!(
@@ -473,6 +548,15 @@ impl ProxyHttp for GatewayProxy {
                         ctx.is_coalesced_follower = true;
 
                         if let Some((entry, tier)) = self.state.tiered_cache.get(&cache_key).await {
+                            if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+                                debug!(
+                                    request_id = %ctx.request_id,
+                                    cache_key = %cache_key,
+                                    entry_is_stream = entry.is_stream,
+                                    request_is_streaming = ctx.is_streaming,
+                                    "Follower cache hit ignored: stream mode mismatch"
+                                );
+                            } else {
                             info!(
                                 request_id = %ctx.request_id,
                                 cache_key = %cache_key,
@@ -515,6 +599,20 @@ impl ProxyHttp for GatewayProxy {
                             }
 
                             return Ok(true);
+                            }
+                        } else if guard.leader_failed() {
+                            warn!(
+                                request_id = %ctx.request_id,
+                                cache_key = %cache_key,
+                                "Follower: leader upstream failed, not retrying upstream"
+                            );
+                            let body = coalesce_leader_failed_error_json();
+                            if !send_json_error(session, http::StatusCode::BAD_GATEWAY, &body)
+                                .await
+                            {
+                                let _ = session.respond_error(502).await;
+                            }
+                            return Ok(true);
                         } else {
                             warn!(
                                 request_id = %ctx.request_id,
@@ -544,7 +642,12 @@ impl ProxyHttp for GatewayProxy {
         ctx.prepared_request = Some(prepared);
 
         if !self.try_acquire_upstream_key(ctx) {
-            let _ = session.respond_error(503).await;
+            let body = upstream_pool_exhausted_error_json();
+            if !send_json_error_with_retry_after(session, http::StatusCode::SERVICE_UNAVAILABLE, &body, 60)
+                .await
+            {
+                let _ = session.respond_error(503).await;
+            }
             return Ok(true);
         }
 
@@ -578,6 +681,20 @@ impl ProxyHttp for GatewayProxy {
                 .map_err(|_| Error::new(ErrorType::InternalError))?
                 .clone();
             apply_connection_options(&conn_config, &mut peer.options);
+            // #region agent log
+            debug_agent_log(
+                "H1",
+                "proxy.rs:upstream_peer",
+                "upstream peer options (models)",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "alpn": format!("{}", peer.options.alpn),
+                    "force_http1": conn_config.upstream_force_http1,
+                    "read_timeout_secs": conn_config.upstream_request_timeout_secs,
+                    "write_timeout_secs": conn_config.upstream_write_timeout_secs,
+                }),
+            );
+            // #endregion
             return Ok(Box::new(peer));
         }
 
@@ -638,6 +755,23 @@ impl ProxyHttp for GatewayProxy {
             .map_err(|_| Error::new(ErrorType::InternalError))?
             .clone();
         apply_connection_options(&conn_config, &mut peer.options);
+        // #region agent log
+        debug_agent_log(
+            "H1",
+            "proxy.rs:upstream_peer",
+            "upstream peer options (chat)",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "alpn": format!("{}", peer.options.alpn),
+                "force_http1": conn_config.upstream_force_http1,
+                "disable_keepalive": conn_config.upstream_disable_keepalive,
+                "tls_curves": conn_config.upstream_tls_curves,
+                "outbound_bytes": ctx.upstream_outbound_body_len,
+                "read_timeout_secs": conn_config.upstream_request_timeout_secs,
+                "write_timeout_secs": conn_config.upstream_write_timeout_secs,
+            }),
+        );
+        // #endregion
 
         Ok(Box::new(peer))
     }
@@ -652,14 +786,46 @@ impl ProxyHttp for GatewayProxy {
         let _ = upstream_request.insert_header("host", host);
         let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
         if let Some(ref new_body) = ctx.new_request_body {
-            let _ = upstream_request
-                .insert_header(http::header::CONTENT_LENGTH, new_body.len().to_string());
+            let had_transfer_encoding = upstream_request
+                .headers
+                .get(http::header::TRANSFER_ENCODING)
+                .is_some();
+            normalize_replaced_body_headers(upstream_request, new_body.len());
+            smooth_upstream_client_headers(upstream_request, ctx.is_streaming);
+            // #region agent log
+            debug_agent_log(
+                "H3",
+                "proxy.rs:upstream_request_filter",
+                "upstream body framing headers normalized",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "body_len": new_body.len(),
+                    "had_transfer_encoding": had_transfer_encoding,
+                    "is_streaming": ctx.is_streaming,
+                    "header_names": upstream_header_names(upstream_request),
+                }),
+            );
+            // #endregion
         }
 
         if let Some(guard) = ctx.upstream_key_guard.as_ref() {
             let bearer = format!("Bearer {}", guard.bearer_secret());
             let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
         }
+
+        let conn_cfg = self
+            .state
+            .runtime
+            .conn_config
+            .read()
+            .map_err(|_| Error::new(ErrorType::InternalError))?
+            .clone();
+        if conn_cfg.upstream_disable_keepalive {
+            ctx.upstream_connection_close = true;
+            let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
+        }
+
+        ctx.upstream_headers_prepared_at = Some(Instant::now());
 
         if ctx.new_request_body.is_some() {
             upstream_request.set_send_end_stream(false);
@@ -685,25 +851,37 @@ impl ProxyHttp for GatewayProxy {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        if ctx.new_request_body.is_some() {
-            if end_of_stream {
-                if let Some(new_body) = ctx.new_request_body.take() {
-                    debug!(
-                        request_id = %ctx.request_id,
-                        body_len = new_body.len(),
-                        body_preview = %String::from_utf8_lossy(&new_body[..new_body.len().min(500)]),
-                        "Setting upstream request body"
-                    );
-                    *body = Some(bytes::Bytes::from(new_body));
-                } else {
-                    debug!(
-                        request_id = %ctx.request_id,
-                        "new_request_body was None at end_of_stream"
-                    );
-                }
-            } else {
-                *body = None;
+        if let Some(new_body) = ctx.new_request_body.take() {
+            let emit_now = end_of_stream || ctx.upstream_retry_buffer_truncated;
+            if emit_now {
+                let header_to_body_ms = ctx
+                    .upstream_headers_prepared_at
+                    .map(|t| t.elapsed().as_millis())
+                    .unwrap_or(0);
+                debug_agent_log(
+                    "R1",
+                    "proxy.rs:request_body_filter",
+                    "upstream body send after headers",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "body_len": new_body.len(),
+                        "header_to_body_ms": header_to_body_ms,
+                        "connection_close": ctx.upstream_connection_close,
+                        "retry_buffer_truncated": ctx.upstream_retry_buffer_truncated,
+                    }),
+                );
+                debug!(
+                    request_id = %ctx.request_id,
+                    body_len = new_body.len(),
+                    body_preview = %String::from_utf8_lossy(&new_body[..new_body.len().min(500)]),
+                    header_to_body_ms,
+                    connection_close = ctx.upstream_connection_close,
+                    retry_buffer_truncated = ctx.upstream_retry_buffer_truncated,
+                    "Setting upstream request body"
+                );
             }
+            ctx.new_request_body =
+                apply_prepared_upstream_body(new_body, body, end_of_stream, ctx.upstream_retry_buffer_truncated);
         } else {
             debug!(
                 request_id = %ctx.request_id,
@@ -733,8 +911,20 @@ impl ProxyHttp for GatewayProxy {
                 pool.report_rate_limited(id);
                 global_metrics().record_upstream_key_request(id, "rate_limited");
                 if !ctx.is_streaming && ctx.upstream_retry_budget > 0 {
-                    ctx.upstream_retry_budget = 0;
-                    global_metrics().record_upstream_key_retry("cooldown_only");
+                    ctx.upstream_retry_budget -= 1;
+                    if let Some(new_guard) =
+                        UpstreamKeyPool::rotate_after_rate_limit(&pool, id)
+                    {
+                        ctx.upstream_key_guard = Some(new_guard);
+                        global_metrics().record_upstream_key_retry("rate_limited_rotate");
+                    } else {
+                        global_metrics().record_upstream_key_retry("cooldown_only");
+                    }
+                }
+            }
+            if let Some(guard) = &ctx.coalesce_guard {
+                if guard.is_leader() {
+                    guard.mark_failed();
                 }
             }
             return Ok(());
@@ -760,6 +950,11 @@ impl ProxyHttp for GatewayProxy {
         if status >= 400 {
             if let Some(ref id) = key_id {
                 global_metrics().record_upstream_key_request(id, "error");
+            }
+            if let Some(guard) = &ctx.coalesce_guard {
+                if guard.is_leader() {
+                    guard.mark_failed();
+                }
             }
             return Ok(());
         }
@@ -818,41 +1013,12 @@ impl ProxyHttp for GatewayProxy {
                     if finalized {
                         ctx.stream_reasoning_finalized = true;
                     }
-                    // #region agent log
-                    if !rewritten.is_empty()
-                        && rewritten.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content")
-                    {
-                        agent_stream_debug_log(
-                            "H1",
-                            "proxy.rs:upstream_response_body_filter",
-                            "rewritten chunk still contains reasoning_content",
-                            serde_json::json!({
-                                "request_id": ctx.request_id,
-                                "chunk_len": rewritten.len(),
-                                "has_display_adapter": ctx.display_adapter.is_some(),
-                            }),
-                        );
-                    }
-                    // #endregion
                     if rewritten.is_empty() {
                         None
                     } else {
                         Some(bytes::Bytes::from(rewritten))
                     }
                 } else {
-                    // #region agent log
-                    if data.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
-                        agent_stream_debug_log(
-                            "H2",
-                            "proxy.rs:upstream_response_body_filter",
-                            "passthrough chunk contains reasoning_content (no prepared_request)",
-                            serde_json::json!({
-                                "request_id": ctx.request_id,
-                                "chunk_len": data.len(),
-                            }),
-                        );
-                    }
-                    // #endregion
                     Some(data.clone())
                 };
 
@@ -963,7 +1129,13 @@ impl ProxyHttp for GatewayProxy {
                         .tiered_cache
                         .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
-                    let entry = build_cache_entry(client_body.clone(), ctx.model.clone(), ttl_secs);
+                    let cache_body = prepare_response_body_for_cache(client_body.clone());
+                    let entry = build_cache_entry(
+                        cache_body,
+                        ctx.model.clone(),
+                        ttl_secs,
+                        ctx.is_streaming,
+                    );
 
                     let tiered_cache = self.state.tiered_cache.clone();
                     let cache_key = cache_key.clone();
@@ -989,9 +1161,10 @@ impl ProxyHttp for GatewayProxy {
                                     if let Some(query_text) = build_semantic_query_text(messages) {
                                         let semantic_cache = semantic_cache.clone();
                                         let entry_clone = build_cache_entry(
-                                            client_body.clone(),
+                                            prepare_response_body_for_cache(client_body.clone()),
                                             ctx.model.clone(),
                                             ttl_secs,
+                                            ctx.is_streaming,
                                         );
 
                                         tokio::spawn(async move {
@@ -1080,6 +1253,7 @@ impl ProxyHttp for GatewayProxy {
                             reasoning_cfg.collapsible_reasoning,
                         );
                     }
+                    strip_reasoning_from_completion_value(&mut response_value);
                     let response_json = serde_json::to_string(&response_value).unwrap_or_default();
 
                     if self.state.runtime.stream_cache_enabled() {
@@ -1090,13 +1264,15 @@ impl ProxyHttp for GatewayProxy {
 
                         let sse_body = ctx.accumulated_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
-                        let response_bytes = response_json.clone().into_bytes();
+                        let response_bytes =
+                            prepare_response_body_for_cache(response_json.clone().into_bytes());
                         let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                             build_cache_entry_with_sse(
                                 response_bytes.clone(),
                                 sse_body,
                                 ctx.model.clone(),
                                 ttl_secs,
+                                true,
                             )
                         } else {
                             warn!(
@@ -1105,7 +1281,7 @@ impl ProxyHttp for GatewayProxy {
                                 "SSE body exceeds max_sse_cache_bytes; caching JSON only"
                             );
                             global_metrics().record_stream_cache_sse_omitted("over_limit");
-                            build_cache_entry(response_bytes, ctx.model.clone(), ttl_secs)
+                            build_cache_entry(response_bytes, ctx.model.clone(), ttl_secs, true)
                         };
                         let tiered_cache = self.state.tiered_cache.clone();
                         let cache_key = cache_key.clone();
@@ -1133,9 +1309,12 @@ impl ProxyHttp for GatewayProxy {
                                         {
                                             let semantic_cache = semantic_cache.clone();
                                             let entry_for_semantic = build_cache_entry(
-                                                response_json.into_bytes(),
+                                                prepare_response_body_for_cache(
+                                                    response_json.into_bytes(),
+                                                ),
                                                 ctx.model.clone(),
                                                 ttl_secs,
+                                                true,
                                             );
                                             let query_text = query_text.to_string();
 
@@ -1177,6 +1356,26 @@ impl ProxyHttp for GatewayProxy {
                 model = %ctx.model,
                 "Request failed"
             );
+            if let Some(guard) = &ctx.coalesce_guard {
+                if guard.is_leader() {
+                    guard.mark_failed();
+                }
+            }
+            // #region agent log
+            debug_agent_log(
+                "F",
+                "proxy.rs:logging",
+                "upstream proxy error",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "error": e.to_string(),
+                    "duration_ms": latency_ms,
+                    "outbound_bytes": ctx.upstream_outbound_body_len,
+                    "is_streaming": ctx.is_streaming,
+                    "coalesce_leader": ctx.coalesce_guard.as_ref().map(|g| g.is_leader()),
+                }),
+            );
+            // #endregion
         } else {
             info!(
                 request_id = %ctx.request_id,
@@ -1193,7 +1392,6 @@ impl ProxyHttp for GatewayProxy {
                 upstream_key_id = ?ctx.upstream_key_guard.as_ref().map(|g| g.key_id()),
                 "Request completed"
             );
-
             if let Some(trace_logger) = &self.state.trace_logger {
                 if let Some(body) = &ctx.original_request_body {
                     let mut entry = SanitizedLogEntry::from_request(
@@ -1275,6 +1473,28 @@ pub fn flush_streaming_reasoning(
         .sum()
 }
 
+fn upstream_pool_exhausted_error_json() -> Vec<u8> {
+    let body = serde_json::json!({
+        "error": {
+            "message": "All upstream DeepSeek API keys are rate-limited or disabled. Retry after cooldown or add keys via CRABCACHE_UPSTREAM_KEYS.",
+            "type": "upstream_key_exhausted",
+            "code": "upstream_key_exhausted",
+        }
+    });
+    serde_json::to_vec(&body).unwrap_or_default()
+}
+
+fn coalesce_leader_failed_error_json() -> Vec<u8> {
+    let body = serde_json::json!({
+        "error": {
+            "message": "Upstream request failed while coalesced peers were waiting; no duplicate upstream call was made.",
+            "type": "upstream_error",
+            "code": "coalesce_leader_failed",
+        }
+    });
+    serde_json::to_vec(&body).unwrap_or_default()
+}
+
 fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
     let body = serde_json::json!({
         "error": {
@@ -1293,15 +1513,36 @@ fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
     serde_json::to_vec(&body).unwrap_or_default()
 }
 
+async fn send_json_error_with_retry_after(
+    session: &mut Session,
+    status: http::StatusCode,
+    body: &[u8],
+    retry_after_secs: u64,
+) -> bool {
+    send_json_error_inner(session, status, body, Some(retry_after_secs)).await
+}
+
 async fn send_json_error(session: &mut Session, status: http::StatusCode, body: &[u8]) -> bool {
+    send_json_error_inner(session, status, body, None).await
+}
+
+async fn send_json_error_inner(
+    session: &mut Session,
+    status: http::StatusCode,
+    body: &[u8],
+    retry_after_secs: Option<u64>,
+) -> bool {
     use pingora_http::ResponseHeader;
-    let mut header = match ResponseHeader::build(status, Some(6)) {
+    let mut header = match ResponseHeader::build(status, Some(8)) {
         Ok(h) => h,
         Err(_) => return false,
     };
     let _ = header.insert_header("content-type", "application/json");
     let _ = header.insert_header("content-length", body.len().to_string());
     let _ = header.insert_header("connection", "close");
+    if let Some(secs) = retry_after_secs {
+        let _ = header.insert_header("retry-after", secs.to_string());
+    }
     if session
         .downstream_session
         .write_response_header(Box::new(header))
@@ -1338,34 +1579,6 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         .is_ok()
 }
 
-// #region agent log
-fn agent_stream_debug_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    let line = serde_json::json!({
-        "sessionId": "3f9816",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0),
-        "runId": std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "cursor-stream".into()),
-    });
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(
-            std::env::var("CRABCACHE_DEBUG_LOG_PATH")
-                .unwrap_or_else(|_| "/opt/projct/CrabCache/.cursor/debug-3f9816.log".into()),
-        )
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{line}");
-    }
-}
-// #endregion
-
 /// Cache hit streaming: prefer stored `sse_body` (already client-shaped from a prior miss).
 /// Fallback `json_to_sse_stream` strips `reasoning_content` from message deltas for Cursor.
 async fn send_cached_response(
@@ -1395,32 +1608,6 @@ async fn send_cached_response(
         } else {
             json_to_sse_stream(response_body, model)
         };
-        // #region agent log
-        if sse_body.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
-            agent_stream_debug_log(
-                "H3",
-                "proxy.rs:send_cached_response",
-                "cache hit sse still contains reasoning_content",
-                serde_json::json!({
-                    "used_legacy_regen": used_legacy_regen,
-                    "saved_empty_content": saved_empty_content,
-                    "tier": format!("{:?}", cache_tier),
-                }),
-            );
-        }
-        if !cached_sse_has_nonempty_content(&sse_body) {
-            agent_stream_debug_log(
-                "H5",
-                "proxy.rs:send_cached_response",
-                "cache hit sse has no non-empty delta.content",
-                serde_json::json!({
-                    "used_legacy_regen": used_legacy_regen,
-                    "saved_empty_content": saved_empty_content,
-                    "tier": format!("{:?}", cache_tier),
-                }),
-            );
-        }
-        // #endregion
         let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
             warn!("Failed to build SSE cache response header");
             return false;
@@ -1455,7 +1642,36 @@ pub fn should_store_sse_body(sse_len: usize, max_sse_cache_bytes: usize) -> bool
     max_sse_cache_bytes > 0 && sse_len <= max_sse_cache_bytes
 }
 
-fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> CacheEntry {
+/// Legacy Redis entries default `is_stream = false`; mismatch forces a miss for streaming clients.
+pub fn cache_entry_matches_stream_mode(entry: &CacheEntry, is_streaming: bool) -> bool {
+    entry.is_stream == is_streaming
+}
+
+fn strip_reasoning_from_completion_value(value: &mut serde_json::Value) {
+    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for choice in choices {
+        if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
+            msg.remove("reasoning_content");
+        }
+    }
+}
+
+fn prepare_response_body_for_cache(body: Vec<u8>) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return body;
+    };
+    strip_reasoning_from_completion_value(&mut value);
+    serde_json::to_vec(&value).unwrap_or(body)
+}
+
+fn build_cache_entry(
+    response_body: Vec<u8>,
+    model: String,
+    ttl_secs: u64,
+    is_stream: bool,
+) -> CacheEntry {
     CacheEntry {
         response_body,
         model,
@@ -1466,6 +1682,7 @@ fn build_cache_entry(response_body: Vec<u8>, model: String, ttl_secs: u64) -> Ca
             .as_secs(),
         ttl_secs,
         sse_body: None,
+        is_stream,
     }
 }
 
@@ -1474,6 +1691,7 @@ fn build_cache_entry_with_sse(
     sse_body: Vec<u8>,
     model: String,
     ttl_secs: u64,
+    is_stream: bool,
 ) -> CacheEntry {
     CacheEntry {
         response_body,
@@ -1485,6 +1703,7 @@ fn build_cache_entry_with_sse(
             .unwrap_or_default()
             .as_secs(),
         ttl_secs,
+        is_stream,
     }
 }
 
@@ -1584,6 +1803,26 @@ fn is_models_endpoint(path: &str, method: &http::Method) -> bool {
 }
 
 fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions) {
+    if config.upstream_force_http1 {
+        options.set_http_version(1, 1);
+        options.alpn = ALPN::H1;
+        options.h2_ping_interval = None;
+        options.max_h2_streams = 1;
+    } else if let Some(ping_secs) = config.h2_ping_interval_secs
+        && ping_secs > 0
+    {
+        options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
+    }
+
+    if !config.upstream_tls_curves.is_empty() {
+        use std::sync::OnceLock;
+        static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
+        let curves: &'static str = *CACHED_CURVES.get_or_init(|| {
+            Box::leak(config.upstream_tls_curves.clone().into_boxed_str())
+        });
+        options.curves = Some(curves);
+    }
+
     if let (Some(idle), Some(interval), Some(count)) = (
         config.tcp_keepalive_idle_secs,
         config.tcp_keepalive_interval_secs,
@@ -1597,14 +1836,22 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
         });
     }
 
-    if let Some(idle_secs) = config.idle_timeout_secs {
+    if config.upstream_disable_keepalive {
+        options.idle_timeout = Some(Duration::from_secs(0));
+    } else if let Some(idle_secs) = config.idle_timeout_secs {
         options.idle_timeout = Some(Duration::from_secs(idle_secs));
     }
 
-    if let Some(ping_secs) = config.h2_ping_interval_secs
-        && ping_secs > 0
-    {
-        options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
+    if let Some(secs) = config.upstream_connection_timeout_secs {
+        if secs > 0 {
+            options.connection_timeout = Some(Duration::from_secs(secs));
+        }
+    }
+
+    if let Some(secs) = config.upstream_write_timeout_secs {
+        if secs > 0 {
+            options.write_timeout = Some(Duration::from_secs(secs));
+        }
     }
 
     if let Some(secs) = config.upstream_request_timeout_secs {
@@ -1971,6 +2218,34 @@ mod tests {
         let text = String::from_utf8(sse).unwrap();
         assert!(!text.contains("reasoning_content"));
         assert!(text.contains("thought"));
+    }
+
+    #[test]
+    fn cache_entry_stream_mode_guard() {
+        let entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, false);
+        assert!(cache_entry_matches_stream_mode(&entry, false));
+        assert!(!cache_entry_matches_stream_mode(&entry, true));
+        let stream_entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, true);
+        assert!(cache_entry_matches_stream_mode(&stream_entry, true));
+    }
+
+    #[test]
+    fn prepare_response_body_for_cache_strips_reasoning_field() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<details>think</details>hi",
+                    "reasoning_content": "secret"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let out = prepare_response_body_for_cache(body.to_string().into_bytes());
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert!(msg.get("reasoning_content").is_none());
+        assert!(msg["content"].as_str().unwrap().contains("hi"));
     }
 
     #[test]

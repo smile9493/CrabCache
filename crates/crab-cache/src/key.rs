@@ -5,10 +5,9 @@ use unicode_normalization::UnicodeNormalization;
 
 /// Fields that are stripped from the request body before generating the cache key.
 ///
-/// These are sampling/inference parameters that do not affect the semantic content
-/// of the response and should not produce different cache entries.
+/// Sampling/inference parameters stripped from the cache key (does not include `stream`:
+/// stream vs non-stream must not share L0/L1 entries for Cursor SSE compatibility).
 const STRIPPED_FIELDS: &[&str] = &[
-    "stream",
     "temperature",
     "top_p",
     "frequency_penalty",
@@ -24,6 +23,7 @@ const STRIPPED_FIELDS: &[&str] = &[
 const KEY_FIELDS: &[&str] = &[
     "model",
     "messages",
+    "stream",
     "max_tokens",
     "stop",
     "response_format",
@@ -255,22 +255,44 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_cache_key_normalization() {
+    fn test_generate_cache_key_stream_mode_differs() {
+        let body_stream = json!({
+            "model": "v4-pro",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": true,
+            "temperature": 0.7
+        });
+
+        let body_non_stream = json!({
+            "model": "v4-pro",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": false,
+            "temperature": 0.9
+        });
+
+        let key_stream = generate_cache_key(&serde_json::to_vec(&body_stream).unwrap()).unwrap();
+        let key_non_stream =
+            generate_cache_key(&serde_json::to_vec(&body_non_stream).unwrap()).unwrap();
+
+        assert_ne!(
+            key_stream, key_non_stream,
+            "stream true/false must not share the same cache key (Cursor SSE vs JSON)"
+        );
+    }
+
+    #[test]
+    fn test_generate_cache_key_sampling_params_stripped() {
         let body1 = json!({
             "model": "v4-pro",
-            "messages": [
-                {"role": "user", "content": "Hello"}
-            ],
+            "messages": [{"role": "user", "content": "Hello"}],
             "stream": true,
             "temperature": 0.7
         });
 
         let body2 = json!({
             "model": "v4-pro",
-            "messages": [
-                {"role": "user", "content": "Hello"}
-            ],
-            "stream": false,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": true,
             "temperature": 0.9
         });
 
@@ -382,8 +404,6 @@ mod tests {
     #[test]
     fn test_stripped_fields_do_not_affect_key() {
         let test_cases = [
-            ("stream", json!(true)),
-            ("stream", json!(false)),
             ("temperature", json!(0.7)),
             ("temperature", json!(1.0)),
             ("top_p", json!(0.9)),

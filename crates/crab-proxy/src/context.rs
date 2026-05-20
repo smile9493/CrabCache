@@ -31,10 +31,47 @@ pub struct ConnectionConfig {
     /// Max seconds waiting for upstream response bytes (0 = no limit).
     #[serde(default = "default_upstream_request_timeout_secs")]
     pub upstream_request_timeout_secs: Option<u64>,
+    /// Force HTTP/1.1 ALPN to upstream (recommended for DeepSeek; avoids H2 edge cases).
+    #[serde(default = "default_upstream_force_http1")]
+    pub upstream_force_http1: bool,
+    /// Max seconds per write when sending large request bodies upstream.
+    #[serde(default = "default_upstream_write_timeout_secs")]
+    pub upstream_write_timeout_secs: Option<u64>,
+    /// TCP+TLS connect timeout to upstream.
+    #[serde(default = "default_upstream_connection_timeout_secs")]
+    pub upstream_connection_timeout_secs: Option<u64>,
+    /// Send `Connection: close` and avoid pooling idle upstream sockets (fixes stale H1 reuse).
+    #[serde(default = "default_upstream_disable_keepalive")]
+    pub upstream_disable_keepalive: bool,
+    /// Override the ECDH curves advertised during TLS handshake (OpenSSL group list syntax).
+    /// Defaults to Chrome-like order: `"X25519:P-256:P-384"`.
+    /// Set to `""` to use the OpenSSL/Pingora defaults.
+    #[serde(default = "default_upstream_tls_curves")]
+    pub upstream_tls_curves: String,
+}
+
+fn default_upstream_disable_keepalive() -> bool {
+    true
+}
+
+fn default_upstream_force_http1() -> bool {
+    true
+}
+
+fn default_upstream_write_timeout_secs() -> Option<u64> {
+    Some(300)
+}
+
+fn default_upstream_connection_timeout_secs() -> Option<u64> {
+    Some(60)
 }
 
 fn default_upstream_request_timeout_secs() -> Option<u64> {
     Some(300)
+}
+
+fn default_upstream_tls_curves() -> String {
+    "X25519:P-256:P-384".to_string()
 }
 
 impl Default for ConnectionConfig {
@@ -46,6 +83,11 @@ impl Default for ConnectionConfig {
             idle_timeout_secs: Some(90),
             h2_ping_interval_secs: Some(30),
             upstream_request_timeout_secs: default_upstream_request_timeout_secs(),
+            upstream_force_http1: true,
+            upstream_write_timeout_secs: default_upstream_write_timeout_secs(),
+            upstream_connection_timeout_secs: default_upstream_connection_timeout_secs(),
+            upstream_disable_keepalive: true,
+            upstream_tls_curves: default_upstream_tls_curves(),
         }
     }
 }
@@ -180,6 +222,13 @@ pub struct GatewayContext {
     pub stream_reasoning_finalized: bool,
     /// Incomplete SSE line bytes spanning upstream body chunks.
     pub stream_sse_remainder: Vec<u8>,
+    /// Serialized upstream JSON body length after reasoning prepare (for diagnostics).
+    pub upstream_outbound_body_len: usize,
+    /// Set in `upstream_request_filter` before Pingora writes upstream headers.
+    pub upstream_headers_prepared_at: Option<Instant>,
+    pub upstream_connection_close: bool,
+    /// Downstream retry buffer exceeded 64KiB while reading in `request_filter`.
+    pub upstream_retry_buffer_truncated: bool,
 }
 
 impl GatewayContext {
@@ -220,6 +269,10 @@ impl GatewayContext {
             upstream_retry_budget: 1,
             stream_reasoning_finalized: false,
             stream_sse_remainder: Vec::new(),
+            upstream_outbound_body_len: 0,
+            upstream_headers_prepared_at: None,
+            upstream_connection_close: false,
+            upstream_retry_buffer_truncated: false,
         }
     }
 }
