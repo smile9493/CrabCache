@@ -1,4 +1,11 @@
 # CrabCache gateway config for Docker Compose (agent profile: gateway + Redis).
+#
+# === Cursor production preset ===
+# .env: CRABCACHE_UPSTREAM_KEYS=sk-ds-1,sk-ds-2,sk-ds-3  (multi-key quota pool)
+# Cursor: Base URL https://<domain>:18000/v1, API Key sk-cc-* (Management POST /v1/keys)
+# After upgrade: POST /v1/cache/invalidate with x-cache-invalidate-confirm: all
+# TLS: Let's Encrypt on OpenResty :18000 (strict curl /ready must return 200)
+#
 # Required: CRABCACHE_API_KEY or CRABCACHE_UPSTREAM_KEYS (upstream DeepSeek key pool).
 # Optional: CRABCACHE_GATEWAY_ADMIN_KEY, CRABCACHE_L1_REDIS_URL, CRABCACHE_MANAGEMENT_LISTEN
 
@@ -49,9 +56,10 @@ ttl_secs = 86400
 
 [reasoning]
 thinking_mode = "enabled"
-reasoning_effort = "max"
-# recover | reject (strict: HTTP 409 when reasoning_content cannot be restored)
-missing_reasoning_strategy = "recover"
+reasoning_effort = "medium"
+# Cursor / Agent 推荐 fill_only：先从 ReasoningStore 补全；Store 未命中时自动 recover（勿裸发上游）
+missing_reasoning_strategy = "fill_only"
+missing_reasoning_on_fill_only = "omit_reasoning"
 display_reasoning = true
 collapsible_reasoning = true
 cache_db_path = "/app/data/reasoning_content.sqlite3"
@@ -63,7 +71,16 @@ tcp_keepalive_idle_secs = 60
 tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
+# Upstream to DeepSeek: force HTTP/1.1 (default true); h2_ping only applies when force_http1 = false
+upstream_force_http1 = true
+upstream_disable_keepalive = true
 h2_ping_interval_secs = 30
+upstream_request_timeout_secs = 300
+upstream_write_timeout_secs = 300
+upstream_connection_timeout_secs = 60
+# Chrome-like ECDH curve order to reduce JA3 fingerprint mismatch with CDN WAF.
+# Set to "" to use OpenSSL/Pingora defaults.
+upstream_tls_curves = "X25519:P-256:P-384"
 
 [trace_logging]
 enabled = true

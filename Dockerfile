@@ -9,7 +9,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# [patch.crates-io] pingora-proxy: required for >64KiB upstream body (see third_party/pingora-proxy/PATCH.md)
 COPY Cargo.toml Cargo.lock ./
+COPY third_party/pingora-proxy/Cargo.toml third_party/pingora-proxy/Cargo.toml
+COPY third_party/pingora-proxy/src third_party/pingora-proxy/src
 COPY crates/crab-metrics/Cargo.toml crates/crab-metrics/Cargo.toml
 COPY crates/crab-route/Cargo.toml crates/crab-route/Cargo.toml
 COPY crates/crab-cache/Cargo.toml crates/crab-cache/Cargo.toml
@@ -32,7 +35,9 @@ RUN cargo build --release -p crab-gateway 2>/dev/null || true
 
 COPY . .
 
-RUN cargo build --release -p crab-gateway
+# Rebuild with full sources (patched pingora-proxy + crab-proxy upstream body inject)
+RUN cargo build --release -p crab-gateway \
+    && cargo tree -p crab-proxy -i pingora-proxy | head -5
 
 FROM debian:bookworm-slim
 

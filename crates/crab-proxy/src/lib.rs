@@ -1,9 +1,12 @@
 mod context;
+mod debug_log;
 mod error;
 mod proxy;
 mod runtime;
 mod sse;
 mod trace_logger;
+mod upstream_body;
+mod upstream_headers;
 mod upstream_pool;
 
 pub use context::{
@@ -14,6 +17,7 @@ pub use error::ProxyError;
 pub use proxy::{GatewayProxy, flush_streaming_reasoning, should_store_sse_body};
 pub use runtime::RuntimeConfig;
 pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
+pub use debug_log::debug_agent_log;
 pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,
     UpstreamKeyStatus, key_preview,

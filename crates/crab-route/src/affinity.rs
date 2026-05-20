@@ -15,7 +15,10 @@ pub fn extract_affinity_key(
         return key;
     }
 
-    if let Some(header_key) = headers.get("x-prompt-cache-key").and_then(|v| v.to_str().ok()) {
+    if let Some(header_key) = headers
+        .get("x-prompt-cache-key")
+        .and_then(|v| v.to_str().ok())
+    {
         let key = format!("pck:{header_key}");
         trace!(key = %key, "Using x-prompt-cache-key as affinity key");
         return key;

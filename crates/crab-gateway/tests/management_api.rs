@@ -55,9 +55,8 @@ async fn test_management_state() -> Option<ManagementState> {
             .ok()?,
     );
 
-    let reasoning_store = Arc::new(
-        ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("reasoning store"),
-    );
+    let reasoning_store =
+        Arc::new(ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("reasoning store"));
 
     Some(ManagementState {
         runtime: test_runtime(),

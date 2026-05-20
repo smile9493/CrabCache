@@ -1,3 +1,6 @@
+[patch.crates-io]
+pingora-proxy = { path = "third_party/pingora-proxy" }
+
 [workspace]
 resolver = "2"
 members = [

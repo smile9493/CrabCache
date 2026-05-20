@@ -371,8 +371,8 @@ impl GatewayConfig {
 
     /// Derive routing peers and TLS SNI from `[upstream].base_url` when omitted (new-api style).
     pub fn apply_upstream_defaults(&mut self) -> anyhow::Result<()> {
-        let parsed = parse_upstream_base_url(self.upstream_base_url())
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let parsed =
+            parse_upstream_base_url(self.upstream_base_url()).map_err(|e| anyhow::anyhow!(e))?;
         self.upstream.base_url = Some(parsed.normalized.clone());
         if self.upstream.deepseek_endpoints.is_empty() {
             self.upstream
@@ -386,14 +386,11 @@ impl GatewayConfig {
     }
 
     pub fn resolved_tls_sni(&self) -> String {
-        self.upstream
-            .tls_sni
-            .clone()
-            .unwrap_or_else(|| {
-                parse_upstream_base_url(self.upstream_base_url())
-                    .map(|p| p.tls_sni)
-                    .unwrap_or_else(|_| "api.deepseek.com".to_string())
-            })
+        self.upstream.tls_sni.clone().unwrap_or_else(|| {
+            parse_upstream_base_url(self.upstream_base_url())
+                .map(|p| p.tls_sni)
+                .unwrap_or_else(|_| "api.deepseek.com".to_string())
+        })
     }
 
     pub fn parse_endpoints(&self) -> Vec<crab_route::Backend> {
@@ -482,9 +479,7 @@ impl GatewayConfig {
         }
 
         for ep in &self.upstream.deepseek_endpoints {
-            if ep.parse::<SocketAddr>().is_err()
-                && ep.to_socket_addrs().is_err()
-            {
+            if ep.parse::<SocketAddr>().is_err() && ep.to_socket_addrs().is_err() {
                 errors.push(format!("Invalid upstream endpoint address: '{ep}'"));
             }
         }
@@ -668,10 +663,7 @@ collection_name = ""
         .unwrap();
 
         unsafe {
-            std::env::set_var(
-                "CRABCACHE_UPSTREAM_BASE_URL",
-                "https://api.openai.com",
-            );
+            std::env::set_var("CRABCACHE_UPSTREAM_BASE_URL", "https://api.openai.com");
         }
         let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
         unsafe {

@@ -32,6 +32,8 @@ services:
       - ./config/gateway.docker.toml:/app/config/gateway.toml:ro
       - gateway_data:/app/data
       - gateway_logs:/app/logs
+      # Optional debug NDJSON (uncomment while diagnosing):
+      - ./.cursor:/app/.cursor
     depends_on:
       redis:
         condition: service_healthy
@@ -45,6 +47,8 @@ services:
       - CRABCACHE_L1_REDIS_URL=${CRABCACHE_L1_REDIS_URL:-redis://redis:6379}
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
       - CRABCACHE_BOOTSTRAP_CLIENT_KEYS=${CRABCACHE_BOOTSTRAP_CLIENT_KEYS:-}
+      - CRABCACHE_DEBUG_LOG_PATH=/app/.cursor/debug-3f9816.log
+      - CRABCACHE_DEBUG_RUN_ID=cursor-debug
     restart: unless-stopped
 
   admin:
