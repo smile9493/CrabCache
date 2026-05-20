@@ -128,6 +128,10 @@ pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
     fetch_json(&format!("{}/metrics", API_BASE)).await
 }
 
+pub async fn fetch_overview() -> Result<crate::types::OverviewBundle, String> {
+    fetch_json(&format!("{}/overview", API_BASE)).await
+}
+
 pub async fn fetch_gateway_health() -> Result<GatewayHealth, String> {
     fetch_json(&format!("{}/gateway/health", API_BASE)).await
 }
@@ -186,7 +190,9 @@ pub async fn update_upstream_config(
     put_json(&format!("{}/upstream/config", API_BASE), req).await
 }
 
-pub async fn test_upstream_connection(body: &UpstreamTestBody) -> Result<UpstreamTestResult, String> {
+pub async fn test_upstream_connection(
+    body: &UpstreamTestBody,
+) -> Result<UpstreamTestResult, String> {
     post_json(&format!("{}/upstream/test", API_BASE), body).await
 }
 
@@ -246,8 +252,8 @@ pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {
     fetch_json(&format!("{}/logs/{}", API_BASE, id)).await
 }
 
-pub async fn fetch_trace_analysis() -> Result<TraceAnalysis, String> {
-    fetch_json(&format!("{}/trace/analysis", API_BASE)).await
+pub async fn fetch_trace_analysis(hours: u32) -> Result<TraceAnalysis, String> {
+    fetch_json(&format!("{}/trace/analysis?hours={}", API_BASE, hours)).await
 }
 
 pub async fn fetch_cache_ops() -> Result<CacheOpsView, String> {

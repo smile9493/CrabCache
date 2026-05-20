@@ -3,7 +3,7 @@ use crate::state::{AppState, KeyMetadata};
 use crate::types::*;
 use axum::{
     Json, Router,
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::Response,
@@ -66,6 +66,7 @@ fn gateway_error_message(err: &crab_control::ControlError) -> String {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
+        .route("/api/admin/overview", get(get_overview))
         .route(
             "/api/admin/metrics/prefix-cache",
             get(get_prefix_cache_metrics),
@@ -118,34 +119,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {
-    match state.gateway.ready().await {
-        Ok(()) => match state.gateway.status().await {
-            Ok(s) => Json(GatewayHealthView {
-                healthy: true,
-                uptime_secs: s.uptime_secs,
-                active_keys: s.active_keys,
-                backend_count: s.backend_count,
-                stream_cache_enabled: s.stream_cache_enabled,
-                error: None,
-            }),
-            Err(e) => Json(GatewayHealthView {
-                healthy: true,
-                uptime_secs: 0,
-                active_keys: 0,
-                backend_count: 0,
-                stream_cache_enabled: false,
-                error: Some(gateway_error_message(&e)),
-            }),
-        },
-        Err(e) => Json(GatewayHealthView {
-            healthy: false,
-            uptime_secs: 0,
-            active_keys: 0,
-            backend_count: 0,
-            stream_cache_enabled: false,
-            error: Some(gateway_error_message(&e)),
-        }),
-    }
+    Json(crate::overview::build_gateway_health(&state).await)
 }
 
 async fn get_network_info() -> Json<NetworkInfo> {
@@ -157,186 +131,39 @@ async fn get_network_info() -> Json<NetworkInfo> {
 async fn get_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MetricsSnapshot>, StatusCode> {
-    let metrics_url = std::env::var("CRABCACHE_GATEWAY_METRICS_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9090/metrics".to_string());
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .http1_only()
-        .build()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let resp = client.get(&metrics_url).send().await.map_err(|e| {
-        tracing::warn!(url = %metrics_url, error = %e, "Failed to fetch gateway metrics");
-        StatusCode::SERVICE_UNAVAILABLE
-    })?;
-
-    let body = resp
-        .text()
+    let body = crate::metrics_history::fetch_gateway_metrics_body()
         .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-
-    // l2_hits = tier L2_semantic; semantic_* = semantic guard status (different meaning).
-    let l0_hits = sum_prometheus_counter(
-        &body,
-        "gateway_cache_requests_total",
-        &[("tier", "L0_moka"), ("result", "hit")],
-    );
-    let l1_hits = sum_prometheus_counter(
-        &body,
-        "gateway_cache_requests_total",
-        &[("tier", "L1_redis"), ("result", "hit")],
-    );
-    let l2_hits = sum_prometheus_counter(
-        &body,
-        "gateway_cache_requests_total",
-        &[("tier", "L2_semantic"), ("result", "hit")],
-    );
-    let cache_misses = sum_prometheus_counter(
-        &body,
-        "gateway_cache_requests_total",
-        &[("tier", "miss"), ("result", "miss")],
-    );
-    let total_input_tokens_hit = sum_prometheus_counter(
-        &body,
-        "gateway_deepseek_input_tokens_total",
-        &[("cache_status", "hit")],
-    );
-    let total_input_tokens_miss = sum_prometheus_counter(
-        &body,
-        "gateway_deepseek_input_tokens_total",
-        &[("cache_status", "miss")],
-    );
-    let total_output_tokens =
-        sum_prometheus_counter(&body, "gateway_deepseek_output_tokens_total", &[]);
-    let semantic_hits = sum_prometheus_counter(
-        &body,
-        "gateway_semantic_cache_requests_total",
-        &[("status", "hit_above_threshold")],
-    ) + sum_prometheus_counter(
-        &body,
-        "gateway_semantic_cache_requests_total",
-        &[("status", "hit_below_threshold")],
-    );
-    let semantic_rejected = sum_prometheus_counter(
-        &body,
-        "gateway_semantic_cache_requests_total",
-        &[("status", "rejected_by_guard")],
-    );
-    let semantic_skipped = sum_prometheus_counter(&body, "gateway_semantic_skipped_total", &[]);
-
-    let prefix_cache_hit_tokens = sum_prometheus_counter(
-        &body,
-        "gateway_upstream_prompt_cache_tokens_total",
-        &[("status", "hit")],
-    );
-    let prefix_cache_miss_tokens = sum_prometheus_counter(
-        &body,
-        "gateway_upstream_prompt_cache_tokens_total",
-        &[("status", "miss")],
-    );
-    let prefix_cache_hit_ratio =
-        prefix_hit_ratio(prefix_cache_hit_tokens, prefix_cache_miss_tokens);
-
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to fetch gateway metrics");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let admin_uptime_secs = now.saturating_sub(state.start_time);
-    let mut uptime_secs = admin_uptime_secs;
-    let mut active_keys = state.keys_meta.len() as u64;
-    if let Ok(status) = state.gateway.status().await {
-        if status.uptime_secs > 0 {
-            uptime_secs = status.uptime_secs;
+    let counters = crate::metrics_history::scrape_gateway_counters(&body, now);
+    {
+        let mut history = state.metrics_history.write();
+        if history.sample_count() == 0 {
+            history.append(counters);
         }
-        active_keys = status.active_keys;
     }
+    crate::overview::build_metrics_snapshot(&body, &state, now)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
+}
 
-    let total_requests = l0_hits + l1_hits + l2_hits + cache_misses;
-    let qps = if uptime_secs > 0 {
-        total_requests as f64 / uptime_secs as f64
-    } else {
-        0.0
-    };
-
-    let tps = if uptime_secs > 0 {
-        (total_input_tokens_hit + total_input_tokens_miss + total_output_tokens) as f64
-            / uptime_secs as f64
-    } else {
-        0.0
-    };
-
-    let hourly_stats = generate_hourly_stats_mock(
-        uptime_secs,
-        total_requests,
-        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        l0_hits + l1_hits + l2_hits,
-    );
-    let daily_stats = generate_daily_stats_mock(
-        uptime_secs,
-        total_requests,
-        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        l0_hits + l1_hits + l2_hits,
-    );
-    let weekly_stats = generate_weekly_stats_mock(
-        uptime_secs,
-        total_requests,
-        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        l0_hits + l1_hits + l2_hits,
-    );
-    let monthly_stats = generate_monthly_stats_mock(
-        uptime_secs,
-        total_requests,
-        total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        l0_hits + l1_hits + l2_hits,
-    );
-
-    Ok(Json(MetricsSnapshot {
-        qps,
-        tps,
-        l0_hits,
-        l1_hits,
-        l2_hits,
-        cache_misses,
-        cache_hit_tokens: total_input_tokens_hit,
-        cache_miss_tokens: total_input_tokens_miss,
-        total_input_tokens: total_input_tokens_hit + total_input_tokens_miss,
-        total_output_tokens,
-        total_tokens: total_input_tokens_hit + total_input_tokens_miss + total_output_tokens,
-        latency_l0_ms: avg_prometheus_histogram_ms(
-            &body,
-            "gateway_cache_fetch_latency_seconds",
-            &[("tier", "L0_moka")],
-        ),
-        latency_l1_ms: avg_prometheus_histogram_ms(
-            &body,
-            "gateway_cache_fetch_latency_seconds",
-            &[("tier", "L1_redis")],
-        ),
-        latency_l2_ms: avg_prometheus_histogram_ms(
-            &body,
-            "gateway_cache_fetch_latency_seconds",
-            &[("tier", "L2_semantic")],
-        ),
-        latency_upstream_ms: avg_prometheus_histogram_ms(
-            &body,
-            "gateway_upstream_latency_seconds",
-            &[],
-        ),
-        active_keys,
-        uptime_hours: uptime_secs / 3600,
-        uptime_secs,
-        hourly_stats,
-        daily_stats,
-        weekly_stats,
-        monthly_stats,
-        semantic_hits,
-        semantic_rejected,
-        semantic_skipped,
-        prefix_cache_hit_tokens,
-        prefix_cache_miss_tokens,
-        prefix_cache_hit_ratio,
-    }))
+async fn get_overview(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<OverviewBundle>, StatusCode> {
+    crate::overview::build_overview(&state)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build overview");
+            StatusCode::SERVICE_UNAVAILABLE
+        })
 }
 
 async fn get_prefix_cache_metrics(
@@ -361,26 +188,10 @@ async fn get_prefix_cache_metrics(
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let hit_tokens = sum_prometheus_counter(
-        &body,
-        "gateway_upstream_prompt_cache_tokens_total",
-        &[("status", "hit")],
-    );
-    let miss_tokens = sum_prometheus_counter(
-        &body,
-        "gateway_upstream_prompt_cache_tokens_total",
-        &[("status", "miss")],
-    );
-    let by_model = prefix_cache_by_model(&body);
-
     let _ = state;
-
-    Ok(Json(PrefixCacheMetricsSnapshot {
-        hit_tokens,
-        miss_tokens,
-        hit_ratio: prefix_hit_ratio(hit_tokens, miss_tokens),
-        by_model,
-    }))
+    Ok(Json(
+        crate::metrics_history::build_prefix_cache_snapshot(&body),
+    ))
 }
 
 fn prefix_hit_ratio(hit: u64, miss: u64) -> f64 {
@@ -532,6 +343,7 @@ fn ensure_current_period_stats(
             tokens: total_tokens,
             cache_hits: total_cache_hits,
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         });
     }
     stats
@@ -567,6 +379,7 @@ fn generate_hourly_stats_mock(
                 total_cache_hits / divisor
             },
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         });
     }
     ensure_current_period_stats(
@@ -609,6 +422,7 @@ fn generate_daily_stats_mock(
                 total_cache_hits / divisor
             },
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         });
     }
     ensure_current_period_stats(
@@ -651,6 +465,7 @@ fn generate_weekly_stats_mock(
                 total_cache_hits / divisor
             },
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         });
     }
     ensure_current_period_stats(
@@ -693,6 +508,7 @@ fn generate_monthly_stats_mock(
                 total_cache_hits / divisor
             },
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         });
     }
     ensure_current_period_stats(
@@ -737,12 +553,18 @@ fn generate_hourly_stats(
             0.0
         };
 
+        let hit_rate = if requests > 0 {
+            cache_hits as f64 / requests as f64
+        } else {
+            0.0
+        };
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%H:00").to_string(),
             requests,
             tokens,
             cache_hits,
             avg_latency_ms,
+            hit_rate,
         });
     }
 
@@ -781,12 +603,18 @@ fn generate_daily_stats(
             0.0
         };
 
+        let hit_rate = if requests > 0 {
+            cache_hits as f64 / requests as f64
+        } else {
+            0.0
+        };
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%m-%d").to_string(),
             requests,
             tokens,
             cache_hits,
             avg_latency_ms,
+            hit_rate,
         });
     }
 
@@ -825,12 +653,18 @@ fn generate_weekly_stats(
             0.0
         };
 
+        let hit_rate = if requests > 0 {
+            cache_hits as f64 / requests as f64
+        } else {
+            0.0
+        };
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("W%U").to_string(),
             requests,
             tokens,
             cache_hits,
             avg_latency_ms,
+            hit_rate,
         });
     }
 
@@ -869,12 +703,18 @@ fn generate_monthly_stats(
             0.0
         };
 
+        let hit_rate = if requests > 0 {
+            cache_hits as f64 / requests as f64
+        } else {
+            0.0
+        };
         stats.push(TimeSeriesPoint {
             timestamp: timestamp.format("%Y-%m").to_string(),
             requests,
             tokens,
             cache_hits,
             avg_latency_ms,
+            hit_rate,
         });
     }
 
@@ -1189,6 +1029,7 @@ async fn update_cache_config(
 async fn get_semantic_config(State(state): State<Arc<AppState>>) -> Json<SemanticConfig> {
     let config = state.semantic_config.read().clone();
     Json(SemanticConfig {
+        enabled: config.enabled,
         similarity_threshold: config.similarity_threshold as f64,
     })
 }
@@ -1201,6 +1042,7 @@ async fn update_semantic_config(
     config.similarity_threshold = req.similarity_threshold as f32;
 
     Json(SemanticConfig {
+        enabled: config.enabled,
         similarity_threshold: config.similarity_threshold as f64,
     })
 }
@@ -1265,9 +1107,14 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
             let datetime =
                 crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
             let consumer = e
-                .conversation_id
+                .consumer
                 .clone()
                 .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    e.conversation_id
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                })
                 .unwrap_or_else(|| "—".to_string());
             let summary = serde_json::json!({
                 "request_hash": e.request_hash,
@@ -1674,85 +1521,58 @@ async fn update_upstream_config(
     }))
 }
 
-async fn get_trace_analysis(State(_state): State<Arc<AppState>>) -> Json<TraceAnalysis> {
+#[derive(Debug, serde::Deserialize)]
+struct TraceAnalysisQuery {
+    #[serde(default = "default_trace_hours")]
+    hours: u32,
+}
+
+fn default_trace_hours() -> u32 {
+    24
+}
+
+fn empty_trace_analysis() -> TraceAnalysis {
+    TraceAnalysis {
+        total_requests: 0,
+        unique_requests: 0,
+        repeat_ratio: 0.0,
+        semantic_cluster_ratio: 0.0,
+        estimated_zipf_alpha: 0.0,
+        estimated_hit_rate: 0.0,
+        avg_latency_ms: 0.0,
+        avg_prompt_tokens: 0.0,
+        cache_hit_ratio: 0.0,
+        top_models: vec![],
+        cluster_distribution: vec![],
+    }
+}
+
+async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<TraceAnalysis> {
     use std::collections::HashMap;
 
-    let trace_path = std::env::var("CRABCACHE_TRACE_LOG_PATH")
-        .unwrap_or_else(|_| "/app/logs/trace.jsonl".to_string());
+    let trace_path = crate::trace_log::trace_log_path();
+    let entries = crate::trace_log::filter_trace_by_hours(
+        crate::trace_log::load_trace_entries(&trace_path),
+        query.hours,
+    );
 
-    let trace_entries: Vec<crate::state::StoredTraceEntry> =
-        match std::fs::read_to_string(&trace_path) {
-            Ok(content) => content
-                .lines()
-                .filter_map(|line| {
-                    let entry: serde_json::Value = serde_json::from_str(line).ok()?;
-                    Some(crate::state::StoredTraceEntry {
-                        timestamp_ms: entry.get("timestamp_ms")?.as_u64()?,
-                        request_hash: entry.get("request_hash")?.as_str()?.to_string(),
-                        content_length: entry.get("content_length")?.as_u64()? as usize,
-                        semantic_cluster: entry.get("semantic_cluster")?.as_u64()? as usize,
-                        conversation_id: entry
-                            .get("conversation_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
-                        model: entry.get("model")?.as_str()?.to_string(),
-                        prompt_tokens: entry.get("prompt_tokens")?.as_u64()? as usize,
-                        latency_ms: entry.get("latency_ms")?.as_f64()?,
-                        cache_hit: entry.get("cache_hit")?.as_bool()?,
-                    })
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!("Failed to read trace log file {}: {}", trace_path, e);
-                return Json(TraceAnalysis {
-                    total_requests: 0,
-                    unique_requests: 0,
-                    repeat_ratio: 0.0,
-                    semantic_cluster_ratio: 0.0,
-                    estimated_zipf_alpha: 0.0,
-                    estimated_hit_rate: 0.0,
-                    avg_latency_ms: 0.0,
-                    avg_prompt_tokens: 0.0,
-                    cache_hit_ratio: 0.0,
-                    top_models: vec![],
-                    cluster_distribution: vec![],
-                });
-            }
-        };
-
-    if trace_entries.is_empty() {
-        return Json(TraceAnalysis {
-            total_requests: 0,
-            unique_requests: 0,
-            repeat_ratio: 0.0,
-            semantic_cluster_ratio: 0.0,
-            estimated_zipf_alpha: 0.0,
-            estimated_hit_rate: 0.0,
-            avg_latency_ms: 0.0,
-            avg_prompt_tokens: 0.0,
-            cache_hit_ratio: 0.0,
-            top_models: vec![],
-            cluster_distribution: vec![],
-        });
+    if entries.is_empty() {
+        return Json(empty_trace_analysis());
     }
 
-    let total_requests = trace_entries.len();
+    let summary = crate::trace_summary::compute_trace_summary(&entries, query.hours);
+    let total_requests = summary.total_requests;
     let mut hash_counts: HashMap<String, usize> = HashMap::new();
-    let mut cluster_counts: HashMap<usize, usize> = HashMap::new();
+    let mut cluster_counts: HashMap<u32, usize> = HashMap::new();
     let mut model_counts: HashMap<String, usize> = HashMap::new();
     let mut total_latency = 0.0;
     let mut total_prompt_tokens = 0;
-    let mut cache_hits = 0;
-
-    for entry in &trace_entries {
+    for entry in &entries {
         *hash_counts.entry(entry.request_hash.clone()).or_insert(0) += 1;
         *cluster_counts.entry(entry.semantic_cluster).or_insert(0) += 1;
         *model_counts.entry(entry.model.clone()).or_insert(0) += 1;
         total_latency += entry.latency_ms;
         total_prompt_tokens += entry.prompt_tokens;
-        if entry.cache_hit {
-            cache_hits += 1;
-        }
     }
 
     let unique_requests = hash_counts.len();
@@ -1791,11 +1611,7 @@ async fn get_trace_analysis(State(_state): State<Arc<AppState>>) -> Json<TraceAn
         0.0
     };
 
-    let cache_hit_ratio = if total_requests > 0 {
-        cache_hits as f64 / total_requests as f64
-    } else {
-        0.0
-    };
+    let cache_hit_ratio = summary.cache_hit_ratio;
 
     let mut top_models: Vec<ModelUsage> = model_counts
         .into_iter()
@@ -1815,7 +1631,7 @@ async fn get_trace_analysis(State(_state): State<Arc<AppState>>) -> Json<TraceAn
     let mut cluster_distribution: Vec<ClusterInfo> = cluster_counts
         .into_iter()
         .map(|(cluster_id, count)| ClusterInfo {
-            cluster_id,
+            cluster_id: cluster_id as usize,
             count,
             percentage: if total_requests > 0 {
                 count as f64 / total_requests as f64 * 100.0
@@ -1899,6 +1715,7 @@ mod metrics_tests {
             tokens: 2,
             cache_hits: 0,
             avg_latency_ms: 0.0,
+            hit_rate: 0.0,
         }];
         let out = ensure_current_period_stats(existing.clone(), 100, "now", 9, 9, 9);
         assert_eq!(out.len(), 1);

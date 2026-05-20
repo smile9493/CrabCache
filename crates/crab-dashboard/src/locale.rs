@@ -625,6 +625,94 @@ impl Translations {
             Locale::EnUS => "hit / rejected / skipped (not L2 tier hits)",
         }
     }
+    pub fn overview_hit_rate_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率 (5m)",
+            Locale::EnUS => "Hit rate (5m)",
+        }
+    }
+    pub fn overview_token_hit_rate_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 命中率 (5m)",
+            Locale::EnUS => "Token hit rate (5m)",
+        }
+    }
+    pub fn overview_qps_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "QPS (5m)",
+            Locale::EnUS => "QPS (5m)",
+        }
+    }
+    pub fn overview_hit_rate_cumulative_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自启动累计",
+            Locale::EnUS => "Since process start",
+        }
+    }
+    pub fn overview_sample_insufficient(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "样本不足（等待指标采样，约 1–2 分钟）",
+            Locale::EnUS => "Insufficient samples (wait ~1–2 min for metrics sampling)",
+        }
+    }
+    pub fn overview_collecting_timeseries(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "时序采集中（每分钟采样，请稍候）",
+            Locale::EnUS => "Collecting time series (samples every minute)",
+        }
+    }
+    pub fn overview_gateway_cache_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关缓存 L0–L2",
+            Locale::EnUS => "Gateway cache L0–L2",
+        }
+    }
+    pub fn overview_coalescing_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求合并 (Coalescing)",
+            Locale::EnUS => "Request coalescing",
+        }
+    }
+    pub fn overview_coalescing_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "并发相同缓存键时合并为一次上游调用",
+            Locale::EnUS => "Duplicate concurrent keys merged into one upstream call",
+        }
+    }
+    pub fn overview_semantic_card_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义缓存守卫",
+            Locale::EnUS => "Semantic cache guard",
+        }
+    }
+    pub fn overview_consumer_table_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按 Consumer (API Key)",
+            Locale::EnUS => "By consumer (API key)",
+        }
+    }
+    pub fn overview_consumer_col(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Consumer",
+            Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn overview_trend_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率",
+            Locale::EnUS => "Hit rate",
+        }
+    }
+    pub fn trace_hours_note(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "影子日志近 24h 实测命中率；Overview 5m 来自 Prometheus 采样，二者口径不同。"
+            }
+            Locale::EnUS => {
+                "Shadow log hit rate (last 24h). Overview 5m uses Prometheus sampling; different windows."
+            }
+        }
+    }
     pub fn overview_cache_hits(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存命中",
@@ -651,6 +739,194 @@ impl Translations {
             Locale::EnUS => {
                 "DeepSeek prompt_cache_hit_tokens / (hit+miss). Separate from L0/L1/L2 gateway response cache."
             }
+        }
+    }
+    pub fn overview_legend_l0_l2(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L0–L2：网关整响应缓存（精确 + 语义 tier）",
+            Locale::EnUS => "L0–L2: gateway full-response cache (exact + semantic tier)",
+        }
+    }
+    pub fn overview_legend_l3(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L3：上游 DeepSeek 前缀 token 缓存（每次请求均计量）",
+            Locale::EnUS => "L3: upstream DeepSeek prefix token cache (counted on every request)",
+        }
+    }
+    pub fn overview_legend_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "主数字 5m：Prometheus 采样环滑动窗口",
+            Locale::EnUS => "Primary numbers (5m): sliding window from Prometheus sampling ring",
+        }
+    }
+    pub fn overview_legend_cumulative(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "累计：自网关进程启动的 counter 总和",
+            Locale::EnUS => "Cumulative: counter totals since gateway process start",
+        }
+    }
+    pub fn overview_health_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关健康",
+            Locale::EnUS => "Gateway health",
+        }
+    }
+    pub fn overview_health_upstream_keys(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 Key 可用",
+            Locale::EnUS => "Upstream keys available",
+        }
+    }
+    pub fn overview_health_stream_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式响应缓存",
+            Locale::EnUS => "Stream response cache",
+        }
+    }
+    pub fn overview_health_unhealthy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关不可达",
+            Locale::EnUS => "Gateway unreachable",
+        }
+    }
+    pub fn overview_prefix_by_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按模型",
+            Locale::EnUS => "By model",
+        }
+    }
+    pub fn overview_cost_saved_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "累计节省 (Prometheus)",
+            Locale::EnUS => "Total saved (Prometheus)",
+        }
+    }
+    pub fn overview_cost_saved_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 5 分钟节省",
+            Locale::EnUS => "Saved (last 5m)",
+        }
+    }
+    pub fn overview_cost_pricing_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "来自 gateway_cache_cost_saved_usd_total；定价见网关配置",
+            Locale::EnUS => "From gateway_cache_cost_saved_usd_total; pricing in gateway config",
+        }
+    }
+    pub fn overview_semantic_disabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义缓存已关闭",
+            Locale::EnUS => "Semantic cache disabled",
+        }
+    }
+    pub fn overview_ops_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维指标",
+            Locale::EnUS => "Operations",
+        }
+    }
+    pub fn overview_ops_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "首字延迟 (TTFT)",
+            Locale::EnUS => "Time to first token (TTFT)",
+        }
+    }
+    pub fn overview_ops_coalesced_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "合并 (5m)",
+            Locale::EnUS => "Coalesced (5m)",
+        }
+    }
+    pub fn overview_ops_rejected_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "拒绝 (5m)",
+            Locale::EnUS => "Rejected (5m)",
+        }
+    }
+    pub fn overview_trace_compare_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "影子日志 vs 网关 5m",
+            Locale::EnUS => "Shadow log vs gateway 5m",
+        }
+    }
+    pub fn overview_trace_compare_link(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "打开 Trace 分析",
+            Locale::EnUS => "Open trace analysis",
+        }
+    }
+    pub fn overview_history_meta(self, samples: usize, oldest_secs: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!(
+                "指标环：{samples} 个采样点，最早约 {oldest_secs}s 前（Admin 重启会清空）"
+            ),
+            Locale::EnUS => format!(
+                "Metrics ring: {samples} samples, oldest ~{oldest_secs}s ago (cleared on admin restart)"
+            ),
+        }
+    }
+    pub fn overview_l3_input_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L3 占 input tokens 比例",
+            Locale::EnUS => "L3 share of input tokens",
+        }
+    }
+    pub fn overview_timeseries_1h(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "1 小时",
+            Locale::EnUS => "1 hour",
+        }
+    }
+    pub fn overview_timeseries_24h(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "24 小时",
+            Locale::EnUS => "24 hours",
+        }
+    }
+    pub fn overview_timeseries_7d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "7 天",
+            Locale::EnUS => "7 days",
+        }
+    }
+    pub fn overview_upstream_keys_strip(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 Key 池",
+            Locale::EnUS => "Upstream key pool",
+        }
+    }
+    pub fn overview_upstream_keys_link(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理上游",
+            Locale::EnUS => "Manage upstream",
+        }
+    }
+    pub fn overview_prefix_health_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀与 Reasoning 保护",
+            Locale::EnUS => "Prefix & reasoning protection",
+        }
+    }
+    pub fn overview_prefix_health_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "prefix_break 与 reasoning 存储 miss 上升时，L3 命中率可能下降。恢复策略见 Reasoning 配置。"
+            }
+            Locale::EnUS => {
+                "Rising prefix_break or reasoning store misses can lower L3 hit rate. See Reasoning settings for recovery."
+            }
+        }
+    }
+    pub fn overview_observability_doc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "可观测性文档",
+            Locale::EnUS => "Observability docs",
+        }
+    }
+    pub fn overview_tier_5m_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 5 分钟分层命中（请求数）",
+            Locale::EnUS => "Tier hits in last 5m (request count)",
         }
     }
     pub fn upstream_l3_affinity_hint(self) -> &'static str {

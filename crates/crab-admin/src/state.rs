@@ -1,4 +1,7 @@
+use crate::metrics_history::MetricsHistory;
 use crate::persist::{self, PersistHandle};
+use crate::types::TraceSummary;
+use std::time::Instant;
 use crab_control::GatewayAdminClient;
 use crab_control::UpstreamTestResult;
 use dashmap::DashMap;
@@ -60,7 +63,9 @@ pub struct AppState {
     pub models: RwLock<StoredModelList>,
     pub backends: RwLock<Vec<StoredBackend>>,
     pub metrics: RwLock<StoredMetrics>,
+    pub metrics_history: RwLock<MetricsHistory>,
     pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
+    pub trace_summary_cache: RwLock<Option<(Instant, TraceSummary)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +301,9 @@ impl AppState {
             models: RwLock::new(models),
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
+            metrics_history: RwLock::new(MetricsHistory::new()),
             trace_entries: RwLock::new(Vec::new()),
+            trace_summary_cache: RwLock::new(None),
             last_invalidate: RwLock::new(None),
         }
     }

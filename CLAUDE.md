@@ -392,6 +392,8 @@ DeepSeek V4 的硬盘级前缀缓存要求请求必须路由到同一后端节�
 
 ## 监控指标
 
+Admin Dashboard Overview 通过 **`GET /api/admin/overview`** 每 5s 聚合拉取（metrics、health、L3 前缀、语义配置、24h Trace 摘要、运维 ops）；展示 **5 分钟窗口**命中率（`hit_rate_5m`、`token_hit_rate_5m`）与 **进程累计**命中率，并区分 L0–L2 与 L3 口径。时序图来自 `crab-admin` 每 60s 采样的指标环。影子日志 Trace 页为近 24h 实测命中率。详见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
+
 关键 Prometheus 指标（通过 `metrics_addr` 暴露）：
 
 | 指标 | 类型 | 标签 | 描述 |

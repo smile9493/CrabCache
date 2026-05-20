@@ -1,0 +1,19 @@
+# Example Prometheus config for CrabCache gateway metrics.
+# Usage:
+#   cp config/prometheus/prometheus.example.yml /etc/prometheus/prometheus.yml
+#   # or mount into the observability compose profile
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: crabcache-gateway
+    static_configs:
+      - targets:
+          - gateway:9090
+        labels:
+          service: crabcache
