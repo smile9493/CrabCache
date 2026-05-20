@@ -1,3 +1,6 @@
+mod metrics_history;
+mod overview;
+mod trace_summary;
 mod network;
 mod openresty;
 mod persist;
@@ -93,6 +96,26 @@ async fn main() -> anyhow::Result<()> {
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
     state.reconcile_upstream_from_gateway().await;
+
+    {
+        let metrics_state = Arc::clone(&state);
+        let interval_secs = crate::metrics_history::sample_interval_secs();
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) =
+                    crate::metrics_history::sample_metrics_history(&metrics_state.metrics_history)
+                        .await
+                {
+                    tracing::debug!(error = %e, "Metrics history sample failed");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+            }
+        });
+        info!(
+            interval_secs,
+            "Metrics history sampler started"
+        );
+    }
 
     if std::env::var("CRABCACHE_MODEL_SYNC_INTERVAL_SECS")
         .ok()

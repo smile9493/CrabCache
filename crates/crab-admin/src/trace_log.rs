@@ -30,6 +30,8 @@ pub struct TraceLogEntry {
     pub content_length: usize,
     pub semantic_cluster: u32,
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub consumer: Option<String>,
     pub model: String,
     pub prompt_tokens: usize,
     pub latency_ms: f64,
@@ -77,14 +79,20 @@ pub fn load_recent_trace_entries(path: &str, limit: usize) -> Vec<TraceLogEntry>
     entries
 }
 
-pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
-    if Path::new(path).exists() {
-        load_trace_entries(path)
-            .into_iter()
-            .find(|e| e.id() == id)
-    } else {
-        None
+/// Keep entries with `timestamp_ms` within the last `hours` (0 = no filter).
+pub fn filter_trace_by_hours(entries: Vec<TraceLogEntry>, hours: u32) -> Vec<TraceLogEntry> {
+    if hours == 0 {
+        return entries;
     }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let cutoff = now_ms.saturating_sub(u64::from(hours) * 3_600_000);
+    entries
+        .into_iter()
+        .filter(|e| e.timestamp_ms >= cutoff)
+        .collect()
 }
 
 #[cfg(test)]
@@ -92,8 +100,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filter_trace_by_hours_keeps_recent() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let old = TraceLogEntry {
+            timestamp_ms: now_ms.saturating_sub(48 * 3_600_000),
+            request_hash: "a".into(),
+            content_length: 1,
+            semantic_cluster: 0,
+            conversation_id: None,
+            consumer: None,
+            model: "m".into(),
+            prompt_tokens: 1,
+            latency_ms: 1.0,
+            cache_hit: false,
+            cache_tier: None,
+        };
+        let new = TraceLogEntry {
+            timestamp_ms: now_ms.saturating_sub(3_600_000),
+            request_hash: "b".into(),
+            content_length: 1,
+            semantic_cluster: 0,
+            conversation_id: None,
+            consumer: Some("c".into()),
+            model: "m".into(),
+            prompt_tokens: 1,
+            latency_ms: 1.0,
+            cache_hit: true,
+            cache_tier: Some("L0_moka".into()),
+        };
+        let filtered = filter_trace_by_hours(vec![old, new], 24);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].request_hash, "b");
+    }
+
+    #[test]
     fn beijing_offset_is_eight_hours_ahead_of_utc() {
-        // 2024-01-01 00:00:00 UTC -> 2024-01-01 08:00:00 CST
         assert_eq!(
             format_beijing_from_unix_secs(1_704_067_200),
             "2024-01-01 08:00:00"
@@ -106,5 +150,15 @@ mod tests {
             format_beijing_from_millis(1_704_067_200_000),
             "2024-01-01 08:00:00"
         );
+    }
+}
+
+pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
+    if Path::new(path).exists() {
+        load_trace_entries(path)
+            .into_iter()
+            .find(|e| e.id() == id)
+    } else {
+        None
     }
 }

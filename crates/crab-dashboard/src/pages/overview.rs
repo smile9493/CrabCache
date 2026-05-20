@@ -5,29 +5,32 @@ use crate::api;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
-use crate::types::{MetricsSnapshot, UpstreamConfig};
+use crate::types::{
+    GatewayHealth, MetricsSnapshot, OverviewBundle, OverviewOpsMetrics, PrefixCacheMetricsSnapshot,
+    SemanticConfig, TraceSummary, UpstreamConfig,
+};
 
 #[component]
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
-    let metrics: RwSignal<Option<Result<MetricsSnapshot, String>>> = RwSignal::new(None);
+    let overview: RwSignal<Option<Result<OverviewBundle, String>>> = RwSignal::new(None);
     let upstream: RwSignal<Option<Result<UpstreamConfig, String>>> = RwSignal::new(None);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
 
-    let load_metrics = move || {
+    let load_overview = move || {
         leptos::task::spawn_local(async move {
-            match api::fetch_metrics().await {
-                Ok(m) => {
-                    metrics.set(Some(Ok(m)));
+            match api::fetch_overview().await {
+                Ok(b) => {
+                    overview.set(Some(Ok(b)));
                     last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
                 }
-                Err(e) => metrics.set(Some(Err(e))),
+                Err(e) => overview.set(Some(Err(e))),
             }
         });
     };
 
-    load_metrics();
+    load_overview();
 
     leptos::task::spawn_local(async move {
         match api::fetch_upstream_config().await {
@@ -40,7 +43,7 @@ pub fn OverviewPage() -> impl IntoView {
         loop {
             TimeoutFuture::new(5000).await;
             if auto_refresh.get() {
-                load_metrics();
+                load_overview();
             }
         }
     });
@@ -65,7 +68,7 @@ pub fn OverviewPage() -> impl IntoView {
                         {t.overview_auto_refresh()}
                     </label>
                     <button
-                        on:click=move |_| load_metrics()
+                        on:click=move |_| load_overview()
                         class="btn btn-secondary text-xs"
                     >
                         {t.overview_refresh()}
@@ -85,42 +88,213 @@ pub fn OverviewPage() -> impl IntoView {
                 _ => view! { <span></span> }.into_any(),
             }}
 
-            {move || match metrics.get() {
+            {move || match overview.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">
                         {format!("{}: {}", use_translations().overview_load_error(), e)}
                     </div>
                 }.into_any(),
-                Some(Ok(m)) => view! {
-                    <div class="space-y-6">
-                        <MetricsBento metrics=m.clone() />
-                        <PrefixCacheCard metrics=m.clone() />
-                        <TokenStats metrics=m.clone() />
-                        <TimeSeriesChart metrics=m.clone() />
-                        <div class="bento-grid-3">
-                            <div class="bento-cell">
-                                <CacheHitSection metrics=m.clone() />
+                Some(Ok(b)) => {
+                    let m = b.metrics.clone();
+                    let health = b.health.clone();
+                    let prefix = b.prefix_cache.clone();
+                    let semantic = b.semantic.clone();
+                    let trace = b.trace_summary.clone();
+                    let ops = b.ops.clone();
+                    view! {
+                        <div class="space-y-6">
+                            <MetricsLegend />
+                            <OverviewHealthStrip health=health />
+                            <HistoryMetaHint metrics=m.clone() />
+                            <MetricsBento metrics=m.clone() />
+                            <TraceCompareBanner trace=trace metrics=m.clone() />
+                            <OpsMetricsRow ops=ops.clone() />
+                            <PrefixCacheCard prefix=prefix.clone() />
+                            <TokenStats metrics=m.clone() prefix=prefix />
+                            <TimeSeriesChart metrics=m.clone() />
+                            <div class="bento-grid-2">
+                                <CoalescingCard metrics=m.clone() ops=ops.clone() />
+                                <SemanticCacheCard metrics=m.clone() semantic=semantic />
                             </div>
-                            <div class="bento-cell">
-                                <CostSavingsSection metrics=m.clone() />
+                            <ConsumerHitTable metrics=m.clone() />
+                            <div class="bento-grid-3">
+                                <div class="bento-cell">
+                                    <CacheHitSection metrics=m.clone() />
+                                </div>
+                                <div class="bento-cell">
+                                    <CostSavingsSection ops=ops.clone() />
+                                </div>
+                                <div class="bento-cell">
+                                    <LatencySection metrics=m.clone() />
+                                </div>
                             </div>
-                            <div class="bento-cell">
-                                <LatencySection metrics=m />
+                            <div class="bento-grid-2">
+                                <UpstreamKeyStrip ops=ops.clone() />
+                                <PrefixHealthCard ops=ops />
                             </div>
+                            <ObservabilityFooter />
                         </div>
-                    </div>
-                }.into_any(),
+                    }.into_any()
+                }
             }}
         </div>
     }
 }
 
 #[component]
-fn PrefixCacheCard(metrics: MetricsSnapshot) -> impl IntoView {
+fn MetricsLegend() -> impl IntoView {
     let t = use_translations();
-    let ratio_pct = metrics.prefix_cache_hit_ratio * 100.0;
-    let total = metrics.prefix_cache_hit_tokens + metrics.prefix_cache_miss_tokens;
+    view! {
+        <div class="glass-card text-xs text-theme-muted space-y-1">
+            <p>{t.overview_legend_l0_l2()}</p>
+            <p>{t.overview_legend_l3()}</p>
+            <p>{t.overview_legend_5m()}</p>
+            <p>{t.overview_legend_cumulative()}</p>
+        </div>
+    }
+}
+
+#[component]
+fn OverviewHealthStrip(health: GatewayHealth) -> impl IntoView {
+    let t = use_translations();
+    let healthy = health.healthy;
+    let stream_on = health.stream_cache_enabled;
+    let err_msg = health.error.clone();
+    let keys = format!(
+        "{}/{}",
+        health.upstream_keys_available,
+        health.upstream_key_count
+    );
+
+    view! {
+        <div class="glass-card flex flex-wrap items-center gap-4 text-sm">
+            <span class="font-medium text-theme-secondary">{t.overview_health_title()}</span>
+            <span class=if healthy { "flex items-center gap-2 text-accent" } else { "flex items-center gap-2 text-error" }>
+                <span class=if healthy { "online-dot" } else { "w-2 h-2 rounded-full bg-error" }></span>
+                {if healthy { t.overview_status_active() } else { t.overview_health_unhealthy() }}
+            </span>
+            <span class="text-theme-muted">
+                {t.overview_health_upstream_keys()}: <span class="font-mono text-theme">{keys}</span>
+            </span>
+            <span class="text-theme-muted">
+                {t.overview_health_stream_cache()}: <span class="font-mono text-theme">
+                    {if stream_on { "on" } else { "off" }}
+                </span>
+            </span>
+            {err_msg.map(|e| {
+                let tip = e.clone();
+                view! {
+                    <span class="text-xs text-error truncate max-w-md" title=tip>{e}</span>
+                }
+            })}
+        </div>
+    }
+}
+
+#[component]
+fn HistoryMetaHint(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let meta = metrics.history_meta.clone();
+    let insufficient = metrics.metrics_sample_insufficient;
+    let show = insufficient || meta.sample_count < 3;
+
+    view! {
+        {show.then(|| view! {
+            <p class="text-xs text-warning">
+                {if insufficient {
+                    t.overview_sample_insufficient().to_string()
+                } else {
+                    t.overview_history_meta(meta.sample_count, meta.oldest_sample_at_secs)
+                }}
+            </p>
+        })}
+    }
+}
+
+#[component]
+fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let trace_pct = trace.cache_hit_ratio * 100.0;
+    let gw_pct = if metrics.metrics_sample_insufficient {
+        None
+    } else {
+        Some(metrics.hit_rate_5m * 100.0)
+    };
+
+    view! {
+        <div class="glass-card flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_trace_compare_title()}</h3>
+                <p class="text-xs text-theme-muted mb-2">{t.trace_hours_note()}</p>
+                <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
+                    <span>
+                        "24h trace: " <span class="text-accent">{format!("{trace_pct:.1}%")}</span>
+                        " (" {trace.total_requests} " req)"
+                    </span>
+                    <span>
+                        "5m gateway: "
+                        {match gw_pct {
+                            Some(p) => view! { <span class="text-accent">{format!("{p:.1}%")}</span> }.into_any(),
+                            None => view! { <span class="text-theme-muted">"—"</span> }.into_any(),
+                        }}
+                    </span>
+                </div>
+            </div>
+            <a href="/trace" class="btn btn-secondary text-xs shrink-0">
+                {t.overview_trace_compare_link()}
+            </a>
+        </div>
+    }
+}
+
+#[component]
+fn OpsMetricsRow(ops: OverviewOpsMetrics) -> impl IntoView {
+    let t = use_translations();
+    view! {
+        <div class="glass-card">
+            <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_ops_title()}</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                    <div class="text-xs text-theme-muted">{t.overview_ops_ttft()}</div>
+                    <div class="text-xl font-mono tabular-nums text-accent">
+                        {format!("{:.0}ms", ops.ttft_ms)}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted">{t.overview_ops_coalesced_5m()}</div>
+                    <div class="text-xl font-mono tabular-nums text-accent">
+                        {format!("{:.0}", ops.coalesced_5m)}
+                    </div>
+                    <div class="text-xs text-theme-muted">{format!("Σ {}", ops.coalesced_total)}</div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted">{t.overview_ops_rejected_5m()}</div>
+                    <div class="text-xl font-mono tabular-nums text-warning">
+                        {format!("{:.0}", ops.rejected_5m)}
+                    </div>
+                    <div class="text-xs text-theme-muted">{format!("Σ {}", ops.rejected_total)}</div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted">{t.overview_cost_saved_5m()}</div>
+                    <div class="text-xl font-mono tabular-nums text-warning">
+                        {format!("${:.4}", ops.cost_saved_usd_5m)}
+                    </div>
+                    <div class="text-xs text-theme-muted">
+                        {format!("${:.2}", ops.cost_saved_usd_total)}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let ratio_pct = prefix.hit_ratio * 100.0;
+    let total = prefix.hit_tokens + prefix.miss_tokens;
+    let by_model = prefix.by_model.clone();
 
     view! {
         <div class="glass-card">
@@ -128,7 +302,7 @@ fn PrefixCacheCard(metrics: MetricsSnapshot) -> impl IntoView {
                 {t.overview_prefix_cache_title()}
             </h3>
             <p class="text-xs text-theme-muted mb-4">{t.overview_prefix_cache_desc()}</p>
-            <div class="flex flex-wrap items-end gap-6">
+            <div class="flex flex-wrap items-end gap-6 mb-4">
                 <div>
                     <div class="text-3xl font-mono tabular-nums text-accent font-semibold">
                         {format!("{:.1}%", ratio_pct)}
@@ -136,11 +310,42 @@ fn PrefixCacheCard(metrics: MetricsSnapshot) -> impl IntoView {
                     <div class="text-xs text-theme-muted mt-1">"L3 hit ratio"</div>
                 </div>
                 <div class="text-sm font-mono tabular-nums text-theme-secondary space-y-1">
-                    <div>{format!("hit: {}", metrics.prefix_cache_hit_tokens)}</div>
-                    <div>{format!("miss: {}", metrics.prefix_cache_miss_tokens)}</div>
+                    <div>{format!("hit: {}", prefix.hit_tokens)}</div>
+                    <div>{format!("miss: {}", prefix.miss_tokens)}</div>
                     <div class="text-theme-muted">{format!("total tokens: {}", total)}</div>
                 </div>
             </div>
+            {(!by_model.is_empty()).then(|| view! {
+                <div>
+                    <h4 class="text-xs font-medium text-theme-muted mb-2">{t.overview_prefix_by_model()}</h4>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-xs text-theme-muted border-b border-theme">
+                                    <th class="pb-2 pr-4">"model"</th>
+                                    <th class="pb-2 pr-4">"hit"</th>
+                                    <th class="pb-2 pr-4">"miss"</th>
+                                    <th class="pb-2">"ratio"</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {by_model.into_iter().map(|row| {
+                                    view! {
+                                        <tr class="border-b border-theme/50">
+                                            <td class="py-2 pr-4 font-mono text-theme">{row.model}</td>
+                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(row.hit_tokens)}</td>
+                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(row.miss_tokens)}</td>
+                                            <td class="py-2 font-mono tabular-nums text-accent">
+                                                {format!("{:.1}%", row.hit_ratio * 100.0)}
+                                            </td>
+                                        </tr>
+                                    }
+                                }).collect::<Vec<_>>()}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            })}
         </div>
     }
 }
@@ -150,11 +355,16 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
     let total_requests = total_hits + metrics.cache_misses;
-    let hit_rate = if total_requests > 0 {
+    let hit_rate_cumulative = if metrics.hit_rate_cumulative > 0.0 {
+        metrics.hit_rate_cumulative * 100.0
+    } else if total_requests > 0 {
         total_hits as f64 / total_requests as f64 * 100.0
     } else {
         0.0
     };
+    let hit_rate_5m = metrics.hit_rate_5m * 100.0;
+    let token_hit_5m = metrics.token_hit_rate_5m * 100.0;
+    let insufficient = metrics.metrics_sample_insufficient;
 
     view! {
         <div class="bento-grid">
@@ -162,27 +372,47 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                 <div class="metric-card h-full">
                     <div class="flex items-start justify-between mb-4">
                         <div>
-                            <div class="metric-card-label">{Translations::overview_qps()}</div>
+                            <div class="metric-card-label">{t.overview_qps_5m()}</div>
                             <div class="metric-card-value">
-                                {format!("{:.2}", metrics.qps)}
+                                {format!("{:.2}", metrics.qps_5m)}
+                            </div>
+                            <div class="text-xs text-theme-muted mt-1">
+                                {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
                             </div>
                         </div>
                         <div class="text-3xl opacity-30">"⚡"</div>
                     </div>
                     <div class="grid grid-cols-2 gap-4 mt-auto">
                         <div>
-                            <div class="text-xs text-theme-muted mb-1">{Translations::overview_tps()}</div>
-                            <div class="text-lg font-mono tabular-nums text-theme">
-                                {format!("{:.2}", metrics.tps)}
+                            <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate_5m()}</div>
+                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
+                                {if insufficient {
+                                    "—".to_string()
+                                } else {
+                                    format!("{hit_rate_5m:.1}%")
+                                }}
+                            </div>
+                            <div class="text-xs text-theme-muted mt-0.5">
+                                {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
                             </div>
                         </div>
                         <div>
-                            <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate()}</div>
-                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
-                                {format!("{:.1}%", hit_rate)}
+                            <div class="text-xs text-theme-muted mb-1">{t.overview_token_hit_rate_5m()}</div>
+                            <div class="text-lg font-mono tabular-nums text-theme">
+                                {if insufficient {
+                                    "—".to_string()
+                                } else {
+                                    format!("{token_hit_5m:.1}%")
+                                }}
+                            </div>
+                            <div class="text-xs text-theme-muted mt-0.5">
+                                {Translations::overview_tps()} " " {format!("{:.2}", metrics.tps)}
                             </div>
                         </div>
                     </div>
+                    {insufficient.then(|| view! {
+                        <p class="text-xs text-warning mt-3">{t.overview_sample_insufficient()}</p>
+                    })}
                 </div>
             </div>
             <div class="bento-cell">
@@ -269,15 +499,22 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn TokenStats(metrics: MetricsSnapshot) -> impl IntoView {
+fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     let t = use_translations();
+    let l3_total = prefix.hit_tokens + prefix.miss_tokens;
+    let l3_ratio = if l3_total > 0 {
+        prefix.hit_tokens as f64 / l3_total as f64 * 100.0
+    } else {
+        0.0
+    };
+
     view! {
         <div class="glass-card">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-sm font-semibold text-theme">{t.overview_token_stats()}</h3>
                 <div class="text-2xl opacity-30">"📊"</div>
             </div>
-            <div class="grid grid-cols-3 gap-6">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
                 <div>
                     <div class="text-xs text-theme-muted mb-1">{t.overview_input_tokens()}</div>
                     <div class="text-2xl font-mono tabular-nums text-theme font-semibold">
@@ -296,6 +533,15 @@ fn TokenStats(metrics: MetricsSnapshot) -> impl IntoView {
                         {format_number(metrics.total_tokens)}
                     </div>
                 </div>
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_l3_input_ratio()}</div>
+                    <div class="text-2xl font-mono tabular-nums text-accent font-semibold">
+                        {format!("{l3_ratio:.1}%")}
+                    </div>
+                    <div class="text-xs text-theme-muted mt-1">
+                        {format!("{} / {} L3 tokens", format_number(prefix.hit_tokens), format_number(l3_total))}
+                    </div>
+                </div>
             </div>
         </div>
     }
@@ -304,14 +550,19 @@ fn TokenStats(metrics: MetricsSnapshot) -> impl IntoView {
 #[component]
 fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
-    let selected_view = RwSignal::new("hourly".to_string());
+    let selected_view = RwSignal::new("1h".to_string());
 
-    let current_data = move || match selected_view.get().as_str() {
-        "hourly" => metrics.hourly_stats.clone(),
-        "daily" => metrics.daily_stats.clone(),
-        "weekly" => metrics.weekly_stats.clone(),
-        "monthly" => metrics.monthly_stats.clone(),
-        _ => metrics.hourly_stats.clone(),
+    let current_data = move || {
+        let slice_last = |data: &[crate::types::TimeSeriesPoint], n: usize| {
+            let start = data.len().saturating_sub(n);
+            data[start..].to_vec()
+        };
+        match selected_view.get().as_str() {
+            "1h" => slice_last(&metrics.hourly_stats, 60),
+            "24h" => metrics.hourly_stats.clone(),
+            "7d" => metrics.daily_stats.clone(),
+            _ => slice_last(&metrics.hourly_stats, 60),
+        }
     };
 
     view! {
@@ -320,52 +571,40 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
                 <h3 class="text-sm font-semibold text-theme">{t.overview_usage_trends()}</h3>
                 <div class="flex gap-2">
                     <button
-                        on:click=move |_| selected_view.set("hourly".to_string())
+                        on:click=move |_| selected_view.set("1h".to_string())
                         class=move || {
-                            if selected_view.get() == "hourly" {
+                            if selected_view.get() == "1h" {
                                 "btn btn-primary text-xs"
                             } else {
                                 "btn btn-secondary text-xs"
                             }
                         }
                     >
-                        {t.overview_hourly()}
+                        {t.overview_timeseries_1h()}
                     </button>
                     <button
-                        on:click=move |_| selected_view.set("daily".to_string())
+                        on:click=move |_| selected_view.set("24h".to_string())
                         class=move || {
-                            if selected_view.get() == "daily" {
+                            if selected_view.get() == "24h" {
                                 "btn btn-primary text-xs"
                             } else {
                                 "btn btn-secondary text-xs"
                             }
                         }
                     >
-                        {t.overview_daily()}
+                        {t.overview_timeseries_24h()}
                     </button>
                     <button
-                        on:click=move |_| selected_view.set("weekly".to_string())
+                        on:click=move |_| selected_view.set("7d".to_string())
                         class=move || {
-                            if selected_view.get() == "weekly" {
+                            if selected_view.get() == "7d" {
                                 "btn btn-primary text-xs"
                             } else {
                                 "btn btn-secondary text-xs"
                             }
                         }
                     >
-                        {t.overview_weekly()}
-                    </button>
-                    <button
-                        on:click=move |_| selected_view.set("monthly".to_string())
-                        class=move || {
-                            if selected_view.get() == "monthly" {
-                                "btn btn-primary text-xs"
-                            } else {
-                                "btn btn-secondary text-xs"
-                            }
-                        }
-                    >
-                        {t.overview_monthly()}
+                        {t.overview_timeseries_7d()}
                     </button>
                 </div>
             </div>
@@ -377,23 +616,32 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
                     if data.is_empty() {
                         view! {
                             <div class="text-center py-8 text-theme-muted text-sm">
-                                {t.overview_no_data()}
+                                {t.overview_collecting_timeseries()}
                             </div>
                         }.into_any()
                     } else {
                         let max_tokens = data.iter().map(|d| d.tokens).max().unwrap_or(1);
+                        let max_req = data.iter().map(|d| d.requests).max().unwrap_or(1) as f64;
                         view! {
                             <div class="space-y-3">
                                 {data.into_iter().map(|point| {
                                     let pct = point.tokens as f64 / max_tokens as f64 * 100.0;
+                                    let hit_pct = if point.hit_rate > 0.0 {
+                                        point.hit_rate * 100.0
+                                    } else if point.requests > 0 {
+                                        point.cache_hits as f64 / point.requests as f64 * 100.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let req_bar_pct = point.requests as f64 / max_req * 100.0;
                                     let t = use_translations();
                                     view! {
                                         <div class="flex items-center gap-3">
                                             <span class="w-20 text-xs text-theme-secondary font-mono">
                                                 {point.timestamp}
                                             </span>
-                                            <div class="flex-1">
-                                                <div class="progress-bar h-6">
+                                            <div class="flex-1 space-y-1">
+                                                <div class="progress-bar h-4" title="tokens">
                                                     <div
                                                         class="progress-bar-fill flex items-center justify-end pr-2"
                                                         style=format!("width: {}%", pct.min(100.0))
@@ -403,13 +651,19 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
                                                         </span>
                                                     </div>
                                                 </div>
+                                                <div class="progress-bar h-2 opacity-70" title="requests">
+                                                    <div
+                                                        class="progress-bar-fill bg-accent/60"
+                                                        style=format!("width: {}%", req_bar_pct.min(100.0))
+                                                    ></div>
+                                                </div>
                                             </div>
-                                            <div class="w-24 text-right">
+                                            <div class="w-28 text-right">
                                                 <div class="text-xs text-theme-muted">
                                                     {format!("{} {}", point.requests, t.overview_requests())}
                                                 </div>
                                                 <div class="text-xs text-accent">
-                                                    {format!("{} {}", point.cache_hits, t.overview_hits())}
+                                                    {format!("{:.0}% {}", hit_pct, t.overview_trend_hit_rate())}
                                                 </div>
                                             </div>
                                         </div>
@@ -452,22 +706,129 @@ fn format_number(n: u64) -> String {
 }
 
 #[component]
-fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
+fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
-    let total = (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits + metrics.cache_misses).max(1);
+    view! {
+        <div class="glass-card h-full">
+            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_coalescing_title()}</h3>
+            <p class="text-xs text-theme-muted mb-3">{t.overview_coalescing_desc()}</p>
+            <div class="text-3xl font-mono tabular-nums text-accent font-semibold">
+                {format!("{:.0}", ops.coalesced_5m)}
+            </div>
+            <div class="text-xs text-theme-muted mt-1">
+                {format!("5m · Σ {} (metrics {})", ops.coalesced_total, metrics.coalesced_total)}
+            </div>
+        </div>
+    }
+}
 
-    let l0 = RwSignal::new(metrics.l0_hits as f64);
-    let l1 = RwSignal::new(metrics.l1_hits as f64);
-    let l2 = RwSignal::new(metrics.l2_hits as f64);
-    let miss = RwSignal::new(metrics.cache_misses as f64);
-
-    let hit_rate = RwSignal::new(
-        (metrics.l0_hits + metrics.l1_hits + metrics.l2_hits) as f64 / total as f64 * 100.0,
-    );
+#[component]
+fn SemanticCacheCard(metrics: MetricsSnapshot, semantic: SemanticConfig) -> impl IntoView {
+    let t = use_translations();
+    let disabled = !semantic.enabled;
 
     view! {
         <div class="glass-card h-full">
-            <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_cache_hit_title()}</h3>
+            <div class="flex items-center gap-2 mb-1">
+                <h3 class="text-sm font-semibold text-theme">{t.overview_semantic_card_title()}</h3>
+                {disabled.then(|| view! {
+                    <span class="text-xs px-2 py-0.5 rounded bg-warning/20 text-warning">
+                        {t.overview_semantic_disabled()}
+                    </span>
+                })}
+            </div>
+            <p class="text-xs text-theme-muted mb-3">
+                {if disabled {
+                    t.overview_semantic_disabled().to_string()
+                } else {
+                    t.overview_semantic_hint().to_string()
+                }}
+            </p>
+            <div class="grid grid-cols-3 gap-3 text-center">
+                <div>
+                    <div class="text-xs text-theme-muted">{t.overview_hits()}</div>
+                    <div class="text-xl font-mono text-accent">{metrics.semantic_hits}</div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted">"rejected"</div>
+                    <div class="text-xl font-mono text-warning">{metrics.semantic_rejected}</div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted">"skipped"</div>
+                    <div class="text-xl font-mono text-theme-secondary">{metrics.semantic_skipped}</div>
+                </div>
+            </div>
+            {(!disabled).then(|| view! {
+                <p class="text-xs text-theme-muted mt-3">
+                    {format!("threshold {:.2}", semantic.similarity_threshold)}
+                </p>
+            })}
+        </div>
+    }
+}
+
+#[component]
+fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let buckets = metrics.consumer_buckets.clone();
+    view! {
+        <div class="glass-card">
+            <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_consumer_table_title()}</h3>
+            {if buckets.is_empty() {
+                view! {
+                    <p class="text-sm text-theme-muted">{t.overview_no_data()}</p>
+                }.into_any()
+            } else {
+                view! {
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-xs text-theme-muted border-b border-theme">
+                                    <th class="pb-2 pr-4">{t.overview_consumer_col()}</th>
+                                    <th class="pb-2 pr-4">"hit tokens"</th>
+                                    <th class="pb-2 pr-4">"miss tokens"</th>
+                                    <th class="pb-2">"ratio"</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {buckets.into_iter().map(|b| {
+                                    view! {
+                                        <tr class="border-b border-theme/50">
+                                            <td class="py-2 pr-4 font-mono text-theme">{b.consumer}</td>
+                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.hit_tokens)}</td>
+                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.miss_tokens)}</td>
+                                            <td class="py-2 font-mono tabular-nums text-accent">
+                                                {format!("{:.1}%", b.hit_ratio * 100.0)}
+                                            </td>
+                                        </tr>
+                                    }
+                                }).collect::<Vec<_>>()}
+                            </tbody>
+                        </table>
+                    </div>
+                }.into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
+    let t = use_translations();
+    let d = metrics.tier_deltas_5m;
+    let total = (d.l0 + d.l1 + d.l2 + d.miss).max(1) as f64;
+
+    let l0 = RwSignal::new(d.l0 as f64);
+    let l1 = RwSignal::new(d.l1 as f64);
+    let l2 = RwSignal::new(d.l2 as f64);
+    let miss = RwSignal::new(d.miss as f64);
+
+    let hit_rate = RwSignal::new((d.l0 + d.l1 + d.l2) as f64 / total * 100.0);
+
+    view! {
+        <div class="glass-card h-full">
+            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_gateway_cache_title()}</h3>
+            <p class="text-xs text-theme-muted mb-4">{t.overview_tier_5m_hint()}</p>
             <div class="space-y-3">
                 <ProgressBar label=crate::locale::Translations::overview_l0_label() value=l0.into() max=total as f64 />
                 <ProgressBar label=crate::locale::Translations::overview_l1_label() value=l1.into() max=total as f64 />
@@ -485,52 +846,111 @@ fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn CostSavingsSection(metrics: MetricsSnapshot) -> impl IntoView {
+fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
-    let direct_cost = metrics.cache_miss_tokens as f64 * 0.14 / 1_000_000.0
-        + metrics.cache_hit_tokens as f64 * 0.14 / 1_000_000.0;
-    let actual_cost = metrics.cache_miss_tokens as f64 * 0.14 / 1_000_000.0
-        + metrics.cache_hit_tokens as f64 * 0.014 / 1_000_000.0;
-    let saved = direct_cost - actual_cost;
-    let saved_pct = if direct_cost > 0.0 {
-        saved / direct_cost * 100.0
+
+    view! {
+        <div class="glass-card h-full">
+            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_cost_title()}</h3>
+            <p class="text-xs text-theme-muted mb-4">{t.overview_cost_pricing_hint()}</p>
+            <div class="space-y-4">
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_cost_saved_total()}</div>
+                    <div class="text-2xl font-mono tabular-nums text-warning font-semibold">
+                        {format!("${:.4}", ops.cost_saved_usd_total)}
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs text-theme-muted mb-1">{t.overview_cost_saved_5m()}</div>
+                    <div class="text-xl font-mono tabular-nums text-accent">
+                        {format!("${:.4}", ops.cost_saved_usd_5m)}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
+    let t = use_translations();
+    view! {
+        <div class="glass-card h-full flex flex-col justify-between">
+            <div>
+                <h3 class="text-sm font-semibold text-theme mb-2">{t.overview_upstream_keys_strip()}</h3>
+                <div class="text-3xl font-mono tabular-nums text-accent">
+                    {format!("{}/{}", ops.upstream_keys_available, ops.upstream_key_count)}
+                </div>
+                <p class="text-xs text-theme-muted mt-2">"available / configured"</p>
+            </div>
+            <a href="/upstream" class="btn btn-secondary text-xs mt-4 w-fit">
+                {t.overview_upstream_keys_link()}
+            </a>
+        </div>
+    }
+}
+
+#[component]
+fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
+    let t = use_translations();
+    let reasoning_total = ops.reasoning_store_hits + ops.reasoning_store_misses;
+    let reasoning_hit_pct = if reasoning_total > 0 {
+        ops.reasoning_store_hits as f64 / reasoning_total as f64 * 100.0
     } else {
         0.0
     };
 
-    let direct = RwSignal::new(format!("${:.2}", direct_cost));
-    let actual = RwSignal::new(format!("${:.2}", actual_cost));
-    let saved_str = RwSignal::new(format!("${:.2}", saved));
-    let pct = RwSignal::new(saved_pct);
-
     view! {
         <div class="glass-card h-full">
-            <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_cost_title()}</h3>
-            <div class="grid grid-cols-2 gap-4 mb-4">
+            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_prefix_health_title()}</h3>
+            <p class="text-xs text-theme-muted mb-4">{t.overview_prefix_health_desc()}</p>
+            <div class="grid grid-cols-2 gap-3 text-sm font-mono tabular-nums">
                 <div>
-                    <div class="text-xs text-theme-muted mb-1">{t.overview_cost_standard()}</div>
-                    <div class="text-xl font-mono tabular-nums text-theme">
-                        {move || direct.get()}
-                    </div>
+                    <span class="text-xs text-theme-muted block">"prefix_break"</span>
+                    <span class="text-warning">{ops.prefix_break_total}</span>
                 </div>
                 <div>
-                    <div class="text-xs text-theme-muted mb-1">{t.overview_cost_with_cache()}</div>
-                    <div class="text-xl font-mono tabular-nums text-accent">
-                        {move || actual.get()}
-                    </div>
+                    <span class="text-xs text-theme-muted block">"sse_omitted"</span>
+                    <span>{ops.stream_cache_sse_omitted}</span>
+                </div>
+                <div>
+                    <span class="text-xs text-theme-muted block">"reasoning hit"</span>
+                    <span class="text-accent">{ops.reasoning_store_hits}</span>
+                </div>
+                <div>
+                    <span class="text-xs text-theme-muted block">"reasoning miss"</span>
+                    <span>{ops.reasoning_store_misses}</span>
                 </div>
             </div>
-            <div class="pt-3 border-t border-theme flex justify-between items-center">
-                <span class="text-sm text-theme-secondary">{t.overview_cost_saved()}</span>
-                <div class="text-right">
-                    <span class="text-lg font-mono tabular-nums text-warning font-semibold">
-                        {move || saved_str.get()}
-                    </span>
-                    <span class="ml-2 text-xs text-warning">
-                        {move || format!("({:.1}%)", pct.get())}
-                    </span>
-                </div>
-            </div>
+            <p class="text-xs text-theme-muted mt-3">
+                {format!("reasoning store hit {:.1}%", reasoning_hit_pct)}
+            </p>
+            <a href="/cache" class="text-xs text-accent hover:underline mt-2 inline-block">
+                "Cache / reasoning →"
+            </a>
+        </div>
+    }
+}
+
+#[component]
+fn ObservabilityFooter() -> impl IntoView {
+    let t = use_translations();
+    let metrics_host = option_env!("CRABCACHE_GATEWAY_METRICS_URL")
+        .unwrap_or("http://127.0.0.1:9090/metrics");
+
+    view! {
+        <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-theme-muted pt-2 border-t border-theme">
+            <a
+                href="/docs/OBSERVABILITY.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-accent hover:underline"
+            >
+                {t.overview_observability_doc()}
+            </a>
+            <span class="font-mono truncate" title=metrics_host>
+                "Prometheus: " {metrics_host}
+            </span>
         </div>
     }
 }

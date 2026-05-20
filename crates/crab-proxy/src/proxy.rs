@@ -1397,6 +1397,7 @@ impl ProxyHttp for GatewayProxy {
                     let mut entry = SanitizedLogEntry::from_request(
                         body,
                         ctx.conversation_id.clone(),
+                        ctx.consumer.clone(),
                         &ctx.model,
                         ctx.total_tokens as usize,
                         duration.as_secs_f64() * 1000.0,

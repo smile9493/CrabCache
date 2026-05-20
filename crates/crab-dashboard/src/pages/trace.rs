@@ -12,7 +12,7 @@ pub fn TracePage() -> impl IntoView {
 
     let load_analysis = move || {
         leptos::task::spawn_local(async move {
-            match api::fetch_trace_analysis().await {
+            match api::fetch_trace_analysis(24).await {
                 Ok(a) => analysis.set(Some(Ok(a))),
                 Err(e) => analysis.set(Some(Err(e))),
             }
@@ -28,6 +28,9 @@ pub fn TracePage() -> impl IntoView {
                     title=t.trace_title()
                     description=t.trace_desc()
                 />
+                <p class="text-xs text-theme-muted max-w-md text-right hidden md:block">
+                    {t.trace_hours_note()}
+                </p>
                 <button
                     on:click=move |_| load_analysis()
                     class="btn btn-secondary text-sm"

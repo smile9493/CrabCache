@@ -12,6 +12,10 @@ pub struct GatewayHealth {
     #[serde(default)]
     pub stream_cache_enabled: bool,
     #[serde(default)]
+    pub upstream_key_count: u32,
+    #[serde(default)]
+    pub upstream_keys_available: u32,
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -69,6 +73,82 @@ pub struct MetricsSnapshot {
     pub prefix_cache_miss_tokens: u64,
     #[serde(default)]
     pub prefix_cache_hit_ratio: f64,
+    #[serde(default)]
+    pub hit_rate_cumulative: f64,
+    #[serde(default)]
+    pub hit_rate_5m: f64,
+    #[serde(default)]
+    pub token_hit_rate_5m: f64,
+    #[serde(default)]
+    pub qps_5m: f64,
+    #[serde(default)]
+    pub coalesced_total: u64,
+    #[serde(default)]
+    pub consumer_buckets: Vec<ConsumerMetricsBucket>,
+    #[serde(default)]
+    pub metrics_sample_insufficient: bool,
+    #[serde(default)]
+    pub history_meta: MetricsHistoryMeta,
+    #[serde(default)]
+    pub tier_deltas_5m: TierDeltas5m,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MetricsHistoryMeta {
+    pub sample_count: usize,
+    pub oldest_sample_at_secs: u64,
+    pub sampling_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TierDeltas5m {
+    pub l0: u64,
+    pub l1: u64,
+    pub l2: u64,
+    pub miss: u64,
+    pub coalesced: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OverviewOpsMetrics {
+    pub cost_saved_usd_total: f64,
+    pub cost_saved_usd_5m: f64,
+    pub coalesced_total: u64,
+    pub coalesced_5m: f64,
+    pub rejected_total: u64,
+    pub rejected_5m: u64,
+    pub ttft_ms: f64,
+    pub prefix_break_total: u64,
+    pub reasoning_store_hits: u64,
+    pub reasoning_store_misses: u64,
+    pub stream_cache_sse_omitted: u64,
+    pub upstream_key_count: u32,
+    pub upstream_keys_available: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceSummary {
+    pub hours: u32,
+    pub total_requests: usize,
+    pub cache_hit_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewBundle {
+    pub metrics: MetricsSnapshot,
+    pub health: GatewayHealth,
+    pub prefix_cache: PrefixCacheMetricsSnapshot,
+    pub semantic: SemanticConfig,
+    pub trace_summary: TraceSummary,
+    pub ops: OverviewOpsMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsumerMetricsBucket {
+    pub consumer: String,
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +225,8 @@ pub struct TimeSeriesPoint {
     pub tokens: u64,
     pub cache_hits: u64,
     pub avg_latency_ms: f64,
+    #[serde(default)]
+    pub hit_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +265,8 @@ pub struct CacheConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticConfig {
+    #[serde(default)]
+    pub enabled: bool,
     pub similarity_threshold: f64,
 }
 
