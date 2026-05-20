@@ -15,7 +15,7 @@ pub use context::{
 };
 pub use error::ProxyError;
 pub use proxy::{GatewayProxy, flush_streaming_reasoning, should_store_sse_body};
-pub use runtime::RuntimeConfig;
+pub use runtime::{DomainPolicy, RuntimeConfig};
 pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
 pub use debug_log::debug_agent_log;
 pub use upstream_pool::{

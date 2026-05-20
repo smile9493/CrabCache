@@ -88,6 +88,17 @@ sum(rate(gateway_deepseek_input_tokens_total{cache_status="hit"}[5m]))
 
 Alert rules: `config/prometheus/alerts.yml`.
 
+### Domain label
+
+API keys may set `domain` (business line / project). Metrics use label `domain`; unset keys record as `unclassified`. Dashboard **Domains** page and Overview domain table read `domain_buckets` from `GET /api/admin/overview`. Domain policies: `PUT /v1/domains/policies` (synced from admin `data/admin-state.json`).
+
+Example PromQL by domain:
+
+```promql
+sum by (domain) (rate(gateway_deepseek_input_tokens_total{cache_status="hit"}[5m]))
+/ sum by (domain) (rate(gateway_deepseek_input_tokens_total[5m]))
+```
+
 ## Client verification
 
 Log response headers from the gateway:
@@ -108,3 +119,5 @@ Log response headers from the gateway:
 3. With `semantic.enabled = false` in gateway config, Overview shows the disabled badge; Trace banner `cache_hit_ratio` matches Trace page 24h value.
 4. Under load, Ops row TTFT / coalescing / rejected **5m** values change within the 5m window.
 5. After restarting `crab-admin`, `HistoryMetaHint` indicates the metrics ring was reset.
+
+**Admin 指标时序环**为进程内存，重启 `crab-admin` 会清空 Dashboard 历史曲线；Prometheus 网关计数器不受影响。Key 配额等扩展字段见 `data/admin-state.json`（[PERSISTENCE.md](./PERSISTENCE.md)）。

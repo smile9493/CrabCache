@@ -2,7 +2,7 @@
 
 use crate::metrics_history::{
     self, avg_prometheus_histogram_ms, build_prefix_cache_snapshot, consumer_token_buckets,
-    scrape_gateway_counters, scrape_ops_metrics, WINDOW_5M_SECS,
+    domain_token_buckets, scrape_gateway_counters, scrape_ops_metrics, WINDOW_5M_SECS,
 };
 use crate::state::AppState;
 use crate::trace_log;
@@ -123,9 +123,30 @@ pub async fn build_metrics_snapshot(
     let daily_stats = history.build_daily_stats(now);
     let weekly_stats = history.build_weekly_stats(now);
     let monthly_stats = history.build_monthly_stats(now);
-    drop(history);
 
     let consumer_buckets = consumer_token_buckets(body, 10);
+    let mut domain_buckets = domain_token_buckets(body, 20);
+    for bucket in &mut domain_buckets {
+        bucket.qps_5m = history.domain_qps_5m(&bucket.domain, now);
+        for policy in state.domain_policies.read().iter() {
+            if policy.domain != bucket.domain || !policy.enabled {
+                continue;
+            }
+            if policy.min_hit_rate > 0.0 && bucket.hit_ratio < policy.min_hit_rate {
+                bucket.alert = Some("hit_rate_low".to_string());
+            }
+            let total_tokens = bucket.hit_tokens + bucket.miss_tokens;
+            if policy.monthly_token_budget > 0 && total_tokens >= policy.monthly_token_budget {
+                bucket.alert = Some("budget_exceeded".to_string());
+            }
+            if policy.monthly_cost_budget_usd > 0.0
+                && bucket.cost_saved_usd >= policy.monthly_cost_budget_usd
+            {
+                bucket.alert = Some("budget_exceeded".to_string());
+            }
+        }
+    }
+    drop(history);
 
     Ok(MetricsSnapshot {
         qps,
@@ -180,6 +201,7 @@ pub async fn build_metrics_snapshot(
         qps_5m: window.qps,
         coalesced_total: counters.coalesced_total,
         consumer_buckets,
+        domain_buckets,
         metrics_sample_insufficient,
         history_meta,
         tier_deltas_5m,

@@ -146,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    state.sync_domain_policies_to_gateway().await;
+
     match state.gateway.list_keys().await {
         Ok(specs) => {
             for spec in specs {

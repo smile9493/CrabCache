@@ -1,0 +1,18 @@
+[package]
+name = "crab-state"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+redis.workspace = true
+bb8.workspace = true
+bb8-redis.workspace = true
+crab-cache.workspace = true
+crab-proxy = { path = "../crab-proxy" }
+crab-route = { path = "../crab-route" }
+crab-control = { path = "../crab-control" }

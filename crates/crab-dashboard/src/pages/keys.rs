@@ -61,6 +61,7 @@ pub fn KeysPage() -> impl IntoView {
 
     let show_create = RwSignal::new(false);
     let new_key_name = RwSignal::new(String::new());
+    let new_key_domain = RwSignal::new(String::new());
     let new_key_rpm = RwSignal::new(60u32);
     let new_key_budget = RwSignal::new(1_000_000u64);
     let new_key_unlimited = RwSignal::new(true);
@@ -71,6 +72,7 @@ pub fn KeysPage() -> impl IntoView {
     let on_create = move |_| {
         creating.set(true);
         create_error.set(String::new());
+        let domain = new_key_domain.get();
         let req = CreateKeyRequest {
             name: new_key_name.get(),
             rpm_limit: new_key_rpm.get(),
@@ -83,6 +85,11 @@ pub fn KeysPage() -> impl IntoView {
                 Some(new_key_quota.get())
             },
             unlimited_quota: Some(new_key_unlimited.get()),
+            domain: if domain.trim().is_empty() {
+                None
+            } else {
+                Some(domain.trim().to_string())
+            },
         };
         leptos::task::spawn_local(async move {
             match api::create_key(&req).await {
@@ -266,6 +273,18 @@ pub fn KeysPage() -> impl IntoView {
                                         }
                                         class="input"
                                         placeholder="e.g. production-app"
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_domain_label()}</label>
+                                    <input
+                                        type="text"
+                                        prop:value=move || new_key_domain.get()
+                                        on:input=move |ev| {
+                                            new_key_domain.set(event_target_value(&ev));
+                                        }
+                                        class="input"
+                                        placeholder="e.g. backend-team"
                                     />
                                 </div>
                                 <div>

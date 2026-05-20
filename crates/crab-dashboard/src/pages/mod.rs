@@ -1,4 +1,5 @@
 pub mod cache_ops;
+pub mod domains;
 pub mod keys;
 pub mod logs;
 pub mod models;

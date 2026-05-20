@@ -1,6 +1,6 @@
 use crate::metrics_history::MetricsHistory;
 use crate::persist::{self, PersistHandle};
-use crate::types::TraceSummary;
+use crate::types::{DomainPolicy, TraceSummary};
 use std::time::Instant;
 use crab_control::GatewayAdminClient;
 use crab_control::UpstreamTestResult;
@@ -66,6 +66,7 @@ pub struct AppState {
     pub metrics_history: RwLock<MetricsHistory>,
     pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
     pub trace_summary_cache: RwLock<Option<(Instant, TraceSummary)>>,
+    pub domain_policies: RwLock<Vec<DomainPolicy>>,
 }
 
 #[derive(Debug, Clone)]
@@ -271,7 +272,14 @@ impl AppState {
             gateway_reachable: RwLock::new(false),
             persist,
             gateway: GatewayAdminClient::from_env(),
-            keys_meta: DashMap::new(),
+            keys_meta: {
+                let map = DashMap::new();
+                for meta in loaded.keys_meta {
+                    let km: KeyMetadata = meta.into();
+                    map.insert(km.id.clone(), km);
+                }
+                map
+            },
             request_logs: RwLock::new(Vec::new()),
             cache_config: RwLock::new(StoredCacheConfig {
                 l0_max_capacity: 10000,
@@ -304,7 +312,42 @@ impl AppState {
             metrics_history: RwLock::new(MetricsHistory::new()),
             trace_entries: RwLock::new(Vec::new()),
             trace_summary_cache: RwLock::new(None),
+            domain_policies: RwLock::new(
+                loaded
+                    .domain_policies
+                    .into_iter()
+                    .map(|p| DomainPolicy {
+                        domain: p.domain,
+                        monthly_token_budget: p.monthly_token_budget,
+                        monthly_cost_budget_usd: p.monthly_cost_budget_usd,
+                        min_hit_rate: p.min_hit_rate,
+                        enabled: p.enabled,
+                    })
+                    .collect(),
+            ),
             last_invalidate: RwLock::new(None),
+        }
+    }
+
+    pub async fn sync_domain_policies_to_gateway(&self) {
+        let policies: Vec<crab_control::DomainPolicySpec> = self
+            .domain_policies
+            .read()
+            .iter()
+            .map(|p| crab_control::DomainPolicySpec {
+                domain: p.domain.clone(),
+                monthly_token_budget: p.monthly_token_budget,
+                monthly_cost_budget_usd: p.monthly_cost_budget_usd,
+                min_hit_rate: p.min_hit_rate,
+                enabled: p.enabled,
+            })
+            .collect();
+        if let Err(e) = self
+            .gateway
+            .put_domain_policies(&crab_control::PutDomainPoliciesRequest { policies })
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to sync domain policies to gateway");
         }
     }
 
@@ -326,11 +369,30 @@ impl AppState {
     }
 
     pub fn flush_persist(&self) {
+        let keys_meta: Vec<persist::PersistedKeyMetadata> = self
+            .keys_meta
+            .iter()
+            .map(|e| persist::PersistedKeyMetadata::from(e.value()))
+            .collect();
+        let domain_policies: Vec<persist::PersistedDomainPolicy> = self
+            .domain_policies
+            .read()
+            .iter()
+            .map(|p| persist::PersistedDomainPolicy {
+                domain: p.domain.clone(),
+                monthly_token_budget: p.monthly_token_budget,
+                monthly_cost_budget_usd: p.monthly_cost_budget_usd,
+                min_hit_rate: p.min_hit_rate,
+                enabled: p.enabled,
+            })
+            .collect();
         let file = persist::build_state_file(
             &self.models.read(),
             &self.upstream_config.read(),
             self.last_upstream_test.read().clone(),
             self.upstream_notes.read().clone(),
+            &keys_meta,
+            &domain_policies,
         );
         self.persist.save_debounced(file);
     }

@@ -5,7 +5,11 @@ use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
 use crab_proxy::{GatewayProxy, GatewayState, RuntimeConfig};
-use crab_reasoning::ReasoningStore;
+use crab_reasoning::ReasoningBackend;
+use crab_state::{
+    RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
+    spawn_state_refresh_task,
+};
 use crab_route::AffinityRouter;
 use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
 use pingora_core::server::Server;
@@ -113,10 +117,14 @@ fn main() -> Result<()> {
 
     if clear_reasoning_cache {
         let reasoning_config = config.reasoning.clone().unwrap_or_default();
-        let store = ReasoningStore::new(
+        let store = ReasoningBackend::from_config(
+            &reasoning_config.backend,
             &reasoning_config.cache_db_path,
+            reasoning_config.redis_url.as_deref(),
+            &config.cache.l1_redis_url,
             reasoning_config.cache_max_age_secs,
             reasoning_config.cache_max_rows,
+            reasoning_config.max_reasoning_entry_bytes,
         )?;
         let deleted = store.clear()?;
         info!(
@@ -218,10 +226,14 @@ fn main() -> Result<()> {
     let conn_config = config.connection.clone().unwrap_or_default();
 
     let reasoning_config = config.reasoning.clone().unwrap_or_default();
-    let reasoning_store = Arc::new(ReasoningStore::new(
+    let reasoning_store = Arc::new(ReasoningBackend::from_config(
+        &reasoning_config.backend,
         &reasoning_config.cache_db_path,
+        reasoning_config.redis_url.as_deref(),
+        &config.cache.l1_redis_url,
         reasoning_config.cache_max_age_secs,
         reasoning_config.cache_max_rows,
+        reasoning_config.max_reasoning_entry_bytes,
     )?);
 
     let upstream_base_url = config.upstream_base_url().to_string();
@@ -293,27 +305,91 @@ fn main() -> Result<()> {
         legacy_client_tokens,
     );
 
-    if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
-        for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            if runtime.keys.contains_key(token) {
-                continue;
+    let state_redis_url = config
+        .state
+        .redis_url
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| config.cache.l1_redis_url.clone());
+
+    let state_store: Option<Arc<RedisStateStore>> = if config.state.is_redis() {
+        let store = rt
+            .block_on(async {
+                RedisStateStore::connect(&RedisStateConfig::new(
+                    state_redis_url.clone(),
+                    config.state.key_prefix.clone(),
+                ))
+                .await
+            })?;
+        let store = Arc::new(store);
+        let empty = rt.block_on(store.is_empty())?;
+        if empty {
+            if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
+                for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    if runtime.keys.contains_key(token) {
+                        continue;
+                    }
+                    let id = uuid::Uuid::new_v4().to_string();
+                    runtime.keys.insert(
+                        token.to_string(),
+                        crab_proxy::StoredKey {
+                            id,
+                            name: "bootstrap".to_string(),
+                            key_hash: token.to_string(),
+                            enabled: true,
+                            domain: None,
+                        },
+                    );
+                    info!(
+                        key_preview = %crab_gateway::config::mask_api_key(token),
+                        "Bootstrap client API key registered"
+                    );
+                }
             }
-            let id = uuid::Uuid::new_v4().to_string();
-            runtime.keys.insert(
-                token.to_string(),
-                crab_proxy::StoredKey {
-                    id,
-                    name: "bootstrap".to_string(),
-                    key_hash: token.to_string(),
-                    enabled: true,
-                },
-            );
+            let snap = build_snapshot_from_runtime(&runtime);
+            rt.block_on(store.save_all(&snap))?;
+            info!("Initialized empty Redis control plane state");
+        } else {
+            let (version, snap) = rt.block_on(store.load_all())?;
+            apply_snapshot_to_runtime(&runtime, &snap, config.upstream.key_cooldown_secs)?;
             info!(
-                key_preview = %crab_gateway::config::mask_api_key(token),
-                "Bootstrap client API key registered"
+                version,
+                keys = snap.keys.len(),
+                "Loaded control plane state from Redis"
             );
         }
-    }
+        spawn_state_refresh_task(
+            store.clone(),
+            runtime.clone(),
+            config.upstream.key_cooldown_secs,
+            config.state.refresh_interval_secs,
+        );
+        Some(store)
+    } else {
+        if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
+            for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                if runtime.keys.contains_key(token) {
+                    continue;
+                }
+                let id = uuid::Uuid::new_v4().to_string();
+                runtime.keys.insert(
+                    token.to_string(),
+                    crab_proxy::StoredKey {
+                        id,
+                        name: "bootstrap".to_string(),
+                        key_hash: token.to_string(),
+                        enabled: true,
+                        domain: None,
+                    },
+                );
+                info!(
+                    key_preview = %crab_gateway::config::mask_api_key(token),
+                    "Bootstrap client API key registered"
+                );
+            }
+        }
+        None
+    };
 
     // Background task: TCP health check for upstream backends
     {
@@ -379,6 +455,7 @@ fn main() -> Result<()> {
         reasoning_store: reasoning_store.clone(),
         reasoning_config: reasoning_config_shared.clone(),
         admin_key: mgmt_admin_key,
+        state_store: state_store.clone(),
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
         invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(InvalidateRateState::default())),

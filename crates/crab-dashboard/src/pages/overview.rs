@@ -118,6 +118,7 @@ pub fn OverviewPage() -> impl IntoView {
                                 <SemanticCacheCard metrics=m.clone() semantic=semantic />
                             </div>
                             <ConsumerHitTable metrics=m.clone() />
+                            <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() />
                             <div class="bento-grid-3">
                                 <div class="bento-cell">
                                     <CacheHitSection metrics=m.clone() />
@@ -695,7 +696,7 @@ fn format_uptime_display(uptime_secs: u64, uptime_hours: u64) -> String {
     format!("{uptime_hours}h")
 }
 
-fn format_number(n: u64) -> String {
+pub fn format_number(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {

@@ -8,15 +8,20 @@ use axum::{
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
-    ClearReasoningCacheResponse, CreateGatewayKeyRequest, CreateGatewayKeyResponse, ErrorResponse,
+    ClearReasoningCacheResponse,     CreateGatewayKeyRequest, CreateGatewayKeyResponse, DomainPolicySpec, ErrorResponse,
     GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
-    PutBackendsRequest, PutTtlConfigRequest, PutUpstreamKeysRequest, PutUpstreamRelayConfigRequest,
+    PutBackendsRequest, PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
+    PutUpstreamRelayConfigRequest,
     ReasoningRuntimeConfigView, RoutingBackendsView, StreamCacheConfig, TtlConfigView,
     UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView,
     parse_backend_endpoints, parse_upstream_base_url,
 };
-use crab_proxy::{ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
-use crab_reasoning::ReasoningStore;
+use crab_proxy::{
+    DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+};
+use std::collections::HashMap;
+use crab_reasoning::ReasoningBackend;
+use crab_state::{RedisStateStore, persist_runtime_state};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -30,7 +35,8 @@ const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
 pub struct ManagementState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
-    pub reasoning_store: Arc<ReasoningStore>,
+    pub reasoning_store: Arc<ReasoningBackend>,
+    pub state_store: Option<Arc<RedisStateStore>>,
     pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
     pub admin_key: String,
     pub invalidate_all_in_progress: Arc<AtomicBool>,
@@ -95,6 +101,14 @@ pub fn router(state: ManagementState) -> Router {
             get(get_fingerprint).put(put_fingerprint),
         )
         .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
+        .route(
+            "/v1/domains/policies",
+            get(list_domain_policies).put(put_domain_policies),
+        )
+        .route(
+            "/v1/domains/policies/{domain}",
+            delete(delete_domain_policy),
+        )
         .route("/v1/cache/ttl", get(get_ttl).put(put_ttl))
         .route(
             "/v1/runtime/stream_cache",
@@ -399,10 +413,12 @@ async fn put_fingerprint(
         "Fingerprint config updated"
     );
 
-    Ok(Json(FingerprintRequest {
+    let resp = FingerprintRequest {
         version: cfg.version,
         normalize_content: cfg.normalize_content,
-    }))
+    };
+    schedule_persist_state(&state);
+    Ok(Json(resp))
 }
 
 async fn health() -> StatusCode {
@@ -433,6 +449,18 @@ async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyR
             }),
         )
     }
+}
+
+fn schedule_persist_state(state: &ManagementState) {
+    let Some(store) = state.state_store.clone() else {
+        return;
+    };
+    let runtime = state.runtime.clone();
+    tokio::spawn(async move {
+        if let Err(e) = persist_runtime_state(store.as_ref(), &runtime).await {
+            tracing::warn!(error = %e, "Failed to persist control plane state to Redis");
+        }
+    });
 }
 
 fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
@@ -582,6 +610,7 @@ async fn put_upstream_relay(
             health.insert(b.name.clone(), crab_route::BackendHealth::new_healthy());
         }
     }
+    drop(router);
 
     tracing::info!(
         base_url = %parsed.normalized,
@@ -590,6 +619,7 @@ async fn put_upstream_relay(
         "Upstream relay config updated"
     );
 
+    schedule_persist_state(&state);
     Ok(Json(upstream_relay_view(&state.runtime)))
 }
 
@@ -642,6 +672,7 @@ async fn put_upstream_keys(
         UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
     };
     state.runtime.replace_upstream_pool(new_pool);
+    schedule_persist_state(&state);
     Ok(Json(upstream_keys_view(&state.runtime)))
 }
 
@@ -703,6 +734,7 @@ async fn patch_upstream_key(
             )
                 .into_response()
         })?;
+    schedule_persist_state(&state);
     Ok(Json(view))
 }
 
@@ -742,6 +774,7 @@ fn stored_to_spec(token: &str, key: &StoredKey, include_full: bool) -> ApiKeySpe
             None
         },
         enabled: key.enabled,
+        domain: key.domain.clone(),
     }
 }
 
@@ -789,15 +822,18 @@ async fn create_key(
         name: req.name.clone(),
         key_hash: token.clone(),
         enabled: req.enabled,
+        domain: req.domain.clone(),
     };
     state.runtime.keys.insert(token.clone(), stored);
 
+    schedule_persist_state(&state);
     Ok(Json(CreateGatewayKeyResponse {
         id,
         name: req.name,
         key_full: token.clone(),
         key_preview: key_preview(&token),
         enabled: req.enabled,
+        domain: req.domain,
     }))
 }
 
@@ -808,6 +844,7 @@ async fn revoke_key(
 ) -> Result<StatusCode, Response> {
     authorize(&headers, &state.admin_key)?;
     if state.runtime.keys.remove(&token).is_some() {
+        schedule_persist_state(&state);
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((
@@ -818,6 +855,68 @@ async fn revoke_key(
         )
             .into_response())
     }
+}
+
+async fn list_domain_policies(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DomainPolicySpec>>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let specs: Vec<DomainPolicySpec> = state
+        .runtime
+        .list_domain_policies()
+        .into_iter()
+        .map(|(domain, policy)| DomainPolicySpec {
+            domain,
+            monthly_token_budget: policy.monthly_token_budget,
+            monthly_cost_budget_usd: policy.monthly_cost_budget_usd,
+            min_hit_rate: policy.min_hit_rate,
+            enabled: policy.enabled,
+        })
+        .collect();
+    Ok(Json(specs))
+}
+
+async fn put_domain_policies(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PutDomainPoliciesRequest>,
+) -> Result<Json<Vec<DomainPolicySpec>>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let mut map = HashMap::new();
+    for p in req.policies {
+        map.insert(
+            p.domain.clone(),
+            DomainPolicy {
+                monthly_token_budget: p.monthly_token_budget,
+                monthly_cost_budget_usd: p.monthly_cost_budget_usd,
+                min_hit_rate: p.min_hit_rate,
+                enabled: p.enabled,
+            },
+        );
+    }
+    state.runtime.replace_domain_policies(map);
+    list_domain_policies(State(state), headers).await
+}
+
+async fn delete_domain_policy(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(domain): Path<String>,
+) -> Result<StatusCode, Response> {
+    authorize(&headers, &state.admin_key)?;
+    if let Ok(mut guard) = state.runtime.domain_policies.write() {
+        if guard.remove(&domain).is_some() {
+            return Ok(StatusCode::NO_CONTENT);
+        }
+    }
+    Err((
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse {
+            error: "domain policy not found".to_string(),
+        }),
+    )
+        .into_response())
 }
 
 async fn patch_key(
@@ -843,8 +942,13 @@ async fn patch_key(
     if let Some(enabled) = req.enabled {
         entry.enabled = enabled;
     }
+    if let Some(domain) = req.domain {
+        entry.domain = Some(domain);
+    }
 
     let spec = stored_to_spec(&token, &entry, false);
+    drop(entry);
+    schedule_persist_state(&state);
     Ok(Json(spec))
 }
 
@@ -879,11 +983,14 @@ async fn put_ttl(
     cfg.default_ttl_secs = req.default_ttl_secs;
     cfg.model_overrides = req.model_overrides.clone();
     cfg.consumer_overrides = req.consumer_overrides.clone();
-    Ok(Json(TtlConfigView {
+    let view = TtlConfigView {
         default_ttl_secs: cfg.default_ttl_secs,
         model_overrides: cfg.model_overrides.clone(),
         consumer_overrides: cfg.consumer_overrides.clone(),
-    }))
+    };
+    drop(cfg);
+    schedule_persist_state(&state);
+    Ok(Json(view))
 }
 
 async fn get_stream_cache(
@@ -903,6 +1010,7 @@ async fn put_stream_cache(
 ) -> Result<Json<StreamCacheConfig>, Response> {
     authorize(&headers, &state.admin_key)?;
     state.runtime.set_stream_cache_enabled(req.enabled);
+    schedule_persist_state(&state);
     Ok(Json(StreamCacheConfig {
         enabled: state.runtime.stream_cache_enabled(),
     }))
@@ -1084,6 +1192,8 @@ async fn put_backends(
         .iter()
         .map(|b| backend_to_spec(b.as_ref(), None))
         .collect();
+    drop(router);
+    schedule_persist_state(&state);
     Ok(Json(RoutingBackendsView { backends }))
 }
 

@@ -62,6 +62,13 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # Coalesce wait timeout in seconds (default: 60)
 # coalesce_timeout_secs = 60
 
+# Control plane persistence (client keys, hot TTL/routing). Use redis for multi-instance.
+[state]
+backend = "memory"
+# redis_url = ""
+# key_prefix = "crab:state"
+# refresh_interval_secs = 5
+
 [cache]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
@@ -127,6 +134,9 @@ ttl_secs = 86400
 # embed_only_on_exact_miss = true
 
 [reasoning]
+# backend = "sqlite"   # use "redis" when running multiple gateway replicas
+# redis_url = ""
+# max_reasoning_entry_bytes = 524288
 thinking_mode = "enabled"
 reasoning_effort = "max"
 # fill_only (recommended for Cursor Agent + tools): fill from ReasoningStore only, no history truncation

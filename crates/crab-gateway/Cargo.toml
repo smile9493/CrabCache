@@ -17,6 +17,8 @@ axum = "0.8"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 bb8.workspace = true
 bb8-redis.workspace = true
+crab-state.workspace = true
+uuid.workspace = true
 
 [dependencies]
 crab-proxy.workspace = true
@@ -26,6 +28,7 @@ crab-route.workspace = true
 crab-semantic.workspace = true
 crab-reasoning.workspace = true
 crab-control.workspace = true
+crab-state.workspace = true
 axum = "0.8"
 uuid.workspace = true
 pingora.workspace = true

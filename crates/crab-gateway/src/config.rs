@@ -5,6 +5,7 @@ use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
+pub use crab_state::StateBackendConfig;
 
 /// A wrapper around `String` that redacts its value in `Debug` output
 /// and `Display` output, preventing accidental leakage of secrets
@@ -94,6 +95,8 @@ pub struct GatewayConfig {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub gateway: GatewaySection,
+    #[serde(default)]
+    pub state: StateBackendConfig,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -758,6 +761,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             trace_logging: None,
             management: None,
             limits: LimitsConfig::default(),
+            state: StateBackendConfig::default(),
         };
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("max_coalesce_inflight")));
@@ -820,6 +824,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 invalidate_scan_timeout_secs: 300,
             }),
             limits: LimitsConfig::default(),
+            state: StateBackendConfig::default(),
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));

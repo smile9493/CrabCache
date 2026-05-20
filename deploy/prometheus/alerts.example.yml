@@ -58,3 +58,36 @@ groups:
           description: |
             Check x-conversation-id stickiness, reasoning strategy (prefer fill_only),
             and whether clients mutate message prefixes. See docs/DEEPSEEK_PREFIX_CACHE.md.
+
+  - name: crabcache_domain_cache
+    rules:
+      - alert: CrabCacheDomainHitRateLow
+        expr: |
+          (
+            sum by (domain) (rate(gateway_deepseek_input_tokens_total{cache_status="hit"}[1h]))
+            /
+            clamp_min(
+              sum by (domain) (rate(gateway_deepseek_input_tokens_total[1h])),
+              1e-9
+            )
+          ) < 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache domain {{ $labels.domain }} token hit rate below 85% (1h)"
+          description: |
+            Review API keys assigned to this domain and cache TTL settings.
+            Unclassified traffic uses domain label `unclassified`.
+
+      - alert: CrabCacheDomainRejectedQuota
+        expr: |
+          increase(gateway_rejected_requests_total{reason="domain_quota_exceeded"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache rejected requests due to domain quota"
+          description: |
+            One or more domains exceeded monthly token or cost budget configured via
+            PUT /v1/domains/policies. Adjust budgets or key assignment.

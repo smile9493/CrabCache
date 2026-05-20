@@ -85,6 +85,7 @@ pub fn Sidebar() -> impl IntoView {
             <nav class="sidebar-nav">
                 <div class="nav-group-label">{move || use_translations().sidebar_group_monitor()}</div>
                 <NavItem href="/" label=move || use_translations().sidebar_overview() icon="◉" on_navigate=close_on_nav />
+                <NavItem href="/domains" label=move || use_translations().sidebar_domains() icon="◫" on_navigate=close_on_nav />
                 <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" on_navigate=close_on_nav />
 
                 <div class="nav-group-label">{move || use_translations().sidebar_group_config()}</div>

@@ -7,6 +7,7 @@ use crate::components::auth_gate::AuthGate;
 use crate::components::sidebar::{MobileTopBar, Sidebar, provide_mobile_nav};
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache_ops::CacheOpsPage;
+use crate::pages::domains::{DomainDetailPage, DomainsListPage};
 use crate::pages::keys::KeysPage;
 use crate::pages::logs::LogsPage;
 use crate::pages::models::ModelsPage;
@@ -50,6 +51,8 @@ fn AuthenticatedShell() -> impl IntoView {
                         <Route path=path!("/cache") view=CacheOpsPage />
                         <Route path=path!("/logs") view=LogsPage />
                         <Route path=path!("/trace") view=TracePage />
+                        <Route path=path!("/domains") view=DomainsListPage />
+                        <Route path=path!("/domains/:domain") view=DomainDetailPage />
                         <Route path=path!("/upstream") view=UpstreamPage />
                     </Routes>
                 </main>

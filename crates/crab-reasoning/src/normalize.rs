@@ -1,7 +1,7 @@
 use crate::keys::{
     conversation_scope, message_signature, tool_call_ids, tool_call_names, tool_call_signature,
 };
-use crate::store::ReasoningStore;
+use crate::backend::ReasoningBackend;
 use crab_metrics::global_metrics;
 use regex::Regex;
 use serde_json::Value;
@@ -421,7 +421,7 @@ struct NormalizeResult {
 
 fn normalize_message(
     message: &Value,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     prior_messages: &[Value],
     cache_namespace: &str,
     repair_reasoning: bool,
@@ -530,7 +530,7 @@ pub struct NormalizeMessagesResult {
 
 pub fn normalize_messages(
     messages: &[Value],
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     cache_namespace: &str,
     repair_reasoning: bool,
     keep_reasoning: bool,
@@ -899,7 +899,7 @@ pub struct PreparedRequest {
 
 pub fn prepare_upstream_request(
     payload: &Value,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     upstream_base_url: &str,
     fallback_model: &str,
     thinking_mode: &str,

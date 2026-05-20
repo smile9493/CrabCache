@@ -31,6 +31,12 @@ default_weight = 1
 deepseek_endpoints = ["api.deepseek.com:443"]
 # keys = ["sk-ds-1", "sk-ds-2"]  # or CRABCACHE_UPSTREAM_KEYS in .env
 
+[state]
+backend = "redis"
+redis_url = "redis://redis:6379"
+key_prefix = "crab:state"
+refresh_interval_secs = 5
+
 [cache]
 default_ttl_secs = 3600
 l0_max_capacity = 10000
@@ -55,6 +61,9 @@ similarity_threshold = 0.95
 ttl_secs = 86400
 
 [reasoning]
+backend = "redis"
+redis_url = "redis://redis:6379"
+max_reasoning_entry_bytes = 524288
 thinking_mode = "enabled"
 reasoning_effort = "medium"
 # Cursor / Agent 推荐 fill_only：先从 ReasoningStore 补全；Store 未命中时自动 recover（勿裸发上游）

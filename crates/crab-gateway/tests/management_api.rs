@@ -8,7 +8,8 @@ use crab_control::{
 };
 use crab_gateway::management::{ManagementState, router};
 use crab_proxy::{ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool};
-use crab_reasoning::ReasoningStore;
+use crab_reasoning::ReasoningBackend;
+use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use crab_route::AffinityRouter;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
@@ -55,8 +56,9 @@ async fn test_management_state() -> Option<ManagementState> {
             .ok()?,
     );
 
-    let reasoning_store =
-        Arc::new(ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("reasoning store"));
+    let reasoning_store = Arc::new(
+        ReasoningBackend::open_sqlite(":memory:", Some(3600), Some(1000)).expect("reasoning store"),
+    );
 
     Some(ManagementState {
         runtime: test_runtime(),
@@ -64,6 +66,7 @@ async fn test_management_state() -> Option<ManagementState> {
         reasoning_store,
         reasoning_config: Arc::new(RwLock::new(ReasoningConfig::default())),
         admin_key: "test-admin".to_string(),
+        state_store: None,
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
         invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(
@@ -174,6 +177,61 @@ async fn create_and_list_keys() {
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn create_key_with_domain_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"domain-key","enabled":true,"domain":"backend-team"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        created["domain"].as_str(),
+        Some("backend-team")
+    );
+
+    let list = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let keys: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        keys.iter()
+            .any(|k| k["domain"].as_str() == Some("backend-team")),
+        "listed key should include domain"
+    );
 }
 
 #[tokio::test]
@@ -437,4 +495,63 @@ async fn upstream_pool_all_cooled_returns_unavailable() {
     pool.report_rate_limited("key-1");
     assert!(pool.acquire().is_none());
     assert_eq!(pool.available_count(), 0);
+}
+
+/// Client API keys written via Management API are visible after reload from Redis (multi-instance).
+#[tokio::test]
+async fn client_key_persisted_in_redis_state() {
+    let Some(mut state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
+        .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let store = match RedisStateStore::connect(&RedisStateConfig::new(
+        redis_url,
+        format!("crab:state:test:{}", uuid::Uuid::new_v4()),
+    ))
+    .await
+    {
+        Ok(s) => Arc::new(s),
+        Err(_) => {
+            skip_or_panic_redis_unavailable();
+            return;
+        }
+    };
+    state.state_store = Some(store.clone());
+
+    let app = router(state.clone());
+    let body = serde_json::json!({"name": "redis-test", "enabled": true});
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let token = created["key_full"].as_str().expect("key_full");
+
+    let (_, snap) = store.load_all().await.expect("load redis state");
+    assert!(
+        snap.keys.contains_key(token),
+        "created key should be in Redis control plane"
+    );
+
+    let runtime_b = test_runtime();
+    runtime_b.keys.clear();
+    apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
+    assert!(
+        runtime_b.keys.contains_key(token),
+        "second runtime should see key after Redis reload"
+    );
 }

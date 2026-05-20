@@ -1,5 +1,7 @@
+mod backend;
 mod keys;
 mod normalize;
+mod redis_store;
 mod store;
 mod streaming;
 mod transform;
@@ -9,6 +11,7 @@ pub use keys::{
     tool_call_ids, tool_call_names, tool_call_signature,
 };
 pub use normalize::{PreparedRequest, normalize_messages, prepare_upstream_request};
+pub use backend::ReasoningBackend;
 pub use store::ReasoningStore;
 pub use streaming::{
     CursorReasoningDisplayAdapter, StreamAccumulator, fold_reasoning_into_content,

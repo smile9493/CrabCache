@@ -1,6 +1,6 @@
 //! Admin auxiliary state persisted to JSON (models metadata, notes, test snapshots).
 
-use crate::state::{StoredModel, StoredModelList, StoredUpstreamConfig};
+use crate::state::{KeyMetadata, StoredModel, StoredModelList, StoredUpstreamConfig};
 use crab_control::UpstreamTestResult;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,31 @@ pub struct AdminStateFile {
     pub last_upstream_test: Option<UpstreamTestResult>,
     #[serde(default)]
     pub upstream_snapshot: Option<PersistedUpstreamSnapshot>,
+    #[serde(default)]
+    pub keys_meta: Vec<PersistedKeyMetadata>,
+    #[serde(default)]
+    pub domain_policies: Vec<PersistedDomainPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedDomainPolicy {
+    pub domain: String,
+    pub monthly_token_budget: u64,
+    pub monthly_cost_budget_usd: f64,
+    pub min_hit_rate: f64,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedKeyMetadata {
+    pub id: String,
+    pub token: String,
+    pub rpm_limit: u64,
+    pub monthly_token_limit: u64,
+    pub expired_at: Option<u64>,
+    pub model_limits: Vec<String>,
+    pub remain_quota: i64,
+    pub unlimited_quota: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -111,6 +136,42 @@ impl Default for AdminStateFile {
             upstream_notes: None,
             last_upstream_test: None,
             upstream_snapshot: None,
+            keys_meta: Vec::new(),
+            domain_policies: Vec::new(),
+        }
+    }
+}
+
+impl From<&KeyMetadata> for PersistedKeyMetadata {
+    fn from(m: &KeyMetadata) -> Self {
+        Self {
+            id: m.id.clone(),
+            token: m.token.clone(),
+            rpm_limit: m.rpm_limit,
+            monthly_token_limit: m.monthly_token_limit,
+            expired_at: m.expired_at,
+            model_limits: m.model_limits.clone(),
+            remain_quota: m.remain_quota,
+            unlimited_quota: m.unlimited_quota,
+        }
+    }
+}
+
+impl From<PersistedKeyMetadata> for KeyMetadata {
+    fn from(p: PersistedKeyMetadata) -> Self {
+        Self {
+            id: p.id,
+            token: p.token,
+            rpm_limit: p.rpm_limit,
+            monthly_token_limit: p.monthly_token_limit,
+            current_rpm: 0,
+            tokens_this_month: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            expired_at: p.expired_at,
+            model_limits: p.model_limits,
+            remain_quota: p.remain_quota,
+            unlimited_quota: p.unlimited_quota,
         }
     }
 }
@@ -160,6 +221,8 @@ pub fn build_state_file(
     upstream: &StoredUpstreamConfig,
     last_test: Option<UpstreamTestResult>,
     notes: Option<String>,
+    keys_meta: &[PersistedKeyMetadata],
+    domain_policies: &[PersistedDomainPolicy],
 ) -> AdminStateFile {
     AdminStateFile {
         version: STATE_VERSION,
@@ -171,5 +234,7 @@ pub fn build_state_file(
             model: upstream.model.clone(),
             endpoints: upstream.endpoints.clone(),
         }),
+        keys_meta: keys_meta.to_vec(),
+        domain_policies: domain_policies.to_vec(),
     }
 }
