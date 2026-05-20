@@ -5,7 +5,7 @@ use crate::upstream_pool::REASONING_NAMESPACE_AUTH;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
 use crab_metrics::{CacheTier, global_metrics};
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_upstream_request,
+    CursorReasoningDisplayAdapter, ReasoningStore, StreamAccumulator, prepare_upstream_request,
     rewrite_response_body, rewrite_sse_chunk,
 };
 use crab_route::extract_affinity_key;
@@ -366,8 +366,7 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if let Some(semantic_cache) = &self.state.semantic_cache {
-                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body)
-                {
+                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body) {
                     if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array())
                     {
                         if let Some(query_text) = build_semantic_query_text(messages) {
@@ -642,10 +641,7 @@ impl ProxyHttp for GatewayProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        let host = ctx
-            .upstream_host
-            .as_deref()
-            .unwrap_or("api.deepseek.com");
+        let host = ctx.upstream_host.as_deref().unwrap_or("api.deepseek.com");
         let _ = upstream_request.insert_header("host", host);
         let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
         if let Some(ref new_body) = ctx.new_request_body {
@@ -780,8 +776,8 @@ impl ProxyHttp for GatewayProxy {
             return Ok(None);
         }
 
-        if let Some(data) = body.as_ref() {
-            ctx.accumulated_body.extend_from_slice(data);
+        if let Some(data) = body.take() {
+            ctx.accumulated_body.extend_from_slice(&data);
 
             if ctx.is_streaming {
                 if ctx.ttft.is_none() {
@@ -798,62 +794,34 @@ impl ProxyHttp for GatewayProxy {
                     }
                 }
 
-                if let (Some(prepared), Some(accumulator)) =
-                    (&ctx.prepared_request, &mut ctx.stream_accumulator)
-                {
-                    let text = String::from_utf8_lossy(data);
-                    for line in text.lines() {
-                        let line_bytes = line.as_bytes();
-                        let result = rewrite_sse_chunk(
-                            line_bytes,
-                            &prepared.original_model,
-                            accumulator,
-                            &prepared.cache_namespace,
-                            &prepared.record_response_contexts,
-                            &mut ctx.display_adapter,
-                            ctx.pending_recovery_notice.as_deref(),
-                            Some(&self.state.reasoning_store),
-                        );
-
-                        ctx.pending_recovery_notice = result.pending_recovery_notice;
-                        if result.finalized {
-                            ctx.stream_reasoning_finalized = true;
-                        }
-
-                        if let Some(usage) = &result.chunk_usage {
-                            let usage_data = UsageData {
-                                prompt_tokens: usage
-                                    .get("prompt_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                completion_tokens: usage
-                                    .get("completion_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                prompt_cache_hit_tokens: usage
-                                    .get("prompt_cache_hit_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                prompt_cache_miss_tokens: usage
-                                    .get("prompt_cache_miss_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                            };
-                            ctx.total_tokens +=
-                                usage_data.prompt_tokens + usage_data.completion_tokens;
-                            ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
-                            ctx.last_prompt_cache_miss_tokens =
-                                usage_data.prompt_cache_miss_tokens;
-                            record_usage_metrics(
-                                &usage_data,
-                                &ctx.model,
-                                ctx.consumer.as_deref(),
-                            );
-                        }
+                let downstream_chunk = if let (Some(prepared), Some(accumulator)) = (
+                    ctx.prepared_request.as_ref(),
+                    ctx.stream_accumulator.as_mut(),
+                ) {
+                    let (rewritten, finalized) = rewrite_upstream_sse_bytes(
+                        &data,
+                        &mut ctx.stream_sse_remainder,
+                        prepared,
+                        accumulator,
+                        &mut ctx.display_adapter,
+                        &mut ctx.pending_recovery_notice,
+                        &self.state.reasoning_store,
+                        false,
+                    );
+                    if finalized {
+                        ctx.stream_reasoning_finalized = true;
                     }
-                }
+                    if rewritten.is_empty() {
+                        None
+                    } else {
+                        Some(bytes::Bytes::from(rewritten))
+                    }
+                } else {
+                    Some(data.clone())
+                };
 
-                let events = parse_sse_chunk(data);
+                let parse_src = downstream_chunk.as_ref().unwrap_or(&data);
+                let events = parse_sse_chunk(parse_src);
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
                         ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
@@ -862,6 +830,10 @@ impl ProxyHttp for GatewayProxy {
                         record_usage_metrics(&usage, &ctx.model, ctx.consumer.as_deref());
                     }
                 }
+
+                *body = downstream_chunk;
+            } else {
+                *body = Some(data);
             }
         }
 
@@ -1004,6 +976,28 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if end_of_stream && ctx.is_streaming {
+            if let (Some(prepared), Some(accumulator)) = (
+                ctx.prepared_request.as_ref(),
+                ctx.stream_accumulator.as_mut(),
+            ) {
+                let (rewritten, finalized) = rewrite_upstream_sse_bytes(
+                    b"",
+                    &mut ctx.stream_sse_remainder,
+                    prepared,
+                    accumulator,
+                    &mut ctx.display_adapter,
+                    &mut ctx.pending_recovery_notice,
+                    &self.state.reasoning_store,
+                    true,
+                );
+                if finalized {
+                    ctx.stream_reasoning_finalized = true;
+                }
+                if !rewritten.is_empty() {
+                    *body = Some(bytes::Bytes::from(rewritten));
+                }
+            }
+
             if let Some(guard) = &ctx.coalesce_guard {
                 guard.mark_completed();
             }
@@ -1176,8 +1170,7 @@ impl ProxyHttp for GatewayProxy {
                     let hit = ctx.last_prompt_cache_hit_tokens;
                     let miss = ctx.last_prompt_cache_miss_tokens;
                     if hit + miss > 0 {
-                        entry.prompt_cache_hit_ratio =
-                            Some(hit as f64 / (hit + miss) as f64);
+                        entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
                     }
                     trace_logger.log(entry);
                 }
@@ -1216,7 +1209,10 @@ impl ProxyHttp for GatewayProxy {
 }
 
 /// Persist accumulated streaming reasoning when the client disconnects or stops before `[DONE]`.
-pub fn flush_streaming_reasoning(ctx: &mut GatewayContext, store: &crab_reasoning::ReasoningStore) -> usize {
+pub fn flush_streaming_reasoning(
+    ctx: &mut GatewayContext,
+    store: &crab_reasoning::ReasoningStore,
+) -> usize {
     if ctx.stream_reasoning_finalized {
         return 0;
     }
@@ -1285,10 +1281,7 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         Err(_) => return false,
     };
     let _ = header.insert_header("access-control-allow-origin", "*");
-    let _ = header.insert_header(
-        "access-control-allow-methods",
-        "GET, POST, OPTIONS",
-    );
+    let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
     let _ = header.insert_header(
         "access-control-allow-headers",
         "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer",
@@ -1409,6 +1402,69 @@ fn record_usage_metrics(usage: &UsageData, model: &str, consumer: Option<&str>) 
             consumer,
         );
     }
+}
+
+/// Rewrite upstream SSE lines for OpenAI-compatible clients (mirror reasoning into `content`).
+fn rewrite_upstream_sse_bytes(
+    chunk: &[u8],
+    remainder: &mut Vec<u8>,
+    prepared: &crab_reasoning::PreparedRequest,
+    accumulator: &mut StreamAccumulator,
+    display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
+    pending_recovery_notice: &mut Option<String>,
+    store: &ReasoningStore,
+    flush_remainder: bool,
+) -> (Vec<u8>, bool) {
+    remainder.extend_from_slice(chunk);
+    let mut out = Vec::new();
+    let mut finalized = false;
+
+    while let Some(pos) = remainder.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = remainder.drain(..=pos).collect();
+        if line.iter().all(|&b| b == b'\n' || b == b'\r') {
+            out.extend_from_slice(&line);
+            continue;
+        }
+        let result = rewrite_sse_chunk(
+            &line,
+            &prepared.original_model,
+            accumulator,
+            &prepared.cache_namespace,
+            &prepared.record_response_contexts,
+            display_adapter,
+            pending_recovery_notice.as_deref(),
+            Some(store),
+        );
+        *pending_recovery_notice = result.pending_recovery_notice;
+        if result.finalized {
+            finalized = true;
+        }
+        out.extend_from_slice(&result.rewritten_line);
+    }
+
+    if flush_remainder && !remainder.is_empty() {
+        let mut tail = std::mem::take(remainder);
+        if !tail.ends_with(b"\n") {
+            tail.push(b'\n');
+        }
+        let result = rewrite_sse_chunk(
+            &tail,
+            &prepared.original_model,
+            accumulator,
+            &prepared.cache_namespace,
+            &prepared.record_response_contexts,
+            display_adapter,
+            pending_recovery_notice.as_deref(),
+            Some(store),
+        );
+        *pending_recovery_notice = result.pending_recovery_notice;
+        if result.finalized {
+            finalized = true;
+        }
+        out.extend_from_slice(&result.rewritten_line);
+    }
+
+    (out, finalized)
 }
 
 fn is_models_endpoint(path: &str, method: &http::Method) -> bool {
@@ -1706,8 +1762,8 @@ mod tests {
 
     #[test]
     fn test_flush_streaming_reasoning_skips_when_finalized() {
-        let store = crab_reasoning::ReasoningStore::new(":memory:", Some(3600), Some(1000))
-            .expect("store");
+        let store =
+            crab_reasoning::ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("store");
         let mut ctx = GatewayContext::new("req-1".to_string());
         ctx.stream_reasoning_finalized = true;
         ctx.prepared_request = Some(crab_reasoning::PreparedRequest {
@@ -1737,6 +1793,9 @@ mod tests {
             value["error"]["code"].as_str(),
             Some("missing_reasoning_content")
         );
-        assert_eq!(value["error"]["missing_reasoning_messages"].as_u64(), Some(2));
+        assert_eq!(
+            value["error"]["missing_reasoning_messages"].as_u64(),
+            Some(2)
+        );
     }
 }
