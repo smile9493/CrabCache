@@ -59,7 +59,7 @@ curl -sf -o /dev/null http://127.0.0.1:18001/   # admin 本地
 `.env` 建议包含：
 
 ```env
-CRABCACHE_BOOTSTRAP_CLIENT_KEYS=sk-87c7a5b1f06142368434e9af8590e5f5
+CRABCACHE_BOOTSTRAP_CLIENT_KEYS=sk-cc-your-client-key-here
 CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 ```
 
