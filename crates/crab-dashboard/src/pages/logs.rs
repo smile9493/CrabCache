@@ -46,7 +46,9 @@ pub fn LogsPage() -> impl IntoView {
                     }
                     logs.set(Some(Ok(list)));
                 }
-                Err(e) => logs.set(Some(Err(e))),
+                Err(e) => {
+                    logs.set(Some(Err(e)));
+                }
             }
         });
     };
@@ -195,7 +197,9 @@ fn LogDetailPane(
                     view! { <Spinner /> }.into_any()
                 } else {
                     match detail.get() {
-                        None => ().into_any(),
+                        None => view! {
+                            <div class="text-sm text-theme-muted">"…"</div>
+                        }.into_any(),
                         Some(Err(e)) => view! {
                             <div class="text-sm text-error">{e}</div>
                         }.into_any(),

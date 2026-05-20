@@ -431,6 +431,44 @@ impl Translations {
             Locale::EnUS => "Copy this key now. You won't be able to see it again.",
         }
     }
+    pub fn keys_created_done(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "完成",
+            Locale::EnUS => "Done",
+        }
+    }
+    pub fn keys_copy_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已复制到剪贴板",
+            Locale::EnUS => "Copied to clipboard",
+        }
+    }
+    pub fn keys_copy_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "复制失败",
+            Locale::EnUS => "Copy failed",
+        }
+    }
+    pub fn keys_copy_unavailable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "完整密钥仅在创建时可见",
+            Locale::EnUS => "Full key only visible at creation",
+        }
+    }
+    pub fn keys_network_load_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法检测网关地址，请配置 CRABCACHE_GATEWAY_CLIENT_LAN_HOST 等环境变量",
+            Locale::EnUS => {
+                "Could not detect gateway URLs; set CRABCACHE_GATEWAY_CLIENT_LAN_HOST or related env vars"
+            }
+        }
+    }
+    pub fn keys_copy_config_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "复制配置",
+            Locale::EnUS => "Copy config",
+        }
+    }
     pub fn keys_unlimited_quota(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "无限配额",
@@ -607,14 +645,22 @@ impl Translations {
     }
     pub fn overview_prefix_cache_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "DeepSeek prompt_cache_hit_tokens / (hit+miss)。与 L0/L1/L2 网关响应缓存无关。",
-            Locale::EnUS => "DeepSeek prompt_cache_hit_tokens / (hit+miss). Separate from L0/L1/L2 gateway response cache.",
+            Locale::ZhCN => {
+                "DeepSeek prompt_cache_hit_tokens / (hit+miss)。与 L0/L1/L2 网关响应缓存无关。"
+            }
+            Locale::EnUS => {
+                "DeepSeek prompt_cache_hit_tokens / (hit+miss). Separate from L0/L1/L2 gateway response cache."
+            }
         }
     }
     pub fn upstream_l3_affinity_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "Ketama + x-conversation-id / x-prompt-cache-key 将同一会话固定到同一上游 peer，提升 L3 命中率。详见 docs/DEEPSEEK_PREFIX_CACHE.md",
-            Locale::EnUS => "Ketama plus x-conversation-id / x-prompt-cache-key stick sessions to one upstream peer for higher L3 hit rate. See docs/DEEPSEEK_PREFIX_CACHE.md",
+            Locale::ZhCN => {
+                "Ketama + x-conversation-id / x-prompt-cache-key 将同一会话固定到同一上游 peer，提升 L3 命中率。详见 docs/DEEPSEEK_PREFIX_CACHE.md"
+            }
+            Locale::EnUS => {
+                "Ketama plus x-conversation-id / x-prompt-cache-key stick sessions to one upstream peer for higher L3 hit rate. See docs/DEEPSEEK_PREFIX_CACHE.md"
+            }
         }
     }
     pub fn overview_token_hit(self) -> &'static str {
@@ -639,6 +685,12 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "局域网地址",
             Locale::EnUS => "LAN URL",
+        }
+    }
+    pub fn keys_openresty_url_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "OpenResty 地址",
+            Locale::EnUS => "OpenResty URL",
         }
     }
     pub fn cache_ops_scope_required(self) -> &'static str {
@@ -1319,8 +1371,12 @@ impl Translations {
     }
     pub fn upstream_pool_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "配额聚合：网关在缓存未命中时轮换使用以下 Key。客户端请使用 sk-cc-*，勿使用 DeepSeek Key。",
-            Locale::EnUS => "Quota pool: gateway rotates these keys on cache miss. Clients must use sk-cc-* keys, not DeepSeek keys.",
+            Locale::ZhCN => {
+                "配额聚合：网关在缓存未命中时轮换使用以下 Key。客户端请使用 sk-cc-*，勿使用 DeepSeek Key。"
+            }
+            Locale::EnUS => {
+                "Quota pool: gateway rotates these keys on cache miss. Clients must use sk-cc-* keys, not DeepSeek keys."
+            }
         }
     }
     pub fn upstream_pool_col_id(self) -> &'static str {
