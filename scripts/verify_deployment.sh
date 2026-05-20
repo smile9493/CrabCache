@@ -107,8 +107,8 @@ if [[ "${http_code}" != "200" ]]; then
   exit 1
 fi
 
-cache_status=$(grep -i '^x-cache-status:' "${HDR_FILE}" | tail -1 | awk '{print $2}' | tr -d '\r')
-upstream_key_id=$(grep -i '^x-upstream-key-id:' "${HDR_FILE}" | tail -1 | awk '{print $2}' | tr -d '\r')
+cache_status=$(grep -i '^x-cache-status:' "${HDR_FILE}" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '\r' || true)
+upstream_key_id=$(grep -i '^x-upstream-key-id:' "${HDR_FILE}" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '\r' || true)
 echo "    x-cache-status: ${cache_status:-<missing>}"
 if [[ -n "${upstream_key_id}" ]]; then
   echo "    x-upstream-key-id: ${upstream_key_id}"
@@ -128,7 +128,7 @@ if [[ "${http_code}" != "200" ]]; then
   exit 1
 fi
 
-cache_status=$(grep -i '^x-cache-status:' "${HDR_FILE}" | tail -1 | awk '{print $2}' | tr -d '\r')
+cache_status=$(grep -i '^x-cache-status:' "${HDR_FILE}" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '\r' || true)
 echo "    x-cache-status: ${cache_status:-<missing>}"
 
 case "${cache_status}" in

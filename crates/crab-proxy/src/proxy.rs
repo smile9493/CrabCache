@@ -865,6 +865,12 @@ impl ProxyHttp for GatewayProxy {
             }
         }
 
+        // Non-streaming reasoning rewrite: buffer upstream chunks; only emit rewritten body on EOS.
+        if !ctx.is_streaming && ctx.prepared_request.is_some() && !end_of_stream {
+            *body = None;
+            return Ok(None);
+        }
+
         if end_of_stream && !ctx.is_streaming {
             if let Some(guard) = &ctx.coalesce_guard {
                 guard.mark_completed();

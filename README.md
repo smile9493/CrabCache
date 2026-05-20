@@ -492,6 +492,8 @@ export CLIENT_API_KEY=sk-cc-...   # 来自 POST /v1/keys
 
 公网入口：用 Nginx 反代本机 `127.0.0.1:8080`，参考 [`deploy/nginx/crabcache-api.conf.example`](deploy/nginx/crabcache-api.conf.example)（需 `proxy_buffering off` 以支持流式）。**不要**将 Management `:9080` 或 Redis 暴露到公网。
 
+1Panel + OpenResty 发布步骤与示例域名配置见 [`docs/deploy-1panel-openresty.md`](docs/deploy-1panel-openresty.md)、[`deploy/nginx/crabcache-openresty-1panel.example.conf`](deploy/nginx/crabcache-openresty-1panel.example.conf)。
+
 ### Agent 客户端配置
 
 | 字段 | 值 |
