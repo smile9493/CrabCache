@@ -1,6 +1,6 @@
 # Cursor + DeepSeek Thinking 接入指南
 
-CrabCache 实现了与 [deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) 相同的 **reasoning_content** 注入、恢复与流式缓存逻辑，用于解决 Cursor 在 DeepSeek thinking 模式下多轮 tool call 时出现的 400 错误。
+CrabCache 在网关内内置了与 [deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) 等价的 **reasoning_content** 注入、恢复与流式缓存逻辑（Rust：`crab-reasoning`）。仓库内 `deepseek-cursor-proxy/` 仅为对照参考，无需单独部署 Python 代理。详见 [`DEEPSEEK_CURSOR_PROXY_PARITY.md`](DEEPSEEK_CURSOR_PROXY_PARITY.md)。
 
 ## 架构
 
@@ -49,8 +49,10 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 | `missing_reasoning_strategy = "fill_only"` | 仅从 ReasoningStore 补全，不截断历史（**推荐冲 L3**，见 [`DEEPSEEK_PREFIX_CACHE.md`](DEEPSEEK_PREFIX_CACHE.md)） |
 | `missing_reasoning_on_fill_only` | `omit_reasoning`（默认）或 `reject`（fill_only 时仍缺 reasoning） |
 | `missing_reasoning_strategy = "reject"` | 严格模式：无法恢复时返回 **HTTP 409**（调试用） |
-| `display_reasoning = true` | 在 Cursor 中显示可折叠 Thinking 区块 |
+| `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：仅增量 `delta.content`，不下发 `reasoning_content`（避免 Cursor 断连） |
 | `stream_cache_enabled`（`[cache]`） | 流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning |
+
+公网域名+端口部署时 Base URL 须包含端口，例如 `https://v4.example.com:18000/v1`（不是无端口 URL）。
 
 ### 推荐配置（二选一）
 
@@ -121,4 +123,13 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-验收：`CLIENT_API_KEY=sk-cc-... ./scripts/verify_deployment.sh`
+验收（需先 `docker compose build gateway`）：
+
+```bash
+CLIENT_API_KEY=sk-cc-... ./scripts/verify_deployment.sh
+CLIENT_API_KEY=sk-cc-... bash scripts/verify_domain_port.sh
+# 可选第二模型
+VERIFY_MODEL=deepseek-v4-flash CLIENT_API_KEY=sk-cc-... bash scripts/verify_domain_port.sh
+```
+
+脚本会校验流式响应中**不得**出现 `reasoning_content` 且包含 `data: [DONE]`。

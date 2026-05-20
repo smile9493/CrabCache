@@ -144,10 +144,7 @@ fn canonical_scope_message(message: &Value) -> Value {
 }
 
 pub fn conversation_scope(messages: &[Value], namespace: &str) -> String {
-    let scope_messages: Vec<Value> = messages
-        .iter()
-        .map(canonical_scope_message)
-        .collect();
+    let scope_messages: Vec<Value> = messages.iter().map(canonical_scope_message).collect();
     let payload = if namespace.is_empty() {
         Value::Array(scope_messages)
     } else {

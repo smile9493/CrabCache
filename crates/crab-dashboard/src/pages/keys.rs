@@ -1,16 +1,41 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::clipboard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{ApiKey, CreateKeyRequest, NetworkInfo};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyNoticeKind {
+    Ok,
+    Failed,
+}
 
 #[component]
 pub fn KeysPage() -> impl IntoView {
     let t = use_translations();
     let keys: RwSignal<Option<Result<Vec<ApiKey>, String>>> = RwSignal::new(None);
-    let network_info: RwSignal<Option<NetworkInfo>> = RwSignal::new(None);
+    let network_info: RwSignal<Option<Result<NetworkInfo, String>>> = RwSignal::new(None);
     let search_query: RwSignal<String> = RwSignal::new(String::new());
+    let copy_notice: RwSignal<Option<CopyNoticeKind>> = RwSignal::new(None);
+    let created_key: RwSignal<Option<ApiKey>> = RwSignal::new(None);
+
+    let show_copy_notice = move |kind: CopyNoticeKind| {
+        copy_notice.set(Some(kind));
+        leptos::task::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(2000).await;
+            copy_notice.set(None);
+        });
+    };
+
+    let copy_text = move |text: String| {
+        if clipboard::copy_text(&text) {
+            show_copy_notice(CopyNoticeKind::Ok);
+        } else {
+            show_copy_notice(CopyNoticeKind::Failed);
+        }
+    };
 
     let load_keys = move || {
         leptos::task::spawn_local(async move {
@@ -22,17 +47,11 @@ pub fn KeysPage() -> impl IntoView {
     };
 
     let load_network_info = move || {
+        network_info.set(None);
         leptos::task::spawn_local(async move {
             match api::fetch_network_info().await {
-                Ok(info) => network_info.set(Some(info)),
-                Err(_) => {
-                    network_info.set(Some(NetworkInfo {
-                        primary_ip: None,
-                        all_ips: vec![],
-                        gateway_url: "http://127.0.0.1:8080".to_string(),
-                        gateway_url_lan: None,
-                    }));
-                }
+                Ok(info) => network_info.set(Some(Ok(info))),
+                Err(e) => network_info.set(Some(Err(e))),
             }
         });
     };
@@ -67,10 +86,10 @@ pub fn KeysPage() -> impl IntoView {
         };
         leptos::task::spawn_local(async move {
             match api::create_key(&req).await {
-                Ok(_key) => {
+                Ok(key) => {
                     show_create.set(false);
                     new_key_name.set(String::new());
-                    load_keys();
+                    created_key.set(Some(key));
                 }
                 Err(e) => {
                     create_error.set(e);
@@ -80,21 +99,16 @@ pub fn KeysPage() -> impl IntoView {
         });
     };
 
+    let dismiss_created_key = move |_| {
+        created_key.set(None);
+        load_keys();
+    };
+
     let on_revoke = move |id: String| {
         let id = id.clone();
         leptos::task::spawn_local(async move {
             let _ = api::revoke_key(&id).await;
             load_keys();
-        });
-    };
-
-    let copy_to_clipboard = move |text: String| {
-        let text = text.clone();
-        leptos::task::spawn_local(async move {
-            if let Some(window) = web_sys::window() {
-                let clipboard = window.navigator().clipboard();
-                let _ = clipboard.write_text(&text);
-            }
         });
     };
 
@@ -113,70 +127,126 @@ pub fn KeysPage() -> impl IntoView {
                 </button>
             </div>
 
-            <div class="glass-card p-4">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-6">
-                        <div class="flex items-center gap-3">
-                            <span class="text-xs text-theme-muted font-semibold">{t.keys_gateway_url_label()}</span>
-                            <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
-                                {move || network_info.get().map(|n| n.gateway_url).unwrap_or_default()}
-                            </code>
-                            <button
-                                on:click=move |_| {
-                                    if let Some(info) = network_info.get() {
-                                        copy_to_clipboard(info.gateway_url);
-                                    }
-                                }
-                                class="text-xs text-accent hover:text-accent transition-colors"
-                            >
-                                {t.keys_copy_btn()}
-                            </button>
-                        </div>
+            {move || {
+                if let Some(kind) = copy_notice.get() {
+                    let msg = match kind {
+                        CopyNoticeKind::Ok => use_translations().keys_copy_ok(),
+                        CopyNoticeKind::Failed => use_translations().keys_copy_failed(),
+                    };
+                    view! {
+                        <div class="text-xs text-accent font-medium">{msg}</div>
+                    }.into_any()
+                } else {
+                    view! { <div></div> }.into_any()
+                }
+            }}
 
-                        {move || {
-                            if let Some(info) = network_info.get() {
-                                if let Some(lan_url) = info.gateway_url_lan {
-                                    view! {
-                                        <div class="flex items-center gap-3">
-                                            <span class="text-xs text-theme-muted font-semibold">{t.keys_lan_url_label()}</span>
-                                            <code class="text-sm font-mono text-accent bg-accent/10 px-2 py-1 rounded">
-                                                {lan_url.clone()}
-                                            </code>
-                                            <button
-                                                on:click=move |_| copy_to_clipboard(lan_url.clone())
-                                                class="text-xs text-accent hover:text-accent transition-colors"
-                                            >
-                                                {t.keys_copy_btn()}
-                                            </button>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <div></div> }.into_any()
-                                }
-                            } else {
-                                view! { <div></div> }.into_any()
-                            }
-                        }}
-                    </div>
-                    <div class="flex items-center gap-3">
-                        <input
-                            type="text"
-                            placeholder=t.keys_search_placeholder()
-                            prop:value=move || search_query.get()
-                            on:input=move |ev| search_query.set(event_target_value(&ev))
-                            class="input w-64 text-sm"
-                        />
-                        <button
-                            on:click=move |_| load_keys()
-                            class="btn btn-secondary text-xs"
-                        >
-                            {t.overview_refresh()}
-                        </button>
-                    </div>
-                </div>
-                <p class="text-xs text-theme-muted mt-2">
-                    {t.keys_gateway_url_hint()}
-                </p>
+            <div class="glass-card p-4">
+                {move || match network_info.get() {
+                    None => view! { <Spinner /> }.into_any(),
+                    Some(Err(e)) => {
+                        let t = use_translations();
+                        view! {
+                            <div class="space-y-2">
+                                <p class="text-xs text-error">{t.keys_network_load_failed()}</p>
+                                <p class="text-xs text-theme-muted font-mono">{e}</p>
+                                <button
+                                    on:click=move |_| load_network_info()
+                                    class="btn btn-secondary text-xs"
+                                >
+                                    {t.overview_refresh()}
+                                </button>
+                            </div>
+                        }.into_any()
+                    }
+                    Some(Ok(info)) => {
+                        let gateway_url = info.gateway_url.clone();
+                        let lan_url = info.gateway_url_lan.clone();
+                        let openresty_url = info.gateway_url_openresty.clone();
+                        let t = use_translations();
+                        view! {
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-6 flex-wrap">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-xs text-theme-muted font-semibold">{t.keys_gateway_url_label()}</span>
+                                        <code class="text-sm font-mono text-theme bg-theme-tertiary px-2 py-1 rounded">
+                                            {gateway_url.clone()}
+                                        </code>
+                                        <button
+                                            on:click={
+                                                let url = gateway_url.clone();
+                                                move |_| copy_text(url.clone())
+                                            }
+                                            class="text-xs text-accent hover:text-accent transition-colors"
+                                        >
+                                            {t.keys_copy_btn()}
+                                        </button>
+                                    </div>
+                                    {if let Some(lan) = lan_url {
+                                        view! {
+                                            <div class="flex items-center gap-3">
+                                                <span class="text-xs text-theme-muted font-semibold">{t.keys_lan_url_label()}</span>
+                                                <code class="text-sm font-mono text-accent bg-accent/10 px-2 py-1 rounded">
+                                                    {lan.clone()}
+                                                </code>
+                                                <button
+                                                    on:click={
+                                                        let url = lan.clone();
+                                                        move |_| copy_text(url.clone())
+                                                    }
+                                                    class="text-xs text-accent hover:text-accent transition-colors"
+                                                >
+                                                    {t.keys_copy_btn()}
+                                                </button>
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <div></div> }.into_any()
+                                    }}
+                                    {if let Some(proxy) = openresty_url {
+                                        view! {
+                                            <div class="flex items-center gap-3">
+                                                <span class="text-xs text-theme-muted font-semibold">{t.keys_openresty_url_label()}</span>
+                                                <code class="text-sm font-mono text-violet-400 bg-violet-500/10 px-2 py-1 rounded">
+                                                    {proxy.clone()}
+                                                </code>
+                                                <button
+                                                    on:click={
+                                                        let url = proxy.clone();
+                                                        move |_| copy_text(url.clone())
+                                                    }
+                                                    class="text-xs text-accent hover:text-accent transition-colors"
+                                                >
+                                                    {t.keys_copy_btn()}
+                                                </button>
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <div></div> }.into_any()
+                                    }}
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <input
+                                        type="text"
+                                        placeholder=t.keys_search_placeholder()
+                                        prop:value=move || search_query.get()
+                                        on:input=move |ev| search_query.set(event_target_value(&ev))
+                                        class="input w-64 text-sm"
+                                    />
+                                    <button
+                                        on:click=move |_| load_keys()
+                                        class="btn btn-secondary text-xs"
+                                    >
+                                        {t.overview_refresh()}
+                                    </button>
+                                </div>
+                            </div>
+                            <p class="text-xs text-theme-muted mt-2">
+                                {t.keys_gateway_url_hint()}
+                            </p>
+                        }.into_any()
+                    }
+                }}
             </div>
 
             {move || {
@@ -270,6 +340,65 @@ pub fn KeysPage() -> impl IntoView {
                 }
             }}
 
+            {move || {
+                if let Some(key) = created_key.get() {
+                    let t = use_translations();
+                    let token = key.key_full.clone().unwrap_or_default();
+                    let gateway_base = network_info
+                        .get()
+                        .and_then(|r| r.ok())
+                        .map(|n| {
+                            n.gateway_url_openresty
+                                .clone()
+                                .or(n.gateway_url_lan.clone())
+                                .unwrap_or_else(|| n.gateway_url.clone())
+                        })
+                        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+                    let config_snippet = format!(
+                        "OPENAI_API_BASE={}/v1\nOPENAI_API_KEY={}",
+                        gateway_base.trim_end_matches('/'),
+                        token
+                    );
+                    view! {
+                        <div class="glass-card border-2 border-accent/30 space-y-4">
+                            <h3 class="text-sm font-semibold text-accent">{t.keys_created_title()}</h3>
+                            <p class="text-xs text-theme-muted">{t.keys_created_hint()}</p>
+                            <code class="block text-sm font-mono text-theme bg-theme-tertiary px-3 py-2 rounded break-all">
+                                {token.clone()}
+                            </code>
+                            <div class="flex flex-wrap gap-2">
+                                <button
+                                    on:click={
+                                        let token = token.clone();
+                                        move |_| copy_text(token.clone())
+                                    }
+                                    class="btn btn-primary text-sm"
+                                >
+                                    {t.keys_copy_btn()}
+                                </button>
+                                <button
+                                    on:click={
+                                        let snippet = config_snippet.clone();
+                                        move |_| copy_text(snippet.clone())
+                                    }
+                                    class="btn btn-secondary text-sm"
+                                >
+                                    {t.keys_copy_config_btn()}
+                                </button>
+                                <button
+                                    on:click=dismiss_created_key
+                                    class="btn btn-secondary text-sm"
+                                >
+                                    {t.keys_created_done()}
+                                </button>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div></div> }.into_any()
+                }
+            }}
+
             {move || match keys.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => view! {
@@ -285,8 +414,8 @@ pub fn KeysPage() -> impl IntoView {
                             if query.is_empty() {
                                 true
                             } else {
-                                key.name.to_lowercase().contains(&query) ||
-                                key.key_preview.to_lowercase().contains(&query)
+                                key.name.to_lowercase().contains(&query)
+                                    || key.key_preview.to_lowercase().contains(&query)
                             }
                         })
                         .collect();
@@ -312,7 +441,11 @@ pub fn KeysPage() -> impl IntoView {
                                     <tbody>
                                         {filtered_keys.into_iter().map(|key| {
                                             let id = key.id.clone();
-                                            let key_full = key.key_full.clone().unwrap_or_else(|| key.key_preview.clone());
+                                            let display_key = key
+                                                .key_full
+                                                .clone()
+                                                .unwrap_or_else(|| key.key_preview.clone());
+                                            let can_copy = key.key_full.is_some();
                                             let quota_str = if key.unlimited_quota {
                                                 t.keys_unlimited().to_string()
                                             } else {
@@ -325,17 +458,30 @@ pub fn KeysPage() -> impl IntoView {
                                                     <td>
                                                         <div class="flex items-center gap-2">
                                                             <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
-                                                                {key_full.clone()}
+                                                                {display_key.clone()}
                                                             </code>
-                                                            <button
-                                                                on:click={
-                                                                    let key = key_full.clone();
-                                                                    move |_| copy_to_clipboard(key.clone())
-                                                                }
-                                                                class="text-xs text-accent hover:text-accent transition-colors"
-                                                            >
-                                                                {t.keys_copy_btn()}
-                                                            </button>
+                                                            {if can_copy {
+                                                                view! {
+                                                                    <button
+                                                                        on:click={
+                                                                            let token = display_key.clone();
+                                                                            move |_| copy_text(token.clone())
+                                                                        }
+                                                                        class="text-xs text-accent hover:text-accent transition-colors"
+                                                                    >
+                                                                        {t.keys_copy_btn()}
+                                                                    </button>
+                                                                }.into_any()
+                                                            } else {
+                                                                view! {
+                                                                    <span
+                                                                        class="text-xs text-theme-muted"
+                                                                        title=t.keys_copy_unavailable()
+                                                                    >
+                                                                        {t.keys_copy_unavailable()}
+                                                                    </span>
+                                                                }.into_any()
+                                                            }}
                                                         </div>
                                                     </td>
                                                     <td class="font-mono tabular-nums text-theme">

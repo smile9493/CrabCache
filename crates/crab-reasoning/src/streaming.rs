@@ -315,34 +315,31 @@ impl CursorReasoningDisplayAdapter {
                 (rc, ec, htc, hf)
             };
 
-            let mut mirrored_parts = Vec::new();
-
-            if !reasoning_content.is_empty() {
-                if !self.open_choices.contains_key(&index) {
-                    mirrored_parts.push(self.block_start.clone());
-                    self.open_choices.insert(index, true);
-                }
-                mirrored_parts.push(reasoning_content);
-            }
-
-            let has_content = !existing_content.is_empty();
-            let should_close = self.open_choices.contains_key(&index)
-                && (has_content || has_tool_calls || has_finish);
-            if should_close {
-                mirrored_parts.push(self.block_end.clone());
-                self.open_choices.remove(&index);
-            }
-
-            if mirrored_parts.is_empty() {
-                continue;
-            }
-            if has_content {
-                mirrored_parts.push(existing_content);
-            }
-
             if let Some(delta) = raw_choice.get_mut("delta") {
                 if let Some(obj) = delta.as_object_mut() {
-                    obj.insert("content".into(), Value::String(mirrored_parts.join("")));
+                    // OpenAI-compatible streaming: incremental `delta.content` only (no
+                    // per-chunk <details> wrappers). Cursor closes the connection otherwise.
+                    if !reasoning_content.is_empty() {
+                        if !self.open_choices.contains_key(&index) {
+                            self.open_choices.insert(index, true);
+                        }
+                        obj.insert("content".into(), Value::String(reasoning_content));
+                    } else if obj.get("role").is_some() && !obj.contains_key("content") {
+                        obj.insert("content".into(), Value::String(String::new()));
+                    } else if !existing_content.is_empty() {
+                        obj.insert("content".into(), Value::String(existing_content));
+                    }
+                    // Upstream may send `reasoning_content: null` on role chunks; Cursor rejects it.
+                    obj.remove("reasoning_content");
+                    if obj.get("content").map(|v| v.is_null()).unwrap_or(false) {
+                        obj.insert("content".into(), Value::String(String::new()));
+                    }
+
+                    let should_close = self.open_choices.contains_key(&index)
+                        && (has_tool_calls || has_finish);
+                    if should_close {
+                        self.open_choices.remove(&index);
+                    }
                 }
             }
         }
@@ -352,34 +349,10 @@ impl CursorReasoningDisplayAdapter {
         if self.open_choices.is_empty() {
             return None;
         }
-
-        let mut sorted_keys: Vec<&usize> = self.open_choices.keys().collect();
-        sorted_keys.sort();
-
-        let choices: Vec<Value> = sorted_keys
-            .iter()
-            .map(|&&index| {
-                serde_json::json!({
-                    "index": index,
-                    "delta": {"content": self.block_end},
-                    "finish_reason": Value::Null,
-                })
-            })
-            .collect();
+        // OpenAI-compatible streams do not need a synthetic closing HTML block.
         self.open_choices.clear();
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        Some(serde_json::json!({
-            "id": self.last_chunk_metadata.get("id").cloned().unwrap_or(Value::String("chatcmpl-reasoning-close".into())),
-            "object": self.last_chunk_metadata.get("object").cloned().unwrap_or(Value::String("chat.completion.chunk".into())),
-            "created": self.last_chunk_metadata.get("created").cloned().unwrap_or(Value::Number(now.into())),
-            "model": model,
-            "choices": choices,
-        }))
+        let _ = model;
+        None
     }
 
     fn remember_chunk_metadata(&mut self, chunk: &Value) {
@@ -440,9 +413,7 @@ pub fn fold_reasoning_into_content(response_payload: &mut Value, collapsible: bo
             if let Some(obj) = message.as_object_mut() {
                 obj.insert(
                     "content".into(),
-                    Value::String(format!(
-                        "{block_start}{reasoning}{block_end}{content}"
-                    )),
+                    Value::String(format!("{block_start}{reasoning}{block_end}{content}")),
                 );
             }
         }
@@ -464,6 +435,52 @@ mod tests {
             msgs[0].get("content").and_then(|c| c.as_str()),
             Some("Hello")
         );
+    }
+
+    #[test]
+    fn store_ready_reasoning_on_tool_call_before_finish() {
+        let store = ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("memory db");
+        let mut acc = StreamAccumulator::new();
+        acc.ingest_chunk(&serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "reasoning_content": "Need tool.",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"}
+                    }]
+                }
+            }]
+        }));
+        let scope = crate::keys::conversation_scope(
+            &[serde_json::json!({"role": "user", "content": "go"})],
+            "ns-test",
+        );
+        let stored = acc.store_ready_reasoning(&store, &scope, "ns-test", &[]);
+        assert!(stored > 0);
+        assert_eq!(
+            store.get(&format!("scope:{scope}:tool_call:call_1")),
+            Some("Need tool.".to_string())
+        );
+    }
+
+    #[test]
+    fn cursor_adapter_strips_null_reasoning_content() {
+        let mut adapter = CursorReasoningDisplayAdapter::new(true);
+        let mut chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": "", "reasoning_content": null}
+            }]
+        });
+        adapter.rewrite_chunk(&mut chunk);
+        let delta = &chunk["choices"][0]["delta"];
+        assert!(delta.get("reasoning_content").is_none());
+        assert_eq!(delta.get("content").and_then(|c| c.as_str()), Some(""));
     }
 
     #[test]

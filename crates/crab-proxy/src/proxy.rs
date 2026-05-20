@@ -1,12 +1,11 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
-use crate::upstream_pool::REASONING_NAMESPACE_AUTH;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
 use crab_metrics::{CacheTier, global_metrics};
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_upstream_request,
-    rewrite_response_body, rewrite_sse_chunk,
+    CursorReasoningDisplayAdapter, ReasoningStore, StreamAccumulator, fold_reasoning_into_content,
+    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
 };
 use crab_route::extract_affinity_key;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -271,8 +270,14 @@ impl ProxyHttp for GatewayProxy {
             &reasoning_cfg.missing_reasoning_on_fill_only,
             reasoning_cfg.context_summary_message_threshold,
             reasoning_cfg.prefix_validate,
-            Some(REASONING_NAMESPACE_AUTH),
+            ctx.authorization.as_deref(),
         );
+
+        let namespace_preview: String = prepared
+            .cache_namespace
+            .chars()
+            .take(8)
+            .collect();
 
         info!(
             request_id = %ctx.request_id,
@@ -283,6 +288,8 @@ impl ProxyHttp for GatewayProxy {
             recovered = prepared.recovered_reasoning_messages,
             retired_prefix = prepared.retired_prefix_messages,
             reasoning_strategy = %reasoning_cfg.missing_reasoning_strategy,
+            cache_namespace = %namespace_preview,
+            consumer = ?ctx.consumer,
             "Prepared upstream request"
         );
 
@@ -366,8 +373,7 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if let Some(semantic_cache) = &self.state.semantic_cache {
-                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body)
-                {
+                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body) {
                     if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array())
                     {
                         if let Some(query_text) = build_semantic_query_text(messages) {
@@ -642,10 +648,7 @@ impl ProxyHttp for GatewayProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        let host = ctx
-            .upstream_host
-            .as_deref()
-            .unwrap_or("api.deepseek.com");
+        let host = ctx.upstream_host.as_deref().unwrap_or("api.deepseek.com");
         let _ = upstream_request.insert_header("host", host);
         let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
         if let Some(ref new_body) = ctx.new_request_body {
@@ -780,8 +783,8 @@ impl ProxyHttp for GatewayProxy {
             return Ok(None);
         }
 
-        if let Some(data) = body.as_ref() {
-            ctx.accumulated_body.extend_from_slice(data);
+        if let Some(data) = body.take() {
+            ctx.accumulated_body.extend_from_slice(&data);
 
             if ctx.is_streaming {
                 if ctx.ttft.is_none() {
@@ -798,62 +801,63 @@ impl ProxyHttp for GatewayProxy {
                     }
                 }
 
-                if let (Some(prepared), Some(accumulator)) =
-                    (&ctx.prepared_request, &mut ctx.stream_accumulator)
-                {
-                    let text = String::from_utf8_lossy(data);
-                    for line in text.lines() {
-                        let line_bytes = line.as_bytes();
-                        let result = rewrite_sse_chunk(
-                            line_bytes,
-                            &prepared.original_model,
-                            accumulator,
-                            &prepared.cache_namespace,
-                            &prepared.record_response_contexts,
-                            &mut ctx.display_adapter,
-                            ctx.pending_recovery_notice.as_deref(),
-                            Some(&self.state.reasoning_store),
-                        );
-
-                        ctx.pending_recovery_notice = result.pending_recovery_notice;
-                        if result.finalized {
-                            ctx.stream_reasoning_finalized = true;
-                        }
-
-                        if let Some(usage) = &result.chunk_usage {
-                            let usage_data = UsageData {
-                                prompt_tokens: usage
-                                    .get("prompt_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                completion_tokens: usage
-                                    .get("completion_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                prompt_cache_hit_tokens: usage
-                                    .get("prompt_cache_hit_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                                prompt_cache_miss_tokens: usage
-                                    .get("prompt_cache_miss_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0),
-                            };
-                            ctx.total_tokens +=
-                                usage_data.prompt_tokens + usage_data.completion_tokens;
-                            ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
-                            ctx.last_prompt_cache_miss_tokens =
-                                usage_data.prompt_cache_miss_tokens;
-                            record_usage_metrics(
-                                &usage_data,
-                                &ctx.model,
-                                ctx.consumer.as_deref(),
-                            );
-                        }
+                let downstream_chunk = if let (Some(prepared), Some(accumulator)) = (
+                    ctx.prepared_request.as_ref(),
+                    ctx.stream_accumulator.as_mut(),
+                ) {
+                    let (rewritten, finalized) = rewrite_upstream_sse_bytes(
+                        &data,
+                        &mut ctx.stream_sse_remainder,
+                        prepared,
+                        accumulator,
+                        &mut ctx.display_adapter,
+                        &mut ctx.pending_recovery_notice,
+                        &self.state.reasoning_store,
+                        false,
+                    );
+                    if finalized {
+                        ctx.stream_reasoning_finalized = true;
                     }
-                }
+                    // #region agent log
+                    if !rewritten.is_empty()
+                        && rewritten.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content")
+                    {
+                        agent_stream_debug_log(
+                            "H1",
+                            "proxy.rs:upstream_response_body_filter",
+                            "rewritten chunk still contains reasoning_content",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "chunk_len": rewritten.len(),
+                                "has_display_adapter": ctx.display_adapter.is_some(),
+                            }),
+                        );
+                    }
+                    // #endregion
+                    if rewritten.is_empty() {
+                        None
+                    } else {
+                        Some(bytes::Bytes::from(rewritten))
+                    }
+                } else {
+                    // #region agent log
+                    if data.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
+                        agent_stream_debug_log(
+                            "H2",
+                            "proxy.rs:upstream_response_body_filter",
+                            "passthrough chunk contains reasoning_content (no prepared_request)",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "chunk_len": data.len(),
+                            }),
+                        );
+                    }
+                    // #endregion
+                    Some(data.clone())
+                };
 
-                let events = parse_sse_chunk(data);
+                let parse_src = downstream_chunk.as_ref().unwrap_or(&data);
+                let events = parse_sse_chunk(parse_src);
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
                         ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
@@ -862,7 +866,17 @@ impl ProxyHttp for GatewayProxy {
                         record_usage_metrics(&usage, &ctx.model, ctx.consumer.as_deref());
                     }
                 }
+
+                *body = downstream_chunk;
+            } else {
+                *body = Some(data);
             }
+        }
+
+        // Non-streaming reasoning rewrite: buffer upstream chunks; only emit rewritten body on EOS.
+        if !ctx.is_streaming && ctx.prepared_request.is_some() && !end_of_stream {
+            *body = None;
+            return Ok(None);
         }
 
         if end_of_stream && !ctx.is_streaming {
@@ -998,6 +1012,28 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if end_of_stream && ctx.is_streaming {
+            if let (Some(prepared), Some(accumulator)) = (
+                ctx.prepared_request.as_ref(),
+                ctx.stream_accumulator.as_mut(),
+            ) {
+                let (rewritten, finalized) = rewrite_upstream_sse_bytes(
+                    b"",
+                    &mut ctx.stream_sse_remainder,
+                    prepared,
+                    accumulator,
+                    &mut ctx.display_adapter,
+                    &mut ctx.pending_recovery_notice,
+                    &self.state.reasoning_store,
+                    true,
+                );
+                if finalized {
+                    ctx.stream_reasoning_finalized = true;
+                }
+                if !rewritten.is_empty() {
+                    *body = Some(bytes::Bytes::from(rewritten));
+                }
+            }
+
             if let Some(guard) = &ctx.coalesce_guard {
                 guard.mark_completed();
             }
@@ -1016,7 +1052,8 @@ impl ProxyHttp for GatewayProxy {
             {
                 let messages = accumulator.messages();
                 if !messages.is_empty() {
-                    let response_json = serde_json::to_string(&serde_json::json!({
+                    let reasoning_cfg = self.reasoning_config();
+                    let mut response_value = serde_json::json!({
                         "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
                         "object": "chat.completion",
                         "created": std::time::SystemTime::now()
@@ -1036,8 +1073,14 @@ impl ProxyHttp for GatewayProxy {
                             "completion_tokens": 0,
                             "total_tokens": 0
                         }
-                    }))
-                    .unwrap_or_default();
+                    });
+                    if reasoning_cfg.display_reasoning {
+                        fold_reasoning_into_content(
+                            &mut response_value,
+                            reasoning_cfg.collapsible_reasoning,
+                        );
+                    }
+                    let response_json = serde_json::to_string(&response_value).unwrap_or_default();
 
                     if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self
@@ -1170,8 +1213,7 @@ impl ProxyHttp for GatewayProxy {
                     let hit = ctx.last_prompt_cache_hit_tokens;
                     let miss = ctx.last_prompt_cache_miss_tokens;
                     if hit + miss > 0 {
-                        entry.prompt_cache_hit_ratio =
-                            Some(hit as f64 / (hit + miss) as f64);
+                        entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
                     }
                     trace_logger.log(entry);
                 }
@@ -1210,7 +1252,10 @@ impl ProxyHttp for GatewayProxy {
 }
 
 /// Persist accumulated streaming reasoning when the client disconnects or stops before `[DONE]`.
-pub fn flush_streaming_reasoning(ctx: &mut GatewayContext, store: &crab_reasoning::ReasoningStore) -> usize {
+pub fn flush_streaming_reasoning(
+    ctx: &mut GatewayContext,
+    store: &crab_reasoning::ReasoningStore,
+) -> usize {
     if ctx.stream_reasoning_finalized {
         return 0;
     }
@@ -1279,10 +1324,7 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         Err(_) => return false,
     };
     let _ = header.insert_header("access-control-allow-origin", "*");
-    let _ = header.insert_header(
-        "access-control-allow-methods",
-        "GET, POST, OPTIONS",
-    );
+    let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
     let _ = header.insert_header(
         "access-control-allow-headers",
         "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer",
@@ -1296,6 +1338,36 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         .is_ok()
 }
 
+// #region agent log
+fn agent_stream_debug_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let line = serde_json::json!({
+        "sessionId": "3f9816",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        "runId": std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "cursor-stream".into()),
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(
+            std::env::var("CRABCACHE_DEBUG_LOG_PATH")
+                .unwrap_or_else(|_| "/opt/projct/CrabCache/.cursor/debug-3f9816.log".into()),
+        )
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+// #endregion
+
+/// Cache hit streaming: prefer stored `sse_body` (already client-shaped from a prior miss).
+/// Fallback `json_to_sse_stream` strips `reasoning_content` from message deltas for Cursor.
 async fn send_cached_response(
     session: &mut Session,
     entry: &CacheEntry,
@@ -1305,11 +1377,50 @@ async fn send_cached_response(
 ) -> bool {
     let response_body = &entry.response_body;
     if is_streaming {
+        let used_legacy_regen = entry
+            .sse_body
+            .as_ref()
+            .is_some_and(|s| s.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        let saved_empty_content = entry
+            .sse_body
+            .as_ref()
+            .is_some_and(|s| !cached_sse_has_nonempty_content(s));
         let sse_body = if let Some(ref saved) = entry.sse_body {
-            saved.clone()
+            if used_legacy_regen || saved_empty_content {
+                // Legacy or empty-content SSE: rebuild from JSON with reasoning folded into content.
+                json_to_sse_stream(response_body, model)
+            } else {
+                saved.clone()
+            }
         } else {
             json_to_sse_stream(response_body, model)
         };
+        // #region agent log
+        if sse_body.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
+            agent_stream_debug_log(
+                "H3",
+                "proxy.rs:send_cached_response",
+                "cache hit sse still contains reasoning_content",
+                serde_json::json!({
+                    "used_legacy_regen": used_legacy_regen,
+                    "saved_empty_content": saved_empty_content,
+                    "tier": format!("{:?}", cache_tier),
+                }),
+            );
+        }
+        if !cached_sse_has_nonempty_content(&sse_body) {
+            agent_stream_debug_log(
+                "H5",
+                "proxy.rs:send_cached_response",
+                "cache hit sse has no non-empty delta.content",
+                serde_json::json!({
+                    "used_legacy_regen": used_legacy_regen,
+                    "saved_empty_content": saved_empty_content,
+                    "tier": format!("{:?}", cache_tier),
+                }),
+            );
+        }
+        // #endregion
         let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
             warn!("Failed to build SSE cache response header");
             return false;
@@ -1403,6 +1514,69 @@ fn record_usage_metrics(usage: &UsageData, model: &str, consumer: Option<&str>) 
             consumer,
         );
     }
+}
+
+/// Rewrite upstream SSE lines for OpenAI-compatible clients (mirror reasoning into `content`).
+fn rewrite_upstream_sse_bytes(
+    chunk: &[u8],
+    remainder: &mut Vec<u8>,
+    prepared: &crab_reasoning::PreparedRequest,
+    accumulator: &mut StreamAccumulator,
+    display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
+    pending_recovery_notice: &mut Option<String>,
+    store: &ReasoningStore,
+    flush_remainder: bool,
+) -> (Vec<u8>, bool) {
+    remainder.extend_from_slice(chunk);
+    let mut out = Vec::new();
+    let mut finalized = false;
+
+    while let Some(pos) = remainder.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = remainder.drain(..=pos).collect();
+        if line.iter().all(|&b| b == b'\n' || b == b'\r') {
+            out.extend_from_slice(&line);
+            continue;
+        }
+        let result = rewrite_sse_chunk(
+            &line,
+            &prepared.original_model,
+            accumulator,
+            &prepared.cache_namespace,
+            &prepared.record_response_contexts,
+            display_adapter,
+            pending_recovery_notice.as_deref(),
+            Some(store),
+        );
+        *pending_recovery_notice = result.pending_recovery_notice;
+        if result.finalized {
+            finalized = true;
+        }
+        out.extend_from_slice(&result.rewritten_line);
+    }
+
+    if flush_remainder && !remainder.is_empty() {
+        let mut tail = std::mem::take(remainder);
+        if !tail.ends_with(b"\n") {
+            tail.push(b'\n');
+        }
+        let result = rewrite_sse_chunk(
+            &tail,
+            &prepared.original_model,
+            accumulator,
+            &prepared.cache_namespace,
+            &prepared.record_response_contexts,
+            display_adapter,
+            pending_recovery_notice.as_deref(),
+            Some(store),
+        );
+        *pending_recovery_notice = result.pending_recovery_notice;
+        if result.finalized {
+            finalized = true;
+        }
+        out.extend_from_slice(&result.rewritten_line);
+    }
+
+    (out, finalized)
 }
 
 fn is_models_endpoint(path: &str, method: &http::Method) -> bool {
@@ -1512,7 +1686,7 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     for (idx, choice) in choices.iter().enumerate() {
         let delta = json!({
             "index": idx,
-            "delta": choice.get("message").cloned().unwrap_or(json!({})),
+            "delta": message_to_cursor_safe_delta(choice.get("message")),
             "finish_reason": choice.get("finish_reason").cloned().unwrap_or(serde_json::Value::Null)
         });
 
@@ -1548,6 +1722,74 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     sse_output.extend_from_slice(b"data: [DONE]\n\n");
 
     sse_output
+}
+
+/// OpenAI-style delta for cache-hit SSE synthesis: no `reasoning_content` (Cursor rejects it).
+fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let Some(msg) = message else {
+        return json!({});
+    };
+    let Some(obj) = msg.as_object() else {
+        return msg.clone();
+    };
+    let mut delta = serde_json::Map::new();
+    if let Some(role) = obj.get("role") {
+        delta.insert("role".into(), role.clone());
+    }
+    let content_str = obj
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let reasoning_str = obj
+        .get("reasoning_content")
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
+    let effective = if content_str.is_empty() && !reasoning_str.is_empty() {
+        reasoning_str
+    } else {
+        content_str
+    };
+    if !effective.is_empty() || obj.contains_key("content") || obj.contains_key("reasoning_content")
+    {
+        delta.insert("content".into(), Value::String(effective.to_string()));
+    }
+    if let Some(tool_calls) = obj.get("tool_calls") {
+        delta.insert("tool_calls".into(), tool_calls.clone());
+    }
+    Value::Object(delta)
+}
+
+/// True if any SSE `data:` line has a non-empty `choices[].delta.content`.
+fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
+    for line in sse.split(|b| *b == b'\n') {
+        let stripped = line.trim_ascii();
+        if !stripped.starts_with(b"data:") {
+            continue;
+        }
+        let data = stripped[b"data:".len()..].trim_ascii();
+        if data == b"[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) else {
+            continue;
+        };
+        let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for choice in choices {
+            if let Some(content) = choice
+                .get("delta")
+                .and_then(|d| d.get("content"))
+                .and_then(|c| c.as_str())
+            {
+                if !content.is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Build a stable concatenated query text for semantic cache from request messages.
@@ -1679,6 +1921,59 @@ mod tests {
     }
 
     #[test]
+    fn cache_hit_sse_with_reasoning_content_should_regenerate() {
+        let bad_sse = b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n";
+        assert!(bad_sse.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "ok", "reasoning_content": "hidden"},
+                "finish_reason": "stop"
+            }]
+        });
+        let regen = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let text = String::from_utf8(regen).unwrap();
+        assert!(!text.contains("reasoning_content"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_omits_reasoning_content() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "hidden"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("[DONE]"));
+        assert!(text.contains("answer"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_folds_reasoning_when_content_empty() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "thought"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        assert!(cached_sse_has_nonempty_content(&sse));
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("thought"));
+    }
+
+    #[test]
     fn test_should_store_sse_body() {
         assert!(should_store_sse_body(100, 4_194_304));
         assert!(!should_store_sse_body(4_194_305, 4_194_304));
@@ -1700,8 +1995,8 @@ mod tests {
 
     #[test]
     fn test_flush_streaming_reasoning_skips_when_finalized() {
-        let store = crab_reasoning::ReasoningStore::new(":memory:", Some(3600), Some(1000))
-            .expect("store");
+        let store =
+            crab_reasoning::ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("store");
         let mut ctx = GatewayContext::new("req-1".to_string());
         ctx.stream_reasoning_finalized = true;
         ctx.prepared_request = Some(crab_reasoning::PreparedRequest {
@@ -1731,6 +2026,9 @@ mod tests {
             value["error"]["code"].as_str(),
             Some("missing_reasoning_content")
         );
-        assert_eq!(value["error"]["missing_reasoning_messages"].as_u64(), Some(2));
+        assert_eq!(
+            value["error"]["missing_reasoning_messages"].as_u64(),
+            Some(2)
+        );
     }
 }

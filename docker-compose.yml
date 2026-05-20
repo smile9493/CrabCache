@@ -44,6 +44,7 @@ services:
       - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}
       - CRABCACHE_L1_REDIS_URL=${CRABCACHE_L1_REDIS_URL:-redis://redis:6379}
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
+      - CRABCACHE_BOOTSTRAP_CLIENT_KEYS=${CRABCACHE_BOOTSTRAP_CLIENT_KEYS:-}
     restart: unless-stopped
 
   admin:
@@ -57,11 +58,17 @@ services:
       - "127.0.0.1:18001:3000"
     volumes:
       - gateway_logs:/app/logs:ro
+      # 1Panel OpenResty site configs (read-only) for Keys page base URL auto-detect
+      - /opt/1panel/www/conf.d:/host/openresty/conf.d:ro
     environment:
       - RUST_LOG=info
       - CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
       - CRABCACHE_GATEWAY_METRICS_URL=http://gateway:9090/metrics
       - CRABCACHE_GATEWAY_ADMIN_KEY=${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}
+      # Keys page LAN URL: set to host LAN IP (container auto-detect is unreliable)
+      - CRABCACHE_GATEWAY_CLIENT_LAN_HOST=${CRABCACHE_GATEWAY_CLIENT_LAN_HOST:-}
+      - CRABCACHE_OPENRESTY_CONF_DIR=/host/openresty/conf.d
+      # Optional override: CRABCACHE_GATEWAY_OPENRESTY_BASE_URL=https://domain:18000
       - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-admin}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
       - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:-}

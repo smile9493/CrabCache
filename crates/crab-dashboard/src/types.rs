@@ -21,6 +21,8 @@ pub struct NetworkInfo {
     pub all_ips: Vec<NetworkInterface>,
     pub gateway_url: String,
     pub gateway_url_lan: Option<String>,
+    #[serde(default)]
+    pub gateway_url_openresty: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +51,8 @@ pub struct MetricsSnapshot {
     pub latency_upstream_ms: f64,
     pub active_keys: u64,
     pub uptime_hours: u64,
+    #[serde(default)]
+    pub uptime_secs: u64,
     pub hourly_stats: Vec<TimeSeriesPoint>,
     pub daily_stats: Vec<TimeSeriesPoint>,
     pub weekly_stats: Vec<TimeSeriesPoint>,

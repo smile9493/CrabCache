@@ -294,6 +294,28 @@ fn main() -> Result<()> {
         legacy_client_tokens,
     );
 
+    if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
+        for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if runtime.keys.contains_key(token) {
+                continue;
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            runtime.keys.insert(
+                token.to_string(),
+                crab_proxy::StoredKey {
+                    id,
+                    name: "bootstrap".to_string(),
+                    key_hash: token.to_string(),
+                    enabled: true,
+                },
+            );
+            info!(
+                key_preview = %crab_gateway::config::mask_api_key(token),
+                "Bootstrap client API key registered"
+            );
+        }
+    }
+
     // Background task: TCP health check for upstream backends
     {
         let runtime = runtime.clone();

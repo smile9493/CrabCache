@@ -227,7 +227,12 @@ impl AppState {
             .unwrap_or_default();
         let mut pool_secrets = Vec::new();
         if let Ok(csv) = std::env::var("CRABCACHE_UPSTREAM_KEYS") {
-            for (i, secret) in csv.split(',').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
+            for (i, secret) in csv
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .enumerate()
+            {
                 pool_secrets.push(UpstreamPoolSecret {
                     id: format!("key-{}", i + 1),
                     secret: secret.to_string(),

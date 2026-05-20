@@ -178,6 +178,8 @@ pub struct GatewayContext {
     pub upstream_retry_budget: u8,
     /// Set when streaming SSE receives upstream `[DONE]` and reasoning was stored.
     pub stream_reasoning_finalized: bool,
+    /// Incomplete SSE line bytes spanning upstream body chunks.
+    pub stream_sse_remainder: Vec<u8>,
 }
 
 impl GatewayContext {
@@ -217,6 +219,7 @@ impl GatewayContext {
             upstream_miss: false,
             upstream_retry_budget: 1,
             stream_reasoning_finalized: false,
+            stream_sse_remainder: Vec::new(),
         }
     }
 }

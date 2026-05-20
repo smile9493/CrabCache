@@ -6,6 +6,32 @@ use serde_json::Value;
 
 pub struct RecoveryNoticeContent(pub String);
 
+/// Map `delta.reasoning_content` → incremental `delta.content` for OpenAI-compatible clients.
+fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
+    let choices = match chunk.get_mut("choices").and_then(|c| c.as_array_mut()) {
+        Some(c) => c,
+        None => return,
+    };
+    for choice in choices {
+        let delta = match choice.get_mut("delta").and_then(|d| d.as_object_mut()) {
+            Some(d) => d,
+            None => continue,
+        };
+        if let Some(rc) = delta.remove("reasoning_content") {
+            let text = rc.as_str().unwrap_or("").to_string();
+            if !text.is_empty() {
+                delta.insert("content".into(), Value::String(text));
+            } else if delta.get("role").is_some() && !delta.contains_key("content") {
+                delta.insert("content".into(), Value::String(String::new()));
+            }
+        } else if delta.get("content").map(|v| v.is_null()).unwrap_or(false) {
+            delta.insert("content".into(), Value::String(String::new()));
+        }
+        // Strip stray null/absent reasoning field if upstream re-inserted it.
+        delta.remove("reasoning_content");
+    }
+}
+
 pub fn record_response_reasoning(
     response_payload: &Value,
     store: Option<&ReasoningStore>,
@@ -272,10 +298,16 @@ pub fn rewrite_sse_chunk(
     }
 
     let mut notice = pending_recovery_notice.map(String::from);
-    if notice.is_some()
-        && inject_recovery_notice(&mut chunk, notice.as_deref().unwrap_or("")) {
-            notice = None;
-        }
+    if notice.is_some() && inject_recovery_notice(&mut chunk, notice.as_deref().unwrap_or("")) {
+        notice = None;
+    }
+    let chunk_usage = chunk.get("usage").cloned();
+    if let Some(adapter) = display_adapter.as_mut() {
+        adapter.rewrite_chunk(&mut chunk);
+    } else {
+        mirror_reasoning_delta_incremental(&mut chunk);
+    }
+    // Ingest after client-shaped rewrite so stream cache JSON includes mirrored content.
     accumulator.ingest_chunk(&chunk);
     if let Some(store) = store {
         let stored: usize = response_contexts
@@ -290,10 +322,6 @@ pub fn rewrite_sse_chunk(
                 "Stored streaming reasoning cache keys mid-stream"
             );
         }
-    }
-    let chunk_usage = chunk.get("usage").cloned();
-    if let Some(adapter) = display_adapter.as_mut() {
-        adapter.rewrite_chunk(&mut chunk);
     }
     if let Some(obj) = chunk.get_mut("model") {
         *obj = Value::String(original_model.to_string());
@@ -338,6 +366,31 @@ mod tests {
             parsed.get("model").unwrap().as_str(),
             Some("deepseek-v4-pro")
         );
+    }
+
+    #[test]
+    fn rewrite_sse_strips_reasoning_content_without_display_adapter() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"reasoning_content": "think", "role": "assistant"}
+            }]
+        });
+        let line = format!("data: {payload}\n\n");
+        let mut acc = StreamAccumulator::new();
+        let result = rewrite_sse_chunk(
+            line.as_bytes(),
+            "deepseek-v4-pro",
+            &mut acc,
+            "",
+            &[],
+            &mut None,
+            None,
+            None,
+        );
+        let body = std::str::from_utf8(&result.rewritten_line).unwrap();
+        assert!(!body.contains("reasoning_content"));
+        assert!(body.contains(r#""content":"think""#) || body.contains(r#""content": "think""#));
     }
 
     #[test]
