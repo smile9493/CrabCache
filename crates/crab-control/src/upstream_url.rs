@@ -117,11 +117,7 @@ fn parse_authority(authority: &str, use_tls: bool) -> Result<(String, u16), Stri
 }
 
 fn default_port(use_tls: bool) -> u16 {
-    if use_tls {
-        443
-    } else {
-        80
-    }
+    if use_tls { 443 } else { 80 }
 }
 
 #[cfg(test)]

@@ -1,12 +1,11 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
-use crate::upstream_pool::REASONING_NAMESPACE_AUTH;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
 use crab_metrics::{CacheTier, global_metrics};
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, ReasoningStore, StreamAccumulator, prepare_upstream_request,
-    rewrite_response_body, rewrite_sse_chunk,
+    CursorReasoningDisplayAdapter, ReasoningStore, StreamAccumulator, fold_reasoning_into_content,
+    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
 };
 use crab_route::extract_affinity_key;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -271,8 +270,14 @@ impl ProxyHttp for GatewayProxy {
             &reasoning_cfg.missing_reasoning_on_fill_only,
             reasoning_cfg.context_summary_message_threshold,
             reasoning_cfg.prefix_validate,
-            Some(REASONING_NAMESPACE_AUTH),
+            ctx.authorization.as_deref(),
         );
+
+        let namespace_preview: String = prepared
+            .cache_namespace
+            .chars()
+            .take(8)
+            .collect();
 
         info!(
             request_id = %ctx.request_id,
@@ -283,6 +288,8 @@ impl ProxyHttp for GatewayProxy {
             recovered = prepared.recovered_reasoning_messages,
             retired_prefix = prepared.retired_prefix_messages,
             reasoning_strategy = %reasoning_cfg.missing_reasoning_strategy,
+            cache_namespace = %namespace_preview,
+            consumer = ?ctx.consumer,
             "Prepared upstream request"
         );
 
@@ -811,12 +818,41 @@ impl ProxyHttp for GatewayProxy {
                     if finalized {
                         ctx.stream_reasoning_finalized = true;
                     }
+                    // #region agent log
+                    if !rewritten.is_empty()
+                        && rewritten.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content")
+                    {
+                        agent_stream_debug_log(
+                            "H1",
+                            "proxy.rs:upstream_response_body_filter",
+                            "rewritten chunk still contains reasoning_content",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "chunk_len": rewritten.len(),
+                                "has_display_adapter": ctx.display_adapter.is_some(),
+                            }),
+                        );
+                    }
+                    // #endregion
                     if rewritten.is_empty() {
                         None
                     } else {
                         Some(bytes::Bytes::from(rewritten))
                     }
                 } else {
+                    // #region agent log
+                    if data.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
+                        agent_stream_debug_log(
+                            "H2",
+                            "proxy.rs:upstream_response_body_filter",
+                            "passthrough chunk contains reasoning_content (no prepared_request)",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "chunk_len": data.len(),
+                            }),
+                        );
+                    }
+                    // #endregion
                     Some(data.clone())
                 };
 
@@ -1016,7 +1052,8 @@ impl ProxyHttp for GatewayProxy {
             {
                 let messages = accumulator.messages();
                 if !messages.is_empty() {
-                    let response_json = serde_json::to_string(&serde_json::json!({
+                    let reasoning_cfg = self.reasoning_config();
+                    let mut response_value = serde_json::json!({
                         "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
                         "object": "chat.completion",
                         "created": std::time::SystemTime::now()
@@ -1036,8 +1073,14 @@ impl ProxyHttp for GatewayProxy {
                             "completion_tokens": 0,
                             "total_tokens": 0
                         }
-                    }))
-                    .unwrap_or_default();
+                    });
+                    if reasoning_cfg.display_reasoning {
+                        fold_reasoning_into_content(
+                            &mut response_value,
+                            reasoning_cfg.collapsible_reasoning,
+                        );
+                    }
+                    let response_json = serde_json::to_string(&response_value).unwrap_or_default();
 
                     if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self
@@ -1295,6 +1338,36 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         .is_ok()
 }
 
+// #region agent log
+fn agent_stream_debug_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let line = serde_json::json!({
+        "sessionId": "3f9816",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        "runId": std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "cursor-stream".into()),
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(
+            std::env::var("CRABCACHE_DEBUG_LOG_PATH")
+                .unwrap_or_else(|_| "/opt/projct/CrabCache/.cursor/debug-3f9816.log".into()),
+        )
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+// #endregion
+
+/// Cache hit streaming: prefer stored `sse_body` (already client-shaped from a prior miss).
+/// Fallback `json_to_sse_stream` strips `reasoning_content` from message deltas for Cursor.
 async fn send_cached_response(
     session: &mut Session,
     entry: &CacheEntry,
@@ -1304,11 +1377,50 @@ async fn send_cached_response(
 ) -> bool {
     let response_body = &entry.response_body;
     if is_streaming {
+        let used_legacy_regen = entry
+            .sse_body
+            .as_ref()
+            .is_some_and(|s| s.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        let saved_empty_content = entry
+            .sse_body
+            .as_ref()
+            .is_some_and(|s| !cached_sse_has_nonempty_content(s));
         let sse_body = if let Some(ref saved) = entry.sse_body {
-            saved.clone()
+            if used_legacy_regen || saved_empty_content {
+                // Legacy or empty-content SSE: rebuild from JSON with reasoning folded into content.
+                json_to_sse_stream(response_body, model)
+            } else {
+                saved.clone()
+            }
         } else {
             json_to_sse_stream(response_body, model)
         };
+        // #region agent log
+        if sse_body.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content") {
+            agent_stream_debug_log(
+                "H3",
+                "proxy.rs:send_cached_response",
+                "cache hit sse still contains reasoning_content",
+                serde_json::json!({
+                    "used_legacy_regen": used_legacy_regen,
+                    "saved_empty_content": saved_empty_content,
+                    "tier": format!("{:?}", cache_tier),
+                }),
+            );
+        }
+        if !cached_sse_has_nonempty_content(&sse_body) {
+            agent_stream_debug_log(
+                "H5",
+                "proxy.rs:send_cached_response",
+                "cache hit sse has no non-empty delta.content",
+                serde_json::json!({
+                    "used_legacy_regen": used_legacy_regen,
+                    "saved_empty_content": saved_empty_content,
+                    "tier": format!("{:?}", cache_tier),
+                }),
+            );
+        }
+        // #endregion
         let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
             warn!("Failed to build SSE cache response header");
             return false;
@@ -1574,7 +1686,7 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     for (idx, choice) in choices.iter().enumerate() {
         let delta = json!({
             "index": idx,
-            "delta": choice.get("message").cloned().unwrap_or(json!({})),
+            "delta": message_to_cursor_safe_delta(choice.get("message")),
             "finish_reason": choice.get("finish_reason").cloned().unwrap_or(serde_json::Value::Null)
         });
 
@@ -1610,6 +1722,74 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     sse_output.extend_from_slice(b"data: [DONE]\n\n");
 
     sse_output
+}
+
+/// OpenAI-style delta for cache-hit SSE synthesis: no `reasoning_content` (Cursor rejects it).
+fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let Some(msg) = message else {
+        return json!({});
+    };
+    let Some(obj) = msg.as_object() else {
+        return msg.clone();
+    };
+    let mut delta = serde_json::Map::new();
+    if let Some(role) = obj.get("role") {
+        delta.insert("role".into(), role.clone());
+    }
+    let content_str = obj
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let reasoning_str = obj
+        .get("reasoning_content")
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
+    let effective = if content_str.is_empty() && !reasoning_str.is_empty() {
+        reasoning_str
+    } else {
+        content_str
+    };
+    if !effective.is_empty() || obj.contains_key("content") || obj.contains_key("reasoning_content")
+    {
+        delta.insert("content".into(), Value::String(effective.to_string()));
+    }
+    if let Some(tool_calls) = obj.get("tool_calls") {
+        delta.insert("tool_calls".into(), tool_calls.clone());
+    }
+    Value::Object(delta)
+}
+
+/// True if any SSE `data:` line has a non-empty `choices[].delta.content`.
+fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
+    for line in sse.split(|b| *b == b'\n') {
+        let stripped = line.trim_ascii();
+        if !stripped.starts_with(b"data:") {
+            continue;
+        }
+        let data = stripped[b"data:".len()..].trim_ascii();
+        if data == b"[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) else {
+            continue;
+        };
+        let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for choice in choices {
+            if let Some(content) = choice
+                .get("delta")
+                .and_then(|d| d.get("content"))
+                .and_then(|c| c.as_str())
+            {
+                if !content.is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Build a stable concatenated query text for semantic cache from request messages.
@@ -1738,6 +1918,59 @@ mod tests {
         ];
         let result = build_semantic_query_text(&messages);
         assert_eq!(result, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn cache_hit_sse_with_reasoning_content_should_regenerate() {
+        let bad_sse = b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n";
+        assert!(bad_sse.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "ok", "reasoning_content": "hidden"},
+                "finish_reason": "stop"
+            }]
+        });
+        let regen = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let text = String::from_utf8(regen).unwrap();
+        assert!(!text.contains("reasoning_content"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_omits_reasoning_content() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "hidden"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("[DONE]"));
+        assert!(text.contains("answer"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_folds_reasoning_when_content_empty() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "thought"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        assert!(cached_sse_has_nonempty_content(&sse));
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("thought"));
     }
 
     #[test]

@@ -208,7 +208,7 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                         <div class="text-2xl opacity-30">"⏱"</div>
                     </div>
                     <div class="metric-card-value">
-                        {format!("{}h", metrics.uptime_hours)}
+                        {format_uptime_display(metrics.uptime_secs, metrics.uptime_hours)}
                     </div>
                     <div class="metric-card-sub">{t.overview_uptime_sub()}</div>
                     <div class="mt-3 pt-3 border-t border-theme space-y-1">
@@ -422,6 +422,23 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
             </div>
         </div>
     }
+}
+
+fn format_uptime_display(uptime_secs: u64, uptime_hours: u64) -> String {
+    if uptime_secs > 0 {
+        if uptime_secs < 3600 {
+            let mins = uptime_secs / 60;
+            let secs = uptime_secs % 60;
+            return format!("{mins}m {secs}s");
+        }
+        let hours = uptime_secs / 3600;
+        let mins = (uptime_secs % 3600) / 60;
+        if mins > 0 {
+            return format!("{hours}h {mins}m");
+        }
+        return format!("{hours}h");
+    }
+    format!("{uptime_hours}h")
 }
 
 fn format_number(n: u64) -> String {

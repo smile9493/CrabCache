@@ -154,17 +154,12 @@ if [[ "${VERIFY_METRICS:-0}" == "1" ]]; then
   fi
 fi
 
-if [[ "${VERIFY_STREAM:-0}" == "1" ]]; then
-  echo "==> POST stream smoke (VERIFY_STREAM=1)"
-  if ! curl -sf -N -X POST "${GATEWAY_URL}/v1/chat/completions" \
-    -H "Authorization: Bearer ${CLIENT_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d '{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true,"max_tokens":8}' \
-    | head -c 256 | grep -q .; then
-    echo "FAIL: streaming response empty" >&2
-    exit 1
-  fi
-  echo "OK stream smoke"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Requires a rebuilt gateway image with Cursor-safe SSE (no reasoning_content in stream).
+bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${GATEWAY_URL}" "${CLIENT_API_KEY}" "deepseek-v4-pro"
+
+if [[ -n "${VERIFY_MODEL:-}" && "${VERIFY_MODEL}" != "deepseek-v4-pro" ]]; then
+  bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${GATEWAY_URL}" "${CLIENT_API_KEY}" "${VERIFY_MODEL}"
 fi
 
 echo "All deployment checks passed."

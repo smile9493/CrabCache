@@ -72,11 +72,26 @@ const EFFORT_ALIASES: &[(&str, &str)] = &[
     ("xhigh", "max"),
 ];
 
-pub const RECOVERY_NOTICE_TEXT: &str =
+pub const RECOVERY_NOTICE_TEXT: &str = "[crabcache] Refreshed reasoning_content history.";
+pub const RECOVERY_NOTICE_CONTENT: &str = "[crabcache] Refreshed reasoning_content history.\n\n";
+/// Legacy prefix from deepseek-cursor-proxy; still recognized in Cursor-echoed history.
+pub const LEGACY_RECOVERY_NOTICE_TEXT: &str =
     "[deepseek-cursor-proxy] Refreshed reasoning_content history.";
-pub const RECOVERY_NOTICE_CONTENT: &str =
-    "[deepseek-cursor-proxy] Refreshed reasoning_content history.\n\n";
-pub const RECOVERY_SYSTEM_CONTENT: &str = "deepseek-cursor-proxy recovered this request because older DeepSeek thinking-mode tool-call reasoning_content was unavailable. Older unrecoverable tool-call history was omitted; continue using only the remaining recovered context.";
+pub const RECOVERY_SYSTEM_CONTENT: &str = "CrabCache recovered this request because older DeepSeek thinking-mode tool-call reasoning_content was unavailable. Older unrecoverable tool-call history was omitted; continue using only the remaining recovered context.";
+
+fn content_starts_with_recovery_notice(content: &str) -> bool {
+    content.starts_with(RECOVERY_NOTICE_TEXT) || content.starts_with(LEGACY_RECOVERY_NOTICE_TEXT)
+}
+
+fn recovery_notice_strip_prefix_len(content: &str) -> Option<usize> {
+    if content.starts_with(RECOVERY_NOTICE_TEXT) {
+        Some(RECOVERY_NOTICE_TEXT.len())
+    } else if content.starts_with(LEGACY_RECOVERY_NOTICE_TEXT) {
+        Some(LEGACY_RECOVERY_NOTICE_TEXT.len())
+    } else {
+        None
+    }
+}
 
 fn get_role_fields(role: &str) -> &'static [&'static str] {
     ROLE_MESSAGE_FIELDS
@@ -449,12 +464,7 @@ fn normalize_message(
     if let Some(tool_calls) = msg.get("tool_calls").and_then(|tc| tc.as_array()).cloned() {
         msg.insert(
             "tool_calls".into(),
-            Value::Array(
-                tool_calls
-                    .iter()
-                    .map(normalize_tool_call)
-                    .collect(),
-            ),
+            Value::Array(tool_calls.iter().map(normalize_tool_call).collect()),
         );
     }
 
@@ -559,7 +569,7 @@ fn has_recovery_notice(message: &Value) -> bool {
         && message
             .get("content")
             .and_then(|c| c.as_str())
-            .map(|s| s.starts_with(RECOVERY_NOTICE_TEXT))
+            .map(content_starts_with_recovery_notice)
             .unwrap_or(false)
 }
 
@@ -571,13 +581,12 @@ fn strip_recovery_notice_for_upstream(messages: &[Value]) -> Vec<Value> {
                 return msg.clone();
             }
             let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-            if !content.starts_with(RECOVERY_NOTICE_TEXT) {
+            let Some(prefix_len) = recovery_notice_strip_prefix_len(content) else {
                 return msg.clone();
-            }
+            };
             let mut cleaned = msg.clone();
             if let Some(obj) = cleaned.as_object_mut() {
-                let remaining =
-                    content[RECOVERY_NOTICE_TEXT.len()..].trim_start_matches(['\r', '\n']);
+                let remaining = content[prefix_len..].trim_start_matches(['\r', '\n']);
                 obj.insert("content".into(), Value::String(remaining.to_string()));
             }
             cleaned
@@ -635,11 +644,7 @@ fn recover_messages_from_missing_reasoning(
     let recovery_boundary_index = messages.iter().rposition(|m| {
         has_recovery_notice(m)
             && missing_indexes.iter().any(|&idx| {
-                idx < messages.len()
-                    && !messages
-                        .get(idx)
-                        .map(has_recovery_notice)
-                        .unwrap_or(false)
+                idx < messages.len() && !messages.get(idx).map(has_recovery_notice).unwrap_or(false)
             })
     });
 
@@ -814,10 +819,7 @@ fn track_immutable_prefix_block(scope: &str, block_hash: &str) {
     if let Some(prev) = guard.get(scope) {
         if prev != block_hash {
             global_metrics().record_prefix_block_drift();
-            tracing::warn!(
-                scope = scope,
-                "Immutable system/tools prefix block drifted"
-            );
+            tracing::warn!(scope = scope, "Immutable system/tools prefix block drifted");
         }
     }
     guard.insert(scope.to_string(), block_hash.to_string());
@@ -923,12 +925,7 @@ pub fn prepare_upstream_request(
     } else if let Some(functions) = payload.get("functions").and_then(|f| f.as_array()).cloned() {
         prepared.insert(
             "tools".into(),
-            Value::Array(
-                functions
-                    .iter()
-                    .map(legacy_function_to_tool)
-                    .collect(),
-            ),
+            Value::Array(functions.iter().map(legacy_function_to_tool).collect()),
         );
     }
 
@@ -1046,10 +1043,7 @@ pub fn prepare_upstream_request(
     }
 
     let mut final_messages = result.messages.clone();
-    maybe_append_context_summary(
-        &mut final_messages,
-        context_summary_message_threshold,
-    );
+    maybe_append_context_summary(&mut final_messages, context_summary_message_threshold);
 
     let active_scope = conversation_scope(&final_messages, &cache_namespace);
     let mut record_response_contexts = Vec::new();
@@ -1108,6 +1102,47 @@ mod tests {
         let result = strip_cursor_thinking_blocks(input);
         assert!(!result.contains("think"));
         assert!(result.contains("actual content"));
+    }
+
+    #[test]
+    fn reasoning_cache_namespace_differs_by_authorization() {
+        let thinking = serde_json::json!({"type": "enabled"});
+        let a = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            Some("Bearer sk-cc-aaa"),
+        );
+        let b = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            Some("Bearer sk-cc-bbb"),
+        );
+        assert_ne!(a, b);
+        let none = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            None,
+        );
+        assert_ne!(a, none);
+    }
+
+    #[test]
+    fn legacy_recovery_notice_still_detected() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "[deepseek-cursor-proxy] Refreshed reasoning_content history.\n\nrest"
+        });
+        let stripped = strip_recovery_notice_for_upstream(&[msg]);
+        assert_eq!(
+            stripped[0].get("content").and_then(|c| c.as_str()),
+            Some("rest")
+        );
     }
 
     #[test]
@@ -1243,7 +1278,11 @@ mod tests {
             false,
             None,
         );
-        let msgs = result.payload.get("messages").and_then(|m| m.as_array()).unwrap();
+        let msgs = result
+            .payload
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .unwrap();
         assert_eq!(msgs.len(), 4);
         assert_eq!(result.retired_prefix_messages, 0);
         assert_eq!(result.recovered_reasoning_messages, 0);
@@ -1251,7 +1290,7 @@ mod tests {
             m.get("role").and_then(|r| r.as_str()) == Some("system")
                 && m.get("content")
                     .and_then(|c| c.as_str())
-                    .map(|s| s.contains("deepseek-cursor-proxy recovered"))
+                    .map(|s| s.contains("CrabCache recovered"))
                     .unwrap_or(false)
         }));
     }

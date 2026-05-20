@@ -67,6 +67,18 @@ code=$(curl -sk -m 15 -o /dev/null -w "%{http_code}" \
   "${ADMIN_BASE}/api/admin/gateway/health" || echo 000)
 check admin_health "${code}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CURL_EXTRA="-sk"
+echo "==> stream SSE (rebuild gateway if reasoning_content leaks)"
+if ! bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${API_BASE}" "${CLIENT_API_KEY}" "deepseek-v4-pro"; then
+  fail=1
+fi
+if [[ -n "${VERIFY_MODEL:-}" && "${VERIFY_MODEL}" != "deepseek-v4-pro" ]]; then
+  if ! bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${API_BASE}" "${CLIENT_API_KEY}" "${VERIFY_MODEL}"; then
+    fail=1
+  fi
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "Domain/port verification FAILED" >&2
   exit 1

@@ -19,6 +19,9 @@ pub struct MetricsSnapshot {
     pub latency_upstream_ms: f64,
     pub active_keys: u64,
     pub uptime_hours: u64,
+    /// Gateway process uptime (preferred over admin container uptime for rates).
+    #[serde(default)]
+    pub uptime_secs: u64,
     pub hourly_stats: Vec<TimeSeriesPoint>,
     pub daily_stats: Vec<TimeSeriesPoint>,
     pub weekly_stats: Vec<TimeSeriesPoint>,
@@ -226,8 +229,7 @@ pub struct UpdateConnectionConfigRequest {
 }
 
 pub use crab_control::{
-    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyView,
-    UpstreamKeysView,
+    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyView, UpstreamKeysView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

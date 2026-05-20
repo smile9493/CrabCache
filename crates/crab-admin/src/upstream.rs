@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::types::{SyncResult, UpstreamModelsResponse};
-use crab_control::{parse_upstream_base_url, validate_deepseek_key, UpstreamTestResult};
+use crab_control::{UpstreamTestResult, parse_upstream_base_url, validate_deepseek_key};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,10 +26,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
         };
     }
 
-    let url = format!(
-        "{}/v1/models",
-        base_url.trim().trim_end_matches('/')
-    );
+    let url = format!("{}/v1/models", base_url.trim().trim_end_matches('/'));
     let start = Instant::now();
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -114,9 +111,9 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
         "{}/v1/models",
         upstream_config.base_url.trim_end_matches('/')
     );
-    let api_key = state.pick_sync_api_key().ok_or_else(|| {
-        "Configure upstream key pool or set a sync API key.".to_string()
-    })?;
+    let api_key = state
+        .pick_sync_api_key()
+        .ok_or_else(|| "Configure upstream key pool or set a sync API key.".to_string())?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -133,7 +130,11 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Upstream returned {}: {}", status.as_u16(), body.chars().take(200).collect::<String>()));
+        return Err(format!(
+            "Upstream returned {}: {}",
+            status.as_u16(),
+            body.chars().take(200).collect::<String>()
+        ));
     }
 
     let upstream: UpstreamModelsResponse = resp
@@ -198,15 +199,17 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
     })
 }
 
-pub async fn detect_models_internal(state: &Arc<AppState>) -> Result<crate::types::ModelDetectResponse, String> {
+pub async fn detect_models_internal(
+    state: &Arc<AppState>,
+) -> Result<crate::types::ModelDetectResponse, String> {
     let upstream_config = state.upstream_config.read().clone();
     let upstream_url = format!(
         "{}/v1/models",
         upstream_config.base_url.trim_end_matches('/')
     );
-    let api_key = state.pick_sync_api_key().ok_or_else(|| {
-        "Configure upstream key pool before detecting models.".to_string()
-    })?;
+    let api_key = state
+        .pick_sync_api_key()
+        .ok_or_else(|| "Configure upstream key pool before detecting models.".to_string())?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))

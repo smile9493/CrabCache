@@ -330,6 +330,11 @@ CrabCache 使用**三套独立密钥**，不可混用：
 | `CRABCACHE_MANAGEMENT_LISTEN` | 管理 API 监听地址 | `127.0.0.1:9080` |
 | `CRABCACHE_ADMIN_KEY` | Admin Dashboard 认证密钥 | `admin` |
 | `CRABCACHE_GATEWAY_CONTROL_URL` | Admin Dashboard 连接网关的管理 API 地址 | `http://127.0.0.1:9080` |
+| `CRABCACHE_GATEWAY_CLIENT_PORT` | Keys 页展示的客户端网关端口 | `8080` |
+| `CRABCACHE_GATEWAY_CLIENT_LAN_HOST` | 覆盖局域网网关主机（Docker 部署建议设置宿主机 LAN IP） | — |
+| `CRABCACHE_GATEWAY_OPENRESTY_BASE_URL` | 覆盖 Keys 页 OpenResty 客户端 Base URL | — |
+| `CRABCACHE_OPENRESTY_CONF_DIR` | 自动检测 OpenResty 时扫描的 Nginx 配置目录 | — |
+| `CRABCACHE_GATEWAY_CLIENT_BASE_URL` | 同上（遗留别名） | — |
 | `CRABCACHE_HTTPS` | Admin Dashboard 是否启用 HTTPS 模式 | `false` |
 | `DEEPSEEK_API_KEY` | Admin Dashboard 同步模型时使用的 API Key | — |
 | `RUST_LOG` | 日志级别 | `info` |
@@ -487,8 +492,11 @@ docker compose ps   # gateway 应为 healthy（/ready 依赖 Redis）
 
 # 创建客户端 sk-cc-*，再验收（勿把 DeepSeek 密钥当 CLIENT_API_KEY）
 export CLIENT_API_KEY=sk-cc-...   # 来自 POST /v1/keys
-./scripts/verify_deployment.sh
+./scripts/verify_deployment.sh    # 含流式 SSE：不得含 reasoning_content
+# 公网域名+端口：CLIENT_API_KEY=sk-... bash scripts/verify_domain_port.sh
 ```
+
+Cursor + DeepSeek 对照说明：[`docs/DEEPSEEK_CURSOR_PROXY_PARITY.md`](docs/DEEPSEEK_CURSOR_PROXY_PARITY.md)、[`docs/CURSOR_SETUP.md`](docs/CURSOR_SETUP.md)。
 
 公网入口：用 Nginx 反代本机 `127.0.0.1:8080`，参考 [`deploy/nginx/crabcache-api.conf.example`](deploy/nginx/crabcache-api.conf.example)（需 `proxy_buffering off` 以支持流式）。**不要**将 Management `:9080` 或 Redis 暴露到公网。
 

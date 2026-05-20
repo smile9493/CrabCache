@@ -192,6 +192,8 @@ cp config/gateway.example.toml config/gateway.toml
 - `CRABCACHE_GATEWAY_ADMIN_KEY`: 覆盖 `[management].admin_key`
 - `CRABCACHE_MANAGEMENT_LISTEN`: 覆盖 `[management].listen_addr`
 - `CRABCACHE_GATEWAY_CONTROL_URL`: Admin Dashboard 连接网关 Management API 的基础 URL
+- `CRABCACHE_GATEWAY_CLIENT_PORT` / `CRABCACHE_GATEWAY_CLIENT_LAN_HOST`: Keys 页本地与局域网网关地址
+- `CRABCACHE_GATEWAY_OPENRESTY_BASE_URL` / `CRABCACHE_OPENRESTY_CONF_DIR`: Keys 页 OpenResty 反代地址（可自动解析 1Panel `conf.d` 中指向 `127.0.0.1:8080` 的 server 块）
 
 ### 运行
 

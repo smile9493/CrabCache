@@ -1,5 +1,7 @@
 mod network;
+mod openresty;
 mod persist;
+mod trace_log;
 mod routes;
 mod state;
 mod types;
@@ -160,12 +162,10 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = routes::router(state)
-        .layer(cors)
-        .fallback_service(
-            ServeDir::new("crates/crab-dashboard/dist")
-                .fallback(ServeFile::new("crates/crab-dashboard/dist/index.html"))
-        );
+    let app = routes::router(state).layer(cors).fallback_service(
+        ServeDir::new("crates/crab-dashboard/dist")
+            .fallback(ServeFile::new("crates/crab-dashboard/dist/index.html")),
+    );
 
     let protocol = if config.is_https() { "https" } else { "http" };
 

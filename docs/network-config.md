@@ -162,17 +162,30 @@ GET /api/admin/network/info
 - `primary_ip`: 主要局域网 IP 地址
 - `all_ips`: 所有网络接口列表
 - `gateway_url`: 本地回环地址
-- `gateway_url_lan`: 局域网访问地址
+- `gateway_url_lan`: 局域网访问地址（仅私网 IP；自动排除 `docker0`/`br-`/`veth` 等虚拟接口）
+- `gateway_url_openresty`: OpenResty 反代后的客户端 Base URL（自动解析 1Panel `conf.d` 中 `proxy_pass http://127.0.0.1:8080` 的 `server` 块，或环境变量覆盖）
+
+### 环境变量（Admin 进程）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `CRABCACHE_GATEWAY_CLIENT_PORT` | `8080` | 客户端请求网关端口 |
+| `CRABCACHE_GATEWAY_CLIENT_LAN_HOST` | — | 覆盖局域网主机（Docker 建议设为宿主机 LAN IP） |
+| `CRABCACHE_GATEWAY_OPENRESTY_BASE_URL` | — | 覆盖 `gateway_url_openresty`（如 `https://v4.example.com:18000`） |
+| `CRABCACHE_GATEWAY_CLIENT_BASE_URL` | — | 同上（遗留别名） |
+| `CRABCACHE_OPENRESTY_CONF_DIR` | — | 扫描的 Nginx 配置目录（Docker 默认 `/host/openresty/conf.d`） |
+| `CRABCACHE_HTTPS` | `false` | 本地/局域网 URL 的 `http`/`https` 前缀 |
 
 ## 故障排查
 
 ### 1. 检测不到局域网地址
 
-**原因**：系统没有活动的非回环网络接口
+**原因**：无合格私网接口（例如仅有 `docker0` 的 `172.17.0.1`），或 Admin 运行在容器内
 
 **解决方法**：
 - 检查网络连接：`ip addr show`
 - 确保网络接口已启动：`sudo ip link set eth0 up`
+- Docker：在 Admin 环境变量中设置 `CRABCACHE_GATEWAY_CLIENT_LAN_HOST=<宿主机局域网 IP>`
 
 ### 2. 局域网无法访问
 
@@ -192,11 +205,14 @@ sudo ufw reload
 
 ### 3. Docker 网络问题
 
-如果在 Docker 容器中运行，需要使用 host 网络模式：
+Admin 容器内自动探测到的往往是容器网桥 IP，**不能**作为局域网网关地址。推荐：
 
 ```bash
-docker run --network host your-image
+# docker-compose admin 服务
+CRABCACHE_GATEWAY_CLIENT_LAN_HOST=192.168.1.100  # 宿主机在局域网中的 IP
 ```
+
+若需从局域网直连网关进程，还需将网关端口映射到 `0.0.0.0`（或使用 `network_mode: host`），仅映射 `127.0.0.1:8080` 时局域网设备无法访问。
 
 ## 最佳实践
 
