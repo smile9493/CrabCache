@@ -216,6 +216,18 @@ pub async fn revoke_key(id: &str) -> Result<(), String> {
     delete_json(&format!("{}/keys/{}", API_BASE, id)).await
 }
 
+pub async fn batch_revoke_keys(ids: &[String]) -> Result<serde_json::Value, String> {
+    post_json(
+        &format!("{}/keys/batch-revoke", API_BASE),
+        &serde_json::json!({ "ids": ids }),
+    )
+    .await
+}
+
+pub async fn patch_key(id: &str, req: &PatchKeyRequest) -> Result<ApiKey, String> {
+    patch_json(&format!("{}/keys/{}", API_BASE, id), req).await
+}
+
 pub async fn fetch_cache_config() -> Result<CacheConfig, String> {
     fetch_json(&format!("{}/cache/config", API_BASE)).await
 }
@@ -346,4 +358,24 @@ pub async fn update_pipeline_runtime(
     req: &PipelineRuntimeConfig,
 ) -> Result<PipelineRuntimeConfig, String> {
     put_json(&format!("{}/runtime/pipeline", API_BASE), req).await
+}
+
+pub async fn fetch_cursor_models() -> Result<CursorModelsConfig, String> {
+    fetch_json(&format!("{}/cursor/models", API_BASE)).await
+}
+
+pub async fn update_cursor_models(req: &CursorModelsConfig) -> Result<CursorModelsConfig, String> {
+    put_json(&format!("{}/cursor/models", API_BASE), req).await
+}
+
+pub async fn update_routing_backends(req: &PutBackendsRequest) -> Result<RoutingStatus, String> {
+    put_json(&format!("{}/routing/backends", API_BASE), req).await
+}
+
+pub async fn fetch_reasoning_config() -> Result<ReasoningConfig, String> {
+    fetch_json(&format!("{}/reasoning/config", API_BASE)).await
+}
+
+pub async fn update_reasoning_config(req: &ReasoningConfig) -> Result<ReasoningConfig, String> {
+    put_json(&format!("{}/reasoning/config", API_BASE), req).await
 }

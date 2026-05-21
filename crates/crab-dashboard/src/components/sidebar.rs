@@ -93,6 +93,8 @@ pub fn Sidebar() -> impl IntoView {
                 <NavItem href="/keys" label=move || use_translations().sidebar_keys() icon="◆" on_navigate=close_on_nav />
                 <NavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon="⬡" on_navigate=close_on_nav />
                 <NavItem href="/models" label=move || use_translations().sidebar_models() icon="◇" on_navigate=close_on_nav />
+                <NavItem href="/cursor-models" label=move || use_translations().sidebar_cursor_models() icon="⊡" on_navigate=close_on_nav />
+                <NavItem href="/reasoning" label=move || use_translations().sidebar_reasoning() icon="⊚" on_navigate=close_on_nav />
                 <NavItem href="/routing" label=move || use_translations().sidebar_routing() icon="◈" on_navigate=close_on_nav />
                 <NavItem href="/pipeline" label=move || use_translations().sidebar_pipeline() icon="⬢" on_navigate=close_on_nav />
 

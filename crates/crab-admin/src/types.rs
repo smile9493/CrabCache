@@ -261,6 +261,22 @@ pub struct ApiKey {
     pub upstream_profile: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchKeyRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateKeyRequest {
     pub name: String,
@@ -298,6 +314,10 @@ pub struct CacheConfig {
     pub l0_ttl_secs: u64,
     pub l1_ttl_secs: u64,
     pub default_ttl_secs: u64,
+    #[serde(default)]
+    pub model_overrides: Vec<(String, u64)>,
+    #[serde(default)]
+    pub consumer_overrides: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,6 +342,20 @@ pub struct ConnectionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningConfig {
+    #[serde(default)]
+    pub thinking_mode: String,
+    #[serde(default)]
+    pub reasoning_effort: String,
+    #[serde(default)]
+    pub reasoning_recovery: bool,
+    #[serde(default)]
+    pub sqlite_cache_enabled: bool,
+    #[serde(default)]
+    pub sqlite_cache_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingStatus {
     pub backends: Vec<BackendStatus>,
     pub total_backends: usize,
@@ -334,6 +368,8 @@ pub struct BackendStatus {
     pub name: String,
     pub request_count: u64,
     pub healthy: bool,
+    #[serde(default)]
+    pub addr: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,10 +480,16 @@ pub struct RequestDetail {
 pub struct UpdateCacheConfigRequest {
     pub l0_ttl_secs: u64,
     pub l1_ttl_secs: u64,
+    #[serde(default)]
+    pub model_overrides: Vec<(String, u64)>,
+    #[serde(default)]
+    pub consumer_overrides: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSemanticConfigRequest {
+    #[serde(default)]
+    pub enabled: Option<bool>,
     pub similarity_threshold: f64,
 }
 
@@ -458,6 +500,29 @@ pub struct UpdateConnectionConfigRequest {
     pub tcp_keepalive_count: usize,
     pub idle_timeout_secs: u64,
     pub h2_ping_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendEndpoint {
+    pub name: String,
+    pub addr: String,
+    pub weight: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutBackendsRequest {
+    pub backends: Vec<BackendEndpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorModelAlias {
+    pub model: String,
+    pub alias: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorModelsConfig {
+    pub aliases: Vec<CursorModelAlias>,
 }
 
 pub use crab_control::{

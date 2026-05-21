@@ -359,6 +359,28 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn get_cursor_models(&self) -> Result<CursorModelsConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/cursor/models")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_cursor_models(
+        &self,
+        req: &CursorModelsConfigView,
+    ) -> Result<CursorModelsConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/cursor/models")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn get_pipeline_runtime(&self) -> Result<PipelineRuntimeConfigView, ControlError> {
         let resp = self
             .authed(reqwest::Method::GET, "/v1/runtime/pipeline")
