@@ -98,6 +98,12 @@ pub struct ApiKeySpec {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +115,12 @@ pub struct CreateGatewayKeyRequest {
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -124,6 +136,12 @@ pub struct CreateGatewayKeyResponse {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +152,12 @@ pub struct PatchGatewayKeyRequest {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +167,10 @@ pub struct DomainPolicySpec {
     pub monthly_cost_budget_usd: f64,
     pub min_hit_rate: f64,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +237,42 @@ fn default_tls_sni() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamCacheConfig {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineProfileView {
+    pub id: String,
+    pub provider: String,
+}
+
+/// Hot-reloadable global pipeline selection (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRuntimeConfigView {
+    pub pipeline_mode: String,
+    pub default_upstream_profile: String,
+    pub profiles: Vec<PipelineProfileView>,
+}
+
+/// Cursor-visible model alias table (hot-reloadable).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CursorModelAliasView {
+    pub upstream: String,
+    #[serde(default = "default_cursor_alias_pipeline")]
+    pub pipeline: String,
+}
+
+fn default_cursor_alias_pipeline() -> String {
+    "cursor_deepseek_v4".to_string()
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CursorModelsConfigView {
+    #[serde(default)]
+    pub force_deepseek_profile_for_aliases: bool,
+    #[serde(default)]
+    pub synthetic_models_enabled: bool,
+    #[serde(default)]
+    pub aliases: HashMap<String, CursorModelAliasView>,
 }
 
 /// Hot-reloadable reasoning / Cursor compatibility settings.

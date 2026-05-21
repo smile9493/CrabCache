@@ -12,9 +12,14 @@ use crab_control::{
     GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
     PutBackendsRequest, PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest,
-    ReasoningRuntimeConfigView, RoutingBackendsView, StreamCacheConfig, TtlConfigView,
+    CursorModelAliasView, CursorModelsConfigView, PipelineProfileView, PipelineRuntimeConfigView,
+    ReasoningRuntimeConfigView,
+    RoutingBackendsView, StreamCacheConfig, TtlConfigView,
     UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView,
     parse_backend_endpoints, parse_upstream_base_url,
+};
+use crab_pipeline::{
+    validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
 };
 use crab_proxy::{
     DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
@@ -117,6 +122,14 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/runtime/reasoning",
             get(get_reasoning_runtime).put(put_reasoning_runtime),
+        )
+        .route(
+            "/v1/runtime/pipeline",
+            get(get_pipeline_runtime).put(put_pipeline_runtime),
+        )
+        .route(
+            "/v1/cursor/models",
+            get(get_cursor_models).put(put_cursor_models),
         )
         .route("/v1/reasoning/cache", delete(clear_reasoning_cache))
         .route("/v1/routing/backends", get(get_backends).put(put_backends))
@@ -775,6 +788,9 @@ fn stored_to_spec(token: &str, key: &StoredKey, include_full: bool) -> ApiKeySpe
         },
         enabled: key.enabled,
         domain: key.domain.clone(),
+        project_id: key.project_id.clone(),
+        pipeline: key.pipeline.clone(),
+        upstream_profile: key.upstream_profile.clone(),
     }
 }
 
@@ -823,6 +839,9 @@ async fn create_key(
         key_hash: token.clone(),
         enabled: req.enabled,
         domain: req.domain.clone(),
+        project_id: req.project_id.clone(),
+        pipeline: req.pipeline.clone(),
+        upstream_profile: req.upstream_profile.clone(),
     };
     state.runtime.keys.insert(token.clone(), stored);
 
@@ -834,6 +853,9 @@ async fn create_key(
         key_preview: key_preview(&token),
         enabled: req.enabled,
         domain: req.domain,
+        project_id: req.project_id,
+        pipeline: req.pipeline,
+        upstream_profile: req.upstream_profile,
     }))
 }
 
@@ -872,6 +894,8 @@ async fn list_domain_policies(
             monthly_cost_budget_usd: policy.monthly_cost_budget_usd,
             min_hit_rate: policy.min_hit_rate,
             enabled: policy.enabled,
+            pipeline: policy.pipeline.clone(),
+            upstream_profile: policy.upstream_profile.clone(),
         })
         .collect();
     Ok(Json(specs))
@@ -892,6 +916,8 @@ async fn put_domain_policies(
                 monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                 min_hit_rate: p.min_hit_rate,
                 enabled: p.enabled,
+                pipeline: p.pipeline.clone(),
+                upstream_profile: p.upstream_profile.clone(),
             },
         );
     }
@@ -946,6 +972,15 @@ async fn patch_key(
     }
     if let Some(domain) = req.domain {
         entry.domain = Some(domain);
+    }
+    if let Some(project_id) = req.project_id {
+        entry.project_id = Some(project_id);
+    }
+    if let Some(pipeline) = req.pipeline {
+        entry.pipeline = Some(pipeline);
+    }
+    if let Some(upstream_profile) = req.upstream_profile {
+        entry.upstream_profile = Some(upstream_profile);
     }
 
     let spec = stored_to_spec(&token, &entry, false);
@@ -1016,6 +1051,156 @@ async fn put_stream_cache(
     Ok(Json(StreamCacheConfig {
         enabled: state.runtime.stream_cache_enabled(),
     }))
+}
+
+fn pipeline_runtime_view(runtime: &RuntimeConfig) -> PipelineRuntimeConfigView {
+    let globals = runtime.pipeline_globals();
+    let profiles = runtime
+        .profile_descriptors()
+        .into_iter()
+        .map(|d| PipelineProfileView {
+            id: d.id,
+            provider: d.provider.as_str().to_string(),
+        })
+        .collect();
+    PipelineRuntimeConfigView {
+        pipeline_mode: globals.pipeline_mode.as_str().to_string(),
+        default_upstream_profile: runtime.default_upstream_profile_id(),
+        profiles,
+    }
+}
+
+async fn get_pipeline_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<PipelineRuntimeConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(pipeline_runtime_view(&state.runtime)))
+}
+
+async fn put_pipeline_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PipelineRuntimeConfigView>,
+) -> Result<Json<PipelineRuntimeConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let mode = req.pipeline_mode.trim();
+    if mode != "auto" && mode != "force_cursor_v4" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "pipeline_mode must be \"auto\" or \"force_cursor_v4\"".to_string(),
+            }),
+        )
+            .into_response());
+    }
+
+    let default_profile = req.default_upstream_profile.trim();
+    if default_profile.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "default_upstream_profile must not be empty".to_string(),
+            }),
+        )
+            .into_response());
+    }
+
+    state
+        .runtime
+        .set_pipeline_runtime(PipelineMode::from_str(mode), default_profile)
+        .map_err(|msg| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: msg.to_string(),
+                }),
+            )
+                .into_response()
+        })?;
+
+    tracing::info!(
+        pipeline_mode = %mode,
+        default_upstream_profile = %default_profile,
+        "Pipeline runtime config updated"
+    );
+
+    schedule_persist_state(&state);
+    Ok(Json(pipeline_runtime_view(&state.runtime)))
+}
+
+fn cursor_models_view(runtime: &RuntimeConfig) -> CursorModelsConfigView {
+    let cfg = runtime.cursor_models();
+    CursorModelsConfigView {
+        force_deepseek_profile_for_aliases: cfg.force_deepseek_profile_for_aliases,
+        synthetic_models_enabled: cfg.synthetic_models_enabled,
+        aliases: cfg
+            .aliases
+            .iter()
+            .map(|(id, e)| {
+                (
+                    id.clone(),
+                    CursorModelAliasView {
+                        upstream: e.upstream.clone(),
+                        pipeline: e.pipeline.as_str().to_string(),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn cursor_models_from_view(view: &CursorModelsConfigView) -> Result<CursorModelsConfig, String> {
+    let aliases = view
+        .aliases
+        .iter()
+        .map(|(id, a)| {
+            (
+                id.clone(),
+                CursorModelEntry {
+                    upstream: a.upstream.clone(),
+                    pipeline: PipelineOverride::from_str(&a.pipeline),
+                },
+            )
+        })
+        .collect();
+    let cfg = CursorModelsConfig {
+        aliases,
+        force_deepseek_profile_for_aliases: view.force_deepseek_profile_for_aliases,
+        synthetic_models_enabled: view.synthetic_models_enabled,
+    };
+    validate_cursor_models(&cfg)?;
+    Ok(cfg)
+}
+
+async fn get_cursor_models(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<CursorModelsConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(cursor_models_view(&state.runtime)))
+}
+
+async fn put_cursor_models(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<CursorModelsConfigView>,
+) -> Result<Json<CursorModelsConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let cfg = cursor_models_from_view(&req).map_err(|msg| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })).into_response()
+    })?;
+    state.runtime.set_cursor_models(cfg).map_err(|msg| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })).into_response()
+    })?;
+    tracing::info!(
+        alias_count = req.aliases.len(),
+        synthetic = req.synthetic_models_enabled,
+        "Cursor model aliases updated"
+    );
+    schedule_persist_state(&state);
+    Ok(Json(cursor_models_view(&state.runtime)))
 }
 
 fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigView {

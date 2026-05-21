@@ -15,6 +15,12 @@ pub struct StoredKeySnapshot {
     pub enabled: bool,
     #[serde(default)]
     pub domain: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub pipeline: Option<String>,
+    #[serde(default)]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +46,18 @@ pub struct RuntimeSnapshot {
     pub fallback_model: String,
     pub backends: Vec<BackendSnapshot>,
     pub connection: ConnectionConfig,
+    #[serde(default = "default_pipeline_mode_snapshot")]
+    pub pipeline_mode: String,
+    #[serde(default = "default_upstream_profile_snapshot")]
+    pub default_upstream_profile: String,
+}
+
+fn default_pipeline_mode_snapshot() -> String {
+    "auto".to_string()
+}
+
+fn default_upstream_profile_snapshot() -> String {
+    "deepseek".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +92,9 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                     key_hash: k.key_hash.clone(),
                     enabled: k.enabled,
                     domain: k.domain.clone(),
+                    project_id: k.project_id.clone(),
+                    pipeline: k.pipeline.clone(),
+                    upstream_profile: k.upstream_profile.clone(),
                 },
             )
         })
@@ -148,6 +169,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         .into_iter()
         .collect();
 
+    let pipeline_globals = runtime.pipeline_globals();
     ControlPlaneSnapshot {
         keys,
         runtime: Some(RuntimeSnapshot {
@@ -158,6 +180,8 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
             fallback_model,
             backends,
             connection,
+            pipeline_mode: pipeline_globals.pipeline_mode.as_str().to_string(),
+            default_upstream_profile: runtime.default_upstream_profile_id(),
         }),
         upstream_keys: Some(upstream_keys),
         domain_policies,
@@ -179,6 +203,9 @@ pub fn apply_snapshot_to_runtime(
                 key_hash: k.key_hash.clone(),
                 enabled: k.enabled,
                 domain: k.domain.clone(),
+                project_id: k.project_id.clone(),
+                pipeline: k.pipeline.clone(),
+                upstream_profile: k.upstream_profile.clone(),
             },
         );
     }
@@ -192,6 +219,10 @@ pub fn apply_snapshot_to_runtime(
             fp.normalize_content = rt.fingerprint.normalize_content;
         }
         runtime.set_stream_cache_enabled(rt.stream_cache_enabled);
+        let _ = runtime.set_pipeline_runtime(
+            crab_pipeline::PipelineMode::from_str(&rt.pipeline_mode),
+            &rt.default_upstream_profile,
+        );
         if let Ok(mut base) = runtime.upstream_base_url.write() {
             *base = rt.upstream_base_url.clone();
         }

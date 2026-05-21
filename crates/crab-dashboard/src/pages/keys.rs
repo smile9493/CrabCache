@@ -66,6 +66,9 @@ pub fn KeysPage() -> impl IntoView {
     let new_key_budget = RwSignal::new(1_000_000u64);
     let new_key_unlimited = RwSignal::new(true);
     let new_key_quota = RwSignal::new(1_000_000i64);
+    let new_key_pipeline = RwSignal::new(String::new());
+    let new_key_upstream_profile = RwSignal::new(String::new());
+    let pipeline_profiles: RwSignal<Option<Vec<String>>> = RwSignal::new(None);
     let creating = RwSignal::new(false);
     let create_error = RwSignal::new(String::new());
 
@@ -89,6 +92,22 @@ pub fn KeysPage() -> impl IntoView {
                 None
             } else {
                 Some(domain.trim().to_string())
+            },
+            pipeline: {
+                let p = new_key_pipeline.get();
+                if p.is_empty() || p == "auto" {
+                    None
+                } else {
+                    Some(p)
+                }
+            },
+            upstream_profile: {
+                let p = new_key_upstream_profile.get();
+                if p.is_empty() {
+                    None
+                } else {
+                    Some(p)
+                }
             },
         };
         leptos::task::spawn_local(async move {
@@ -127,7 +146,16 @@ pub fn KeysPage() -> impl IntoView {
                     description=t.keys_desc()
                 />
                 <button
-                    on:click=move |_| show_create.set(true)
+                    on:click=move |_| {
+                        show_create.set(true);
+                        leptos::task::spawn_local(async move {
+                            if let Ok(cfg) = api::fetch_pipeline_runtime().await {
+                                pipeline_profiles.set(Some(
+                                    cfg.profiles.into_iter().map(|p| p.id).collect(),
+                                ));
+                            }
+                        });
+                    }
                     class="btn btn-primary text-sm"
                 >
                     {t.keys_new_btn()}
@@ -299,6 +327,32 @@ pub fn KeysPage() -> impl IntoView {
                                         }
                                         class="input"
                                     />
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_pipeline_label()}</label>
+                                    <select
+                                        class="input w-full"
+                                        prop:value=move || new_key_pipeline.get()
+                                        on:change=move |ev| new_key_pipeline.set(event_target_value(&ev))
+                                    >
+                                        <option value="auto">{t.keys_override_auto()}</option>
+                                        <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
+                                        <option value="deepseek_light">"deepseek_light"</option>
+                                        <option value="generic_relay">"generic_relay"</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_upstream_profile_label()}</label>
+                                    <select
+                                        class="input w-full"
+                                        prop:value=move || new_key_upstream_profile.get()
+                                        on:change=move |ev| new_key_upstream_profile.set(event_target_value(&ev))
+                                    >
+                                        <option value="">{t.keys_override_auto()}</option>
+                                        {move || pipeline_profiles.get().unwrap_or_default().into_iter().map(|id| {
+                                            view! { <option value=id.clone()>{id.clone()}</option> }
+                                        }).collect_view()}
+                                    </select>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-4">

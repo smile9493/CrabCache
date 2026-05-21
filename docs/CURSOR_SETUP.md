@@ -1,6 +1,6 @@
 # Cursor + DeepSeek Thinking 接入指南
 
-CrabCache 在网关内内置了与 [deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) 等价的 **reasoning_content** 注入、恢复与流式缓存逻辑（Rust：`crab-reasoning`）。仓库内 `deepseek-cursor-proxy/` 仅为对照参考，无需单独部署 Python 代理。详见 [`DEEPSEEK_CURSOR_PROXY_PARITY.md`](DEEPSEEK_CURSOR_PROXY_PARITY.md)。
+CrabCache 在网关内内置了与 [deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) 等价的 **reasoning_content** 注入、恢复与流式缓存逻辑（Rust：`crab-reasoning`）。仓库内 `deepseek-cursor-proxy/` 与 Go 版 [`cursor-deepseek/`](../cursor-deepseek/) 仅为对照参考，无需单独部署。Go 侧「`gpt-4o` 等模型别名」体验的吸收路线图见 [`CURSOR_DEEPSEEK_ABSORPTION_PLAN.md`](CURSOR_DEEPSEEK_ABSORPTION_PLAN.md)；协议对照见 [`DEEPSEEK_CURSOR_PROXY_PARITY.md`](DEEPSEEK_CURSOR_PROXY_PARITY.md)。
 
 ## 架构
 
@@ -11,6 +11,29 @@ Cursor  →  HTTPS  →  CrabCache (:8080)  →  DeepSeek API
 
 - **客户端 Key**：Management API 颁发的 `sk-cc-*`（推荐）
 - **上游 Key**：`CRABCACHE_UPSTREAM_KEYS` 或 `[upstream].keys`（DeepSeek 账号密钥，勿下发给 Cursor）
+
+### 请求管道（自动选择）
+
+网关按 **上游 profile** 与 **模型/客户端信号** 选择三条管道之一（`crab-pipeline`）：
+
+| 管道 | 典型场景 | 行为 |
+|------|----------|------|
+| `cursor_deepseek_v4` | DeepSeek profile + `deepseek-v4-*` + Cursor/agent 信号 | Reasoning 注入/恢复、SSE 改写、L2 语义缓存 |
+| `deepseek_light` | DeepSeek profile + 其他 `deepseek-*`（如 `deepseek-chat`） | 仅字段规范化，**不**注入 `thinking` |
+| `generic_relay` | OpenAI/Anthropic 等 profile | 透传，不碰 reasoning |
+
+默认 **自动**；可为 Key 或域名策略固定管道 / profile：
+
+```bash
+curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"cursor","enabled":true,"pipeline":"auto","upstream_profile":"deepseek"}'
+```
+
+`pipeline_mode = "force_cursor_v4"`（`[gateway]`）可全局强制 V4 管道（调试）；生产建议 `auto`。
+
+多厂商上游见 `config/gateway.example.toml` 中 `[[upstream.profiles]]` 与 `[gateway] default_upstream_profile`。
 
 ## 公网入口
 
@@ -28,7 +51,7 @@ CrabCache **不内置** ngrok 子进程；隧道由外部工具提供。
 |------|-----|
 | Base URL | `https://<你的域名>/v1` |
 | API Key | `sk-cc-...`（Management `POST /v1/keys` 创建） |
-| Model | 请求体中的 model，如 `deepseek-v4-pro` |
+| Model | `deepseek-v4-pro` / `deepseek-v4-flash-max`，或配置别名如 `gpt-4o`（见 `[gateway.cursor_models]`） |
 
 创建客户端 Key：
 
@@ -97,6 +120,11 @@ curl -s -X POST "http://127.0.0.1:9080/v1/cache/invalidate" \
 热更新（无需重启）：
 
 ```bash
+curl -s -X PUT "http://127.0.0.1:9080/v1/runtime/pipeline" \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"pipeline_mode":"auto","default_upstream_profile":"deepseek","profiles":[{"id":"deepseek","provider":"deepseek"}]}'
+
 curl -s -X PUT "http://127.0.0.1:9080/v1/runtime/reasoning" \
   -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
   -H "Content-Type: application/json" \

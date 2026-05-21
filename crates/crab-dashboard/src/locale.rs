@@ -73,6 +73,174 @@ impl Translations {
             Locale::EnUS => "Logs & Traces",
         }
     }
+    pub fn sidebar_live(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实时监控",
+            Locale::EnUS => "Live",
+        }
+    }
+    pub fn live_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端实时速度",
+            Locale::EnUS => "Live client speed",
+        }
+    }
+    pub fn live_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按 Consumer 查看端到端与上游 API 延迟、TTFT 及 Token 消耗（基于影子日志，约 5 秒粒度）",
+            Locale::EnUS => "Per-consumer e2e vs upstream latency, TTFT, and token usage from shadow log (~5s buckets)",
+        }
+    }
+    pub fn live_auto_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自动刷新 (2s)",
+            Locale::EnUS => "Auto-refresh (2s)",
+        }
+    }
+    pub fn live_consumer_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Consumer（客户端）",
+            Locale::EnUS => "Consumer (client)",
+        }
+    }
+    pub fn live_select_consumer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择 Consumer…",
+            Locale::EnUS => "Select consumer…",
+        }
+    }
+    pub fn live_window_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 5 分钟",
+            Locale::EnUS => "Last 5 min",
+        }
+    }
+    pub fn live_window_15m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 15 分钟",
+            Locale::EnUS => "Last 15 min",
+        }
+    }
+    pub fn live_trace_unavailable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "影子日志不可用。请在 gateway.toml 启用 trace_logging，并确保 Admin 能读取 trace.jsonl（Docker 需共享 gateway_logs 卷）。",
+            Locale::EnUS => "Shadow log unavailable. Enable trace_logging in gateway.toml and mount trace.jsonl for Admin (gateway_logs volume in Docker).",
+        }
+    }
+    pub fn live_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "该时间窗内暂无此 Consumer 的请求数据",
+            Locale::EnUS => "No requests for this consumer in the selected window",
+        }
+    }
+    pub fn live_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求数",
+            Locale::EnUS => "Requests",
+        }
+    }
+    pub fn live_qps(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近窗 QPS",
+            Locale::EnUS => "Window QPS",
+        }
+    }
+    pub fn live_upstream_na(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "—",
+            Locale::EnUS => "—",
+        }
+    }
+    pub fn live_avg_e2e(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均端到端延迟",
+            Locale::EnUS => "Avg e2e latency",
+        }
+    }
+    pub fn live_avg_upstream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均上游延迟",
+            Locale::EnUS => "Avg upstream latency",
+        }
+    }
+    pub fn live_tokens_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 合计",
+            Locale::EnUS => "Total tokens",
+        }
+    }
+    pub fn live_tokens_in_out(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 / 输出",
+            Locale::EnUS => "Input / output",
+        }
+    }
+    pub fn live_latency_chart(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟趋势",
+            Locale::EnUS => "Latency trend",
+        }
+    }
+    pub fn live_upstream_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游延迟仅统计缓存未命中且已记录上游耗时的请求；缓存命中仅显示端到端延迟。",
+            Locale::EnUS => "Upstream latency applies to cache misses with upstream timing; hits show e2e only.",
+        }
+    }
+    pub fn live_token_chart(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 消耗趋势",
+            Locale::EnUS => "Token usage trend",
+        }
+    }
+    pub fn live_series_e2e(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "端到端",
+            Locale::EnUS => "E2E",
+        }
+    }
+    pub fn live_series_upstream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游",
+            Locale::EnUS => "Upstream",
+        }
+    }
+    pub fn live_series_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "首字 (TTFT)",
+            Locale::EnUS => "TTFT",
+        }
+    }
+    pub fn live_tokens_input(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 Token",
+            Locale::EnUS => "Input tokens",
+        }
+    }
+    pub fn live_tokens_output(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出 Token",
+            Locale::EnUS => "Output tokens",
+        }
+    }
+    pub fn live_latest_request(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最近一次请求",
+            Locale::EnUS => "Latest request",
+        }
+    }
+    pub fn live_latest_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn live_latest_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存状态",
+            Locale::EnUS => "Cache status",
+        }
+    }
     pub fn sidebar_upstream(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游配置",
@@ -533,6 +701,109 @@ impl Translations {
         }
     }
 
+    pub fn sidebar_pipeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求管道",
+            Locale::EnUS => "Pipelines",
+        }
+    }
+    pub fn pipeline_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求管道",
+            Locale::EnUS => "Request Pipelines",
+        }
+    }
+    pub fn pipeline_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全局管道模式、默认上游 profile；Key 可单独覆盖 pipeline / profile",
+            Locale::EnUS => "Global pipeline mode and default upstream profile; keys can override per client.",
+        }
+    }
+    pub fn pipeline_mode_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全局管道模式",
+            Locale::EnUS => "Global pipeline mode",
+        }
+    }
+    pub fn pipeline_mode_auto(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自动（按模型与客户端信号）",
+            Locale::EnUS => "Auto (model + client signals)",
+        }
+    }
+    pub fn pipeline_mode_force(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "强制 Cursor DeepSeek V4",
+            Locale::EnUS => "Force Cursor DeepSeek V4",
+        }
+    }
+    pub fn pipeline_mode_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "紧急调试：所有聊天走 V4 reasoning 管道；生产建议保持自动",
+            Locale::EnUS => "Emergency override: all chat uses V4 reasoning pipeline; use Auto in production.",
+        }
+    }
+    pub fn pipeline_default_profile(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "默认上游 Profile",
+            Locale::EnUS => "Default upstream profile",
+        }
+    }
+    pub fn pipeline_profiles_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已注册 Profile",
+            Locale::EnUS => "Registered profiles",
+        }
+    }
+    pub fn pipeline_provider_col(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "厂商",
+            Locale::EnUS => "Provider",
+        }
+    }
+    pub fn pipeline_profiles_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Profile 在 gateway.toml 的 [[upstream.profiles]] 中定义；修改后需重启网关",
+            Locale::EnUS => "Profiles are defined in gateway.toml [[upstream.profiles]]; restart gateway after file changes.",
+        }
+    }
+    pub fn pipeline_save(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存",
+            Locale::EnUS => "Save",
+        }
+    }
+    pub fn pipeline_saving(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存中…",
+            Locale::EnUS => "Saving…",
+        }
+    }
+    pub fn pipeline_save_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管道配置已更新",
+            Locale::EnUS => "Pipeline settings updated",
+        }
+    }
+    pub fn keys_pipeline_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管道覆盖",
+            Locale::EnUS => "Pipeline override",
+        }
+    }
+    pub fn keys_upstream_profile_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 Profile",
+            Locale::EnUS => "Upstream profile",
+        }
+    }
+    pub fn keys_override_auto(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自动",
+            Locale::EnUS => "Auto",
+        }
+    }
+
     pub fn cache_ops_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存运维",
@@ -811,6 +1082,96 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "缓存层级 (5m)",
             Locale::EnUS => "Cache tiers (5m)",
+        }
+    }
+    pub fn domains_policies_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名策略",
+            Locale::EnUS => "Domain policies",
+        }
+    }
+    pub fn domains_policies_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按域名设置配额、命中率门槛，以及管道 / 上游 profile 覆盖",
+            Locale::EnUS => "Per-domain quotas, hit-rate gates, and pipeline / upstream profile overrides.",
+        }
+    }
+    pub fn domains_policy_edit_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "编辑域名策略",
+            Locale::EnUS => "Edit domain policy",
+        }
+    }
+    pub fn domains_policy_add(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "添加策略",
+            Locale::EnUS => "Add policy",
+        }
+    }
+    pub fn domains_policy_save(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存策略",
+            Locale::EnUS => "Save policy",
+        }
+    }
+    pub fn domains_policy_delete(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除策略",
+            Locale::EnUS => "Delete policy",
+        }
+    }
+    pub fn domains_policy_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名策略已保存并同步到网关",
+            Locale::EnUS => "Domain policy saved and synced to gateway",
+        }
+    }
+    pub fn domains_policy_deleted(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名策略已删除",
+            Locale::EnUS => "Domain policy deleted",
+        }
+    }
+    pub fn domains_policy_col_pipeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管道",
+            Locale::EnUS => "Pipeline",
+        }
+    }
+    pub fn domains_policy_col_profile(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Profile",
+            Locale::EnUS => "Profile",
+        }
+    }
+    pub fn domains_policy_budget_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "月 Token 预算",
+            Locale::EnUS => "Monthly token budget",
+        }
+    }
+    pub fn domains_policy_budget_cost(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "月成本预算 (USD)",
+            Locale::EnUS => "Monthly cost budget (USD)",
+        }
+    }
+    pub fn domains_policy_min_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最低命中率",
+            Locale::EnUS => "Min hit rate",
+        }
+    }
+    pub fn domains_policy_enabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "启用策略",
+            Locale::EnUS => "Policy enabled",
+        }
+    }
+    pub fn domains_policy_new_domain(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名标识",
+            Locale::EnUS => "Domain id",
         }
     }
     pub fn keys_domain_label(self) -> &'static str {

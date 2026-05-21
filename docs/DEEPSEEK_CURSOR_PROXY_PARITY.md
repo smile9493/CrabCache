@@ -20,6 +20,7 @@
 | 稳定 session 多轮 tool | 无 `client_key` scope | **`client_key` / `x-conversation-id`**：就地补 reasoning（CrabCache 增强） |
 | 流式 partial 落库 | server finally | `flush_streaming_reasoning` |
 | L0/L1/L2 缓存、合并、路由 | 无 | 有（`stream` 参与精确缓存键，避免流式/非流式混用） |
+| Cursor 模型别名（`gpt-4o` 等） | 有（Go） | 有：`[gateway.cursor_models]` + Management `GET/PUT /v1/cursor/models` |
 | 内置 ngrok | 有 | 无（OpenResty / Cloudflare Tunnel） |
 
 ## 刻意差异（流式）

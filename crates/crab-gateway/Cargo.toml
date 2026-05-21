@@ -27,6 +27,7 @@ crab-cache.workspace = true
 crab-route.workspace = true
 crab-semantic.workspace = true
 crab-reasoning.workspace = true
+crab-pipeline.workspace = true
 crab-control.workspace = true
 crab-state.workspace = true
 axum = "0.8"

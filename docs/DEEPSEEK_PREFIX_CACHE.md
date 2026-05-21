@@ -38,7 +38,7 @@ missing_reasoning_strategy = "recover"
 
 ### 粘滞路由
 
-优先级：`x-conversation-id` > `x-prompt-cache-key` / `prompt_cache_key` > `x-user-id` > 客户端 IP。
+优先级：`x-conversation-id` > `x-prompt-cache-key` / `prompt_cache_key` > **body `user_id`（网关注入的 `project_id`）** > `x-user-id` > 客户端 IP。多租户见 [MULTI_TENANT.md](./MULTI_TENANT.md)。
 
 Ketama 将亲和键映射到 `[upstream].deepseek_endpoints` 中的固定 peer；peer 切换会导致 L3 暂时下跌。
 

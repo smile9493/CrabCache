@@ -790,5 +790,59 @@
   *, ::before, ::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 
+/* Live metrics line charts */
+.line-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.line-chart-plot {
+  position: relative;
+}
+.line-chart-svg {
+  width: 100%;
+  display: block;
+  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+}
+.line-chart-grid {
+  stroke: var(--border-light);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.line-chart-y-hint {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.5rem;
+}
+.line-chart-x-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0 0.25rem;
+}
+.line-chart-x-tick {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.line-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.line-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.line-chart-legend-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+}
+
 /* keep tailwind-generated utilities for layout utilities that output.css doesn't cover */
 /* tailwind will be rebuilt via `npx @tailwindcss/cli` when Node is available */

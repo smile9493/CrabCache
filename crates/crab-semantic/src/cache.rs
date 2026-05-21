@@ -31,13 +31,16 @@ impl SemanticCache {
         })
     }
 
-    pub async fn search(&self, query_text: &str) -> Option<CacheEntry> {
+    pub async fn search(&self, query_text: &str, tenant_id: Option<&str>) -> Option<CacheEntry> {
         let start = Instant::now();
         let vector = self.pool.embed(query_text).await.ok()?;
         let elapsed = start.elapsed();
         global_metrics().record_semantic_embed_latency(elapsed);
 
-        let result = self.store.search(&vector, self.threshold).await;
+        let result = self
+            .store
+            .search(&vector, self.threshold, tenant_id)
+            .await;
 
         if result.is_some() {
             global_metrics().record_semantic_cache_hit(true);
@@ -58,16 +61,24 @@ impl SemanticCache {
         result
     }
 
-    pub async fn insert(&self, query_text: &str, entry: &CacheEntry) -> Result<()> {
+    pub async fn insert(
+        &self,
+        query_text: &str,
+        entry: &CacheEntry,
+        tenant_id: Option<&str>,
+    ) -> Result<()> {
         let start = Instant::now();
         let vector = self.pool.embed(query_text).await?;
         let elapsed = start.elapsed();
         global_metrics().record_semantic_embed_latency(elapsed);
 
-        let id = simple_hash(query_text);
+        let tenant = tenant_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(crate::store::DEFAULT_TENANT_ID);
+        let id = simple_hash(&format!("{tenant}:{query_text}"));
 
         self.store
-            .upsert(&id, &vector, entry, self.ttl_secs)
+            .upsert(&id, &vector, entry, self.ttl_secs, tenant_id)
             .await?;
 
         debug!(

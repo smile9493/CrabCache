@@ -73,6 +73,7 @@ pub struct GatewayMetrics {
     pub state_persist_total: IntCounter,
     pub state_persist_errors_total: IntCounter,
     pub reasoning_store_rejected_bytes: IntCounter,
+    pub pipeline_selected: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -260,6 +261,14 @@ impl GatewayMetrics {
             "Reasoning cache entries rejected due to max_reasoning_entry_bytes",
         )?;
 
+        let pipeline_selected = IntCounterVec::new(
+            Opts::new(
+                "gateway_pipeline_selected_total",
+                "Request pipeline selections by pipeline, upstream profile, and reason",
+            ),
+            &["pipeline", "profile", "reason"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -285,6 +294,7 @@ impl GatewayMetrics {
             state_persist_total,
             state_persist_errors_total,
             reasoning_store_rejected_bytes,
+            pipeline_selected,
         })
     }
 
@@ -313,7 +323,14 @@ impl GatewayMetrics {
         registry.register(Box::new(self.state_persist_total.clone()))?;
         registry.register(Box::new(self.state_persist_errors_total.clone()))?;
         registry.register(Box::new(self.reasoning_store_rejected_bytes.clone()))?;
+        registry.register(Box::new(self.pipeline_selected.clone()))?;
         Ok(())
+    }
+
+    pub fn record_pipeline_selected(&self, pipeline: &str, profile: &str, reason: &str) {
+        self.pipeline_selected
+            .with_label_values(&[pipeline, profile, reason])
+            .inc();
     }
 
     pub fn record_state_persist_success(&self) {

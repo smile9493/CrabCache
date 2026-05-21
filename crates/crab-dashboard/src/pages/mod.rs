@@ -1,9 +1,11 @@
 pub mod cache_ops;
 pub mod domains;
 pub mod keys;
+pub mod live;
 pub mod logs;
 pub mod models;
 pub mod overview;
+pub mod pipeline;
 pub mod routing;
 pub mod trace;
 pub mod upstream;

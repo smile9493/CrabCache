@@ -953,6 +953,7 @@ dependencies = [
  "crab-cache",
  "crab-control",
  "crab-metrics",
+ "crab-pipeline",
  "crab-proxy",
  "crab-reasoning",
  "crab-route",
@@ -985,6 +986,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-pipeline"
+version = "0.1.0"
+dependencies = [
+ "crab-reasoning",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crab-proxy"
 version = "0.1.0"
 dependencies = [
@@ -994,6 +1004,7 @@ dependencies = [
  "chrono",
  "crab-cache",
  "crab-metrics",
+ "crab-pipeline",
  "crab-reasoning",
  "crab-route",
  "crab-semantic",
@@ -1074,6 +1085,7 @@ dependencies = [
  "crab-cache",
  "crab-control",
  "crab-metrics",
+ "crab-pipeline",
  "crab-proxy",
  "crab-route",
  "futures-util",

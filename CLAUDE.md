@@ -18,7 +18,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 - **DeepSeek Reasoning 处理管线**：思考链提取、SSE 块改写、Cursor 折叠显示适配、SQLite 缓存
 - **SSE 流式响应优化**：缓存命中时合成 SSE 流返回，流式响应可选缓存
 - **缓存键指纹 (Fingerprint)**：版本化、Unicode NFC 标准化，安全失效旧缓存
-- **多租户隔离**：命名空间前缀缓存键
+- **多租户隔离**：`project_id` / `X-Project-Id` → DeepSeek `user_id` + 动态缓存命名空间（见 [docs/MULTI_TENANT.md](docs/MULTI_TENANT.md)）
 - **配置验证**：启动时全面校验配置合法性（API Key、端点、地址等）
 - **SecretString 安全处理**：密钥自动遮盖，杜绝日志泄漏
 - **Prometheus 可观测性**：Token 成本追踪、延迟监控、成本节省估算
@@ -318,6 +318,8 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | GET | `/v1/cache/invalidate/status` | 查询清理任务状态（all_in_progress + job snapshot） |
 | GET | `/v1/cache/fingerprint` | 获取指纹版本和标准化配置 |
 | PUT | `/v1/cache/fingerprint` | 更新指纹版本（升版本使旧键自然 miss，逻辑隔离，不扫 Redis） |
+| GET | `/v1/cursor/models` | 获取 Cursor 模型别名表 |
+| PUT | `/v1/cursor/models` | 热更新 Cursor 模型别名（`gpt-4o` → `deepseek-v4-pro` 等） |
 | GET | `/v1/routing/backends` | 获取后端路由列表 |
 | PUT | `/v1/routing/backends` | 热更新后端路由端点 |
 

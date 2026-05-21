@@ -1,8 +1,15 @@
 use crab_control::parse_upstream_base_url;
+use crab_pipeline::{
+    validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode,
+    PipelineOverride, UpstreamProvider,
+};
+use crab_proxy::{UpstreamKeyPool, UpstreamProfileRuntime};
+use crab_route::AffinityRouter;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::{Arc, RwLock};
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 pub use crab_state::StateBackendConfig;
@@ -107,6 +114,72 @@ pub struct GatewaySection {
     /// When true, respond to CORS preflight and allow cross-origin API calls.
     #[serde(default)]
     pub cors_enabled: bool,
+    /// Default upstream profile id when model/key do not specify one.
+    #[serde(default = "default_upstream_profile_id")]
+    pub default_upstream_profile: String,
+    /// `auto` or `force_cursor_v4` (emergency: all chat uses Cursor DeepSeek V4 pipeline).
+    #[serde(default = "default_pipeline_mode")]
+    pub pipeline_mode: String,
+    /// Cursor-visible model aliases (e.g. `gpt-4o` → `deepseek-v4-pro`).
+    #[serde(default)]
+    pub cursor_models: GatewayCursorModelsConfig,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct GatewayCursorModelsConfig {
+    #[serde(default)]
+    pub force_deepseek_profile_for_aliases: bool,
+    #[serde(default)]
+    pub synthetic_models_enabled: bool,
+    #[serde(default)]
+    pub aliases: HashMap<String, GatewayCursorModelAlias>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatewayCursorModelAlias {
+    pub upstream: String,
+    #[serde(default = "default_cursor_alias_pipeline")]
+    pub pipeline: String,
+}
+
+fn default_cursor_alias_pipeline() -> String {
+    "cursor_deepseek_v4".to_string()
+}
+
+impl GatewayConfig {
+    pub fn cursor_models_config(&self) -> CursorModelsConfig {
+        let aliases = self
+            .gateway
+            .cursor_models
+            .aliases
+            .iter()
+            .map(|(id, a)| {
+                (
+                    id.clone(),
+                    CursorModelEntry {
+                        upstream: a.upstream.clone(),
+                        pipeline: PipelineOverride::from_str(&a.pipeline),
+                    },
+                )
+            })
+            .collect();
+        CursorModelsConfig {
+            aliases,
+            force_deepseek_profile_for_aliases: self
+                .gateway
+                .cursor_models
+                .force_deepseek_profile_for_aliases,
+            synthetic_models_enabled: self.gateway.cursor_models.synthetic_models_enabled,
+        }
+    }
+}
+
+fn default_upstream_profile_id() -> String {
+    "deepseek".to_string()
+}
+
+fn default_pipeline_mode() -> String {
+    "auto".to_string()
 }
 
 fn default_max_request_body_bytes() -> usize {
@@ -197,6 +270,24 @@ impl Default for TraceConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct UpstreamProfileConfig {
+    pub id: String,
+    #[serde(default = "default_profile_provider")]
+    pub provider: String,
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    pub model: Option<String>,
+    pub tls_sni: Option<String>,
+    #[serde(default)]
+    pub keys: Vec<SecretString>,
+}
+
+fn default_profile_provider() -> String {
+    "deepseek".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpstreamConfig {
     pub deepseek_endpoints: Vec<String>,
@@ -216,6 +307,9 @@ pub struct UpstreamConfig {
     pub max_coalesce_inflight: Option<usize>,
     #[serde(default = "default_coalesce_timeout_secs")]
     pub coalesce_timeout_secs: Option<u64>,
+    /// Multi-vendor upstream profiles. When empty, a single `deepseek` profile is synthesized from legacy fields.
+    #[serde(default)]
+    pub profiles: Vec<UpstreamProfileConfig>,
 }
 
 fn default_upstream_key_cooldown_secs() -> u64 {
@@ -411,6 +505,148 @@ impl GatewayConfig {
         })
     }
 
+    /// Legacy single-profile list, or explicit `[[upstream.profiles]]`.
+    pub fn resolved_upstream_profiles(&self) -> Vec<UpstreamProfileConfig> {
+        if !self.upstream.profiles.is_empty() {
+            return self.upstream.profiles.clone();
+        }
+        vec![UpstreamProfileConfig {
+            id: "deepseek".to_string(),
+            provider: "deepseek".to_string(),
+            base_url: self.upstream.base_url.clone(),
+            endpoints: self.upstream.deepseek_endpoints.clone(),
+            model: self.upstream.model.clone(),
+            tls_sni: self.upstream.tls_sni.clone(),
+            keys: self.upstream.keys.clone(),
+        }]
+    }
+
+    fn profile_key_secrets(&self, profile: &UpstreamProfileConfig) -> Vec<String> {
+        let mut keys: Vec<String> = profile
+            .keys
+            .iter()
+            .map(|k| k.inner().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        if keys.is_empty() {
+            keys = self.upstream_key_secrets();
+        }
+        keys
+    }
+
+    fn parse_profile_endpoints(
+        &self,
+        profile: &UpstreamProfileConfig,
+    ) -> anyhow::Result<Vec<crab_route::Backend>> {
+        let base_url = profile
+            .base_url
+            .as_deref()
+            .unwrap_or_else(|| self.upstream_base_url());
+        let parsed = parse_upstream_base_url(base_url).map_err(|e| anyhow::anyhow!(e))?;
+        let mut endpoints = profile.endpoints.clone();
+        if endpoints.is_empty() {
+            endpoints.push(parsed.endpoint);
+        }
+        let tls_sni = profile
+            .tls_sni
+            .clone()
+            .unwrap_or(parsed.tls_sni);
+        let weight = self.upstream.default_weight.unwrap_or(1);
+        let mut backends = Vec::new();
+        let mut errors = Vec::new();
+        for (i, endpoint) in endpoints.iter().enumerate() {
+            match endpoint.parse::<SocketAddr>() {
+                Ok(addr) => {
+                    backends.push(crab_route::Backend::new(
+                        format!("{}-backend-{}", profile.id, i + 1),
+                        addr,
+                        weight,
+                        tls_sni.clone(),
+                    ));
+                    continue;
+                }
+                Err(_) => {}
+            }
+            match endpoint.to_socket_addrs() {
+                Ok(mut addrs) => {
+                    if let Some(addr) = addrs.next() {
+                        backends.push(crab_route::Backend::new(
+                            format!("{}-backend-{}", profile.id, i + 1),
+                            addr,
+                            weight,
+                            tls_sni.clone(),
+                        ));
+                    } else {
+                        errors.push(format!("No addresses for '{endpoint}'"));
+                    }
+                }
+                Err(e) => errors.push(format!("Cannot resolve '{endpoint}': {e}")),
+            }
+        }
+        if !errors.is_empty() {
+            anyhow::bail!("{}", errors.join("; "));
+        }
+        if backends.is_empty() {
+            anyhow::bail!("profile '{}' has no endpoints", profile.id);
+        }
+        Ok(backends)
+    }
+
+    pub fn pipeline_globals(&self) -> PipelineGlobals {
+        let ids: Vec<String> = self
+            .resolved_upstream_profiles()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let mode = PipelineMode::from_str(&self.gateway.pipeline_mode);
+        PipelineGlobals::with_profiles_mode_and_cursor_models(
+            self.gateway.default_upstream_profile.clone(),
+            ids,
+            mode,
+            self.cursor_models_config(),
+        )
+    }
+
+    pub fn build_upstream_profile_runtimes(
+        &self,
+        rt: &tokio::runtime::Runtime,
+    ) -> anyhow::Result<HashMap<String, Arc<UpstreamProfileRuntime>>> {
+        let cooldown = self.upstream_key_cooldown_secs();
+        let mut map = HashMap::new();
+        for profile in self.resolved_upstream_profiles() {
+            let backends = self.parse_profile_endpoints(&profile)?;
+            let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
+            let base_url = profile
+                .base_url
+                .clone()
+                .unwrap_or_else(|| self.upstream_base_url().to_string());
+            let fallback_model = profile
+                .model
+                .clone()
+                .unwrap_or_else(|| self.fallback_model().to_string());
+            let tls_sni = profile
+                .tls_sni
+                .clone()
+                .unwrap_or_else(|| self.resolved_tls_sni());
+            let keys = self.profile_key_secrets(&profile);
+            let pool = UpstreamKeyPool::from_secrets(keys, cooldown);
+            let pool_handle = Arc::new(RwLock::new(pool));
+            map.insert(
+                profile.id.clone(),
+                Arc::new(UpstreamProfileRuntime {
+                    id: profile.id.clone(),
+                    provider: UpstreamProvider::from_str(&profile.provider),
+                    base_url,
+                    fallback_model,
+                    tls_sni,
+                    router,
+                    upstream_pool: pool_handle,
+                }),
+            );
+        }
+        Ok(map)
+    }
+
     pub fn management_config(&self) -> ManagementConfig {
         self.management.clone().unwrap_or_default()
     }
@@ -559,6 +795,10 @@ impl GatewayConfig {
                     self.limits.max_concurrent_requests
                 ));
             }
+        }
+
+        if let Err(msg) = validate_cursor_models(&self.cursor_models_config()) {
+            errors.push(msg);
         }
 
         if errors.is_empty() {
@@ -719,6 +959,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 health_check_interval_secs: 30,
                 max_coalesce_inflight: Some(10_000),
                 coalesce_timeout_secs: None,
+                profiles: vec![],
             },
             gateway: GatewaySection::default(),
             cache: CacheConfig {
@@ -778,6 +1019,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 health_check_interval_secs: 30,
                 max_coalesce_inflight: None,
                 coalesce_timeout_secs: None,
+                profiles: vec![],
             },
             gateway: GatewaySection::default(),
             cache: CacheConfig {

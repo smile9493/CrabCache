@@ -2,9 +2,17 @@ use anyhow::Result;
 use crab_cache::CacheEntry;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, PointStruct, SearchPointsBuilder, UpsertPointsBuilder,
-    Value, VectorParamsBuilder,
+    Condition, CreateCollectionBuilder, Distance, Filter, PointStruct, SearchPointsBuilder,
+    UpsertPointsBuilder, Value, VectorParamsBuilder,
 };
+
+pub const DEFAULT_TENANT_ID: &str = "__default__";
+
+fn tenant_label(tenant_id: Option<&str>) -> &str {
+    tenant_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(DEFAULT_TENANT_ID)
+}
 use tracing::debug;
 
 pub struct VectorStore {
@@ -53,12 +61,20 @@ impl VectorStore {
         Ok(())
     }
 
-    pub async fn search(&self, vector: &[f32], threshold: f32) -> Option<CacheEntry> {
+    pub async fn search(
+        &self,
+        vector: &[f32],
+        threshold: f32,
+        tenant_id: Option<&str>,
+    ) -> Option<CacheEntry> {
+        let tenant = tenant_label(tenant_id);
+        let filter = Filter::must([Condition::matches("tenant_id", tenant.to_string())]);
         let result = self
             .client
             .search_points(
                 SearchPointsBuilder::new(&self.collection, vector.to_vec(), 1)
-                    .score_threshold(threshold),
+                    .score_threshold(threshold)
+                    .filter(filter),
             )
             .await
             .ok()?;
@@ -90,11 +106,14 @@ impl VectorStore {
         vector: &[f32],
         entry: &CacheEntry,
         ttl_secs: u64,
+        tenant_id: Option<&str>,
     ) -> Result<()> {
+        let tenant = tenant_label(tenant_id);
         let entry_json = serde_json::to_string(entry)?;
         let mut payload = std::collections::HashMap::new();
         payload.insert("entry".to_string(), Value::from(entry_json));
         payload.insert("ttl_secs".to_string(), Value::from(ttl_secs as i64));
+        payload.insert("tenant_id".to_string(), Value::from(tenant.to_string()));
 
         let point = PointStruct::new(id, vector.to_vec(), payload);
 

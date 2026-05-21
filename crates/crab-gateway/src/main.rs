@@ -33,8 +33,8 @@ struct MetricsServer {
 
 #[async_trait]
 impl pingora_core::services::background::BackgroundService for MetricsServer {
-    async fn start(&self, _shutdown: pingora_core::server::ShutdownWatch) {
-        let listener = match std::net::TcpListener::bind(&self.addr) {
+    async fn start(&self, mut shutdown: pingora_core::server::ShutdownWatch) {
+        let listener = match tokio::net::TcpListener::bind(&self.addr).await {
             Ok(l) => l,
             Err(e) => {
                 tracing::error!(addr = %self.addr, error = %e, "Failed to bind metrics addr");
@@ -42,28 +42,43 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
             }
         };
 
-        for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(s) => s,
-                Err(_) => continue,
+        loop {
+            let accept = tokio::select! {
+                _ = shutdown.changed() => break,
+                result = listener.accept() => result,
             };
+            let Ok((mut stream, _)) = accept else {
+                continue;
+            };
+            let registry = self.registry.clone();
+            tokio::spawn(async move {
+                let output = match tokio::task::spawn_blocking(move || {
+                    let encoder = prometheus::TextEncoder::new();
+                    let metric_families = registry.gather();
+                    encoder.encode_to_string(&metric_families)
+                })
+                .await
+                {
+                    Ok(Ok(body)) => body,
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "Failed to encode prometheus metrics");
+                        String::new()
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Metrics gather task join failed");
+                        String::new()
+                    }
+                };
 
-            let encoder = prometheus::TextEncoder::new();
-            let metric_families = self.registry.gather();
-            let output = encoder
-                .encode_to_string(&metric_families)
-                .unwrap_or_default();
-
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n{}",
-                output.len(),
-                output
-            );
-
-            use std::io::Write;
-            let mut stream = stream;
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.flush();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n{}",
+                    output.len(),
+                    output
+                );
+                use tokio::io::AsyncWriteExt;
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+            });
         }
     }
 }
@@ -149,9 +164,6 @@ fn main() -> Result<()> {
     }
     info!("Configuration validated successfully");
 
-    let backends = config.parse_endpoints();
-    info!(backend_count = backends.len(), "Backends parsed");
-
     let mut server = Server::new(None)?;
     server.bootstrap();
 
@@ -166,7 +178,28 @@ fn main() -> Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
 
-    let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
+    let upstream_profiles = config.build_upstream_profile_runtimes(&rt)?;
+    let default_profile_id = config.gateway.default_upstream_profile.clone();
+    let pipeline_globals = config.pipeline_globals();
+    let default_profile = upstream_profiles
+        .get(&default_profile_id)
+        .cloned()
+        .or_else(|| upstream_profiles.values().next().cloned())
+        .expect("at least one upstream profile");
+    let default_backends: Vec<crab_route::Backend> = default_profile
+        .router
+        .backends()
+        .iter()
+        .map(|b| (**b).clone())
+        .collect();
+    let router = AffinityRouter::new(&default_backends)?;
+    let backends = router.backends().to_vec();
+    info!(
+        backend_count = backends.len(),
+        profile_count = upstream_profiles.len(),
+        default_profile = %default_profile_id,
+        "Upstream profiles initialized"
+    );
 
     let l1_pool = rt.block_on(async {
         bb8::Pool::builder()
@@ -236,20 +269,17 @@ fn main() -> Result<()> {
         reasoning_config.max_reasoning_entry_bytes,
     )?);
 
-    let upstream_base_url = config.upstream_base_url().to_string();
-    let fallback_model = config.fallback_model().to_string();
+    let upstream_base_url = default_profile.base_url.clone();
+    let fallback_model = default_profile.fallback_model.clone();
     let mgmt_cfg = config.management_config();
     let mgmt_listen = mgmt_cfg.listen_addr.clone();
     let mgmt_admin_key = mgmt_cfg.admin_key.into_inner();
 
-    let upstream_key_secrets = config.upstream_key_secrets();
-    let upstream_pool = crab_proxy::UpstreamKeyPool::from_secrets(
-        upstream_key_secrets,
-        config.upstream_key_cooldown_secs(),
-    );
+    let upstream_pool = default_profile.upstream_pool.clone();
     info!(
-        upstream_key_count = upstream_pool.len(),
-        "Upstream DeepSeek key pool initialized"
+        upstream_key_count = upstream_pool.read().map(|p| p.len()).unwrap_or(0),
+        default_profile = %default_profile_id,
+        "Upstream key pool initialized (default profile)"
     );
     let mut legacy_client_tokens = std::collections::HashSet::new();
     let api_key = config.api_key.inner();
@@ -301,6 +331,9 @@ fn main() -> Result<()> {
         upstream_base_url,
         fallback_model,
         upstream_pool,
+        upstream_profiles,
+        default_profile_id,
+        pipeline_globals,
         legacy_api_key_as_client_auth,
         legacy_client_tokens,
     );
@@ -338,6 +371,9 @@ fn main() -> Result<()> {
                             key_hash: token.to_string(),
                             enabled: true,
                             domain: None,
+                            project_id: None,
+                            pipeline: None,
+                            upstream_profile: None,
                         },
                     );
                     info!(
@@ -380,6 +416,9 @@ fn main() -> Result<()> {
                         key_hash: token.to_string(),
                         enabled: true,
                         domain: None,
+                        project_id: None,
+                        pipeline: None,
+                        upstream_profile: None,
                     },
                 );
                 info!(
@@ -390,6 +429,21 @@ fn main() -> Result<()> {
         }
         None
     };
+
+    for profile in runtime
+        .upstream_profiles
+        .read()
+        .expect("upstream profiles lock poisoned")
+        .values()
+    {
+        if let Ok(mut health) = runtime.backend_health.write() {
+            for b in profile.router.backends() {
+                health
+                    .entry(b.name.clone())
+                    .or_insert_with(crab_route::BackendHealth::new_healthy);
+            }
+        }
+    }
 
     // Background task: TCP health check for upstream backends
     {

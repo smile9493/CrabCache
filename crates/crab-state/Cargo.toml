@@ -17,7 +17,9 @@ crab-proxy = { path = "../crab-proxy" }
 crab-route = { path = "../crab-route" }
 crab-control = { path = "../crab-control" }
 crab-metrics = { path = "../crab-metrics" }
+crab-pipeline = { path = "../crab-pipeline" }
 futures-util = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+crab-pipeline = { path = "../crab-pipeline" }

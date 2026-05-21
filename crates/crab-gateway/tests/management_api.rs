@@ -7,8 +7,12 @@ use crab_control::{
     CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER, GATEWAY_ADMIN_KEY_HEADER,
 };
 use crab_gateway::management::{ManagementState, router};
-use crab_proxy::{ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool};
+use crab_pipeline::{PipelineGlobals, PipelineMode, UpstreamProvider};
+use crab_proxy::{
+    ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime,
+};
 use crab_reasoning::ReasoningBackend;
+use std::collections::HashMap;
 use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use crab_route::AffinityRouter;
 use std::sync::atomic::AtomicBool;
@@ -26,6 +30,20 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool =
         UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
+    let pool_handle = Arc::new(RwLock::new(upstream_pool));
+    let mut profiles = HashMap::new();
+    profiles.insert(
+        "deepseek".to_string(),
+        Arc::new(UpstreamProfileRuntime {
+            id: "deepseek".to_string(),
+            provider: UpstreamProvider::Deepseek,
+            base_url: "https://api.deepseek.com".to_string(),
+            fallback_model: "deepseek-v4-pro".to_string(),
+            tls_sni: "api.deepseek.com".to_string(),
+            router: AffinityRouter::new(&backends).unwrap(),
+            upstream_pool: pool_handle.clone(),
+        }),
+    );
     RuntimeConfig::new(
         router,
         ttl,
@@ -34,7 +52,10 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         FingerprintConfig::default(),
         "https://api.deepseek.com".to_string(),
         "deepseek-v4-pro".to_string(),
-        upstream_pool,
+        pool_handle,
+        profiles,
+        "deepseek".to_string(),
+        PipelineGlobals::default(),
         false,
         std::collections::HashSet::new(),
     )
@@ -177,6 +198,66 @@ async fn create_and_list_keys() {
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn create_key_with_project_id_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"project-key","enabled":true,"project_id":"proj_alpha"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        created["project_id"].as_str(),
+        Some("proj_alpha")
+    );
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/v1/keys/{}",
+                    created["key_full"].as_str().expect("key_full")
+                ))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"project_id":"proj_beta"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(patch.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        patched["project_id"].as_str(),
+        Some("proj_beta")
+    );
 }
 
 #[tokio::test]
@@ -622,4 +703,128 @@ async fn domain_policies_persisted_in_redis_state() {
         policies.iter().any(|(d, _)| d == "persist-team"),
         "second runtime should see domain policy after Redis reload"
     );
+}
+
+#[test]
+fn pipeline_runtime_set_and_read() {
+    let runtime = test_runtime();
+    assert_eq!(
+        runtime.pipeline_globals().pipeline_mode,
+        PipelineMode::Auto
+    );
+    runtime
+        .set_pipeline_runtime(PipelineMode::ForceCursorV4, "deepseek")
+        .expect("set pipeline");
+    assert_eq!(
+        runtime.pipeline_globals().pipeline_mode,
+        PipelineMode::ForceCursorV4
+    );
+    assert_eq!(runtime.default_upstream_profile_id(), "deepseek");
+    assert!(runtime
+        .set_pipeline_runtime(PipelineMode::Auto, "unknown")
+        .is_err());
+}
+
+#[tokio::test]
+async fn pipeline_runtime_http_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/pipeline")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let view: crab_control::PipelineRuntimeConfigView = serde_json::from_slice(&body).unwrap();
+    assert_eq!(view.pipeline_mode, "auto");
+    assert!(!view.profiles.is_empty());
+
+    let put_body = serde_json::json!({
+        "pipeline_mode": "force_cursor_v4",
+        "default_upstream_profile": "deepseek",
+        "profiles": view.profiles,
+    });
+    let put_resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/pipeline")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(put_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let updated: crab_control::PipelineRuntimeConfigView = serde_json::from_slice(&body).unwrap();
+    assert_eq!(updated.pipeline_mode, "force_cursor_v4");
+}
+
+#[tokio::test]
+async fn cursor_models_http_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_body = serde_json::json!({
+        "force_deepseek_profile_for_aliases": true,
+        "synthetic_models_enabled": false,
+        "aliases": {
+            "gpt-4o": {
+                "upstream": "deepseek-v4-pro",
+                "pipeline": "cursor_deepseek_v4"
+            }
+        }
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/cursor/models")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let get_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/cursor/models")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let view: crab_control::CursorModelsConfigView = serde_json::from_slice(&body).unwrap();
+    assert!(view.aliases.contains_key("gpt-4o"));
+    assert_eq!(view.aliases["gpt-4o"].upstream, "deepseek-v4-pro");
 }

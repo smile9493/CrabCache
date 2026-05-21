@@ -9,6 +9,7 @@ crab-route.workspace = true
 crab-cache.workspace = true
 crab-semantic.workspace = true
 crab-reasoning.workspace = true
+crab-pipeline.workspace = true
 pingora.workspace = true
 pingora-core.workspace = true
 pingora-proxy.workspace = true

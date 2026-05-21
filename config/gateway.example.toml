@@ -18,6 +18,20 @@ api_key = "sk-your-deepseek-api-key-here"
 [gateway]
 legacy_api_key_as_client_auth = false
 # cors_enabled = false
+# Default upstream profile when model/key do not specify one (see [[upstream.profiles]]).
+default_upstream_profile = "deepseek"
+# auto | force_cursor_v4 — auto selects CursorDeepSeekV4 / DeepSeekLight / GenericRelay per request.
+pipeline_mode = "auto"
+
+# Cursor model aliases (OpenAI-style ids → DeepSeek upstream). See docs/CURSOR_SETUP.md.
+[gateway.cursor_models]
+force_deepseek_profile_for_aliases = true
+# synthetic_models_enabled = false
+
+[gateway.cursor_models.aliases]
+gpt-4o = { upstream = "deepseek-v4-pro", pipeline = "cursor_deepseek_v4" }
+gpt-4 = { upstream = "deepseek-v4-pro", pipeline = "cursor_deepseek_v4" }
+deepseek-chat = { upstream = "deepseek-chat", pipeline = "deepseek_light" }
 
 # Management HTTP API (Admin / control plane). Default binds loopback only.
 # In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
@@ -49,6 +63,24 @@ default_weight = 1
 
 # Ketama peer addresses (host:port). When omitted, derived from base_url host (port 443/80).
 deepseek_endpoints = ["api.deepseek.com:443"]
+
+# Optional multi-vendor upstream profiles (each has its own key pool and router).
+# When omitted, a single `deepseek` profile is built from [upstream] above.
+# [[upstream.profiles]]
+# id = "deepseek"
+# provider = "deepseek"
+# base_url = "https://api.deepseek.com"
+# endpoints = ["api.deepseek.com:443"]
+# model = "deepseek-v4-pro"
+# keys = ["sk-ds-1"]
+#
+# [[upstream.profiles]]
+# id = "openai"
+# provider = "openai"
+# base_url = "https://api.openai.com"
+# endpoints = ["api.openai.com:443"]
+# model = "gpt-4o"
+# keys = ["sk-openai-1"]
 
 # Optional: TLS SNI override (defaults to hostname from base_url)
 # tls_sni = "api.deepseek.com"
@@ -99,6 +131,12 @@ fingerprint_version = 1
 # with different encodings share the same cache entry.
 # Set to false to disable normalization (emergency rollback).
 fingerprint_normalize_content = true
+
+# Optional global prefix for L0/L1 cache keys. Per-request project_id (API key or X-Project-Id)
+# is combined as "{cache_key_namespace}:{project_id}:{hash}" when both are set.
+# See docs/MULTI_TENANT.md.
+# cache_key_namespace = "org"
+
 [cache.model_ttl_overrides]
 "deepseek-v4-pro" = 7200
 "deepseek-v4-flash" = 3600

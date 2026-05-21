@@ -18,9 +18,20 @@ pub struct SanitizedLogEntry {
     pub consumer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub model: String,
     pub prompt_tokens: usize,
+    /// End-to-end latency (client request start → logging).
     pub latency_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     pub cache_hit: bool,
     pub cache_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,6 +48,7 @@ impl SanitizedLogEntry {
         conversation_id: Option<String>,
         consumer: Option<String>,
         domain: Option<String>,
+        project_id: Option<String>,
         model: &str,
         prompt_tokens: usize,
         latency_ms: f64,
@@ -70,9 +82,14 @@ impl SanitizedLogEntry {
             conversation_id,
             consumer,
             domain,
+            project_id,
             model: model.to_string(),
             prompt_tokens,
             latency_ms,
+            upstream_latency_ms: None,
+            ttft_ms: None,
+            input_tokens: None,
+            output_tokens: None,
             cache_hit,
             cache_tier,
             retired_prefix_messages: None,
@@ -234,6 +251,7 @@ mod tests {
             Some("conv-123".to_string()),
             Some("test-consumer".to_string()),
             Some("backend-team".to_string()),
+            Some("proj-a".to_string()),
             "deepseek-chat",
             100,
             150.5,
@@ -253,10 +271,12 @@ mod tests {
     #[test]
     fn test_hash_consistency() {
         let body = b"identical request";
-        let entry1 =
-            SanitizedLogEntry::from_request(body, None, None, None, "model", 0, 0.0, false, None);
-        let entry2 =
-            SanitizedLogEntry::from_request(body, None, None, None, "model", 0, 0.0, false, None);
+        let entry1 = SanitizedLogEntry::from_request(
+            body, None, None, None, None, "model", 0, 0.0, false, None,
+        );
+        let entry2 = SanitizedLogEntry::from_request(
+            body, None, None, None, None, "model", 0, 0.0, false, None,
+        );
 
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert_eq!(entry1.semantic_cluster, entry2.semantic_cluster);

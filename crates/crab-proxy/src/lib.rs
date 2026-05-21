@@ -4,10 +4,12 @@ mod error;
 mod proxy;
 mod runtime;
 mod sse;
+mod tenant;
 mod trace_logger;
 mod upstream_body;
 mod upstream_headers;
 mod upstream_pool;
+mod upstream_profile;
 
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
@@ -22,3 +24,5 @@ pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,
     UpstreamKeyStatus, key_preview,
 };
+pub use tenant::{effective_cache_namespace, resolve_project_id, sanitize_user_id, ProjectResolveError};
+pub use upstream_profile::UpstreamProfileRuntime;

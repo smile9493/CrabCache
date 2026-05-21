@@ -24,7 +24,9 @@ if ! bash "${SCRIPT_DIR}/verify_domain_port.sh"; then
   fail=1
 fi
 
-echo "==> [2/4] Non-stream chat (deepseek-v4-flash)"
+ALIAS_MODEL="${ALIAS_MODEL:-gpt-4o}"
+
+echo "==> [2/5] Non-stream chat (deepseek-v4-flash)"
 BODY='{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"cursor-e2e-verify"}],"max_tokens":8,"stream":false}'
 code=$(curl -sk -m 120 -o /tmp/crabcache_cursor_nostream.json -w "%{http_code}" \
   -X POST "${API_BASE}/v1/chat/completions" \
@@ -38,13 +40,27 @@ else
   fail=1
 fi
 
-echo "==> [3/4] Model suffix deepseek-v4-flash-max (stream)"
+echo "==> [3/5] Non-stream chat (alias model ${ALIAS_MODEL})"
+BODY_ALIAS=$(printf '{"model":"%s","messages":[{"role":"user","content":"cursor-alias-e2e"}],"max_tokens":8,"stream":false}' "${ALIAS_MODEL}")
+code_alias=$(curl -sk -m 120 -o /tmp/crabcache_cursor_alias.json -w "%{http_code}" \
+  -X POST "${API_BASE}/v1/chat/completions" \
+  -H "Authorization: Bearer ${CLIENT_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d "${BODY_ALIAS}" || echo 000)
+if [[ "${code_alias}" == "200" ]] && python3 -c "import json; d=json.load(open('/tmp/crabcache_cursor_alias.json')); assert d.get('model')=='${ALIAS_MODEL}'" 2>/dev/null; then
+  echo "OK  alias model non-stream (${code_alias}, model=${ALIAS_MODEL})"
+else
+  echo "FAIL alias model (got ${code_alias}) — configure [gateway.cursor_models.aliases] on gateway" >&2
+  fail=1
+fi
+
+echo "==> [4/5] Model suffix deepseek-v4-flash-max (stream)"
 export CURL_EXTRA="-sk"
 if ! bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${API_BASE}" "${CLIENT_API_KEY}" "deepseek-v4-flash-max"; then
   fail=1
 fi
 
-echo "==> [4/4] Upstream key pool (local Management)"
+echo "==> [5/5] Upstream key pool (local Management)"
 if curl -sf -m 5 "${MGMT_BASE}/v1/health" >/dev/null 2>&1; then
   pool_json=$(curl -sf -m 10 "${MGMT_BASE}/v1/upstream/keys" \
     -H "x-gateway-admin-key: ${ADMIN_KEY}" || echo "{}")

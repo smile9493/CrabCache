@@ -3,6 +3,7 @@ use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_metrics::CacheTier;
+use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
@@ -20,6 +21,11 @@ pub struct StoredKey {
     pub key_hash: String,
     pub enabled: bool,
     pub domain: Option<String>,
+    /// DeepSeek `user_id` / tenant bucket; bound to this client key when set.
+    pub project_id: Option<String>,
+    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `generic_relay`
+    pub pipeline: Option<String>,
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -204,6 +210,9 @@ pub struct GatewayContext {
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
+    pub request_pipeline: Option<RequestPipeline>,
+    pub pipeline_reason: Option<PipelineSelectionReason>,
+    pub upstream_profile_id: Option<String>,
     pub request_start: Instant,
     pub upstream_start: Option<Instant>,
     pub ttft: Option<std::time::Duration>,
@@ -220,7 +229,14 @@ pub struct GatewayContext {
     pub req_hash: Option<String>,
     pub content_length: usize,
     pub total_tokens: u64,
+    /// Last known prompt/completion tokens (upstream usage or cache entry).
+    pub last_input_tokens: u64,
+    pub last_output_tokens: u64,
+    /// Upstream body completion latency (response headers → EOS), miss paths only.
+    pub upstream_latency_ms: Option<f64>,
     pub conversation_id: Option<String>,
+    /// Resolved tenant id for upstream `user_id` and cache namespaces.
+    pub project_id: Option<String>,
     /// OpenAI-style `prompt_cache_key` from request body (affinity + L3 stickiness).
     pub prompt_cache_key: Option<String>,
     pub last_prompt_cache_hit_tokens: u64,
@@ -260,6 +276,9 @@ impl GatewayContext {
             model: String::new(),
             consumer: None,
             domain: None,
+            request_pipeline: None,
+            pipeline_reason: None,
+            upstream_profile_id: None,
             request_start: Instant::now(),
             upstream_start: None,
             ttft: None,
@@ -276,7 +295,11 @@ impl GatewayContext {
             req_hash: None,
             content_length: 0,
             total_tokens: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
+            upstream_latency_ms: None,
             conversation_id: None,
+            project_id: None,
             prompt_cache_key: None,
             last_prompt_cache_hit_tokens: 0,
             last_prompt_cache_miss_tokens: 0,

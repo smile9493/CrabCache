@@ -85,6 +85,7 @@ pub fn Sidebar() -> impl IntoView {
             <nav class="sidebar-nav">
                 <div class="nav-group-label">{move || use_translations().sidebar_group_monitor()}</div>
                 <NavItem href="/" label=move || use_translations().sidebar_overview() icon="◉" on_navigate=close_on_nav />
+                <NavItem href="/live" label=move || use_translations().sidebar_live() icon="◔" on_navigate=close_on_nav />
                 <NavItem href="/domains" label=move || use_translations().sidebar_domains() icon="◫" on_navigate=close_on_nav />
                 <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" on_navigate=close_on_nav />
 
@@ -93,6 +94,7 @@ pub fn Sidebar() -> impl IntoView {
                 <NavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon="⬡" on_navigate=close_on_nav />
                 <NavItem href="/models" label=move || use_translations().sidebar_models() icon="◇" on_navigate=close_on_nav />
                 <NavItem href="/routing" label=move || use_translations().sidebar_routing() icon="◈" on_navigate=close_on_nav />
+                <NavItem href="/pipeline" label=move || use_translations().sidebar_pipeline() icon="⬢" on_navigate=close_on_nav />
 
                 <div class="nav-group-label">{move || use_translations().sidebar_group_ops()}</div>
                 <NavItem href="/cache" label=move || use_translations().sidebar_cache_ops() icon="◎" on_navigate=close_on_nav />

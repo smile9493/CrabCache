@@ -1,4 +1,6 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
+use crate::tenant::{ProjectResolveError, effective_cache_namespace, resolve_project_id};
+use crate::runtime::RuntimeConfig;
 use crate::debug_agent_log;
 use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_headers::{
@@ -10,9 +12,14 @@ use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
 use crab_metrics::{CacheTier, global_metrics};
+use crab_pipeline::{
+    PipelineOverride, PipelineRequestContext, RequestPipeline, select_request_pipeline,
+    validate_pipeline_override,
+};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, fold_reasoning_into_content,
-    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
+    prepare_generic_request, prepare_light_request, prepare_upstream_request, rewrite_response_body,
+    rewrite_sse_chunk,
 };
 use crab_route::extract_affinity_key;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -109,30 +116,63 @@ impl GatewayProxy {
             .clone()
     }
 
-    fn authorize_client(&self, provided_key: &str, auth: &str) -> (bool, Option<String>, Option<String>) {
+    fn authorize_client(
+        &self,
+        provided_key: &str,
+        auth: &str,
+    ) -> (
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) {
         if let Some(stored_key) = self.state.runtime.keys.get(provided_key) {
             let key = stored_key.value();
             (
                 key.enabled,
                 Some(key.name.clone()),
                 key.domain.clone(),
+                key.project_id.clone(),
+                key.pipeline.clone(),
+                key.upstream_profile.clone(),
             )
         } else if self
             .state
             .runtime
             .is_legacy_client_token(provided_key, auth)
         {
-            (true, None, None)
+            (true, None, None, None, None, None)
         } else {
-            (false, None, None)
+            (false, None, None, None, None, None)
         }
+    }
+
+    fn domain_policy_fields(&self, domain: Option<&str>) -> (Option<String>, Option<String>) {
+        let label = RuntimeConfig::effective_domain_label(domain);
+        self.state
+            .runtime
+            .domain_policies
+            .read()
+            .ok()
+            .and_then(|m| m.get(label).cloned())
+            .map(|p| (p.pipeline.clone(), p.upstream_profile.clone()))
+            .unwrap_or((None, None))
+    }
+
+    fn active_upstream_profile(&self, ctx: &GatewayContext) -> Arc<crate::upstream_profile::UpstreamProfileRuntime> {
+        ctx.upstream_profile_id
+            .as_deref()
+            .and_then(|id| self.state.runtime.profile(id))
+            .unwrap_or_else(|| self.state.runtime.default_profile())
     }
 
     fn try_acquire_upstream_key(&self, ctx: &mut GatewayContext) -> bool {
         if ctx.upstream_key_guard.is_some() {
             return true;
         }
-        let pool = self.state.runtime.upstream_pool();
+        let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
         match pool.acquire() {
             Some(guard) => {
                 ctx.upstream_miss = true;
@@ -162,17 +202,41 @@ impl ProxyHttp for GatewayProxy {
             }
         }
 
-        let req_header = session.req_header();
+        let req_path = session.req_header().uri.path().to_string();
+        let req_method = session.req_header().method.clone();
+        let auth = session
+            .req_header()
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let provided_key = auth.strip_prefix("Bearer ").unwrap_or(&auth).to_string();
+        let conversation_id_from_header = session
+            .req_header()
+            .headers
+            .get("x-conversation-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let user_agent = session
+            .req_header()
+            .headers
+            .get(http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let consumer_from_header = session
+            .req_header()
+            .headers
+            .get("x-consumer")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
 
-        if req_header.uri.path() == "/health"
-            || req_header.uri.path() == "/healthz"
-            || req_header.uri.path() == "/v1/healthz"
-        {
+        if req_path == "/health" || req_path == "/healthz" || req_path == "/v1/healthz" {
             let _ = session.respond_error(200).await;
             return Ok(true);
         }
 
-        if req_header.uri.path() == "/ready" {
+        if req_path == "/ready" {
             let status = if self.state.tiered_cache.ping().await {
                 200
             } else {
@@ -182,24 +246,27 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
-        let auth = req_header
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        let provided_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
-
-        if is_models_endpoint(req_header.uri.path(), &req_header.method) {
-            let (is_authorized, consumer_from_key, domain_from_key) =
-                self.authorize_client(provided_key, auth);
+        if is_models_endpoint(&req_path, &req_method) {
+            let (is_authorized, consumer_from_key, domain_from_key, _, _, key_profile) =
+                self.authorize_client(&provided_key, &auth);
             if !is_authorized {
                 let _ = session.respond_error(401).await;
                 return Ok(true);
             }
             ctx.consumer = consumer_from_key;
             ctx.domain = domain_from_key;
+            ctx.upstream_profile_id = key_profile
+                .or_else(|| Some(self.state.runtime.default_upstream_profile_id()));
             ctx.is_models_list = true;
+            let cursor_models = self.state.runtime.pipeline_globals().cursor_models;
+            if cursor_models.synthetic_models_enabled && !cursor_models.aliases.is_empty() {
+                let body = crab_pipeline::synthetic_models_list_json(&cursor_models);
+                if send_json_ok(session, &body).await {
+                    return Ok(true);
+                }
+                let _ = session.respond_error(500).await;
+                return Ok(true);
+            }
             if !self.try_acquire_upstream_key(ctx) {
                 let body = upstream_pool_exhausted_error_json();
                 if !send_json_error_with_retry_after(
@@ -217,24 +284,68 @@ impl ProxyHttp for GatewayProxy {
             return Ok(false);
         }
 
-        if req_header.uri.path() != "/v1/chat/completions"
-            && req_header.uri.path() != "/chat/completions"
-        {
+        if req_path != "/v1/chat/completions" && req_path != "/chat/completions" {
             let _ = session.respond_error(404).await;
             return Ok(true);
         }
 
-        if req_header.method != http::Method::POST {
+        if req_method != http::Method::POST {
             let _ = session.respond_error(405).await;
             return Ok(true);
         }
 
-        let (is_authorized, consumer_from_key, domain_from_key) =
-            self.authorize_client(provided_key, auth);
+        let (
+            is_authorized,
+            consumer_from_key,
+            domain_from_key,
+            key_project_id,
+            key_pipeline,
+            key_upstream_profile,
+        ) = self.authorize_client(&provided_key, &auth);
 
         if !is_authorized {
             let _ = session.respond_error(401).await;
             return Ok(true);
+        }
+
+        let project_id_header = session
+            .req_header()
+            .headers
+            .get("x-project-id")
+            .and_then(|v| v.to_str().ok());
+
+        match resolve_project_id(key_project_id.as_deref(), project_id_header) {
+            Ok(project_id) => ctx.project_id = project_id,
+            Err(ProjectResolveError::Mismatch) => {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": "X-Project-Id does not match the project_id bound to this API key",
+                        "type": "project_mismatch",
+                        "code": "project_mismatch"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error(session, http::StatusCode::FORBIDDEN, body_str.as_bytes()).await
+                {
+                    let _ = session.respond_error(403).await;
+                }
+                return Ok(true);
+            }
+            Err(ProjectResolveError::InvalidHeader(msg)) => {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": msg,
+                        "type": "invalid_project_id",
+                        "code": "invalid_project_id"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await
+                {
+                    let _ = session.respond_error(400).await;
+                }
+                return Ok(true);
+            }
         }
 
         match self.state.request_semaphore.clone().try_acquire_owned() {
@@ -246,27 +357,19 @@ impl ProxyHttp for GatewayProxy {
             }
         }
 
-        ctx.authorization = Some(auth.to_string());
-        ctx.consumer = consumer_from_key.or_else(|| {
-            req_header
-                .headers
-                .get("x-consumer")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        });
+        ctx.authorization = Some(auth);
+        ctx.consumer = consumer_from_key
+            .or(consumer_from_header)
+            .or_else(|| ctx.project_id.clone());
         ctx.domain = domain_from_key;
+        let (domain_pipeline, domain_upstream_profile) =
+            self.domain_policy_fields(ctx.domain.as_deref());
 
         if !self.state.runtime.domain_within_quota(ctx.domain.as_deref()) {
             global_metrics().record_rejected("domain_quota_exceeded");
             let _ = session.respond_error(429).await;
             return Ok(true);
         }
-
-        let conversation_id_from_header = req_header
-            .headers
-            .get("x-conversation-id")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
 
         session.as_mut().enable_retry_buffering();
 
@@ -310,13 +413,8 @@ impl ProxyHttp for GatewayProxy {
             }
         };
 
-        let fallback_model = self
-            .state
-            .runtime
-            .fallback_model
-            .read()
-            .map(|m| m.clone())
-            .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        let profile = self.state.runtime.default_profile();
+        let fallback_model = profile.fallback_model.clone();
         ctx.model = payload
             .get("model")
             .and_then(|m| m.as_str())
@@ -333,18 +431,70 @@ impl ProxyHttp for GatewayProxy {
             .map(|s| s.to_string())
             .or(conversation_id_from_header);
 
-        let upstream_base_url = self
-            .state
-            .runtime
-            .upstream_base_url
-            .read()
-            .map(|u| u.clone())
-            .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
-        let reasoning_cfg = self.reasoning_config();
         ctx.prompt_cache_key = payload
             .get("prompt_cache_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+
+        let pipeline_globals = self.state.runtime.pipeline_globals();
+        let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
+        let alias_upstream_model = model_alias_entry.map(|e| e.upstream.as_str());
+        let model_alias_pipeline = model_alias_entry.map(|e| e.pipeline);
+        let alias_hit = model_alias_entry.is_some();
+
+        let pipe_ctx = PipelineRequestContext {
+            model: &ctx.model,
+            payload: Some(&payload),
+            key_pipeline: key_pipeline
+                .as_deref()
+                .map(PipelineOverride::from_str),
+            key_upstream_profile: key_upstream_profile.as_deref(),
+            domain_pipeline: domain_pipeline
+                .as_deref()
+                .map(PipelineOverride::from_str),
+            domain_upstream_profile: domain_upstream_profile.as_deref(),
+            conversation_id_header: ctx.conversation_id.as_deref(),
+            user_agent: user_agent.as_deref(),
+            alias_upstream_model,
+            model_alias_pipeline,
+        };
+        let selection = select_request_pipeline(
+            &pipeline_globals,
+            &self.state.runtime.profile_descriptors(),
+            &pipe_ctx,
+        );
+
+        if let Some(msg) = validate_pipeline_override(
+            pipe_ctx
+                .key_pipeline
+                .or(pipe_ctx.domain_pipeline)
+                .unwrap_or(PipelineOverride::Auto),
+            selection.provider,
+        ) {
+            let body = serde_json::json!({
+                "error": { "message": msg, "type": "invalid_pipeline", "code": "invalid_pipeline" }
+            });
+            let body_str = body.to_string();
+            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
+                let _ = session.respond_error(400).await;
+            }
+            return Ok(true);
+        }
+
+        ctx.request_pipeline = Some(selection.pipeline);
+        ctx.pipeline_reason = Some(selection.reason);
+        ctx.upstream_profile_id = Some(selection.upstream_profile_id.clone());
+
+        global_metrics().record_pipeline_selected(
+            selection.pipeline.as_str(),
+            &selection.upstream_profile_id,
+            selection.reason.as_str(),
+        );
+
+        let active_profile = self.active_upstream_profile(ctx);
+        let upstream_base_url = active_profile.base_url.clone();
+        let profile_fallback = active_profile.fallback_model.clone();
+        let reasoning_cfg = self.reasoning_config();
 
         // Stable ReasoningStore scope (deepseek-cursor-proxy style): header id > client sk-cc > req hash.
         let client_session = client_session_from_authorization(ctx.authorization.as_deref());
@@ -360,25 +510,6 @@ impl ProxyHttp for GatewayProxy {
                     .map(|h| format!("req:{}", &h[..h.len().min(16)]))
             });
         let stable_session = stable_session_buf.as_deref();
-        let prepared = prepare_upstream_request(
-            &payload,
-            Some(&self.state.reasoning_store),
-            &upstream_base_url,
-            &fallback_model,
-            &reasoning_cfg.thinking_mode,
-            &reasoning_cfg.reasoning_effort,
-            &reasoning_cfg.missing_reasoning_strategy,
-            reasoning_cfg.context_summary_message_threshold,
-            reasoning_cfg.prefix_validate,
-            ctx.authorization.as_deref(),
-            stable_session,
-        );
-
-        let namespace_preview: String = prepared
-            .cache_namespace
-            .chars()
-            .take(8)
-            .collect();
 
         let (stable_session_kind, stable_session_prefix) = stable_session_log_fields(
             ctx.conversation_id.as_deref(),
@@ -387,14 +518,79 @@ impl ProxyHttp for GatewayProxy {
             ctx.req_hash.as_deref(),
         );
 
+        let mut reject_missing = false;
+        let mut patched = 0usize;
+        let mut missing = 0usize;
+        let mut recovered = 0usize;
+        let mut retired_prefix = 0usize;
+        let mut upstream_model_log = ctx.model.clone();
+        let mut namespace_preview = String::new();
+        let effective_user_id = ctx.project_id.as_deref();
+
+        match selection.pipeline {
+            RequestPipeline::CursorDeepSeekV4 => {
+                let prepared = prepare_upstream_request(
+                    &payload,
+                    Some(&self.state.reasoning_store),
+                    &upstream_base_url,
+                    &profile_fallback,
+                    &reasoning_cfg.thinking_mode,
+                    &reasoning_cfg.reasoning_effort,
+                    &reasoning_cfg.missing_reasoning_strategy,
+                    reasoning_cfg.context_summary_message_threshold,
+                    reasoning_cfg.prefix_validate,
+                    ctx.authorization.as_deref(),
+                    stable_session,
+                    alias_upstream_model,
+                    effective_user_id,
+                );
+                patched = prepared.patched_reasoning_messages;
+                missing = prepared.missing_reasoning_messages;
+                recovered = prepared.recovered_reasoning_messages;
+                retired_prefix = prepared.retired_prefix_messages;
+                upstream_model_log = prepared.upstream_model.clone();
+                namespace_preview = prepared.cache_namespace.chars().take(8).collect();
+                reject_missing = missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
+                ctx.pending_recovery_notice = prepared.recovery_notice.clone();
+                ctx.prepared_request = Some(prepared.clone());
+                ctx.new_request_body = Some(serde_json::to_vec(&prepared.payload).unwrap_or_default());
+                if ctx.is_streaming && reasoning_cfg.display_reasoning {
+                    ctx.stream_accumulator = Some(StreamAccumulator::new());
+                    ctx.display_adapter = Some(CursorReasoningDisplayAdapter::new(
+                        reasoning_cfg.collapsible_reasoning,
+                    ));
+                }
+            }
+            RequestPipeline::DeepSeekLight => {
+                let light = prepare_light_request(
+                    &payload,
+                    &profile_fallback,
+                    alias_upstream_model,
+                    effective_user_id,
+                );
+                upstream_model_log = light.upstream_model.clone();
+                ctx.new_request_body = Some(serde_json::to_vec(&light.payload).unwrap_or_default());
+            }
+            RequestPipeline::GenericRelay => {
+                let generic = prepare_generic_request(&payload);
+                upstream_model_log = generic.model.clone();
+                ctx.new_request_body = Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
+            }
+        }
+
         info!(
             request_id = %ctx.request_id,
-            model = %prepared.original_model,
-            upstream_model = %prepared.upstream_model,
-            patched = prepared.patched_reasoning_messages,
-            missing = prepared.missing_reasoning_messages,
-            recovered = prepared.recovered_reasoning_messages,
-            retired_prefix = prepared.retired_prefix_messages,
+            pipeline = %selection.pipeline.as_str(),
+            upstream_profile = %selection.upstream_profile_id,
+            pipeline_reason = %selection.reason.as_str(),
+            client_model = %ctx.model,
+            model = %ctx.model,
+            upstream_model = %upstream_model_log,
+            alias_hit = alias_hit,
+            patched = patched,
+            missing = missing,
+            recovered = recovered,
+            retired_prefix = retired_prefix,
             reasoning_strategy = %reasoning_cfg.missing_reasoning_strategy,
             cache_namespace = %namespace_preview,
             stable_session_kind = %stable_session_kind,
@@ -402,10 +598,6 @@ impl ProxyHttp for GatewayProxy {
             consumer = ?ctx.consumer,
             "Prepared upstream request"
         );
-
-        // Align with deepseek-cursor-proxy: only `reject` returns 409; recover forwards after repair.
-        let reject_missing = prepared.missing_reasoning_messages > 0
-            && reasoning_cfg.missing_reasoning_strategy == "reject";
 
         // #region agent log
         let req_hash_short = ctx
@@ -428,13 +620,14 @@ impl ProxyHttp for GatewayProxy {
                 "last_user_fp": last_user_message_fingerprint(&payload),
                 "stable_session_kind": stable_session_kind,
                 "stable_session_prefix": stable_session_prefix,
-                "missing": prepared.missing_reasoning_messages,
-                "patched": prepared.patched_reasoning_messages,
-                "recovered": prepared.recovered_reasoning_messages,
-                "retired_prefix": prepared.retired_prefix_messages,
-                "recovery_notice_prepared": prepared.recovery_notice.is_some(),
+                "missing": missing,
+                "patched": patched,
+                "recovered": recovered,
+                "retired_prefix": retired_prefix,
+                "recovery_notice_prepared": ctx.pending_recovery_notice.is_some(),
                 "strategy": reasoning_cfg.missing_reasoning_strategy,
                 "reject_missing": reject_missing,
+                "pipeline": selection.pipeline.as_str(),
                 "retry_buffer_truncated": ctx.upstream_retry_buffer_truncated,
             }),
         );
@@ -443,10 +636,10 @@ impl ProxyHttp for GatewayProxy {
         if reject_missing {
             warn!(
                 request_id = %ctx.request_id,
-                missing = prepared.missing_reasoning_messages,
+                missing = missing,
                 "Strict missing-reasoning mode rejected request"
             );
-            let body = missing_reasoning_error_json(prepared.missing_reasoning_messages);
+            let body = missing_reasoning_error_json(missing);
             // #region agent log
             debug_agent_log(
                 "RM",
@@ -454,7 +647,7 @@ impl ProxyHttp for GatewayProxy {
                 "rejected missing reasoning before upstream",
                 serde_json::json!({
                     "request_id": ctx.request_id,
-                    "missing": prepared.missing_reasoning_messages,
+                    "missing": missing,
                     "status": 409,
                 }),
             );
@@ -465,17 +658,6 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
-        if ctx.is_streaming {
-            ctx.stream_accumulator = Some(StreamAccumulator::new());
-            if reasoning_cfg.display_reasoning {
-                ctx.display_adapter = Some(CursorReasoningDisplayAdapter::new(
-                    reasoning_cfg.collapsible_reasoning,
-                ));
-            }
-        }
-
-        ctx.pending_recovery_notice = prepared.recovery_notice.clone();
-
         // #region agent log
         debug_agent_log(
             "H-B",
@@ -484,13 +666,13 @@ impl ProxyHttp for GatewayProxy {
             serde_json::json!({
                 "request_id": ctx.request_id,
                 "req_hash": req_hash_short,
-                "recovery_notice_prepared": prepared.recovery_notice.is_some(),
+                "recovery_notice_prepared": ctx.pending_recovery_notice.is_some(),
                 "pending_recovery_notice": ctx.pending_recovery_notice.is_some(),
             }),
         );
         // #endregion
 
-        let new_body = serde_json::to_vec(&prepared.payload).unwrap_or_default();
+        let new_body = ctx.new_request_body.clone().unwrap_or(full_body);
         ctx.upstream_outbound_body_len = new_body.len();
         // #region agent log
         let outbound_fp: String = {
@@ -499,11 +681,13 @@ impl ProxyHttp for GatewayProxy {
             let h = hex::encode(hasher.finalize());
             h[..h.len().min(8)].to_string()
         };
-        let upstream_msg_count = prepared
-            .payload
-            .get("messages")
-            .and_then(|m| m.as_array())
-            .map(|a| a.len())
+        let upstream_msg_count = serde_json::from_slice::<serde_json::Value>(&new_body)
+            .ok()
+            .and_then(|v| {
+                v.get("messages")
+                    .and_then(|m| m.as_array())
+                    .map(|a| a.len())
+            })
             .unwrap_or(0);
         debug_agent_log(
             "H-G",
@@ -518,8 +702,8 @@ impl ProxyHttp for GatewayProxy {
                 "outbound_bytes": ctx.upstream_outbound_body_len,
                 "outbound_fp": outbound_fp,
                 "last_user_fp": last_user_message_fingerprint(&payload),
-                "recovered": prepared.recovered_reasoning_messages,
-                "retired_prefix": prepared.retired_prefix_messages,
+                "recovered": recovered,
+                "retired_prefix": retired_prefix,
             }),
         );
         // #endregion
@@ -561,9 +745,17 @@ impl ProxyHttp for GatewayProxy {
             .read()
             .map(|f| f.clone())
             .unwrap_or_default();
-        if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
-            &full_body,
+        let cache_key_body = ctx
+            .original_request_body
+            .as_deref()
+            .expect("original_request_body set");
+        let cache_namespace = effective_cache_namespace(
             self.state.cache_key_namespace.as_deref(),
+            ctx.project_id.as_deref(),
+        );
+        if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
+            cache_key_body,
+            cache_namespace.as_deref(),
             &fingerprint,
         ) {
             ctx.cache_key = Some(cache_key.clone());
@@ -587,6 +779,8 @@ impl ProxyHttp for GatewayProxy {
                     );
                     ctx.cache_tier = Some(tier);
                     ctx.cache_hit = Some(entry.clone());
+                    ctx.last_input_tokens = entry.usage.prompt_tokens;
+                    ctx.last_output_tokens = entry.usage.completion_tokens;
                     global_metrics().record_latency(
                         crab_metrics::LatencyKind::CacheFetch,
                         ctx.request_start.elapsed(),
@@ -681,8 +875,9 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
 
-            if let Some(semantic_cache) = &self.state.semantic_cache {
-                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(&full_body) {
+            if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
+                if let Some(semantic_cache) = &self.state.semantic_cache {
+                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(cache_key_body) {
                     if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array())
                     {
                         if let Some(query_text) = build_semantic_query_text(messages) {
@@ -712,7 +907,9 @@ impl ProxyHttp for GatewayProxy {
                             }
 
                             if gate_decision == GateDecision::Pass {
-                                if let Some(entry) = semantic_cache.search(&query_text).await {
+                                if let Some(entry) =
+                                    semantic_cache.search(&query_text, ctx.project_id.as_deref()).await
+                                {
                                     // Model guard: verify the cached entry's model matches
                                     if entry.model != ctx.model {
                                         global_metrics().record_semantic_cache_rejected();
@@ -739,6 +936,8 @@ impl ProxyHttp for GatewayProxy {
 
                                         ctx.cache_tier = Some(CacheTier::L2Semantic);
                                         ctx.cache_hit = Some(entry.clone());
+                                        ctx.last_input_tokens = entry.usage.prompt_tokens;
+                                        ctx.last_output_tokens = entry.usage.completion_tokens;
                                         global_metrics().record_cache_hit(
                                             CacheTier::L2Semantic,
                                             &ctx.model,
@@ -783,6 +982,7 @@ impl ProxyHttp for GatewayProxy {
                             }
                         }
                     }
+                }
                 }
             }
 
@@ -849,6 +1049,8 @@ impl ProxyHttp for GatewayProxy {
 
                             ctx.cache_tier = Some(tier);
                             ctx.cache_hit = Some(entry.clone());
+                            ctx.last_input_tokens = entry.usage.prompt_tokens;
+                            ctx.last_output_tokens = entry.usage.completion_tokens;
                             global_metrics().record_coalesced_request();
                             global_metrics().record_latency(
                                 crab_metrics::LatencyKind::CacheFetch,
@@ -923,8 +1125,6 @@ impl ProxyHttp for GatewayProxy {
             }
         }
 
-        ctx.prepared_request = Some(prepared);
-
         if !self.try_acquire_upstream_key(ctx) {
             let body = upstream_pool_exhausted_error_json();
             if !send_json_error_with_retry_after(session, http::StatusCode::SERVICE_UNAVAILABLE, &body, 60)
@@ -944,12 +1144,8 @@ impl ProxyHttp for GatewayProxy {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         if ctx.is_models_list {
-            let router = self
-                .state
-                .runtime
-                .router
-                .read()
-                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let profile = self.active_upstream_profile(ctx);
+            let router = &profile.router;
             let backend = router
                 .backends()
                 .first()
@@ -997,14 +1193,11 @@ impl ProxyHttp for GatewayProxy {
         );
 
         let body_pck = ctx.prompt_cache_key.as_deref();
-        let affinity_key = extract_affinity_key(&headers, &client_ip, body_pck);
+        let affinity_key =
+            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref());
 
-        let router = self
-            .state
-            .runtime
-            .router
-            .read()
-            .map_err(|_| Error::new(ErrorType::InternalError))?;
+        let profile = self.active_upstream_profile(ctx);
+        let router = &profile.router;
 
         // Check if we have health information to filter by
         let backend = {
@@ -1354,6 +1547,8 @@ impl ProxyHttp for GatewayProxy {
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
                         ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
+                        ctx.last_input_tokens = usage.prompt_tokens;
+                        ctx.last_output_tokens = usage.completion_tokens;
                         ctx.last_prompt_cache_hit_tokens = usage.prompt_cache_hit_tokens;
                         ctx.last_prompt_cache_miss_tokens = usage.prompt_cache_miss_tokens;
                         record_usage_metrics(
@@ -1386,6 +1581,7 @@ impl ProxyHttp for GatewayProxy {
 
             if let Some(upstream_start) = ctx.upstream_start {
                 let latency = upstream_start.elapsed();
+                ctx.upstream_latency_ms = Some(latency.as_secs_f64() * 1000.0);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -1452,6 +1648,8 @@ impl ProxyHttp for GatewayProxy {
                             .unwrap_or(0),
                     };
                     ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
+                    ctx.last_input_tokens = usage_data.prompt_tokens;
+                    ctx.last_output_tokens = usage_data.completion_tokens;
                     ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
                     ctx.last_prompt_cache_miss_tokens = usage_data.prompt_cache_miss_tokens;
                     record_usage_metrics(
@@ -1508,9 +1706,14 @@ impl ProxyHttp for GatewayProxy {
                                             ctx.is_streaming,
                                         );
 
+                                        let project_id = ctx.project_id.clone();
                                         tokio::spawn(async move {
                                             if let Err(e) = semantic_cache
-                                                .insert(&query_text, &entry_clone)
+                                                .insert(
+                                                    &query_text,
+                                                    &entry_clone,
+                                                    project_id.as_deref(),
+                                                )
                                                 .await
                                             {
                                                 warn!(error = %e, "Failed to insert into semantic cache");
@@ -1554,6 +1757,7 @@ impl ProxyHttp for GatewayProxy {
 
             if let Some(upstream_start) = ctx.upstream_start {
                 let latency = upstream_start.elapsed();
+                ctx.upstream_latency_ms = Some(latency.as_secs_f64() * 1000.0);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -1658,10 +1862,15 @@ impl ProxyHttp for GatewayProxy {
                                                 true,
                                             );
                                             let query_text = query_text.to_string();
+                                            let project_id = ctx.project_id.clone();
 
                                             tokio::spawn(async move {
                                                 if let Err(e) = semantic_cache
-                                                    .insert(&query_text, &entry_for_semantic)
+                                                    .insert(
+                                                        &query_text,
+                                                        &entry_for_semantic,
+                                                        project_id.as_deref(),
+                                                    )
                                                     .await
                                                 {
                                                     warn!(error = %e, "Failed to insert streaming response into semantic cache");
@@ -1754,6 +1963,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.conversation_id.clone(),
                         ctx.consumer.clone(),
                         ctx.domain.clone(),
+                        ctx.project_id.clone(),
                         &ctx.model,
                         ctx.total_tokens as usize,
                         duration.as_secs_f64() * 1000.0,
@@ -1769,6 +1979,15 @@ impl ProxyHttp for GatewayProxy {
                     let miss = ctx.last_prompt_cache_miss_tokens;
                     if hit + miss > 0 {
                         entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
+                    }
+                    entry.upstream_latency_ms = ctx.upstream_latency_ms;
+                    entry.ttft_ms = ctx.ttft.map(|d| d.as_secs_f64() * 1000.0);
+                    if ctx.last_input_tokens > 0 || ctx.last_output_tokens > 0 {
+                        entry.input_tokens = Some(ctx.last_input_tokens);
+                        entry.output_tokens = Some(ctx.last_output_tokens);
+                        entry.prompt_tokens = ctx
+                            .last_input_tokens
+                            .saturating_add(ctx.last_output_tokens) as usize;
                     }
                     trace_logger.log(entry);
                 }
@@ -1901,6 +2120,10 @@ async fn send_json_error(session: &mut Session, status: http::StatusCode, body: 
     send_json_error_inner(session, status, body, None).await
 }
 
+async fn send_json_ok(session: &mut Session, body: &[u8]) -> bool {
+    send_json_error_inner(session, http::StatusCode::OK, body, None).await
+}
+
 async fn send_json_error_inner(
     session: &mut Session,
     status: http::StatusCode,
@@ -1943,7 +2166,7 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
     let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
     let _ = header.insert_header(
         "access-control-allow-headers",
-        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer",
+        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer, X-Project-Id",
     );
     let _ = header.insert_header("access-control-max-age", "86400");
     let _ = header.insert_header("content-length", "0");

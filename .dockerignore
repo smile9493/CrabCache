@@ -1,4 +1,6 @@
 # Docker build context — exclude local toolchains and build artifacts
+cursor-deepseek
+deepseek-cursor-proxy
 .git
 .github
 target

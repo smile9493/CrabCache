@@ -358,4 +358,26 @@ impl GatewayAdminClient {
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
+
+    pub async fn get_pipeline_runtime(&self) -> Result<PipelineRuntimeConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/runtime/pipeline")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_pipeline_runtime(
+        &self,
+        req: &PipelineRuntimeConfigView,
+    ) -> Result<PipelineRuntimeConfigView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/runtime/pipeline")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
 }
