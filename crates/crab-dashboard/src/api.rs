@@ -148,6 +148,25 @@ pub async fn put_domain_policies(policies: Vec<DomainPolicy>) -> Result<Vec<Doma
     put_json(&format!("{}/domains/policies", API_BASE), &policies).await
 }
 
+pub async fn upsert_domain_policy(policy: DomainPolicy) -> Result<Vec<DomainPolicy>, String> {
+    let mut policies = fetch_domain_policies().await?;
+    if let Some(existing) = policies.iter_mut().find(|p| p.domain == policy.domain) {
+        *existing = policy;
+    } else {
+        policies.push(policy);
+    }
+    put_domain_policies(policies).await
+}
+
+pub async fn delete_domain_policy(domain: &str) -> Result<Vec<DomainPolicy>, String> {
+    let policies = fetch_domain_policies()
+        .await?
+        .into_iter()
+        .filter(|p| p.domain != domain)
+        .collect();
+    put_domain_policies(policies).await
+}
+
 pub async fn fetch_gateway_health() -> Result<GatewayHealth, String> {
     fetch_json(&format!("{}/gateway/health", API_BASE)).await
 }
@@ -158,6 +177,35 @@ pub async fn fetch_network_info() -> Result<NetworkInfo, String> {
 
 pub async fn fetch_keys() -> Result<Vec<ApiKey>, String> {
     fetch_json(&format!("{}/keys", API_BASE)).await
+}
+
+fn percent_encode_query(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", b);
+            }
+        }
+    }
+    out
+}
+
+pub async fn fetch_live_metrics(
+    consumer: &str,
+    window_secs: u32,
+) -> Result<crate::types::LiveMetricsResponse, String> {
+    let url = format!(
+        "{}/live-metrics?consumer={}&window_secs={}&bucket_secs=5",
+        API_BASE,
+        percent_encode_query(consumer),
+        window_secs
+    );
+    fetch_json(&url).await
 }
 
 pub async fn create_key(req: &CreateKeyRequest) -> Result<ApiKey, String> {
@@ -288,4 +336,14 @@ pub async fn update_fingerprint(
 
 pub async fn update_stream_cache(req: &StreamCacheToggle) -> Result<StreamCacheToggle, String> {
     put_json(&format!("{}/cache/stream_cache", API_BASE), req).await
+}
+
+pub async fn fetch_pipeline_runtime() -> Result<PipelineRuntimeConfig, String> {
+    fetch_json(&format!("{}/runtime/pipeline", API_BASE)).await
+}
+
+pub async fn update_pipeline_runtime(
+    req: &PipelineRuntimeConfig,
+) -> Result<PipelineRuntimeConfig, String> {
+    put_json(&format!("{}/runtime/pipeline", API_BASE), req).await
 }

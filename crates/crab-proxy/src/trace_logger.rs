@@ -20,7 +20,16 @@ pub struct SanitizedLogEntry {
     pub domain: Option<String>,
     pub model: String,
     pub prompt_tokens: usize,
+    /// End-to-end latency (client request start → logging).
     pub latency_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     pub cache_hit: bool,
     pub cache_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +82,10 @@ impl SanitizedLogEntry {
             model: model.to_string(),
             prompt_tokens,
             latency_ms,
+            upstream_latency_ms: None,
+            ttft_ms: None,
+            input_tokens: None,
+            output_tokens: None,
             cache_hit,
             cache_tier,
             retired_prefix_messages: None,

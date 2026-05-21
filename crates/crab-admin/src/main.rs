@@ -6,6 +6,7 @@ mod network;
 mod openresty;
 mod persist;
 mod trace_log;
+mod live_metrics;
 mod routes;
 mod state;
 mod types;

@@ -69,6 +69,8 @@ pub struct AppState {
     /// Last successful upstream reconcile from gateway Management API.
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
     pub gateway_probe_cache: RwLock<Option<(Instant, GatewayProbe)>>,
+    /// Shared parsed trace tail for live-metrics (1s TTL, mtime-invalidated).
+    pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -325,6 +327,7 @@ impl AppState {
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
+            live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             domain_policies: RwLock::new(
                 loaded
                     .domain_policies
@@ -353,6 +356,8 @@ impl AppState {
                 monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                 min_hit_rate: p.min_hit_rate,
                 enabled: p.enabled,
+                pipeline: None,
+                upstream_profile: None,
             })
             .collect();
         if let Err(e) = self

@@ -227,6 +227,11 @@ pub struct GatewayContext {
     pub req_hash: Option<String>,
     pub content_length: usize,
     pub total_tokens: u64,
+    /// Last known prompt/completion tokens (upstream usage or cache entry).
+    pub last_input_tokens: u64,
+    pub last_output_tokens: u64,
+    /// Upstream body completion latency (response headers → EOS), miss paths only.
+    pub upstream_latency_ms: Option<f64>,
     pub conversation_id: Option<String>,
     /// OpenAI-style `prompt_cache_key` from request body (affinity + L3 stickiness).
     pub prompt_cache_key: Option<String>,
@@ -286,6 +291,9 @@ impl GatewayContext {
             req_hash: None,
             content_length: 0,
             total_tokens: 0,
+            last_input_tokens: 0,
+            last_output_tokens: 0,
+            upstream_latency_ms: None,
             conversation_id: None,
             prompt_cache_key: None,
             last_prompt_cache_hit_tokens: 0,

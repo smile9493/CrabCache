@@ -169,7 +169,7 @@ impl GatewayProxy {
         if ctx.upstream_key_guard.is_some() {
             return true;
         }
-        let pool = self.active_upstream_profile(ctx).upstream_pool.clone();
+        let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
         match pool.acquire() {
             Some(guard) => {
                 ctx.upstream_miss = true;
@@ -717,6 +717,8 @@ impl ProxyHttp for GatewayProxy {
                     );
                     ctx.cache_tier = Some(tier);
                     ctx.cache_hit = Some(entry.clone());
+                    ctx.last_input_tokens = entry.usage.prompt_tokens;
+                    ctx.last_output_tokens = entry.usage.completion_tokens;
                     global_metrics().record_latency(
                         crab_metrics::LatencyKind::CacheFetch,
                         ctx.request_start.elapsed(),
@@ -870,6 +872,8 @@ impl ProxyHttp for GatewayProxy {
 
                                         ctx.cache_tier = Some(CacheTier::L2Semantic);
                                         ctx.cache_hit = Some(entry.clone());
+                                        ctx.last_input_tokens = entry.usage.prompt_tokens;
+                                        ctx.last_output_tokens = entry.usage.completion_tokens;
                                         global_metrics().record_cache_hit(
                                             CacheTier::L2Semantic,
                                             &ctx.model,
@@ -981,6 +985,8 @@ impl ProxyHttp for GatewayProxy {
 
                             ctx.cache_tier = Some(tier);
                             ctx.cache_hit = Some(entry.clone());
+                            ctx.last_input_tokens = entry.usage.prompt_tokens;
+                            ctx.last_output_tokens = entry.usage.completion_tokens;
                             global_metrics().record_coalesced_request();
                             global_metrics().record_latency(
                                 crab_metrics::LatencyKind::CacheFetch,
@@ -1476,6 +1482,8 @@ impl ProxyHttp for GatewayProxy {
                 for event in &events {
                     if let Some(usage) = event.parse_usage() {
                         ctx.total_tokens += usage.prompt_tokens + usage.completion_tokens;
+                        ctx.last_input_tokens = usage.prompt_tokens;
+                        ctx.last_output_tokens = usage.completion_tokens;
                         ctx.last_prompt_cache_hit_tokens = usage.prompt_cache_hit_tokens;
                         ctx.last_prompt_cache_miss_tokens = usage.prompt_cache_miss_tokens;
                         record_usage_metrics(
@@ -1508,6 +1516,7 @@ impl ProxyHttp for GatewayProxy {
 
             if let Some(upstream_start) = ctx.upstream_start {
                 let latency = upstream_start.elapsed();
+                ctx.upstream_latency_ms = Some(latency.as_secs_f64() * 1000.0);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -1574,6 +1583,8 @@ impl ProxyHttp for GatewayProxy {
                             .unwrap_or(0),
                     };
                     ctx.total_tokens += usage_data.prompt_tokens + usage_data.completion_tokens;
+                    ctx.last_input_tokens = usage_data.prompt_tokens;
+                    ctx.last_output_tokens = usage_data.completion_tokens;
                     ctx.last_prompt_cache_hit_tokens = usage_data.prompt_cache_hit_tokens;
                     ctx.last_prompt_cache_miss_tokens = usage_data.prompt_cache_miss_tokens;
                     record_usage_metrics(
@@ -1676,6 +1687,7 @@ impl ProxyHttp for GatewayProxy {
 
             if let Some(upstream_start) = ctx.upstream_start {
                 let latency = upstream_start.elapsed();
+                ctx.upstream_latency_ms = Some(latency.as_secs_f64() * 1000.0);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -1891,6 +1903,15 @@ impl ProxyHttp for GatewayProxy {
                     let miss = ctx.last_prompt_cache_miss_tokens;
                     if hit + miss > 0 {
                         entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
+                    }
+                    entry.upstream_latency_ms = ctx.upstream_latency_ms;
+                    entry.ttft_ms = ctx.ttft.map(|d| d.as_secs_f64() * 1000.0);
+                    if ctx.last_input_tokens > 0 || ctx.last_output_tokens > 0 {
+                        entry.input_tokens = Some(ctx.last_input_tokens);
+                        entry.output_tokens = Some(ctx.last_output_tokens);
+                        entry.prompt_tokens = ctx
+                            .last_input_tokens
+                            .saturating_add(ctx.last_output_tokens) as usize;
                     }
                     trace_logger.log(entry);
                 }

@@ -15,7 +15,8 @@ use crab_control::{
     UpstreamKeyInput, UpstreamKeysPutMode, parse_upstream_base_url, validate_deepseek_key,
 };
 use crate::metrics_history::{
-    domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets, fetch_gateway_metrics_body,
+    domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
+    fetch_gateway_metrics_body,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -123,6 +124,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
+        .route("/api/admin/live-metrics", get(get_live_metrics))
         .layer(middleware::from_fn(admin_auth))
         .with_state(state)
 }
@@ -863,6 +865,8 @@ async fn create_key(
             enabled: true,
             token: None,
             domain: req.domain.clone(),
+            pipeline: None,
+            upstream_profile: None,
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -1637,6 +1641,45 @@ fn empty_trace_analysis() -> TraceAnalysis {
         top_models: vec![],
         cluster_distribution: vec![],
     }
+}
+
+async fn get_live_metrics(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<LiveMetricsQuery>,
+) -> Result<Json<LiveMetricsResponse>, StatusCode> {
+    let consumer = query.consumer.trim();
+    if consumer.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = crate::trace_log::trace_log_path();
+    let trace_available = crate::trace_log::trace_log_available(&path);
+    let (window_secs, bucket_secs) =
+        crate::live_metrics::clamp_live_params(query.window_secs, query.bucket_secs);
+
+    let consumer = consumer.to_string();
+    let path_for_blocking = path.clone();
+    let state = Arc::clone(&state);
+    let entries = tokio::task::spawn_blocking(move || {
+        crate::trace_log::load_live_trace_entries_cached(
+            &state.live_trace_cache,
+            &path_for_blocking,
+            window_secs,
+            crate::trace_log::LIVE_TRACE_TAIL_BYTES,
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let available_consumers = crate::trace_log::distinct_consumers(entries.as_ref(), 50);
+    let resp = crate::live_metrics::aggregate_live_metrics(
+        entries.as_ref(),
+        &consumer,
+        window_secs,
+        bucket_secs,
+        trace_available,
+        available_consumers,
+    );
+    Ok(Json(resp))
 }
 
 async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<TraceAnalysis> {

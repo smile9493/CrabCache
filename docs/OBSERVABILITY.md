@@ -44,12 +44,39 @@ Environment:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CRABCACHE_GATEWAY_METRICS_URL` | `http://127.0.0.1:9090/metrics` | Prometheus scrape target |
+| `CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS` | `2` | Admin dedupes scrapes within this window (overview polls every 5s) |
+| `CRABCACHE_GATEWAY_METRICS_STALE_SECS` | `30` | On scrape failure, serve last good body up to this age instead of HTTP 503 |
 | `CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS` | `60` | History ring sample interval |
 | `CRABCACHE_TRACE_LOG_PATH` | `/app/logs/trace.jsonl` | Shadow log for Trace/Logs pages |
 | `CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS` | `30` | Min interval for `GET /upstream/config` gateway reconcile |
 | `CRABCACHE_GATEWAY_PROBE_TTL_SECS` | `3` | Cache TTL for bundled `/v1/ready` + `/v1/status` in overview |
 
 Trace analysis: `GET /api/admin/trace/analysis?hours=24` (default 24; `hours=0` = full file).
+
+### Live client monitor (`/live`)
+
+Dashboard page **实时监控 / Live** polls **`GET /api/admin/live-metrics`** every **2s** (per selected Consumer).
+
+| Query | Default | Description |
+|-------|---------|-------------|
+| `consumer` | (required) | API key `name` / trace `consumer` |
+| `window_secs` | `300` | Last 5 minutes (clamped 60–900) |
+| `bucket_secs` | `5` | Aggregation bucket width |
+
+Response: `buckets[]` (avg e2e / upstream / TTFT latency, token sums per bucket), `summary`, optional `latest` point.
+
+| UI series | Trace field | Notes |
+|-----------|-------------|-------|
+| E2E latency | `latency_ms` | Client → gateway wall time |
+| Upstream latency | `upstream_latency_ms` | Gateway → upstream body EOS; **miss only** |
+| TTFT | `ttft_ms` | Streaming first token |
+| Tokens | `input_tokens` / `output_tokens` | From upstream `usage`; cache hits use cached entry usage |
+
+Requires `[trace_logging] enabled = true` and API keys with a **name** (consumer label). Admin tails the last **2MB** of `trace.jsonl` via **seek** (not full-file read).
+
+**Performance:** parsed tail is cached in `crab-admin` for **1s** (invalidated on file mtime or window change). Dashboard polls every **2s** (5m window) or **3s** (15m window) and pauses when the browser tab is hidden.
+
+**Response fields:** `available_consumers` (up to 50 names from trace), `buckets[].upstream_latency_ms` / `ttft_ms` as `null` when the bucket has no upstream/TTFT samples (cache hits).
 
 ## Shadow log
 
@@ -63,7 +90,7 @@ max_lines = 10000
 max_files = 5
 ```
 
-Each line is a `SanitizedLogEntry` (no raw body). Includes `consumer` (API key name), `cache_tier`, `prompt_cache_hit_ratio`.
+Each line is a `SanitizedLogEntry` (no raw body). Includes `consumer` (API key name), `cache_tier`, `prompt_cache_hit_ratio`, and (current gateway builds) `upstream_latency_ms`, `ttft_ms`, `input_tokens`, `output_tokens`.
 
 Docker: gateway writes to `gateway_logs` volume; admin mounts it read-only.
 
@@ -117,7 +144,7 @@ Log response headers from the gateway:
 | Browser **502** on the whole page (document request) | OpenResty cannot reach `crab-admin` | `docker compose --profile admin up -d`; `curl -sf http://127.0.0.1:18001/`; `proxy_pass` must be `127.0.0.1:18001` (not `8080` / wrong port). OpenResty `error.log`: `connect() failed (111: Connection refused)`. |
 | Overview card **HTTP 503** | `GET /api/admin/overview` failed building metrics | Gateway `:9090/metrics` and `CRABCACHE_GATEWAY_METRICS_URL`; `docker compose ps` gateway health. |
 | Overview card **HTTP 502** (API, not HTML) | Rare; upstream proxy reset while admin was blocked | Admin logs; large `trace.jsonl` (tail-read capped at 32MB); reduce concurrent refreshes. |
-| Intermittent failures on refresh | Request storm (mitigated in recent builds) | Overview should only call `/api/admin/overview` (no extra `/upstream/config` on load); gateway Management cached ~3s. |
+| Intermittent failures on refresh | Metrics scrape timeout or gateway `:9090` blocked under load | Overview polls `/api/admin/overview` only; admin caches metrics for 2s (`CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS`) and serves stale up to 30s (`CRABCACHE_GATEWAY_METRICS_STALE_SECS`) on transient errors. Confirm `CRABCACHE_GATEWAY_METRICS_URL` (Docker: `http://gateway:9090/metrics`). |
 
 Quick checks:
 

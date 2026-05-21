@@ -9,9 +9,11 @@ use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache_ops::CacheOpsPage;
 use crate::pages::domains::{DomainDetailPage, DomainsListPage};
 use crate::pages::keys::KeysPage;
+use crate::pages::live::LivePage;
 use crate::pages::logs::LogsPage;
 use crate::pages::models::ModelsPage;
 use crate::pages::overview::OverviewPage;
+use crate::pages::pipeline::PipelinePage;
 use crate::pages::routing::RoutingPage;
 use crate::pages::trace::TracePage;
 use crate::pages::upstream::UpstreamPage;
@@ -45,9 +47,11 @@ fn AuthenticatedShell() -> impl IntoView {
                 <main class="main-content overflow-y-auto theme-scrollbar">
                     <Routes fallback=|| view! { <NotFound /> }>
                         <Route path=path!("/") view=OverviewPage />
+                        <Route path=path!("/live") view=LivePage />
                         <Route path=path!("/keys") view=KeysPage />
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/routing") view=RoutingPage />
+                        <Route path=path!("/pipeline") view=PipelinePage />
                         <Route path=path!("/cache") view=CacheOpsPage />
                         <Route path=path!("/logs") view=LogsPage />
                         <Route path=path!("/trace") view=TracePage />
