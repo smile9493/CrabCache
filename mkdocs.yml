@@ -1,0 +1,73 @@
+site_name: CrabCache 文档
+site_url: https://smile9493.github.io/CrabCache/
+repo_url: https://github.com/smile9493/CrabCache
+repo_name: smile9493/CrabCache
+edit_uri: edit/main/docs/
+site_description: CrabCache - 基于 Pingora 的 DeepSeek V4 高性能 Rust API 网关文档
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换暗色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换亮色模式
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+
+nav:
+  - 首页: index.md
+  - 入门指南:
+      - Cursor + DeepSeek 接入: CURSOR_SETUP.md
+      - 从 new-api 迁移: NEW_API_MIGRATION.md
+      - Agent Key 迁移: AGENT_CLIENT_KEY_MIGRATION.md
+  - DeepSeek 集成:
+      - 上游前缀缓存 L3: DEEPSEEK_PREFIX_CACHE.md
+      - Cursor Proxy 对照: DEEPSEEK_CURSOR_PROXY_PARITY.md
+      - 功能吸收计划: CURSOR_DEEPSEEK_ABSORPTION_PLAN.md
+  - 运维管理:
+      - 多租户隔离: MULTI_TENANT.md
+      - 持久化指南: PERSISTENCE.md
+      - 推理内容存储: REASONING_STORE.md
+      - 可观测性: OBSERVABILITY.md
+  - 部署指南:
+      - 1Panel + OpenResty: deploy-1panel-openresty.md
+      - 网络地址配置: network-config.md
+      - 自签名证书: self-signed-cert.md
