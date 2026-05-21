@@ -1021,7 +1021,6 @@ fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigVie
         thinking_mode: config.thinking_mode.clone(),
         reasoning_effort: config.reasoning_effort.clone(),
         missing_reasoning_strategy: config.missing_reasoning_strategy.clone(),
-        missing_reasoning_on_fill_only: config.missing_reasoning_on_fill_only.clone(),
         display_reasoning: config.display_reasoning,
         collapsible_reasoning: config.collapsible_reasoning,
     }
@@ -1055,16 +1054,12 @@ async fn put_reasoning_runtime(
         )
             .into_response());
     }
-    if req.missing_reasoning_strategy != "recover"
-        && req.missing_reasoning_strategy != "reject"
-        && req.missing_reasoning_strategy != "fill_only"
-    {
+    if req.missing_reasoning_strategy != "recover" && req.missing_reasoning_strategy != "reject" {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error:
-                    "missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\""
-                        .to_string(),
+                error: "missing_reasoning_strategy must be \"recover\" or \"reject\" (deepseek-cursor-proxy)"
+                    .to_string(),
             }),
         )
             .into_response());
@@ -1077,9 +1072,6 @@ async fn put_reasoning_runtime(
     cfg.thinking_mode = req.thinking_mode;
     cfg.reasoning_effort = req.reasoning_effort;
     cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
-    if !req.missing_reasoning_on_fill_only.is_empty() {
-        cfg.missing_reasoning_on_fill_only = req.missing_reasoning_on_fill_only;
-    }
     cfg.display_reasoning = req.display_reasoning;
     cfg.collapsible_reasoning = req.collapsible_reasoning;
 

@@ -156,6 +156,25 @@ pub fn conversation_scope(messages: &[Value], namespace: &str) -> String {
     sha256_json(&payload)
 }
 
+/// ReasoningStore scope: prefer stable client session id (`x-conversation-id` / `prompt_cache_key`)
+/// so keys survive growing message history; fall back to hashing messages when absent.
+pub fn resolve_reasoning_scope(
+    stable_session_id: Option<&str>,
+    messages_for_scope: &[Value],
+    cache_namespace: &str,
+) -> String {
+    if let Some(id) = stable_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if cache_namespace.is_empty() {
+            format!("session:{id}")
+        } else {
+            let ns_tag = &sha256_hex(cache_namespace)[..16];
+            format!("session:{id}:ns:{ns_tag}")
+        }
+    } else {
+        conversation_scope(messages_for_scope, cache_namespace)
+    }
+}
+
 pub fn turn_context_signature(prior_messages: &[Value]) -> String {
     let last_user_index = prior_messages
         .iter()
@@ -278,6 +297,24 @@ mod tests {
         let scope1 = conversation_scope(&msgs, "ns");
         let scope2 = conversation_scope(&msgs, "ns");
         assert_eq!(scope1, scope2);
+    }
+
+    #[test]
+    fn test_resolve_reasoning_scope_stable_across_growing_history() {
+        let short = vec![json!({"role": "user", "content": "hi"})];
+        let long = vec![
+            json!({"role": "user", "content": "hi"}),
+            json!({"role": "assistant", "content": "ok"}),
+            json!({"role": "user", "content": "more"}),
+        ];
+        let legacy_short = conversation_scope(&short, "ns");
+        let legacy_long = conversation_scope(&long, "ns");
+        assert_ne!(legacy_short, legacy_long);
+
+        let stable_short = resolve_reasoning_scope(Some("conv-abc"), &short, "ns");
+        let stable_long = resolve_reasoning_scope(Some("conv-abc"), &long, "ns");
+        assert_eq!(stable_short, stable_long);
+        assert!(stable_short.starts_with("session:conv-abc:"));
     }
 
     #[test]

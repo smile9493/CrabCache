@@ -7,7 +7,8 @@ mod streaming;
 mod transform;
 
 pub use keys::{
-    conversation_scope, message_signature, portable_reasoning_keys, scoped_reasoning_keys,
+    conversation_scope, message_signature, portable_reasoning_keys, resolve_reasoning_scope,
+    scoped_reasoning_keys,
     tool_call_ids, tool_call_names, tool_call_signature,
 };
 pub use normalize::{PreparedRequest, normalize_messages, prepare_upstream_request};

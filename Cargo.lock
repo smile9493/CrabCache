@@ -1020,6 +1020,7 @@ dependencies = [
  "anyhow",
  "crab-metrics",
  "hex",
+ "redis",
  "regex",
  "rusqlite",
  "serde",

@@ -67,7 +67,6 @@ pub struct GatewayMetrics {
     pub upstream_key_inflight: IntGaugeVec,
     pub upstream_key_retries: IntCounterVec,
     pub reasoning_store_lookups: IntCounterVec,
-    pub reasoning_recovery_fallback: IntCounter,
     pub prefix_break: IntCounter,
     pub prefix_block_drift: IntCounter,
     pub context_summary_appended: IntCounter,
@@ -228,11 +227,6 @@ impl GatewayMetrics {
             &["result"],
         )?;
 
-        let reasoning_recovery_fallback = IntCounter::new(
-            "gateway_reasoning_recovery_fallback_total",
-            "fill_only last-resort recovery system insertions (hurts L3 prefix)",
-        )?;
-
         let prefix_break = IntCounter::new(
             "gateway_prefix_break_total",
             "Detected non-append-only message prefix changes vs cached scope",
@@ -267,7 +261,6 @@ impl GatewayMetrics {
             upstream_key_inflight,
             upstream_key_retries,
             reasoning_store_lookups,
-            reasoning_recovery_fallback,
             prefix_break,
             prefix_block_drift,
             context_summary_appended,
@@ -293,7 +286,6 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_key_inflight.clone()))?;
         registry.register(Box::new(self.upstream_key_retries.clone()))?;
         registry.register(Box::new(self.reasoning_store_lookups.clone()))?;
-        registry.register(Box::new(self.reasoning_recovery_fallback.clone()))?;
         registry.register(Box::new(self.prefix_break.clone()))?;
         registry.register(Box::new(self.prefix_block_drift.clone()))?;
         registry.register(Box::new(self.context_summary_appended.clone()))?;
@@ -305,10 +297,6 @@ impl GatewayMetrics {
         self.reasoning_store_lookups
             .with_label_values(&[result])
             .inc();
-    }
-
-    pub fn record_reasoning_recovery_fallback(&self) {
-        self.reasoning_recovery_fallback.inc();
     }
 
     pub fn record_prefix_break(&self) {

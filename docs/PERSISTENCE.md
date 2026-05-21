@@ -34,6 +34,8 @@ Reasoning（`[reasoning].backend = "redis"`）：
 |-----|------|
 | `crab:reasoning:{logical_key}` | JSON：`{reasoning, message_json, created_at}`，带 TTL |
 
+稳定会话 scope、`x-conversation-id` / `req:hash` 与运维清单见 **[REASONING_STORE.md](./REASONING_STORE.md)**。
+
 ## 配置
 
 ### 控制面（多实例必选）

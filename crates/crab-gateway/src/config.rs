@@ -539,15 +539,9 @@ impl GatewayConfig {
 
         if let Some(reasoning) = &self.reasoning {
             let strategy = reasoning.missing_reasoning_strategy.as_str();
-            if strategy != "recover" && strategy != "reject" && strategy != "fill_only" {
+            if strategy != "recover" && strategy != "reject" {
                 errors.push(format!(
-                    "reasoning.missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\", got \"{strategy}\""
-                ));
-            }
-            let on_fill = reasoning.missing_reasoning_on_fill_only.as_str();
-            if on_fill != "omit_reasoning" && on_fill != "reject" {
-                errors.push(format!(
-                    "reasoning.missing_reasoning_on_fill_only must be \"omit_reasoning\" or \"reject\", got \"{on_fill}\""
+                    "reasoning.missing_reasoning_strategy must be \"recover\" or \"reject\" (deepseek-cursor-proxy), got \"{strategy}\""
                 ));
             }
             if reasoning.thinking_mode != "enabled" && reasoning.thinking_mode != "disabled" {

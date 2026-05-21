@@ -98,9 +98,6 @@ pub struct ReasoningConfig {
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub missing_reasoning_strategy: String,
-    /// When `missing_reasoning_strategy = "fill_only"`: `omit_reasoning` (default) or `reject`.
-    #[serde(default = "default_missing_reasoning_on_fill_only")]
-    pub missing_reasoning_on_fill_only: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
     /// `sqlite` (default) or `redis` (required for multi-instance gateway).
@@ -121,10 +118,6 @@ pub struct ReasoningConfig {
     pub prefix_validate: bool,
 }
 
-fn default_missing_reasoning_on_fill_only() -> String {
-    "omit_reasoning".to_string()
-}
-
 fn default_reasoning_backend() -> String {
     "sqlite".to_string()
 }
@@ -139,7 +132,6 @@ impl Default for ReasoningConfig {
             thinking_mode: "enabled".to_string(),
             reasoning_effort: "max".to_string(),
             missing_reasoning_strategy: "recover".to_string(),
-            missing_reasoning_on_fill_only: default_missing_reasoning_on_fill_only(),
             display_reasoning: true,
             collapsible_reasoning: true,
             backend: default_reasoning_backend(),

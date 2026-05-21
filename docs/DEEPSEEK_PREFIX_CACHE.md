@@ -21,21 +21,16 @@ L3 由 DeepSeek API 在服务端维护 KV/前缀缓存；CrabCache 通过稳定 
 
 ### Reasoning 策略（影响 L3）
 
+与 **deepseek-cursor-proxy** 一致，仅 `recover` / `reject`：
+
 | `missing_reasoning_strategy` | 行为 | L3 |
 |------------------------------|------|-----|
-| `fill_only`（推荐冲 L3） | 仅从 ReasoningStore 补全 `reasoning_content`，不截断历史 | 友好 |
-| `recover`（Cursor 兼容） | 截断 + 插入 recovery system | **破坏前缀** |
+| `recover`（默认） | 无稳定 scope 时可能截断；有 `client_key`/`x-conversation-id` 时**就地补 reasoning、不截断** | 配稳定会话时友好 |
 | `reject` | 缺 reasoning 时 409 | 不修改消息（调试） |
-
-`fill_only` 子项 `missing_reasoning_on_fill_only`：
-
-- `omit_reasoning`（默认）：仍缺失时原样转发（无 reasoning 字段），最大化 L3。
-- `reject`：仍缺失时 HTTP 409。
 
 ```toml
 [reasoning]
-missing_reasoning_strategy = "fill_only"
-missing_reasoning_on_fill_only = "omit_reasoning"
+missing_reasoning_strategy = "recover"
 # 超长对话：在尾部追加摘要 user 消息（不删除历史），0=关闭
 # context_summary_message_threshold = 200
 # prefix_validate = true  # 记录 gateway_prefix_break_total，不阻断

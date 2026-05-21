@@ -37,6 +37,61 @@ fn sanitize_for_trace(value: Option<&str>) -> Option<String> {
     })
 }
 
+/// Labels which stable ReasoningStore scope source is active (for ops / Cursor sub-agent debugging).
+fn last_user_message_fingerprint(payload: &serde_json::Value) -> Option<String> {
+    let messages = payload.get("messages")?.as_array()?;
+    let content = messages.iter().rev().find_map(|m| {
+        if m.get("role")?.as_str()? != "user" {
+            return None;
+        }
+        match m.get("content") {
+            Some(serde_json::Value::String(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    Some(hash[..hash.len().min(8)].to_string())
+}
+
+fn client_session_from_authorization(authorization: Option<&str>) -> Option<String> {
+    let auth = authorization?;
+    let token = auth.strip_prefix("Bearer ").unwrap_or(auth).trim();
+    if token.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    Some(format!("client:{}", &hash[..hash.len().min(16)]))
+}
+
+fn stable_session_log_fields(
+    conversation_id: Option<&str>,
+    prompt_cache_key: Option<&str>,
+    client_session: Option<&str>,
+    req_hash: Option<&str>,
+) -> (&'static str, Option<String>) {
+    fn prefix8(s: &str) -> String {
+        s.chars().take(8).collect()
+    }
+    if conversation_id.is_some_and(|s| !s.trim().is_empty()) {
+        return ("conversation", conversation_id.map(prefix8));
+    }
+    if prompt_cache_key.is_some_and(|s| !s.trim().is_empty()) {
+        return ("prompt_cache_key", prompt_cache_key.map(prefix8));
+    }
+    if client_session.is_some_and(|s| !s.trim().is_empty()) {
+        return ("client_key", client_session.map(prefix8));
+    }
+    if let Some(hash) = req_hash.filter(|s| !s.trim().is_empty()) {
+        let short: String = hash.chars().take(8).collect();
+        return ("req_hash", Some(short));
+    }
+    ("message_scope", None)
+}
+
 pub struct GatewayProxy {
     state: Arc<GatewayState>,
 }
@@ -291,6 +346,20 @@ impl ProxyHttp for GatewayProxy {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        // Stable ReasoningStore scope (deepseek-cursor-proxy style): header id > client sk-cc > req hash.
+        let client_session = client_session_from_authorization(ctx.authorization.as_deref());
+        let client_session_for_log = client_session.clone();
+        let stable_session_buf = ctx
+            .conversation_id
+            .clone()
+            .or(ctx.prompt_cache_key.clone())
+            .or(client_session)
+            .or_else(|| {
+                ctx.req_hash
+                    .as_ref()
+                    .map(|h| format!("req:{}", &h[..h.len().min(16)]))
+            });
+        let stable_session = stable_session_buf.as_deref();
         let prepared = prepare_upstream_request(
             &payload,
             Some(&self.state.reasoning_store),
@@ -299,10 +368,10 @@ impl ProxyHttp for GatewayProxy {
             &reasoning_cfg.thinking_mode,
             &reasoning_cfg.reasoning_effort,
             &reasoning_cfg.missing_reasoning_strategy,
-            &reasoning_cfg.missing_reasoning_on_fill_only,
             reasoning_cfg.context_summary_message_threshold,
             reasoning_cfg.prefix_validate,
             ctx.authorization.as_deref(),
+            stable_session,
         );
 
         let namespace_preview: String = prepared
@@ -310,6 +379,13 @@ impl ProxyHttp for GatewayProxy {
             .chars()
             .take(8)
             .collect();
+
+        let (stable_session_kind, stable_session_prefix) = stable_session_log_fields(
+            ctx.conversation_id.as_deref(),
+            ctx.prompt_cache_key.as_deref(),
+            client_session_for_log.as_deref(),
+            ctx.req_hash.as_deref(),
+        );
 
         info!(
             request_id = %ctx.request_id,
@@ -321,27 +397,43 @@ impl ProxyHttp for GatewayProxy {
             retired_prefix = prepared.retired_prefix_messages,
             reasoning_strategy = %reasoning_cfg.missing_reasoning_strategy,
             cache_namespace = %namespace_preview,
+            stable_session_kind = %stable_session_kind,
+            stable_session_prefix = ?stable_session_prefix,
             consumer = ?ctx.consumer,
             "Prepared upstream request"
         );
 
-        // Thinking mode requires reasoning_content on tool-call history; never forward gaps.
-        let reject_missing = reasoning_cfg.thinking_mode == "enabled"
-            && prepared.missing_reasoning_messages > 0;
+        // Align with deepseek-cursor-proxy: only `reject` returns 409; recover forwards after repair.
+        let reject_missing = prepared.missing_reasoning_messages > 0
+            && reasoning_cfg.missing_reasoning_strategy == "reject";
 
         // #region agent log
+        let req_hash_short = ctx
+            .req_hash
+            .as_deref()
+            .map(|h| h.chars().take(8).collect::<String>());
+        let message_count = payload
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
         debug_agent_log(
             "P1",
             "proxy.rs:request_filter",
             "reasoning prepare summary",
             serde_json::json!({
                 "request_id": ctx.request_id,
+                "req_hash": req_hash_short,
+                "message_count": message_count,
+                "last_user_fp": last_user_message_fingerprint(&payload),
+                "stable_session_kind": stable_session_kind,
+                "stable_session_prefix": stable_session_prefix,
                 "missing": prepared.missing_reasoning_messages,
                 "patched": prepared.patched_reasoning_messages,
                 "recovered": prepared.recovered_reasoning_messages,
                 "retired_prefix": prepared.retired_prefix_messages,
+                "recovery_notice_prepared": prepared.recovery_notice.is_some(),
                 "strategy": reasoning_cfg.missing_reasoning_strategy,
-                "on_fill_only": reasoning_cfg.missing_reasoning_on_fill_only,
                 "reject_missing": reject_missing,
                 "retry_buffer_truncated": ctx.upstream_retry_buffer_truncated,
             }),
@@ -384,8 +476,53 @@ impl ProxyHttp for GatewayProxy {
 
         ctx.pending_recovery_notice = prepared.recovery_notice.clone();
 
+        // #region agent log
+        debug_agent_log(
+            "H-B",
+            "proxy.rs:request_filter",
+            "recovery notice gate",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "req_hash": req_hash_short,
+                "recovery_notice_prepared": prepared.recovery_notice.is_some(),
+                "pending_recovery_notice": ctx.pending_recovery_notice.is_some(),
+            }),
+        );
+        // #endregion
+
         let new_body = serde_json::to_vec(&prepared.payload).unwrap_or_default();
         ctx.upstream_outbound_body_len = new_body.len();
+        // #region agent log
+        let outbound_fp: String = {
+            let mut hasher = Sha256::new();
+            hasher.update(&new_body);
+            let h = hex::encode(hasher.finalize());
+            h[..h.len().min(8)].to_string()
+        };
+        let upstream_msg_count = prepared
+            .payload
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        debug_agent_log(
+            "H-G",
+            "proxy.rs:request_filter",
+            "upstream context size (stagnation check)",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "req_hash": req_hash_short,
+                "message_count": message_count,
+                "upstream_msg_count": upstream_msg_count,
+                "inbound_bytes": ctx.content_length,
+                "outbound_bytes": ctx.upstream_outbound_body_len,
+                "outbound_fp": outbound_fp,
+                "last_user_fp": last_user_message_fingerprint(&payload),
+                "recovered": prepared.recovered_reasoning_messages,
+                "retired_prefix": prepared.retired_prefix_messages,
+            }),
+        );
+        // #endregion
         ctx.new_request_body = Some(new_body);
         ctx.upstream_retry_buffer_truncated = session.retry_buffer_truncated();
         if ctx.upstream_retry_buffer_truncated {
@@ -470,20 +607,70 @@ impl ProxyHttp for GatewayProxy {
                         cost,
                     );
 
-                    if !send_cached_response(
+                    // #region agent log
+                    let req_hash_short = ctx
+                        .req_hash
+                        .as_deref()
+                        .map(|h| h.chars().take(8).collect::<String>());
+                    debug_agent_log(
+                        "H4",
+                        "proxy.rs:request_filter",
+                        "exact cache hit before send_cached_response",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "req_hash": req_hash_short,
+                            "tier": tier.as_str(),
+                            "is_streaming": ctx.is_streaming,
+                            "entry_is_stream": entry.is_stream,
+                            "response_body_len": entry.response_body.len(),
+                            "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
+                            "elapsed_ms": ctx.request_start.elapsed().as_millis(),
+                        }),
+                    );
+                    // #endregion
+
+                    let sent_ok = send_cached_response(
                         session,
                         &entry,
                         &ctx.model,
                         ctx.is_streaming,
                         tier,
                     )
-                    .await
-                    {
+                    .await;
+
+                    // #region agent log
+                    debug_agent_log(
+                        "H5",
+                        "proxy.rs:request_filter",
+                        "send_cached_response result",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "req_hash": req_hash_short,
+                            "sent_ok": sent_ok,
+                            "tier": tier.as_str(),
+                        }),
+                    );
+                    // #endregion
+
+                    if !sent_ok {
                         let _ = session.respond_error(500).await;
                     }
 
                     return Ok(true);
                 } else {
+                    // #region agent log
+                    debug_agent_log(
+                        "H2",
+                        "proxy.rs:request_filter",
+                        "cache hit stream mode mismatch",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "is_streaming": ctx.is_streaming,
+                            "entry_is_stream": entry.is_stream,
+                            "tier": tier.as_str(),
+                        }),
+                    );
+                    // #endregion
                     debug!(
                         request_id = %ctx.request_id,
                         cache_key = %cache_key,
@@ -601,6 +788,21 @@ impl ProxyHttp for GatewayProxy {
 
             match self.state.coalescer.acquire(&cache_key).await {
                 Ok(guard) => {
+                    // #region agent log
+                    let cache_key_short: String = cache_key.chars().take(8).collect();
+                    debug_agent_log(
+                        "H-E",
+                        "proxy.rs:request_filter",
+                        "coalesce acquire",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
+                            "is_leader": guard.is_leader(),
+                            "leader_failed": guard.leader_failed(),
+                            "cache_key_prefix": cache_key_short,
+                        }),
+                    );
+                    // #endregion
                     if !guard.is_leader() {
                         ctx.is_coalesced_follower = true;
 
@@ -629,6 +831,21 @@ impl ProxyHttp for GatewayProxy {
                                 tier = ?tier,
                                 "Follower found cached response after leader completed"
                             );
+
+                            // #region agent log
+                            debug_agent_log(
+                                "H-A",
+                                "proxy.rs:request_filter",
+                                "coalesce follower cache replay",
+                                serde_json::json!({
+                                    "request_id": ctx.request_id,
+                                    "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
+                                    "tier": tier.as_str(),
+                                    "response_body_len": entry.response_body.len(),
+                                    "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
+                                }),
+                            );
+                            // #endregion
 
                             ctx.cache_tier = Some(tier);
                             ctx.cache_hit = Some(entry.clone());
@@ -1657,11 +1874,11 @@ fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
     let body = serde_json::json!({
         "error": {
             "message": format!(
-                "CrabCache is running in strict missing-reasoning mode and cannot automatically \
-                 recover this thinking-mode tool-call history because cached DeepSeek \
-                 reasoning_content is missing for {missing_count} assistant message(s). \
-                 Set missing_reasoning_strategy to \"recover\" or \"fill_only\" in [reasoning] config, or clear \
-                 the reasoning cache and retry."
+                "CrabCache cannot satisfy DeepSeek thinking-mode requirements: reasoning_content is still \
+                 missing for {missing_count} assistant message(s) after ReasoningStore fill and history recover. \
+                 Clear the reasoning cache (DELETE /v1/reasoning/cache), retry once so the gateway can store \
+                 reasoning from a successful response, or temporarily set missing_reasoning_strategy to \"recover\". \
+                 Ensure [reasoning].backend = \"redis\" for multi-instance/sub-agent retries."
             ),
             "type": "missing_reasoning_content",
             "code": "missing_reasoning_content",
@@ -1756,6 +1973,13 @@ async fn send_cached_response(
             .sse_body
             .as_ref()
             .is_some_and(|s| !cached_sse_has_nonempty_content(s));
+        let sse_source = if entry.sse_body.is_none() {
+            "json_regen"
+        } else if used_legacy_regen || saved_empty_content {
+            "legacy_regen"
+        } else {
+            "saved_sse"
+        };
         let sse_body = if let Some(ref saved) = entry.sse_body {
             if used_legacy_regen || saved_empty_content {
                 // Legacy or empty-content SSE: rebuild from JSON with reasoning folded into content.
@@ -1766,6 +1990,32 @@ async fn send_cached_response(
         } else {
             json_to_sse_stream(response_body, model)
         };
+        let json_choices = serde_json::from_slice::<serde_json::Value>(response_body)
+            .ok()
+            .and_then(|v| v.get("choices").and_then(|c| c.as_array()).map(|a| a.len()))
+            .unwrap_or(0);
+        let has_done = sse_body.windows(6).any(|w| w == b"[DONE]");
+        let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
+        // #region agent log
+        debug_agent_log(
+            "H1",
+            "proxy.rs:send_cached_response",
+            "streaming cache hit SSE synthesis",
+            serde_json::json!({
+                "sse_source": sse_source,
+                "sse_len": sse_body.len(),
+                "response_body_len": response_body.len(),
+                "used_legacy_regen": used_legacy_regen,
+                "saved_empty_content": saved_empty_content,
+                "json_choices": json_choices,
+                "has_done": has_done,
+                "has_nonempty_content": has_nonempty,
+                "entry_is_stream": entry.is_stream,
+                "cache_tier": cache_tier.as_str(),
+                "model": model,
+            }),
+        );
+        // #endregion
         let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
             warn!("Failed to build SSE cache response header");
             return false;
@@ -2090,7 +2340,20 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
 
     let value: serde_json::Value = match serde_json::from_slice(json_body) {
         Ok(v) => v,
-        Err(_) => return json_body.to_vec(),
+        Err(_) => {
+            // #region agent log
+            debug_agent_log(
+                "H3",
+                "proxy.rs:json_to_sse_stream",
+                "json parse failed, returning raw bytes",
+                serde_json::json!({
+                    "json_len": json_body.len(),
+                    "model": model,
+                }),
+            );
+            // #endregion
+            return json_body.to_vec();
+        }
     };
 
     let choices = value
@@ -2099,6 +2362,7 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
         .cloned()
         .unwrap_or_default();
     let usage = value.get("usage").cloned();
+    let has_usage = usage.is_some();
 
     let mut sse_output = Vec::new();
 
@@ -2139,6 +2403,20 @@ fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     }
 
     sse_output.extend_from_slice(b"data: [DONE]\n\n");
+
+    // #region agent log
+    debug_agent_log(
+        "H3",
+        "proxy.rs:json_to_sse_stream",
+        "sse synthesized from json",
+        serde_json::json!({
+            "choices_count": choices.len(),
+            "sse_len": sse_output.len(),
+            "has_usage": has_usage,
+            "model": model,
+        }),
+    );
+    // #endregion
 
     sse_output
 }

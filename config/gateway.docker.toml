@@ -66,9 +66,8 @@ redis_url = "redis://redis:6379"
 max_reasoning_entry_bytes = 524288
 thinking_mode = "enabled"
 reasoning_effort = "medium"
-# Cursor / Agent 推荐 fill_only：先从 ReasoningStore 补全；Store 未命中时自动 recover（勿裸发上游）
-missing_reasoning_strategy = "fill_only"
-missing_reasoning_on_fill_only = "omit_reasoning"
+# deepseek-cursor-proxy：recover（默认）| reject（409）
+missing_reasoning_strategy = "recover"
 display_reasoning = true
 collapsible_reasoning = true
 cache_db_path = "/app/data/reasoning_content.sqlite3"

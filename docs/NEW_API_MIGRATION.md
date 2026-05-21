@@ -20,7 +20,7 @@ Cursor → OpenResty :18000 → crab-gateway :8080 → api.deepseek.com
 | 渠道 `ApiKey` 多行 / MultiKey 轮询 | `CRABCACHE_UPSTREAM_KEYS=sk-1,sk-2` 或 `PUT /v1/upstream/keys` |
 | 用户令牌（计费） | Management `POST /v1/keys` → `sk-cc-*` |
 | `deepseek-v4-flash-max` 后缀 | 内置 `parse_deepseek_v4_thinking_suffix`（同 new-api `-max`/`-none`） |
-| Python `missing_reasoning_strategy=recover` | 默认 `fill_only`（多轮 tool 更稳）；可热更新为 `recover` |
+| Python `missing_reasoning_strategy=recover` | 默认 **`recover`**（与 proxy 一致）；`client_key` scope 下就地补 reasoning、不截断 tool 历史 |
 | Python 流式保留 `reasoning_content` | CrabCache 流式**仅** `delta.content`（防 Cursor 断连） |
 | Python 无答案缓存 | CrabCache **L0/L1** + Coalescing（需部署后 invalidate 一次） |
 | ngrok 公网 URL | OpenResty + Let's Encrypt（`docs/deploy-1panel-openresty.md`） |

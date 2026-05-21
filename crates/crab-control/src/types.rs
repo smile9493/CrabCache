@@ -217,14 +217,8 @@ pub struct ReasoningRuntimeConfigView {
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub missing_reasoning_strategy: String,
-    #[serde(default = "default_missing_reasoning_on_fill_only")]
-    pub missing_reasoning_on_fill_only: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
-}
-
-fn default_missing_reasoning_on_fill_only() -> String {
-    "omit_reasoning".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
