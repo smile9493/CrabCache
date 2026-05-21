@@ -36,6 +36,7 @@ const SUPPORTED_REQUEST_FIELDS: &[&str] = &[
     "seed",
     "n",
     "logit_bias",
+    "user_id",
 ];
 
 const MESSAGE_FIELDS: &[&str] = &[
@@ -844,6 +845,7 @@ pub fn reasoning_cache_namespace(
     thinking: &Value,
     reasoning_effort: &str,
     authorization: Option<&str>,
+    project_id: Option<&str>,
 ) -> String {
     use sha2::{Digest, Sha256};
     let auth_hash = authorization
@@ -860,6 +862,7 @@ pub fn reasoning_cache_namespace(
         "thinking": thinking,
         "reasoning_effort": reasoning_effort,
         "authorization_hash": auth_hash,
+        "project_id": project_id.filter(|s| !s.is_empty()),
     });
     let canonical = serde_json::to_string(&payload).unwrap_or_default();
     let mut hasher = Sha256::new();
@@ -1018,6 +1021,17 @@ fn resolve_upstream_model(
         .unwrap_or(computed)
 }
 
+fn apply_effective_user_id(prepared: &mut serde_json::Map<String, Value>, effective_user_id: Option<&str>) {
+    match effective_user_id.filter(|s| !s.is_empty()) {
+        Some(id) => {
+            prepared.insert("user_id".into(), Value::String(id.to_string()));
+        }
+        None => {
+            prepared.remove("user_id");
+        }
+    }
+}
+
 fn filter_supported_request_fields(payload: &Value) -> serde_json::Map<String, Value> {
     let supported_set: std::collections::HashSet<&str> =
         SUPPORTED_REQUEST_FIELDS.iter().copied().collect();
@@ -1048,6 +1062,7 @@ pub fn prepare_light_request(
     payload: &Value,
     fallback_model: &str,
     alias_upstream: Option<&str>,
+    effective_user_id: Option<&str>,
 ) -> LightPreparedRequest {
     let original_model = payload
         .get("model")
@@ -1095,6 +1110,7 @@ pub fn prepare_light_request(
         .unwrap_or(&[]);
     let normalized = normalize_messages(raw_messages, None, "", None, false, false);
     prepared.insert("messages".into(), Value::Array(normalized.messages));
+    apply_effective_user_id(&mut prepared, effective_user_id);
 
     LightPreparedRequest {
         payload: Value::Object(prepared),
@@ -1156,6 +1172,7 @@ pub fn prepare_upstream_request(
     authorization: Option<&str>,
     stable_session_id: Option<&str>,
     alias_upstream: Option<&str>,
+    effective_user_id: Option<&str>,
 ) -> PreparedRequest {
     let original_model = payload
         .get("model")
@@ -1258,6 +1275,7 @@ pub fn prepare_upstream_request(
             .and_then(|e| e.as_str())
             .unwrap_or(reasoning_effort),
         authorization,
+        effective_user_id,
     );
 
     let raw_inbound_messages = payload
@@ -1393,6 +1411,7 @@ pub fn prepare_upstream_request(
 
     let upstream_messages = strip_recovery_notice_for_upstream(&final_messages);
     prepared.insert("messages".into(), Value::Array(upstream_messages));
+    apply_effective_user_id(&mut prepared, effective_user_id);
 
     PreparedRequest {
         payload: Value::Object(prepared),
@@ -1450,6 +1469,7 @@ mod tests {
             &thinking,
             "max",
             Some("Bearer sk-cc-aaa"),
+            None,
         );
         let b = reasoning_cache_namespace(
             "https://api.deepseek.com",
@@ -1457,6 +1477,7 @@ mod tests {
             &thinking,
             "max",
             Some("Bearer sk-cc-bbb"),
+            None,
         );
         assert_ne!(a, b);
         let none = reasoning_cache_namespace(
@@ -1464,6 +1485,7 @@ mod tests {
             "deepseek-v4-pro",
             &thinking,
             "max",
+            None,
             None,
         );
         assert_ne!(a, none);
@@ -1522,7 +1544,7 @@ mod tests {
                 {"role": "assistant", "content": "ok", "reasoning_content": "secret"}
             ]
         });
-        let result = prepare_light_request(&payload, "deepseek-v4-pro", None);
+        let result = prepare_light_request(&payload, "deepseek-v4-pro", None, None);
         assert!(!result.payload.to_string().contains("thinking"));
         assert!(!result.payload.to_string().contains("reasoning_content"));
         assert_eq!(result.upstream_model, "deepseek-chat");
@@ -1558,9 +1580,60 @@ mod tests {
             None,
             None,
             Some("deepseek-v4-pro"),
+            None,
         );
         assert_eq!(result.original_model, "gpt-4o");
         assert_eq!(result.upstream_model, "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn test_prepare_upstream_request_injects_user_id() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "user_id": "wrong-tenant",
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            None,
+            None,
+            Some("proj-a"),
+        );
+        assert_eq!(
+            result.payload.get("user_id").and_then(|v| v.as_str()),
+            Some("proj-a")
+        );
+    }
+
+    #[test]
+    fn reasoning_cache_namespace_differs_by_project() {
+        let thinking = serde_json::json!({"type": "enabled"});
+        let a = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            None,
+            Some("proj-a"),
+        );
+        let b = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            None,
+            Some("proj-b"),
+        );
+        assert_ne!(a, b);
     }
 
     #[test]
@@ -1580,6 +1653,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
             None,
@@ -1619,6 +1693,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(result.missing_reasoning_messages > 0);
         assert_eq!(result.recovered_reasoning_messages, 0);
@@ -1652,6 +1727,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
             None,
@@ -1694,6 +1770,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
             None,
@@ -1745,6 +1822,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert_eq!(result.missing_reasoning_messages, 0);
     }
@@ -1781,6 +1859,7 @@ mod tests {
             false,
             None,
             Some("client:stable-1"),
+            None,
             None,
         );
         let msgs = result
@@ -1823,6 +1902,7 @@ mod tests {
             &thinking,
             "max",
             None,
+            None,
         );
         let scope = resolve_reasoning_scope(Some("cursor-thread-1"), &prior, &namespace);
         let mut assistant_with_reasoning = assistant.clone();
@@ -1857,6 +1937,7 @@ mod tests {
             false,
             None,
             Some("cursor-thread-1"),
+            None,
             None,
         );
         assert_eq!(result.patched_reasoning_messages, 1);
@@ -1901,6 +1982,7 @@ mod tests {
             None,
             Some("cursor-subagent-1"),
             None,
+            None,
         );
         assert!(
             result.recovery_notice.is_none(),
@@ -1938,6 +2020,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(first_result.recovery_notice.is_some());
 
@@ -1965,6 +2048,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
             None,

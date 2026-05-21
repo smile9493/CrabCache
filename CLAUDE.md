@@ -18,7 +18,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 - **DeepSeek Reasoning 处理管线**：思考链提取、SSE 块改写、Cursor 折叠显示适配、SQLite 缓存
 - **SSE 流式响应优化**：缓存命中时合成 SSE 流返回，流式响应可选缓存
 - **缓存键指纹 (Fingerprint)**：版本化、Unicode NFC 标准化，安全失效旧缓存
-- **多租户隔离**：命名空间前缀缓存键
+- **多租户隔离**：`project_id` / `X-Project-Id` → DeepSeek `user_id` + 动态缓存命名空间（见 [docs/MULTI_TENANT.md](docs/MULTI_TENANT.md)）
 - **配置验证**：启动时全面校验配置合法性（API Key、端点、地址等）
 - **SecretString 安全处理**：密钥自动遮盖，杜绝日志泄漏
 - **Prometheus 可观测性**：Token 成本追踪、延迟监控、成本节省估算

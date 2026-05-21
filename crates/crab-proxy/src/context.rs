@@ -21,6 +21,8 @@ pub struct StoredKey {
     pub key_hash: String,
     pub enabled: bool,
     pub domain: Option<String>,
+    /// DeepSeek `user_id` / tenant bucket; bound to this client key when set.
+    pub project_id: Option<String>,
     /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `generic_relay`
     pub pipeline: Option<String>,
     pub upstream_profile: Option<String>,
@@ -233,6 +235,8 @@ pub struct GatewayContext {
     /// Upstream body completion latency (response headers → EOS), miss paths only.
     pub upstream_latency_ms: Option<f64>,
     pub conversation_id: Option<String>,
+    /// Resolved tenant id for upstream `user_id` and cache namespaces.
+    pub project_id: Option<String>,
     /// OpenAI-style `prompt_cache_key` from request body (affinity + L3 stickiness).
     pub prompt_cache_key: Option<String>,
     pub last_prompt_cache_hit_tokens: u64,
@@ -295,6 +299,7 @@ impl GatewayContext {
             last_output_tokens: 0,
             upstream_latency_ms: None,
             conversation_id: None,
+            project_id: None,
             prompt_cache_key: None,
             last_prompt_cache_hit_tokens: 0,
             last_prompt_cache_miss_tokens: 0,

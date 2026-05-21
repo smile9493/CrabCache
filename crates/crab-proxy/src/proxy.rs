@@ -1,4 +1,5 @@
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
+use crate::tenant::{ProjectResolveError, effective_cache_namespace, resolve_project_id};
 use crate::runtime::RuntimeConfig;
 use crate::debug_agent_log;
 use crate::upstream_body::apply_prepared_upstream_body;
@@ -125,6 +126,7 @@ impl GatewayProxy {
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     ) {
         if let Some(stored_key) = self.state.runtime.keys.get(provided_key) {
             let key = stored_key.value();
@@ -132,6 +134,7 @@ impl GatewayProxy {
                 key.enabled,
                 Some(key.name.clone()),
                 key.domain.clone(),
+                key.project_id.clone(),
                 key.pipeline.clone(),
                 key.upstream_profile.clone(),
             )
@@ -140,9 +143,9 @@ impl GatewayProxy {
             .runtime
             .is_legacy_client_token(provided_key, auth)
         {
-            (true, None, None, None, None)
+            (true, None, None, None, None, None)
         } else {
-            (false, None, None, None, None)
+            (false, None, None, None, None, None)
         }
     }
 
@@ -244,7 +247,7 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if is_models_endpoint(&req_path, &req_method) {
-            let (is_authorized, consumer_from_key, domain_from_key, _, key_profile) =
+            let (is_authorized, consumer_from_key, domain_from_key, _, _, key_profile) =
                 self.authorize_client(&provided_key, &auth);
             if !is_authorized {
                 let _ = session.respond_error(401).await;
@@ -291,12 +294,58 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
-        let (is_authorized, consumer_from_key, domain_from_key, key_pipeline, key_upstream_profile) =
-            self.authorize_client(&provided_key, &auth);
+        let (
+            is_authorized,
+            consumer_from_key,
+            domain_from_key,
+            key_project_id,
+            key_pipeline,
+            key_upstream_profile,
+        ) = self.authorize_client(&provided_key, &auth);
 
         if !is_authorized {
             let _ = session.respond_error(401).await;
             return Ok(true);
+        }
+
+        let project_id_header = session
+            .req_header()
+            .headers
+            .get("x-project-id")
+            .and_then(|v| v.to_str().ok());
+
+        match resolve_project_id(key_project_id.as_deref(), project_id_header) {
+            Ok(project_id) => ctx.project_id = project_id,
+            Err(ProjectResolveError::Mismatch) => {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": "X-Project-Id does not match the project_id bound to this API key",
+                        "type": "project_mismatch",
+                        "code": "project_mismatch"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error(session, http::StatusCode::FORBIDDEN, body_str.as_bytes()).await
+                {
+                    let _ = session.respond_error(403).await;
+                }
+                return Ok(true);
+            }
+            Err(ProjectResolveError::InvalidHeader(msg)) => {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": msg,
+                        "type": "invalid_project_id",
+                        "code": "invalid_project_id"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await
+                {
+                    let _ = session.respond_error(400).await;
+                }
+                return Ok(true);
+            }
         }
 
         match self.state.request_semaphore.clone().try_acquire_owned() {
@@ -309,7 +358,9 @@ impl ProxyHttp for GatewayProxy {
         }
 
         ctx.authorization = Some(auth);
-        ctx.consumer = consumer_from_key.or(consumer_from_header);
+        ctx.consumer = consumer_from_key
+            .or(consumer_from_header)
+            .or_else(|| ctx.project_id.clone());
         ctx.domain = domain_from_key;
         let (domain_pipeline, domain_upstream_profile) =
             self.domain_policy_fields(ctx.domain.as_deref());
@@ -474,6 +525,7 @@ impl ProxyHttp for GatewayProxy {
         let mut retired_prefix = 0usize;
         let mut upstream_model_log = ctx.model.clone();
         let mut namespace_preview = String::new();
+        let effective_user_id = ctx.project_id.as_deref();
 
         match selection.pipeline {
             RequestPipeline::CursorDeepSeekV4 => {
@@ -490,6 +542,7 @@ impl ProxyHttp for GatewayProxy {
                     ctx.authorization.as_deref(),
                     stable_session,
                     alias_upstream_model,
+                    effective_user_id,
                 );
                 patched = prepared.patched_reasoning_messages;
                 missing = prepared.missing_reasoning_messages;
@@ -509,7 +562,12 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
             RequestPipeline::DeepSeekLight => {
-                let light = prepare_light_request(&payload, &profile_fallback, alias_upstream_model);
+                let light = prepare_light_request(
+                    &payload,
+                    &profile_fallback,
+                    alias_upstream_model,
+                    effective_user_id,
+                );
                 upstream_model_log = light.upstream_model.clone();
                 ctx.new_request_body = Some(serde_json::to_vec(&light.payload).unwrap_or_default());
             }
@@ -691,9 +749,13 @@ impl ProxyHttp for GatewayProxy {
             .original_request_body
             .as_deref()
             .expect("original_request_body set");
+        let cache_namespace = effective_cache_namespace(
+            self.state.cache_key_namespace.as_deref(),
+            ctx.project_id.as_deref(),
+        );
         if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
             cache_key_body,
-            self.state.cache_key_namespace.as_deref(),
+            cache_namespace.as_deref(),
             &fingerprint,
         ) {
             ctx.cache_key = Some(cache_key.clone());
@@ -845,7 +907,9 @@ impl ProxyHttp for GatewayProxy {
                             }
 
                             if gate_decision == GateDecision::Pass {
-                                if let Some(entry) = semantic_cache.search(&query_text).await {
+                                if let Some(entry) =
+                                    semantic_cache.search(&query_text, ctx.project_id.as_deref()).await
+                                {
                                     // Model guard: verify the cached entry's model matches
                                     if entry.model != ctx.model {
                                         global_metrics().record_semantic_cache_rejected();
@@ -1129,7 +1193,8 @@ impl ProxyHttp for GatewayProxy {
         );
 
         let body_pck = ctx.prompt_cache_key.as_deref();
-        let affinity_key = extract_affinity_key(&headers, &client_ip, body_pck);
+        let affinity_key =
+            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref());
 
         let profile = self.active_upstream_profile(ctx);
         let router = &profile.router;
@@ -1641,9 +1706,14 @@ impl ProxyHttp for GatewayProxy {
                                             ctx.is_streaming,
                                         );
 
+                                        let project_id = ctx.project_id.clone();
                                         tokio::spawn(async move {
                                             if let Err(e) = semantic_cache
-                                                .insert(&query_text, &entry_clone)
+                                                .insert(
+                                                    &query_text,
+                                                    &entry_clone,
+                                                    project_id.as_deref(),
+                                                )
                                                 .await
                                             {
                                                 warn!(error = %e, "Failed to insert into semantic cache");
@@ -1792,10 +1862,15 @@ impl ProxyHttp for GatewayProxy {
                                                 true,
                                             );
                                             let query_text = query_text.to_string();
+                                            let project_id = ctx.project_id.clone();
 
                                             tokio::spawn(async move {
                                                 if let Err(e) = semantic_cache
-                                                    .insert(&query_text, &entry_for_semantic)
+                                                    .insert(
+                                                        &query_text,
+                                                        &entry_for_semantic,
+                                                        project_id.as_deref(),
+                                                    )
                                                     .await
                                                 {
                                                     warn!(error = %e, "Failed to insert streaming response into semantic cache");
@@ -1888,6 +1963,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.conversation_id.clone(),
                         ctx.consumer.clone(),
                         ctx.domain.clone(),
+                        ctx.project_id.clone(),
                         &ctx.model,
                         ctx.total_tokens as usize,
                         duration.as_secs_f64() * 1000.0,
@@ -2090,7 +2166,7 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
     let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
     let _ = header.insert_header(
         "access-control-allow-headers",
-        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer",
+        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer, X-Project-Id",
     );
     let _ = header.insert_header("access-control-max-age", "86400");
     let _ = header.insert_header("content-length", "0");

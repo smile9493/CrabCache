@@ -16,6 +16,8 @@ pub struct StoredKeySnapshot {
     #[serde(default)]
     pub domain: Option<String>,
     #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
     pub pipeline: Option<String>,
     #[serde(default)]
     pub upstream_profile: Option<String>,
@@ -90,6 +92,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                     key_hash: k.key_hash.clone(),
                     enabled: k.enabled,
                     domain: k.domain.clone(),
+                    project_id: k.project_id.clone(),
                     pipeline: k.pipeline.clone(),
                     upstream_profile: k.upstream_profile.clone(),
                 },
@@ -200,6 +203,7 @@ pub fn apply_snapshot_to_runtime(
                 key_hash: k.key_hash.clone(),
                 enabled: k.enabled,
                 domain: k.domain.clone(),
+                project_id: k.project_id.clone(),
                 pipeline: k.pipeline.clone(),
                 upstream_profile: k.upstream_profile.clone(),
             },

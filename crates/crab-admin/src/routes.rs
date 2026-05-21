@@ -837,6 +837,7 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
                     .or(spec.key_full),
                 active: spec.enabled,
                 domain: spec.domain,
+                project_id: spec.project_id,
                 rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
                 monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
                 tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
@@ -865,6 +866,7 @@ async fn create_key(
             enabled: true,
             token: None,
             domain: req.domain.clone(),
+            project_id: req.project_id.clone(),
             pipeline: None,
             upstream_profile: None,
         })
@@ -899,6 +901,7 @@ async fn create_key(
         key_full: Some(created.key_full),
         active: created.enabled,
         domain: created.domain,
+        project_id: created.project_id,
         rpm_limit: req.rpm_limit,
         monthly_token_budget: req.monthly_token_budget,
         tokens_used_this_month: 0,

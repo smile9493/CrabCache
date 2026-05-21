@@ -131,6 +131,12 @@ fingerprint_version = 1
 # with different encodings share the same cache entry.
 # Set to false to disable normalization (emergency rollback).
 fingerprint_normalize_content = true
+
+# Optional global prefix for L0/L1 cache keys. Per-request project_id (API key or X-Project-Id)
+# is combined as "{cache_key_namespace}:{project_id}:{hash}" when both are set.
+# See docs/MULTI_TENANT.md.
+# cache_key_namespace = "org"
+
 [cache.model_ttl_overrides]
 "deepseek-v4-pro" = 7200
 "deepseek-v4-flash" = 3600

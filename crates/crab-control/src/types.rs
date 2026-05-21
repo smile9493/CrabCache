@@ -99,6 +99,8 @@ pub struct ApiKeySpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
@@ -113,6 +115,8 @@ pub struct CreateGatewayKeyRequest {
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +137,8 @@ pub struct CreateGatewayKeyResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
@@ -146,6 +152,8 @@ pub struct PatchGatewayKeyRequest {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -30,6 +30,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool =
         UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
+    let pool_handle = Arc::new(RwLock::new(upstream_pool));
     let mut profiles = HashMap::new();
     profiles.insert(
         "deepseek".to_string(),
@@ -40,7 +41,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             fallback_model: "deepseek-v4-pro".to_string(),
             tls_sni: "api.deepseek.com".to_string(),
             router: AffinityRouter::new(&backends).unwrap(),
-            upstream_pool: upstream_pool.clone(),
+            upstream_pool: pool_handle.clone(),
         }),
     );
     RuntimeConfig::new(
@@ -51,7 +52,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         FingerprintConfig::default(),
         "https://api.deepseek.com".to_string(),
         "deepseek-v4-pro".to_string(),
-        upstream_pool,
+        pool_handle,
         profiles,
         "deepseek".to_string(),
         PipelineGlobals::default(),
@@ -197,6 +198,66 @@ async fn create_and_list_keys() {
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn create_key_with_project_id_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"project-key","enabled":true,"project_id":"proj_alpha"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        created["project_id"].as_str(),
+        Some("proj_alpha")
+    );
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/v1/keys/{}",
+                    created["key_full"].as_str().expect("key_full")
+                ))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"project_id":"proj_beta"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(patch.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        patched["project_id"].as_str(),
+        Some("proj_beta")
+    );
 }
 
 #[tokio::test]

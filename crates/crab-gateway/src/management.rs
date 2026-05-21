@@ -788,6 +788,7 @@ fn stored_to_spec(token: &str, key: &StoredKey, include_full: bool) -> ApiKeySpe
         },
         enabled: key.enabled,
         domain: key.domain.clone(),
+        project_id: key.project_id.clone(),
         pipeline: key.pipeline.clone(),
         upstream_profile: key.upstream_profile.clone(),
     }
@@ -838,6 +839,7 @@ async fn create_key(
         key_hash: token.clone(),
         enabled: req.enabled,
         domain: req.domain.clone(),
+        project_id: req.project_id.clone(),
         pipeline: req.pipeline.clone(),
         upstream_profile: req.upstream_profile.clone(),
     };
@@ -851,6 +853,7 @@ async fn create_key(
         key_preview: key_preview(&token),
         enabled: req.enabled,
         domain: req.domain,
+        project_id: req.project_id,
         pipeline: req.pipeline,
         upstream_profile: req.upstream_profile,
     }))
@@ -969,6 +972,9 @@ async fn patch_key(
     }
     if let Some(domain) = req.domain {
         entry.domain = Some(domain);
+    }
+    if let Some(project_id) = req.project_id {
+        entry.project_id = Some(project_id);
     }
     if let Some(pipeline) = req.pipeline {
         entry.pipeline = Some(pipeline);

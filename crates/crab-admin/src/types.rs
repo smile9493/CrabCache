@@ -249,6 +249,8 @@ pub struct ApiKey {
     pub unlimited_quota: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +264,8 @@ pub struct CreateKeyRequest {
     pub unlimited_quota: Option<bool>,
     #[serde(default)]
     pub domain: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
