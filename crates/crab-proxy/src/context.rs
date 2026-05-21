@@ -3,6 +3,7 @@ use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_metrics::CacheTier;
+use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
@@ -20,6 +21,9 @@ pub struct StoredKey {
     pub key_hash: String,
     pub enabled: bool,
     pub domain: Option<String>,
+    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `generic_relay`
+    pub pipeline: Option<String>,
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -204,6 +208,9 @@ pub struct GatewayContext {
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
+    pub request_pipeline: Option<RequestPipeline>,
+    pub pipeline_reason: Option<PipelineSelectionReason>,
+    pub upstream_profile_id: Option<String>,
     pub request_start: Instant,
     pub upstream_start: Option<Instant>,
     pub ttft: Option<std::time::Duration>,
@@ -260,6 +267,9 @@ impl GatewayContext {
             model: String::new(),
             consumer: None,
             domain: None,
+            request_pipeline: None,
+            pipeline_reason: None,
+            upstream_profile_id: None,
             request_start: Instant::now(),
             upstream_start: None,
             ttft: None,

@@ -233,6 +233,16 @@ fn legacy_function_to_tool(function: &Value) -> Value {
     Value::Object(m)
 }
 
+/// DeepSeek does not support selecting a specific function; downgrade to `auto` (cursor-deepseek parity).
+pub fn normalize_tool_choice_for_deepseek(tool_choice: &Value) -> Option<Value> {
+    match tool_choice {
+        Value::Object(obj) if obj.get("type").and_then(|t| t.as_str()) == Some("function") => {
+            Some(Value::String("auto".into()))
+        }
+        other => normalize_tool_choice(other),
+    }
+}
+
 fn normalize_tool_choice(tool_choice: &Value) -> Option<Value> {
     match tool_choice {
         Value::String(s) => {
@@ -999,6 +1009,123 @@ pub fn upstream_model_for(original_model: &str, fallback_model: &str) -> String 
     }
 }
 
+fn resolve_upstream_model(
+    computed: String,
+    alias_upstream: Option<&str>,
+) -> String {
+    alias_upstream
+        .map(|s| s.to_string())
+        .unwrap_or(computed)
+}
+
+fn filter_supported_request_fields(payload: &Value) -> serde_json::Map<String, Value> {
+    let supported_set: std::collections::HashSet<&str> =
+        SUPPORTED_REQUEST_FIELDS.iter().copied().collect();
+    let mut prepared: serde_json::Map<String, Value> = payload
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| supported_set.contains(k.as_str()))
+        .collect();
+    if !prepared.contains_key("max_tokens") {
+        if let Some(mct) = payload.get("max_completion_tokens") {
+            prepared.insert("max_tokens".into(), mct.clone());
+        }
+    }
+    prepared
+}
+
+#[derive(Debug, Clone)]
+pub struct LightPreparedRequest {
+    pub payload: Value,
+    pub original_model: String,
+    pub upstream_model: String,
+}
+
+/// DeepSeek non-V4: OpenAI field whitelist + message normalization without thinking/reasoning store.
+pub fn prepare_light_request(
+    payload: &Value,
+    fallback_model: &str,
+    alias_upstream: Option<&str>,
+) -> LightPreparedRequest {
+    let original_model = payload
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or(fallback_model)
+        .to_string();
+    let computed = if original_model.starts_with("deepseek-") {
+        original_model.clone()
+    } else {
+        fallback_model.to_string()
+    };
+    let upstream_model = resolve_upstream_model(computed, alias_upstream);
+
+    let mut prepared = filter_supported_request_fields(payload);
+    prepared.insert("model".into(), Value::String(upstream_model.clone()));
+
+    if let Some(tools) = prepared.get("tools").and_then(|t| t.as_array()).cloned() {
+        prepared.insert(
+            "tools".into(),
+            Value::Array(tools.iter().map(normalize_tool).collect()),
+        );
+    } else if let Some(functions) = payload.get("functions").and_then(|f| f.as_array()).cloned() {
+        prepared.insert(
+            "tools".into(),
+            Value::Array(functions.iter().map(legacy_function_to_tool).collect()),
+        );
+    }
+
+    if let Some(tool_choice) = prepared.get("tool_choice").cloned() {
+        if let Some(normalized) = normalize_tool_choice_for_deepseek(&tool_choice) {
+            prepared.insert("tool_choice".into(), normalized);
+        } else {
+            prepared.remove("tool_choice");
+        }
+    } else if let Some(function_call) = payload.get("function_call") {
+        if let Some(converted) = convert_function_call(function_call) {
+            prepared.insert("tool_choice".into(), converted);
+        }
+    }
+
+    let raw_messages = payload
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let normalized = normalize_messages(raw_messages, None, "", None, false, false);
+    prepared.insert("messages".into(), Value::Array(normalized.messages));
+
+    LightPreparedRequest {
+        payload: Value::Object(prepared),
+        original_model,
+        upstream_model,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GenericPreparedRequest {
+    pub payload: Value,
+    pub model: String,
+}
+
+/// Minimal relay: field filter + token alias; messages and model unchanged.
+pub fn prepare_generic_request(payload: &Value) -> GenericPreparedRequest {
+    let model = payload
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("gpt-4")
+        .to_string();
+    let mut prepared = filter_supported_request_fields(payload);
+    if !prepared.contains_key("model") {
+        prepared.insert("model".into(), Value::String(model.clone()));
+    }
+    GenericPreparedRequest {
+        payload: Value::Object(prepared),
+        model,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedRequest {
     pub payload: Value,
@@ -1028,6 +1155,7 @@ pub fn prepare_upstream_request(
     prefix_validate: bool,
     authorization: Option<&str>,
     stable_session_id: Option<&str>,
+    alias_upstream: Option<&str>,
 ) -> PreparedRequest {
     let original_model = payload
         .get("model")
@@ -1035,7 +1163,10 @@ pub fn prepare_upstream_request(
         .unwrap_or(fallback_model)
         .to_string();
     let v4_suffix = parse_deepseek_v4_thinking_suffix(&original_model);
-    let upstream_model = upstream_model_for(&v4_suffix.base_model, fallback_model);
+    let upstream_model = resolve_upstream_model(
+        upstream_model_for(&v4_suffix.base_model, fallback_model),
+        alias_upstream,
+    );
     let thinking_mode = v4_suffix
         .thinking_mode_override
         .as_deref()
@@ -1090,7 +1221,7 @@ pub fn prepare_upstream_request(
     }
 
     if let Some(tool_choice) = prepared.get("tool_choice").cloned() {
-        if let Some(normalized) = normalize_tool_choice(&tool_choice) {
+        if let Some(normalized) = normalize_tool_choice_for_deepseek(&tool_choice) {
             prepared.insert("tool_choice".into(), normalized);
         } else {
             prepared.remove("tool_choice");
@@ -1383,6 +1514,56 @@ mod tests {
     }
 
     #[test]
+    fn prepare_light_request_does_not_inject_thinking() {
+        let payload = serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "ok", "reasoning_content": "secret"}
+            ]
+        });
+        let result = prepare_light_request(&payload, "deepseek-v4-pro", None);
+        assert!(!result.payload.to_string().contains("thinking"));
+        assert!(!result.payload.to_string().contains("reasoning_content"));
+        assert_eq!(result.upstream_model, "deepseek-chat");
+    }
+
+    #[test]
+    fn prepare_generic_request_keeps_model() {
+        let payload = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result = prepare_generic_request(&payload);
+        assert_eq!(result.model, "gpt-4");
+        assert!(!result.payload.to_string().contains("thinking"));
+    }
+
+    #[test]
+    fn test_prepare_upstream_request_alias_upstream() {
+        let payload = serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            None,
+            Some("deepseek-v4-pro"),
+        );
+        assert_eq!(result.original_model, "gpt-4o");
+        assert_eq!(result.upstream_model, "deepseek-v4-pro");
+    }
+
+    #[test]
     fn test_prepare_upstream_request_basic() {
         let payload = serde_json::json!({
             "model": "deepseek-v4-pro",
@@ -1399,6 +1580,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
         );
@@ -1436,9 +1618,20 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert!(result.missing_reasoning_messages > 0);
         assert_eq!(result.recovered_reasoning_messages, 0);
+    }
+
+    #[test]
+    fn test_deepseek_tool_choice_function_downgraded_to_auto() {
+        let tc = serde_json::json!({
+            "type": "function",
+            "function": { "name": "list_dir" }
+        });
+        let out = normalize_tool_choice_for_deepseek(&tc).expect("normalized");
+        assert_eq!(out, serde_json::json!("auto"));
     }
 
     #[test]
@@ -1459,6 +1652,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
         );
@@ -1500,6 +1694,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
         );
@@ -1549,6 +1744,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert_eq!(result.missing_reasoning_messages, 0);
     }
@@ -1585,6 +1781,7 @@ mod tests {
             false,
             None,
             Some("client:stable-1"),
+            None,
         );
         let msgs = result
             .payload
@@ -1660,6 +1857,7 @@ mod tests {
             false,
             None,
             Some("cursor-thread-1"),
+            None,
         );
         assert_eq!(result.patched_reasoning_messages, 1);
         assert_eq!(result.recovered_reasoning_messages, 0);
@@ -1702,6 +1900,7 @@ mod tests {
             false,
             None,
             Some("cursor-subagent-1"),
+            None,
         );
         assert!(
             result.recovery_notice.is_none(),
@@ -1738,6 +1937,7 @@ mod tests {
             false,
             None,
             None,
+            None,
         );
         assert!(first_result.recovery_notice.is_some());
 
@@ -1765,6 +1965,7 @@ mod tests {
             "recover",
             0,
             false,
+            None,
             None,
             None,
         );

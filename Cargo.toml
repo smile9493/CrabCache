@@ -13,6 +13,7 @@ members = [
     "crates/crab-admin",
     "crates/crab-dashboard",
     "crates/crab-reasoning",
+    "crates/crab-pipeline",
     "crates/crab-control",
     "crates/crab-state",
 ]
@@ -76,6 +77,7 @@ crab-cache     = { path = "crates/crab-cache" }
 crab-semantic  = { path = "crates/crab-semantic" }
 crab-proxy     = { path = "crates/crab-proxy" }
 crab-reasoning = { path = "crates/crab-reasoning" }
+crab-pipeline   = { path = "crates/crab-pipeline" }
 crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
 crab-state     = { path = "crates/crab-state" }

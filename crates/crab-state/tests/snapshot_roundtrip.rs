@@ -1,7 +1,8 @@
 //! Control plane snapshot round-trip (domain policies, empty upstream pool).
 
 use crab_cache::{FingerprintConfig, TtlConfig};
-use crab_proxy::{ConnectionConfig, DomainPolicy, RuntimeConfig, UpstreamKeyPool};
+use crab_pipeline::{PipelineGlobals, UpstreamProvider};
+use crab_proxy::{ConnectionConfig, DomainPolicy, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::AffinityRouter;
 use crab_state::{
     apply_snapshot_to_runtime, build_snapshot_from_runtime, ControlPlaneSnapshot,
@@ -18,7 +19,21 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     .unwrap();
     let router = AffinityRouter::new(&backends).unwrap();
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
+    let upstream_pool =
+        UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
+    let mut profiles = HashMap::new();
+    profiles.insert(
+        "deepseek".to_string(),
+        Arc::new(UpstreamProfileRuntime {
+            id: "deepseek".to_string(),
+            provider: UpstreamProvider::Deepseek,
+            base_url: "https://api.deepseek.com".to_string(),
+            fallback_model: "deepseek-v4-pro".to_string(),
+            tls_sni: "api.deepseek.com".to_string(),
+            router: AffinityRouter::new(&backends).unwrap(),
+            upstream_pool: upstream_pool.clone(),
+        }),
+    );
     RuntimeConfig::new(
         router,
         ttl,
@@ -28,6 +43,9 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         "https://api.deepseek.com".to_string(),
         "deepseek-v4-pro".to_string(),
         upstream_pool,
+        profiles,
+        "deepseek".to_string(),
+        PipelineGlobals::default(),
         false,
         std::collections::HashSet::new(),
     )
@@ -44,6 +62,8 @@ fn domain_policies_roundtrip() {
             monthly_cost_budget_usd: 50.0,
             min_hit_rate: 0.85,
             enabled: true,
+            pipeline: None,
+            upstream_profile: None,
         },
     );
     runtime.replace_domain_policies(policies);

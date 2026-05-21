@@ -318,6 +318,8 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | GET | `/v1/cache/invalidate/status` | 查询清理任务状态（all_in_progress + job snapshot） |
 | GET | `/v1/cache/fingerprint` | 获取指纹版本和标准化配置 |
 | PUT | `/v1/cache/fingerprint` | 更新指纹版本（升版本使旧键自然 miss，逻辑隔离，不扫 Redis） |
+| GET | `/v1/cursor/models` | 获取 Cursor 模型别名表 |
+| PUT | `/v1/cursor/models` | 热更新 Cursor 模型别名（`gpt-4o` → `deepseek-v4-pro` 等） |
 | GET | `/v1/routing/backends` | 获取后端路由列表 |
 | PUT | `/v1/routing/backends` | 热更新后端路由端点 |
 

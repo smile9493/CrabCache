@@ -149,9 +149,6 @@ fn main() -> Result<()> {
     }
     info!("Configuration validated successfully");
 
-    let backends = config.parse_endpoints();
-    info!(backend_count = backends.len(), "Backends parsed");
-
     let mut server = Server::new(None)?;
     server.bootstrap();
 
@@ -166,7 +163,28 @@ fn main() -> Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
 
-    let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
+    let upstream_profiles = config.build_upstream_profile_runtimes(&rt)?;
+    let default_profile_id = config.gateway.default_upstream_profile.clone();
+    let pipeline_globals = config.pipeline_globals();
+    let default_profile = upstream_profiles
+        .get(&default_profile_id)
+        .cloned()
+        .or_else(|| upstream_profiles.values().next().cloned())
+        .expect("at least one upstream profile");
+    let default_backends: Vec<crab_route::Backend> = default_profile
+        .router
+        .backends()
+        .iter()
+        .map(|b| (**b).clone())
+        .collect();
+    let router = AffinityRouter::new(&default_backends)?;
+    let backends = router.backends().to_vec();
+    info!(
+        backend_count = backends.len(),
+        profile_count = upstream_profiles.len(),
+        default_profile = %default_profile_id,
+        "Upstream profiles initialized"
+    );
 
     let l1_pool = rt.block_on(async {
         bb8::Pool::builder()
@@ -236,20 +254,17 @@ fn main() -> Result<()> {
         reasoning_config.max_reasoning_entry_bytes,
     )?);
 
-    let upstream_base_url = config.upstream_base_url().to_string();
-    let fallback_model = config.fallback_model().to_string();
+    let upstream_base_url = default_profile.base_url.clone();
+    let fallback_model = default_profile.fallback_model.clone();
     let mgmt_cfg = config.management_config();
     let mgmt_listen = mgmt_cfg.listen_addr.clone();
     let mgmt_admin_key = mgmt_cfg.admin_key.into_inner();
 
-    let upstream_key_secrets = config.upstream_key_secrets();
-    let upstream_pool = crab_proxy::UpstreamKeyPool::from_secrets(
-        upstream_key_secrets,
-        config.upstream_key_cooldown_secs(),
-    );
+    let upstream_pool = default_profile.upstream_pool.clone();
     info!(
         upstream_key_count = upstream_pool.len(),
-        "Upstream DeepSeek key pool initialized"
+        default_profile = %default_profile_id,
+        "Upstream key pool initialized (default profile)"
     );
     let mut legacy_client_tokens = std::collections::HashSet::new();
     let api_key = config.api_key.inner();
@@ -301,6 +316,9 @@ fn main() -> Result<()> {
         upstream_base_url,
         fallback_model,
         upstream_pool,
+        upstream_profiles,
+        default_profile_id,
+        pipeline_globals,
         legacy_api_key_as_client_auth,
         legacy_client_tokens,
     );
@@ -338,6 +356,8 @@ fn main() -> Result<()> {
                             key_hash: token.to_string(),
                             enabled: true,
                             domain: None,
+                            pipeline: None,
+                            upstream_profile: None,
                         },
                     );
                     info!(
@@ -380,6 +400,8 @@ fn main() -> Result<()> {
                         key_hash: token.to_string(),
                         enabled: true,
                         domain: None,
+                        pipeline: None,
+                        upstream_profile: None,
                     },
                 );
                 info!(
@@ -390,6 +412,16 @@ fn main() -> Result<()> {
         }
         None
     };
+
+    for profile in runtime.upstream_profiles.values() {
+        if let Ok(mut health) = runtime.backend_health.write() {
+            for b in profile.router.backends() {
+                health
+                    .entry(b.name.clone())
+                    .or_insert_with(crab_route::BackendHealth::new_healthy);
+            }
+        }
+    }
 
     // Background task: TCP health check for upstream backends
     {
