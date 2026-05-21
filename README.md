@@ -357,6 +357,14 @@ CrabCache 使用**三套独立密钥**，不可混用：
 | `/v1/cache/ttl` | PUT | 更新 TTL 配置 |
 | `/v1/routing/backends` | GET | 获取当前路由后端列表 |
 | `/v1/routing/backends` | PUT | 动态更新路由后端 |
+| `/v1/cursor/models` | GET | 获取 Cursor 模型别名映射 |
+| `/v1/cursor/models` | PUT | 更新 Cursor 模型别名（如 `gpt-4o` → `deepseek-v4-pro`） |
+| `/v1/reasoning/config` | GET | 获取 Reasoning 处理管线配置 |
+| `/v1/reasoning/config` | PUT | 更新 Reasoning 配置（thinking_mode, reasoning_effort 等） |
+| `/v1/cache/invalidate` | POST | 物理清理 L0+L1 缓存（scope: all / prefix:xxx / 单 key） |
+| `/v1/cache/invalidate/status` | GET | 查询缓存清理任务状态 |
+| `/v1/cache/fingerprint` | GET | 获取指纹版本和标准化配置 |
+| `/v1/cache/fingerprint` | PUT | 更新指纹版本（升版本使旧键自然 miss） |
 
 所有非 `/v1/health` 的端点需要通过 `X-Gateway-Admin-Key` 请求头认证。
 
@@ -398,15 +406,17 @@ cargo run --release -p crab-admin -- --listen 0.0.0.0:3000
 
 #### 管理面板功能
 
-- **API Key 管理**: 创建、查看、撤销 API Key（同步网关管理 API）
-- **缓存配置**: 查看/更新 L0/L1 TTL、语义缓存相似度阈值
+- **API Key 管理**: 创建、查看、撤销、批量吊销、行内编辑 API Key（同步网关管理 API），支持多租户 project_id
+- **缓存配置**: 查看/更新 L0/L1 TTL、模型/消费者 TTL 覆盖、语义缓存启用开关及相似度阈值、缓存失效（invalidate）、指纹版本配置
+- **Reasoning 配置**: 管理 DeepSeek 推理处理管线（thinking_mode、reasoning_effort、推理恢复策略、SQLite 缓存）
+- **Cursor 模型别名**: 管理模型别名映射（如 `gpt-4o` → `deepseek-v4-pro`），热更新生效
 - **连接配置**: TCP Keepalive、空闲超时、H2 Ping 配置
 - **上游配置**: 更新 DeepSeek Base URL、端点列表、API Key
+- **路由管理**: 查看 Ketama 后端状态，支持热更新后端端点（名称/地址/权重）
 - **模型管理**: 从上游同步模型列表、查看模型元数据
-- **路由状态**: 查看当前 Ketama 后端分布
-- **请求日志**: 实时请求日志查看、详细分析
+- **请求日志**: 实时请求日志查看，支持按 model/consumer/cache_status 过滤
 - **Trace 分析**: 影子日志分析面板（请求重复率、语义聚类、Zipf 分布）
-- **监控指标**: QPS、TPS、缓存命中率、延迟分布
+- **监控指标**: QPS、TPS、缓存命中率、延迟分布，支持时间范围选择器（5m/1h/6h/24h/7d）
 
 ## 📊 性能
 
