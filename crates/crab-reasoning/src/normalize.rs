@@ -482,8 +482,14 @@ fn patch_missing_reasoning_inplace(
         let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) else {
             continue;
         };
+        let has_tool_calls = obj
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .is_some_and(|a| !a.is_empty());
         let content = obj.get("content").and_then(|c| c.as_str()).unwrap_or("");
-        let placeholder = if content.is_empty() {
+        // Tool-call assistants: minimal placeholder (DeepSeek requires the field).
+        // Text-only assistants without Store: use content so upstream sees progress.
+        let placeholder = if has_tool_calls || content.is_empty() {
             REASONING_PLACEHOLDER.to_string()
         } else {
             content.to_string()

@@ -35,8 +35,14 @@ thinking_mode = "enabled"
 missing_reasoning_strategy = "recover"
 # 与 deepseek-cursor-proxy 一致：recover | reject（仅 reject 返回 409）
 cache_max_age_secs = 2592000
+cache_max_rows = 100000
 max_reasoning_entry_bytes = 524288
 ```
+
+`cache_max_rows`（默认 100000）：
+
+- **SQLite**：表行数上限，超限删最旧行。
+- **Redis**：后台任务每 5 分钟 `SCAN crab:reasoning:*`，按 `created_at` 删最旧条目直至低于上限；与 `cache_max_age_secs` TTL 并存。
 
 环境变量覆盖：
 

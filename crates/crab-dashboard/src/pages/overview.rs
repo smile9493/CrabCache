@@ -6,38 +6,39 @@ use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
 use crate::types::{
-    GatewayHealth, MetricsSnapshot, OverviewBundle, OverviewOpsMetrics, PrefixCacheMetricsSnapshot,
-    SemanticConfig, TraceSummary, UpstreamConfig,
+    GatewayHealth, MetricsSnapshot, OverviewBundle, OverviewOpsMetrics, OverviewSuggestion,
+    PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
 };
 
 #[component]
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
     let overview: RwSignal<Option<Result<OverviewBundle, String>>> = RwSignal::new(None);
-    let upstream: RwSignal<Option<Result<UpstreamConfig, String>>> = RwSignal::new(None);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
+    let load_generation = RwSignal::new(0u64);
 
     let load_overview = move || {
+        load_generation.update(|g| *g += 1);
+        let request_id = load_generation.get();
         leptos::task::spawn_local(async move {
             match api::fetch_overview().await {
                 Ok(b) => {
-                    overview.set(Some(Ok(b)));
-                    last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                    if load_generation.get() == request_id {
+                        overview.set(Some(Ok(b)));
+                        last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                    }
                 }
-                Err(e) => overview.set(Some(Err(e))),
+                Err(e) => {
+                    if load_generation.get() == request_id {
+                        overview.set(Some(Err(e)));
+                    }
+                }
             }
         });
     };
 
     load_overview();
-
-    leptos::task::spawn_local(async move {
-        match api::fetch_upstream_config().await {
-            Ok(c) => upstream.set(Some(Ok(c))),
-            Err(e) => upstream.set(Some(Err(e))),
-        }
-    });
 
     leptos::task::spawn_local(async move {
         loop {
@@ -76,25 +77,18 @@ pub fn OverviewPage() -> impl IntoView {
                 </div>
             </PageHeader>
 
-            {move || match upstream.get() {
-                Some(Ok(c)) if c.key_pool_count == 0 => view! {
-                    <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
-                        <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
-                        <a href="/upstream" class="btn btn-primary text-sm">
-                            {t.overview_setup_upstream_link()}
-                        </a>
-                    </div>
-                }.into_any(),
-                _ => view! { <span></span> }.into_any(),
-            }}
-
             {move || match overview.get() {
                 None => view! { <Spinner /> }.into_any(),
-                Some(Err(e)) => view! {
-                    <div class="glass-card text-error text-sm">
-                        {format!("{}: {}", use_translations().overview_load_error(), e)}
-                    </div>
-                }.into_any(),
+                Some(Err(e)) => {
+                    let t = use_translations();
+                    let hint = overview_error_hint(&e, &t);
+                    view! {
+                        <div class="glass-card text-error text-sm space-y-2">
+                            <p>{format!("{}: {}", t.overview_load_error(), e)}</p>
+                            {hint.map(|h| view! { <p class="text-theme-muted text-xs">{h.clone()}</p> })}
+                        </div>
+                    }.into_any()
+                }
                 Some(Ok(b)) => {
                     let m = b.metrics.clone();
                     let health = b.health.clone();
@@ -102,17 +96,27 @@ pub fn OverviewPage() -> impl IntoView {
                     let semantic = b.semantic.clone();
                     let trace = b.trace_summary.clone();
                     let ops = b.ops.clone();
+                    let suggestions = b.suggestions.clone();
+                    let show_upstream_cta = health.upstream_key_count == 0 && ops.upstream_key_count == 0;
                     view! {
                         <div class="space-y-6">
+                            {show_upstream_cta.then(|| view! {
+                                <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
+                                    <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
+                                    <a href="/upstream" class="btn btn-primary text-sm">
+                                        {t.overview_setup_upstream_link()}
+                                    </a>
+                                </div>
+                            })}
                             <MetricsLegend />
                             <OverviewHealthStrip health=health />
                             <HistoryMetaHint metrics=m.clone() />
-                            <MetricsBento metrics=m.clone() />
+                            <MetricsBento metrics=m.clone() suggestions=suggestions.clone() />
                             <TraceCompareBanner trace=trace metrics=m.clone() />
                             <OpsMetricsRow ops=ops.clone() />
                             <PrefixCacheCard prefix=prefix.clone() />
                             <TokenStats metrics=m.clone() prefix=prefix />
-                            <TimeSeriesChart metrics=m.clone() />
+                            <TimeSeriesChart metrics=m.clone() suggestions=suggestions />
                             <div class="bento-grid-2">
                                 <CoalescingCard metrics=m.clone() ops=ops.clone() />
                                 <SemanticCacheCard metrics=m.clone() semantic=semantic />
@@ -140,6 +144,43 @@ pub fn OverviewPage() -> impl IntoView {
                 }
             }}
         </div>
+    }
+}
+
+fn overview_error_hint(err: &str, t: &crate::locale::Translations) -> Option<String> {
+    if err.contains("HTTP 502") {
+        Some(t.overview_error_hint_502().to_string())
+    } else if err.contains("HTTP 503") {
+        Some(t.overview_error_hint_503().to_string())
+    } else {
+        None
+    }
+}
+
+#[component]
+fn ChartSuggestions(
+    suggestions: Vec<OverviewSuggestion>,
+    target: &'static str,
+) -> impl IntoView {
+    let filtered: Vec<_> = suggestions
+        .into_iter()
+        .filter(|s| s.target == target)
+        .collect();
+    let t = use_translations();
+    view! {
+        {(!filtered.is_empty()).then(|| view! {
+            <div class="impact-hint space-y-2">
+                <div class="text-xs font-medium text-theme-secondary">{t.overview_suggestions_title()}</div>
+                {filtered.into_iter().map(|s| {
+                    let class = match s.severity.as_str() {
+                        "warn" => "text-warning text-xs",
+                        "action" => "text-accent text-xs",
+                        _ => "text-theme-muted text-xs",
+                    };
+                    view! { <p class=class>{s.message}</p> }
+                }).collect::<Vec<_>>()}
+            </div>
+        })}
     }
 }
 
@@ -352,7 +393,7 @@ fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
+fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) -> impl IntoView {
     let t = use_translations();
     let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
     let total_requests = total_hits + metrics.cache_misses;
@@ -414,6 +455,7 @@ fn MetricsBento(metrics: MetricsSnapshot) -> impl IntoView {
                     {insufficient.then(|| view! {
                         <p class="text-xs text-warning mt-3">{t.overview_sample_insufficient()}</p>
                     })}
+                    <ChartSuggestions suggestions=suggestions.clone() target="hit_rate" />
                 </div>
             </div>
             <div class="bento-cell">
@@ -549,7 +591,10 @@ fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> i
 }
 
 #[component]
-fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
+fn TimeSeriesChart(
+    metrics: MetricsSnapshot,
+    suggestions: Vec<OverviewSuggestion>,
+) -> impl IntoView {
     let t = use_translations();
     let selected_view = RwSignal::new("1h".to_string());
 
@@ -609,6 +654,8 @@ fn TimeSeriesChart(metrics: MetricsSnapshot) -> impl IntoView {
                     </button>
                 </div>
             </div>
+
+            <ChartSuggestions suggestions=suggestions target="timeseries" />
 
             <div class="space-y-4">
                 {move || {

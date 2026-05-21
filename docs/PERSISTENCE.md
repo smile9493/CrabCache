@@ -9,8 +9,9 @@
 | 响应缓存 L0 | Moka 热缓存 | 进程内存 | 不共享（设计如此） |
 | 响应缓存 L1 | 精确命中条目 | Redis `cache:{key}` | 共享 |
 | 响应缓存 L2 | 语义向量 | Qdrant | 共享 |
-| 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、上游 relay | Redis `crab:state:*` | 共享（必选） |
-| 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` | 共享 |
+| 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、连接参数、上游 relay、**域策略** | Redis `crab:state:*` | 共享（必选） |
+| 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` | 共享（`Some([])` 可清空池） |
+| 域用量计数 | `domain_usage`（当月 token/成本累计） | 进程内存 | **不**持久化 |
 | Reasoning | 思考链恢复 | SQLite 或 Redis `crab:reasoning:*` | 多实例需 `redis` |
 | 影子日志 | 脱敏 Trace | JSONL 文件 / 卷 | 每实例或集中采集 |
 | Admin UI | 模型元数据、Key 配额 | `data/admin-state.json` | Admin 单实例卷 |
@@ -24,9 +25,10 @@
 |-----|------|
 | `{prefix}:version` | 单调 revision（INCR） |
 | `{prefix}:keys` | JSON：`token -> StoredKey` |
-| `{prefix}:runtime` | JSON：TTL、指纹、stream_cache、relay、backends |
-| `{prefix}:upstream_keys` | JSON：`UpstreamKeySpec[]`（含 secret，敏感） |
-| Pub/Sub `{prefix}:rev` | 发布新 revision，各实例刷新本地缓存 |
+| `{prefix}:runtime` | JSON：TTL、指纹、stream_cache、relay、backends、`connection` |
+| `{prefix}:upstream_keys` | JSON：`UpstreamKeySpec[]`（含 secret，敏感）；缺 key = 保留内存池，`[]` = 清空 |
+| `{prefix}:domain_policies` | JSON：`domain -> DomainPolicy`（预算/命中率阈值，**不含** `domain_usage`） |
+| Pub/Sub `{prefix}:rev` | 发布新 revision；各实例 **订阅 + 轮询** `refresh_interval_secs` 双路径刷新 |
 
 Reasoning（`[reasoning].backend = "redis"`）：
 
@@ -49,6 +51,15 @@ refresh_interval_secs = 5
 ```
 
 环境变量：`CRABCACHE_STATE_BACKEND=redis|memory`
+
+**单实例 vs 多副本**（`config/gateway.example.toml` 顶部注释对照）：
+
+| 场景 | `[state].backend` | `[reasoning].backend` |
+|------|-------------------|------------------------|
+| 本机开发 / 单容器 | `memory`（默认） | `sqlite` 或 `redis` |
+| `docker compose --scale gateway=N` | **`redis`**（`gateway.docker.toml`） | **`redis`** |
+
+Management 写穿 Redis 失败时重试 3 次并记录 `gateway_state_persist_total` / `gateway_state_persist_errors_total`。
 
 ### Reasoning（多实例必选）
 
@@ -90,6 +101,8 @@ docker compose --profile admin up -d
 
 `admin_data` 卷挂载 `/app/data`，保存 `admin-state.json`（含 `keys_meta` 配额字段）。
 
+**双源说明**：Admin 的 `domain_policies` 也写入 `admin-state.json`，并在启动时 `sync_domain_policies_to_gateway` 推到 Gateway。**运行时权威**为 Gateway Redis `crab:state:domain_policies`；多 Gateway 副本以 Redis 为准，Admin 重启后应从 Management `GET /v1/domains/policies` 对齐（勿只在 Admin 本地改策略而不同步网关）。
+
 ## 备份
 
 | 资产 | 方法 |
@@ -113,6 +126,7 @@ docker compose --profile admin up -d
 ## 明确不持久化
 
 - L0 Moka、Request Coalescing inflight
+- **`domain_usage`**（域当月用量；策略在 Redis，计数器每实例内存）
 - Prometheus 进程计数器（靠外部 TSDB）
 - Admin `metrics_history` 时序环（重启清空，见 [OBSERVABILITY.md](./OBSERVABILITY.md)）
 

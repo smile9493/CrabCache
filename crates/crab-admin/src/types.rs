@@ -104,6 +104,13 @@ pub struct TraceSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewSuggestion {
+    pub severity: String,
+    pub target: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverviewBundle {
     pub metrics: MetricsSnapshot,
     pub health: GatewayHealthView,
@@ -111,6 +118,8 @@ pub struct OverviewBundle {
     pub semantic: SemanticConfig,
     pub trace_summary: TraceSummary,
     pub ops: OverviewOpsMetrics,
+    #[serde(default)]
+    pub suggestions: Vec<OverviewSuggestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

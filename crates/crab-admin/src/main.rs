@@ -1,5 +1,6 @@
 mod metrics_history;
 mod overview;
+mod suggestions;
 mod trace_summary;
 mod network;
 mod openresty;

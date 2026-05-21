@@ -4,7 +4,8 @@ use crate::metrics_history::{
     self, avg_prometheus_histogram_ms, build_prefix_cache_snapshot, consumer_token_buckets,
     domain_token_buckets, scrape_gateway_counters, scrape_ops_metrics, WINDOW_5M_SECS,
 };
-use crate::state::AppState;
+use crate::state::{AppState, GatewayProbe};
+use crate::suggestions::build_overview_suggestions;
 use crate::trace_log;
 use crate::trace_summary;
 use crate::types::{
@@ -16,6 +17,47 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TRACE_SUMMARY_TTL: Duration = Duration::from_secs(60);
+const GATEWAY_PROBE_TTL: Duration = Duration::from_secs(3);
+
+pub fn gateway_probe_ttl() -> Duration {
+    std::env::var("CRABCACHE_GATEWAY_PROBE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(GATEWAY_PROBE_TTL)
+}
+
+/// Fetch `/v1/ready` and `/v1/status` at most once per TTL window.
+pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
+    {
+        let cache = state.gateway_probe_cache.read();
+        if let Some((at, probe)) = cache.as_ref() {
+            if at.elapsed() < gateway_probe_ttl() {
+                return probe.clone();
+            }
+        }
+    }
+
+    let ready = state.gateway.ready().await;
+    let ready_ok = ready.is_ok();
+    let ready_error = ready.err().map(|e| e.to_string());
+
+    let status_result = state.gateway.status().await;
+    let (status, status_error) = match status_result {
+        Ok(s) => (Some(s), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+
+    let probe = GatewayProbe {
+        ready_ok,
+        ready_error,
+        status,
+        status_error,
+    };
+    *state.gateway_probe_cache.write() = Some((Instant::now(), probe.clone()));
+    probe
+}
 
 pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, String> {
     let body = metrics_history::fetch_gateway_metrics_body().await?;
@@ -32,8 +74,9 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
         }
     }
 
-    let metrics = build_metrics_snapshot(&body, state, now).await?;
-    let health = build_gateway_health(state).await;
+    let probe = fetch_gateway_probe_cached(state).await;
+    let metrics = build_metrics_snapshot(&body, state, now, probe.status.as_ref()).await?;
+    let health = build_gateway_health_from_probe(&probe);
     let prefix_cache = build_prefix_cache_snapshot(&body);
 
     let semantic_cfg = state.semantic_config.read().clone();
@@ -43,27 +86,31 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
     };
 
     let mut ops = scrape_ops_metrics(&body, &state.metrics_history.read(), now);
-    if let Ok(status) = state.gateway.status().await {
+    if let Some(ref status) = probe.status {
         ops.upstream_key_count = status.upstream_key_count as u32;
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
 
-    let trace_summary = cached_trace_summary(state, 24);
+    let trace_summary = cached_trace_summary(state, 24).await;
 
-    Ok(OverviewBundle {
+    let mut bundle = OverviewBundle {
         metrics,
         health,
         prefix_cache,
         semantic,
         trace_summary,
         ops,
-    })
+        suggestions: vec![],
+    };
+    bundle.suggestions = build_overview_suggestions(&bundle);
+    Ok(bundle)
 }
 
 pub async fn build_metrics_snapshot(
     body: &str,
     state: &Arc<AppState>,
     now: u64,
+    gateway_status: Option<&GatewayStatus>,
 ) -> Result<MetricsSnapshot, String> {
     let counters = scrape_gateway_counters(body, now);
 
@@ -82,7 +129,7 @@ pub async fn build_metrics_snapshot(
 
     let mut uptime_secs = now.saturating_sub(state.start_time);
     let mut active_keys = state.keys_meta.len() as u64;
-    if let Ok(status) = state.gateway.status().await {
+    if let Some(status) = gateway_status {
         if status.uptime_secs > 0 {
             uptime_secs = status.uptime_secs;
         }
@@ -209,12 +256,12 @@ pub async fn build_metrics_snapshot(
 }
 
 pub async fn build_gateway_health(state: &Arc<AppState>) -> GatewayHealthView {
-    match state.gateway.ready().await {
-        Ok(()) => match state.gateway.status().await {
-            Ok(s) => gateway_health_from_status(s, None),
-            Err(e) => gateway_health_from_status(empty_gateway_status(), Some(e.to_string())),
-        },
-        Err(e) => GatewayHealthView {
+    build_gateway_health_from_probe(&fetch_gateway_probe_cached(state).await)
+}
+
+fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
+    if !probe.ready_ok {
+        return GatewayHealthView {
             healthy: false,
             uptime_secs: 0,
             active_keys: 0,
@@ -222,8 +269,15 @@ pub async fn build_gateway_health(state: &Arc<AppState>) -> GatewayHealthView {
             stream_cache_enabled: false,
             upstream_key_count: 0,
             upstream_keys_available: 0,
-            error: Some(e.to_string()),
-        },
+            error: probe.ready_error.clone(),
+        };
+    }
+    match &probe.status {
+        Some(s) => gateway_health_from_status(s.clone(), probe.status_error.clone()),
+        None => gateway_health_from_status(
+            empty_gateway_status(),
+            probe.status_error.clone(),
+        ),
     }
 }
 
@@ -253,7 +307,7 @@ fn empty_gateway_status() -> GatewayStatus {
     }
 }
 
-fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary {
+async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary {
     {
         let cache = state.trace_summary_cache.read();
         if let Some((at, summary)) = cache.as_ref() {
@@ -264,7 +318,7 @@ fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary {
     }
 
     let path = trace_log::trace_log_path();
-    let entries = trace_log::filter_trace_by_hours(trace_log::load_trace_entries(&path), hours);
+    let entries = trace_log::load_trace_entries_async(&path, hours).await;
     let summary = trace_summary::compute_trace_summary(&entries, hours);
     *state.trace_summary_cache.write() = Some((Instant::now(), summary.clone()));
     summary

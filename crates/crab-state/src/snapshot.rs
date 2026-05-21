@@ -1,9 +1,12 @@
 use anyhow::Result;
 use crab_cache::TtlConfig;
 use crab_control::parse_backend_endpoints;
-use crab_proxy::{RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec};
+use crab_proxy::{
+    ConnectionConfig, DomainPolicy, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoredKeySnapshot {
     pub id: String,
@@ -36,6 +39,7 @@ pub struct RuntimeSnapshot {
     pub upstream_base_url: String,
     pub fallback_model: String,
     pub backends: Vec<BackendSnapshot>,
+    pub connection: ConnectionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +53,11 @@ pub struct UpstreamKeySnapshot {
 pub struct ControlPlaneSnapshot {
     pub keys: HashMap<String, StoredKeySnapshot>,
     pub runtime: Option<RuntimeSnapshot>,
-    pub upstream_keys: Vec<UpstreamKeySnapshot>,
+    /// `None` when the Redis key was never written (legacy); `Some` applies even if empty.
+    #[serde(default)]
+    pub upstream_keys: Option<Vec<UpstreamKeySnapshot>>,
+    #[serde(default)]
+    pub domain_policies: HashMap<String, DomainPolicy>,
 }
 
 pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnapshot {
@@ -118,6 +126,12 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         })
         .unwrap_or_default();
 
+    let connection = runtime
+        .conn_config
+        .read()
+        .map(|c| c.clone())
+        .unwrap_or_default();
+
     let upstream_keys: Vec<UpstreamKeySnapshot> = runtime
         .upstream_pool()
         .to_specs()
@@ -129,6 +143,11 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         })
         .collect();
 
+    let domain_policies: HashMap<String, DomainPolicy> = runtime
+        .list_domain_policies()
+        .into_iter()
+        .collect();
+
     ControlPlaneSnapshot {
         keys,
         runtime: Some(RuntimeSnapshot {
@@ -138,8 +157,10 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
             upstream_base_url,
             fallback_model,
             backends,
+            connection,
         }),
-        upstream_keys,
+        upstream_keys: Some(upstream_keys),
+        domain_policies,
     }
 }
 
@@ -177,6 +198,9 @@ pub fn apply_snapshot_to_runtime(
         if let Ok(mut model) = runtime.fallback_model.write() {
             *model = rt.fallback_model.clone();
         }
+        if let Ok(mut conn) = runtime.conn_config.write() {
+            *conn = rt.connection.clone();
+        }
 
         if !rt.backends.is_empty() {
             let tls_sni = rt.backends[0].tls_sni.clone();
@@ -196,9 +220,8 @@ pub fn apply_snapshot_to_runtime(
         }
     }
 
-    if !snap.upstream_keys.is_empty() {
-        let specs: Vec<UpstreamKeySpec> = snap
-            .upstream_keys
+    if let Some(keys) = &snap.upstream_keys {
+        let specs: Vec<UpstreamKeySpec> = keys
             .iter()
             .map(|k| UpstreamKeySpec {
                 id: k.id.clone(),
@@ -209,6 +232,8 @@ pub fn apply_snapshot_to_runtime(
         let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs);
         runtime.replace_upstream_pool(pool);
     }
+
+    runtime.replace_domain_policies(snap.domain_policies.clone());
 
     Ok(())
 }

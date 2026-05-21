@@ -157,7 +157,8 @@ async fn get_metrics(
             history.append(counters);
         }
     }
-    crate::overview::build_metrics_snapshot(&body, &state, now)
+    let probe = crate::overview::fetch_gateway_probe_cached(&state).await;
+    crate::overview::build_metrics_snapshot(&body, &state, now, probe.status.as_ref())
         .await
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
@@ -1465,7 +1466,7 @@ fn build_upstream_config_view(state: &AppState) -> UpstreamConfig {
 }
 
 async fn get_upstream_config(State(state): State<Arc<AppState>>) -> Json<UpstreamConfig> {
-    state.reconcile_upstream_from_gateway().await;
+    state.reconcile_upstream_if_stale(false).await;
     Json(build_upstream_config_view(&state))
 }
 
@@ -1642,10 +1643,7 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
     use std::collections::HashMap;
 
     let trace_path = crate::trace_log::trace_log_path();
-    let entries = crate::trace_log::filter_trace_by_hours(
-        crate::trace_log::load_trace_entries(&trace_path),
-        query.hours,
-    );
+    let entries = crate::trace_log::load_trace_entries_async(&trace_path, query.hours).await;
 
     if entries.is_empty() {
         return Json(empty_trace_analysis());

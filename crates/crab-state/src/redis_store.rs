@@ -24,6 +24,7 @@ impl RedisStateConfig {
 
 pub struct RedisStateStore {
     pool: Pool<RedisConnectionManager>,
+    redis_url: String,
     prefix: String,
     rev_channel: String,
 }
@@ -42,6 +43,7 @@ impl RedisStateStore {
 
         Ok(Self {
             pool,
+            redis_url: config.redis_url.clone(),
             prefix,
             rev_channel,
         })
@@ -67,6 +69,7 @@ impl RedisStateStore {
         let keys_json: Option<String> = conn.get(self.key("keys")).await?;
         let runtime_json: Option<String> = conn.get(self.key("runtime")).await?;
         let upstream_json: Option<String> = conn.get(self.key("upstream_keys")).await?;
+        let domain_json: Option<String> = conn.get(self.key("domain_policies")).await?;
 
         let keys = keys_json
             .as_deref()
@@ -81,6 +84,11 @@ impl RedisStateStore {
         let upstream_keys = upstream_json
             .as_deref()
             .map(serde_json::from_str)
+            .transpose()?;
+
+        let domain_policies = domain_json
+            .as_deref()
+            .map(serde_json::from_str)
             .transpose()?
             .unwrap_or_default();
 
@@ -90,6 +98,7 @@ impl RedisStateStore {
                 keys,
                 runtime,
                 upstream_keys,
+                domain_policies,
             },
         ))
     }
@@ -102,10 +111,18 @@ impl RedisStateStore {
                 .set(self.key("runtime"), serde_json::to_string(rt)?)
                 .await?;
         }
+        if let Some(upstream) = &snap.upstream_keys {
+            let _: () = conn
+                .set(
+                    self.key("upstream_keys"),
+                    serde_json::to_string(upstream)?,
+                )
+                .await?;
+        }
         let _: () = conn
             .set(
-                self.key("upstream_keys"),
-                serde_json::to_string(&snap.upstream_keys)?,
+                self.key("domain_policies"),
+                serde_json::to_string(&snap.domain_policies)?,
             )
             .await?;
 
@@ -123,6 +140,10 @@ impl RedisStateStore {
 
     pub fn rev_channel(&self) -> &str {
         &self.rev_channel
+    }
+
+    pub fn redis_url(&self) -> &str {
+        &self.redis_url
     }
 
     pub async fn ping(&self) -> bool {

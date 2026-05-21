@@ -62,10 +62,13 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # Coalesce wait timeout in seconds (default: 60)
 # coalesce_timeout_secs = 60
 
-# Control plane persistence (client keys, hot TTL/routing). Use redis for multi-instance.
+# Control plane persistence (client keys, TTL/routing, domain policies, connection).
+# Single instance / bare-metal dev: backend = "memory" (default).
+# Multi-gateway replicas or docker compose --scale gateway=N: backend = "redis"
+#   (see config/gateway.docker.toml; env CRABCACHE_STATE_BACKEND=redis).
 [state]
 backend = "memory"
-# redis_url = ""
+# redis_url = ""      # empty → reuse cache.l1_redis_url
 # key_prefix = "crab:state"
 # refresh_interval_secs = 5
 
@@ -134,8 +137,8 @@ ttl_secs = 86400
 # embed_only_on_exact_miss = true
 
 [reasoning]
-# Production / Docker: use redis so reasoning survives restart and multi-instance scale.
-# Single-process dev can use sqlite (default when backend omitted).
+# Multi-instance / Docker: backend = "redis" (gateway.docker.toml).
+# Single-process dev: omit backend or backend = "sqlite".
 backend = "redis"
 redis_url = "redis://127.0.0.1:6379"
 max_reasoning_entry_bytes = 524288

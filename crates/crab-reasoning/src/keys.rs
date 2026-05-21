@@ -330,6 +330,25 @@ mod tests {
     }
 
     #[test]
+    fn test_portable_keys_include_tool_call_id() {
+        let prior = vec![json!({"role": "user", "content": "explore repo"})];
+        let assistant = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "list_dir", "arguments": "{}"}
+            }]
+        });
+        let keys = portable_reasoning_keys(&assistant, "cursor-ns", &prior);
+        assert!(
+            keys.iter().any(|k| k.contains("tool_call:call_1")),
+            "portable keys must include tool_call id for Store round-trip"
+        );
+    }
+
+    #[test]
     fn test_scoped_reasoning_keys() {
         let msg = json!({
             "content": "",

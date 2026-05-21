@@ -52,8 +52,9 @@ services:
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
       - CRABCACHE_BOOTSTRAP_CLIENT_KEYS=${CRABCACHE_BOOTSTRAP_CLIENT_KEYS:-}
       - CRABCACHE_STATE_BACKEND=${CRABCACHE_STATE_BACKEND:-redis}
-      - CRABCACHE_DEBUG_LOG_PATH=/app/.cursor/debug-5c7cd5.log
-      - CRABCACHE_DEBUG_RUN_ID=cursor-debug
+      # Opt-in NDJSON debug (H-G stagnation verify); set on host before `docker compose up`
+      - CRABCACHE_DEBUG_LOG_PATH=${CRABCACHE_DEBUG_LOG_PATH:-}
+      - CRABCACHE_DEBUG_RUN_ID=${CRABCACHE_DEBUG_RUN_ID:-}
     restart: unless-stopped
 
   admin:
@@ -85,10 +86,18 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 25s
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    # Production: set requirepass and use redis://:password@redis:6379 in .env
+    # (CRABCACHE_L1_REDIS_URL / state / reasoning URLs — see .env.example).
     container_name: crabcache-redis
     expose:
       - "6379"

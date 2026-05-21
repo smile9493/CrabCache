@@ -27,8 +27,7 @@ fn validate_base_url(url: &str) -> Option<String> {
 }
 
 fn first_key_from_text(text: &str) -> Option<String> {
-    text
-        .lines()
+    text.lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
@@ -127,15 +126,13 @@ pub fn UpstreamPage() -> impl IntoView {
             {
                 Ok(r) => {
                     test_ok.set(r.ok);
-                    test_message.set(
-                        r.error.unwrap_or_else(|| {
-                            format!(
-                                "OK — {} models, {} ms",
-                                r.model_count.unwrap_or(0),
-                                r.latency_ms
-                            )
-                        }),
-                    );
+                    test_message.set(r.error.unwrap_or_else(|| {
+                        format!(
+                            "OK — {} models, {} ms",
+                            r.model_count.unwrap_or(0),
+                            r.latency_ms
+                        )
+                    }));
                 }
                 Err(e) => test_message.set(e),
             }

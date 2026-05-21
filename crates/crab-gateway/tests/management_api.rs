@@ -555,3 +555,71 @@ async fn client_key_persisted_in_redis_state() {
         "second runtime should see key after Redis reload"
     );
 }
+
+/// Domain policies written via Management API are visible after reload from Redis.
+#[tokio::test]
+async fn domain_policies_persisted_in_redis_state() {
+    let Some(mut state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
+        .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let store = match RedisStateStore::connect(&RedisStateConfig::new(
+        redis_url,
+        format!("crab:state:test:{}", uuid::Uuid::new_v4()),
+    ))
+    .await
+    {
+        Ok(s) => Arc::new(s),
+        Err(_) => {
+            skip_or_panic_redis_unavailable();
+            return;
+        }
+    };
+    state.state_store = Some(store.clone());
+
+    let app = router(state.clone());
+    let body = serde_json::json!({
+        "policies": [{
+            "domain": "persist-team",
+            "monthly_token_budget": 500000,
+            "monthly_cost_budget_usd": 25.0,
+            "min_hit_rate": 0.9,
+            "enabled": true
+        }]
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/domains/policies")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let (_, snap) = store.load_all().await.expect("load redis state");
+    assert!(
+        snap.domain_policies.contains_key("persist-team"),
+        "domain policy should be in Redis control plane"
+    );
+    assert_eq!(
+        snap.domain_policies["persist-team"].monthly_token_budget,
+        500_000
+    );
+
+    let runtime_b = test_runtime();
+    apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
+    let policies = runtime_b.list_domain_policies();
+    assert!(
+        policies.iter().any(|(d, _)| d == "persist-team"),
+        "second runtime should see domain policy after Redis reload"
+    );
+}

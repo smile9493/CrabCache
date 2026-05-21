@@ -535,9 +535,10 @@ docker compose exec gateway curl -s -X POST http://127.0.0.1:9080/v1/keys \
 
 **持久化**（多实例部署见 [docs/PERSISTENCE.md](docs/PERSISTENCE.md)）：
 
-- **Redis 控制面**（`[state].backend = "redis"`）：客户端 `sk-cc-*`、TTL/路由/上游池跨 Gateway 副本共享。
-- **Reasoning**（`[reasoning].backend = "redis"`）：多实例下思考链恢复须用 Redis，单实例可用 SQLite。
-- **Admin**：`CRABCACHE_ADMIN_STATE_PATH`（默认 `data/admin-state.json`）保存模型元数据、Key 配额等；Docker Admin profile 挂载 `admin_data` 卷。
+- **Redis 控制面**（`[state].backend = "redis"`）：客户端 `sk-cc-*`、TTL/指纹/路由/连接参数、域策略、上游池；Pub/Sub + 轮询同步；Management 写穿带重试指标。
+- **Reasoning**（`[reasoning].backend = "redis"`）：多实例下思考链恢复须用 Redis（`SCAN` 清理 + `cache_max_rows` 修剪）；单实例可用 SQLite。
+- **Admin**：`admin-state.json`（`keys_meta`、本地 `domain_policies` 缓存）；运行时域策略以 Gateway Redis 为准，Admin 启动会同步到 Management API。
+- **不持久化**：L0 Moka、`domain_usage` 当月计数、Coalescing inflight。
 
 可选 Admin Dashboard（需先 [`scripts/build_dashboard.sh`](scripts/build_dashboard.sh) 构建前端）：
 

@@ -21,7 +21,7 @@ use crab_proxy::{
 };
 use std::collections::HashMap;
 use crab_reasoning::ReasoningBackend;
-use crab_state::{RedisStateStore, persist_runtime_state};
+use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -457,8 +457,8 @@ fn schedule_persist_state(state: &ManagementState) {
     };
     let runtime = state.runtime.clone();
     tokio::spawn(async move {
-        if let Err(e) = persist_runtime_state(store.as_ref(), &runtime).await {
-            tracing::warn!(error = %e, "Failed to persist control plane state to Redis");
+        if let Err(e) = persist_runtime_state_with_retry(store.as_ref(), &runtime).await {
+            tracing::error!(error = %e, "Failed to persist control plane state to Redis after retries");
         }
     });
 }
@@ -896,6 +896,7 @@ async fn put_domain_policies(
         );
     }
     state.runtime.replace_domain_policies(map);
+    schedule_persist_state(&state);
     list_domain_policies(State(state), headers).await
 }
 
@@ -907,6 +908,7 @@ async fn delete_domain_policy(
     authorize(&headers, &state.admin_key)?;
     if let Ok(mut guard) = state.runtime.domain_policies.write() {
         if guard.remove(&domain).is_some() {
+            schedule_persist_state(&state);
             return Ok(StatusCode::NO_CONTENT);
         }
     }

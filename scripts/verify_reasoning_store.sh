@@ -7,9 +7,9 @@ MGMT_URL="${CRABCACHE_GATEWAY_CONTROL_URL:-http://127.0.0.1:9080}"
 ADMIN_KEY="${CRABCACHE_GATEWAY_ADMIN_KEY:-change-me-in-production}"
 
 echo "== ReasoningStore / runtime check =="
-health=$(curl -sf "${MGMT_URL}/v1/health" || true)
-if [[ -z "${health}" ]]; then
-  echo "FAIL: management API not reachable at ${MGMT_URL}" >&2
+code=$(curl -s -o /dev/null -w "%{http_code}" "${MGMT_URL}/v1/health" || echo "000")
+if [[ "${code}" != "200" ]]; then
+  echo "FAIL: management API not reachable at ${MGMT_URL} (HTTP ${code})" >&2
   exit 1
 fi
 echo "OK management health"

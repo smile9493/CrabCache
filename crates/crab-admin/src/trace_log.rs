@@ -61,15 +61,59 @@ pub fn trace_log_path() -> String {
         .unwrap_or_else(|_| "/app/logs/trace.jsonl".to_string())
 }
 
+const MAX_TRACE_READ_BYTES: usize = 32 * 1024 * 1024;
+
 pub fn load_trace_entries(path: &str) -> Vec<TraceLogEntry> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let (bytes, truncated) = load_trace_bytes(path);
+    parse_trace_lines(&bytes, truncated)
+}
+
+/// Load trace entries on a blocking thread (for async handlers).
+pub async fn load_trace_entries_async(path: &str, hours: u32) -> Vec<TraceLogEntry> {
+    let path = path.to_string();
+    match tokio::task::spawn_blocking(move || load_trace_entries_for_hours(&path, hours)).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(error = %e, "trace log spawn_blocking join failed");
+            Vec::new()
+        }
+    }
+}
+
+fn load_trace_bytes(path: &str) -> (Vec<u8>, bool) {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return (Vec::new(), false),
     };
-    content
-        .lines()
+    if data.len() <= MAX_TRACE_READ_BYTES {
+        return (data, false);
+    }
+    tracing::warn!(
+        path,
+        bytes = data.len(),
+        max = MAX_TRACE_READ_BYTES,
+        "trace log truncated from tail for overview"
+    );
+    (
+        data[data.len().saturating_sub(MAX_TRACE_READ_BYTES)..].to_vec(),
+        true,
+    )
+}
+
+fn parse_trace_lines(slice: &[u8], truncated: bool) -> Vec<TraceLogEntry> {
+    let text = std::str::from_utf8(slice).unwrap_or("");
+    let mut lines = text.lines();
+    if truncated {
+        lines.next(); // drop likely partial first line after tail truncation
+    }
+    lines
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
+}
+
+fn load_trace_entries_for_hours(path: &str, hours: u32) -> Vec<TraceLogEntry> {
+    let entries = load_trace_entries(path);
+    filter_trace_by_hours(entries, hours)
 }
 
 pub fn load_recent_trace_entries(path: &str, limit: usize) -> Vec<TraceLogEntry> {

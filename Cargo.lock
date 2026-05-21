@@ -1026,6 +1026,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "tracing",
 ]
 
@@ -1072,8 +1073,10 @@ dependencies = [
  "bb8-redis",
  "crab-cache",
  "crab-control",
+ "crab-metrics",
  "crab-proxy",
  "crab-route",
+ "futures-util",
  "redis",
  "serde",
  "serde_json",

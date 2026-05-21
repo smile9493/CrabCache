@@ -70,6 +70,9 @@ pub struct GatewayMetrics {
     pub prefix_break: IntCounter,
     pub prefix_block_drift: IntCounter,
     pub context_summary_appended: IntCounter,
+    pub state_persist_total: IntCounter,
+    pub state_persist_errors_total: IntCounter,
+    pub reasoning_store_rejected_bytes: IntCounter,
 }
 
 impl GatewayMetrics {
@@ -242,6 +245,21 @@ impl GatewayMetrics {
             "Context summary messages appended at tail (strategy B)",
         )?;
 
+        let state_persist_total = IntCounter::new(
+            "gateway_state_persist_total",
+            "Successful control-plane state writes to Redis",
+        )?;
+
+        let state_persist_errors_total = IntCounter::new(
+            "gateway_state_persist_errors_total",
+            "Failed control-plane state writes to Redis after retries",
+        )?;
+
+        let reasoning_store_rejected_bytes = IntCounter::new(
+            "gateway_reasoning_store_rejected_bytes_total",
+            "Reasoning cache entries rejected due to max_reasoning_entry_bytes",
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -264,6 +282,9 @@ impl GatewayMetrics {
             prefix_break,
             prefix_block_drift,
             context_summary_appended,
+            state_persist_total,
+            state_persist_errors_total,
+            reasoning_store_rejected_bytes,
         })
     }
 
@@ -289,7 +310,22 @@ impl GatewayMetrics {
         registry.register(Box::new(self.prefix_break.clone()))?;
         registry.register(Box::new(self.prefix_block_drift.clone()))?;
         registry.register(Box::new(self.context_summary_appended.clone()))?;
+        registry.register(Box::new(self.state_persist_total.clone()))?;
+        registry.register(Box::new(self.state_persist_errors_total.clone()))?;
+        registry.register(Box::new(self.reasoning_store_rejected_bytes.clone()))?;
         Ok(())
+    }
+
+    pub fn record_state_persist_success(&self) {
+        self.state_persist_total.inc();
+    }
+
+    pub fn record_state_persist_error(&self) {
+        self.state_persist_errors_total.inc();
+    }
+
+    pub fn record_reasoning_store_rejected(&self) {
+        self.reasoning_store_rejected_bytes.inc();
     }
 
     pub fn record_reasoning_store_lookup(&self, hit: bool) {

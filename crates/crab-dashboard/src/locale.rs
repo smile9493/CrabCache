@@ -277,6 +277,32 @@ impl Translations {
             Locale::EnUS => "Failed to load metrics",
         }
     }
+    pub fn overview_error_hint_502(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "502：检查 crab-admin 是否在运行，OpenResty proxy_pass 是否指向 127.0.0.1:18001（非 8080）。"
+            }
+            Locale::EnUS => {
+                "502: ensure crab-admin is running and OpenResty proxy_pass targets 127.0.0.1:18001 (not 8080)."
+            }
+        }
+    }
+    pub fn overview_error_hint_503(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "503：检查网关 :9090/metrics 与 CRABCACHE_GATEWAY_METRICS_URL，确认 gateway 容器健康。"
+            }
+            Locale::EnUS => {
+                "503: check gateway :9090/metrics and CRABCACHE_GATEWAY_METRICS_URL; verify gateway is healthy."
+            }
+        }
+    }
+    pub fn overview_suggestions_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维建议",
+            Locale::EnUS => "Suggestions",
+        }
+    }
 
     pub fn keys_title(self) -> &'static str {
         match self.locale {

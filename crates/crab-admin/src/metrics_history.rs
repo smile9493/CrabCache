@@ -374,13 +374,23 @@ pub async fn fetch_gateway_metrics_body() -> Result<String, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let resp = client
-        .get(&metrics_url)
-        .send()
-        .await
-        .map_err(|e| format!("fetch {metrics_url}: {e}"))?;
-
-    resp.text().await.map_err(|e| e.to_string())
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        match client.get(&metrics_url).send().await {
+            Ok(resp) => return resp.text().await.map_err(|e| e.to_string()),
+            Err(e) => {
+                last_err = format!("fetch {metrics_url}: {e}");
+                if attempt == 0 && (e.is_timeout() || e.is_connect()) {
+                    tracing::debug!(error = %e, "metrics fetch retry");
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                tracing::warn!(error = %last_err, "Failed to fetch gateway metrics");
+                return Err(last_err);
+            }
+        }
+    }
+    Err(last_err)
 }
 
 /// Parse gateway counters from Prometheus exposition text.

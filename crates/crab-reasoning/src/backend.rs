@@ -2,12 +2,13 @@ use crate::keys::{portable_reasoning_keys, scoped_reasoning_keys};
 use crate::redis_store::RedisReasoningStore;
 use crate::store::ReasoningStore;
 use serde_json::Value;
+use std::sync::Arc;
 use tracing::debug;
 
 /// Shared reasoning cache (SQLite single-instance or Redis multi-instance).
 pub enum ReasoningBackend {
     Sqlite(ReasoningStore),
-    Redis(RedisReasoningStore),
+    Redis(Arc<RedisReasoningStore>),
 }
 
 impl ReasoningBackend {
@@ -26,13 +27,17 @@ impl ReasoningBackend {
     pub fn open_redis(
         redis_url: &str,
         max_age_seconds: Option<u64>,
+        max_rows: Option<usize>,
         max_entry_bytes: usize,
     ) -> anyhow::Result<Self> {
-        Ok(Self::Redis(RedisReasoningStore::new(
+        let store = Arc::new(RedisReasoningStore::new(
             redis_url,
             max_age_seconds,
+            max_rows,
             max_entry_bytes,
-        )?))
+        )?);
+        store.clone().spawn_prune_task();
+        Ok(Self::Redis(store))
     }
 
     pub fn from_config(
@@ -51,7 +56,7 @@ impl ReasoningBackend {
             let url = redis_url
                 .filter(|s| !s.is_empty())
                 .unwrap_or(l1_redis_url);
-            Self::open_redis(url, max_age_seconds, max_entry_bytes)
+            Self::open_redis(url, max_age_seconds, max_rows, max_entry_bytes)
         } else {
             Self::open_sqlite(cache_db_path, max_age_seconds, max_rows)
         }

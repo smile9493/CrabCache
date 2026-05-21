@@ -7,7 +7,7 @@ use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
 use crab_semantic::{SemanticCache, SemanticGateConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -22,7 +22,7 @@ pub struct StoredKey {
     pub domain: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConnectionConfig {
     pub tcp_keepalive_idle_secs: Option<u64>,
     pub tcp_keepalive_interval_secs: Option<u64>,

@@ -71,7 +71,9 @@ CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 
 ### 2) `proxy_pass` 必须指向 8080 / 18001
 
-错误示例：`http://127.0.0.1:18080` → 站点 `error.log` 会出现 `connect() failed (111: Connection refused)`。
+错误示例：`http://127.0.0.1:18080` → 站点 `error.log` 会出现 `connect() failed (111: Connection refused)`，浏览器显示 **502 Bad Gateway**。
+
+仪表盘需 **`docker compose --profile admin`** 启动；仅起 `gateway` 时 `18001` 无进程监听，刷新 `https://域名:18010` 会偶发 502。详见 [OBSERVABILITY.md](./OBSERVABILITY.md)「Dashboard 502 / 503 troubleshooting」。
 
 ### 3) 内网用公网域名访问可能 403
 
@@ -92,7 +94,7 @@ Cursor / 子代理往往不带会话头时，网关会用 **`client:<sk-cc>`** �
 仓库示例（注释形式，按环境启用其一）：
 
 - **Cookie**：`proxy_set_header x-conversation-id $cookie_<your_cookie>;`
-- **Authorization 派生**：`map $http_authorization $crabcache_conv_id { ... }` 后 `proxy_set_header x-conversation-id $crabcache_conv_id;`
+- **Authorization 派生（示例配置默认启用）**：[`deploy/nginx/crabcache-openresty-1panel.example.conf`](../deploy/nginx/crabcache-openresty-1panel.example.conf) 顶部 `map` + `proxy_set_header x-conversation-id $crabcache_conv_id_final;`（可被 cookie `crabcache_thread_id` 覆盖）
 
 详见 [`deploy/nginx/crabcache-openresty-1panel.example.conf`](../deploy/nginx/crabcache-openresty-1panel.example.conf) 与 **[REASONING_STORE.md](REASONING_STORE.md)**。
 

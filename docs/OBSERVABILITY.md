@@ -18,6 +18,7 @@ Three layers: **Prometheus (real-time)**, **Admin Dashboard (operations)**, **sh
 | `ttft_ms` | `gateway_stream_first_token_latency_seconds` | Average TTFT (histogram) |
 | `tier_deltas_5m` | `gateway_cache_requests_total` by tier | L0/L1/L2/miss request counts in 5m window |
 | `trace_summary.cache_hit_ratio` | `trace.jsonl` (24h, cached 60s) | Shadow log hit rate for Trace compare banner |
+| `suggestions[]` | Rule engine in `build_overview` | Actionable hints under hit-rate and time-series cards |
 
 ## Admin Dashboard
 
@@ -32,6 +33,7 @@ Three layers: **Prometheus (real-time)**, **Admin Dashboard (operations)**, **sh
 | `semantic` | `enabled` + `similarity_threshold` |
 | `trace_summary` | 24h shadow log summary (60s server cache) |
 | `ops` | Cost saved, coalescing/rejected 5m, TTFT, prefix_break, reasoning store, SSE omitted |
+| `suggestions` | Rule-based ops hints (`severity`, `target`, `message`) for Overview cards |
 
 - Time series buckets come from a **60s metrics sampler** (`CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS`, default 60). Empty charts mean “collecting” — wait 1–2 minutes after startup.
 - `metrics_sample_insufficient` is true when the 5m window has fewer than 5 requests; UI shows “—” for window rates.
@@ -44,6 +46,8 @@ Environment:
 | `CRABCACHE_GATEWAY_METRICS_URL` | `http://127.0.0.1:9090/metrics` | Prometheus scrape target |
 | `CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS` | `60` | History ring sample interval |
 | `CRABCACHE_TRACE_LOG_PATH` | `/app/logs/trace.jsonl` | Shadow log for Trace/Logs pages |
+| `CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS` | `30` | Min interval for `GET /upstream/config` gateway reconcile |
+| `CRABCACHE_GATEWAY_PROBE_TTL_SECS` | `3` | Cache TTL for bundled `/v1/ready` + `/v1/status` in overview |
 
 Trace analysis: `GET /api/admin/trace/analysis?hours=24` (default 24; `hours=0` = full file).
 
@@ -105,6 +109,23 @@ Log response headers from the gateway:
 
 - `x-cache-status`: `HIT` / `MISS`
 - `x-request-id`: correlate with gateway logs
+
+## Dashboard 502 / 503 troubleshooting
+
+| Symptom | Likely cause | What to check |
+|---------|----------------|---------------|
+| Browser **502** on the whole page (document request) | OpenResty cannot reach `crab-admin` | `docker compose --profile admin up -d`; `curl -sf http://127.0.0.1:18001/`; `proxy_pass` must be `127.0.0.1:18001` (not `8080` / wrong port). OpenResty `error.log`: `connect() failed (111: Connection refused)`. |
+| Overview card **HTTP 503** | `GET /api/admin/overview` failed building metrics | Gateway `:9090/metrics` and `CRABCACHE_GATEWAY_METRICS_URL`; `docker compose ps` gateway health. |
+| Overview card **HTTP 502** (API, not HTML) | Rare; upstream proxy reset while admin was blocked | Admin logs; large `trace.jsonl` (tail-read capped at 32MB); reduce concurrent refreshes. |
+| Intermittent failures on refresh | Request storm (mitigated in recent builds) | Overview should only call `/api/admin/overview` (no extra `/upstream/config` on load); gateway Management cached ~3s. |
+
+Quick checks:
+
+```bash
+curl -sf http://127.0.0.1:18001/
+curl -sf -H "x-admin-key: $CRABCACHE_ADMIN_KEY" http://127.0.0.1:18001/api/admin/overview | head -c 200
+curl -sf http://127.0.0.1:9090/metrics | head
+```
 
 ## Limitations
 
