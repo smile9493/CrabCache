@@ -13,6 +13,7 @@ use crab_control::{
     CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
     PutTtlConfigRequest, PutUpstreamKeysRequest,
     UpstreamKeyInput, UpstreamKeysPutMode, parse_upstream_base_url, validate_deepseek_key,
+    CursorModelsConfigView,
 };
 use crate::metrics_history::{
     domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
@@ -83,7 +84,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/gateway/health", get(get_gateway_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
-        .route("/api/admin/keys/{id}", delete(revoke_key))
+        .route(
+            "/api/admin/keys/{id}",
+            delete(revoke_key).patch(patch_key),
+        )
+        .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
         .route(
             "/api/admin/cache/config",
             get(get_cache_config).put(update_cache_config),
@@ -108,6 +113,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_connection_config).put(update_connection_config),
         )
         .route(
+            "/api/admin/reasoning/config",
+            get(get_reasoning_config).put(put_reasoning_config),
+        )
+        .route(
             "/api/admin/upstream/config",
             get(get_upstream_config).put(update_upstream_config),
         )
@@ -124,6 +133,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/models/detect", post(post_models_detect))
         .route("/api/admin/models/apply", post(post_models_apply))
         .route("/api/admin/routing/status", get(get_routing_status))
+        .route("/api/admin/routing/backends", put(put_routing_backends))
+        .route("/api/admin/cursor/models", get(get_cursor_models).put(put_cursor_models))
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
@@ -924,6 +935,103 @@ async fn revoke_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn patch_key(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<PatchKeyRequest>,
+) -> Result<Json<ApiKey>, (StatusCode, String)> {
+    let token = state
+        .keys_meta
+        .get(&id)
+        .map(|m| m.token.clone())
+        .ok_or((StatusCode::NOT_FOUND, "key not found".to_string()))?;
+
+    let updated = state
+        .gateway
+        .patch_key(
+            &token,
+            &crab_control::PatchGatewayKeyRequest {
+                name: req.name.clone(),
+                enabled: req.enabled,
+                domain: req.domain.clone(),
+                project_id: req.project_id.clone(),
+                pipeline: req.pipeline.clone(),
+                upstream_profile: req.upstream_profile.clone(),
+            },
+        )
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    if let Some(mut meta) = state.keys_meta.get_mut(&id) {
+        if req.enabled == Some(false) {
+            meta.token = String::new();
+        }
+    }
+    state.flush_persist();
+
+    let meta = state.keys_meta.get(&id);
+    Ok(Json(ApiKey {
+        id: updated.id.clone(),
+        name: updated.name,
+        key_preview: updated.key_preview,
+        key_full: meta.as_ref().map(|m| m.token.clone()),
+        active: updated.enabled,
+        rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
+        monthly_token_budget: meta
+            .as_ref()
+            .map(|m| m.monthly_token_limit)
+            .unwrap_or(0),
+        tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
+        expired_at: meta.as_ref().and_then(|m| m.expired_at),
+        model_limits: meta
+            .as_ref()
+            .map(|m| m.model_limits.clone())
+            .unwrap_or_default(),
+        remain_quota: meta.as_ref().map(|m| m.remain_quota).unwrap_or(-1),
+        unlimited_quota: meta.as_ref().map(|m| m.unlimited_quota).unwrap_or(true),
+        domain: updated.domain,
+        project_id: updated.project_id,
+        pipeline: updated.pipeline,
+        upstream_profile: updated.upstream_profile,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct BatchRevokeBody {
+    ids: Vec<String>,
+}
+
+async fn batch_revoke_keys(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<BatchRevokeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut revoked = Vec::new();
+    let mut errors = Vec::new();
+    for id in &body.ids {
+        let token = match state.keys_meta.get(id).map(|m| m.token.clone()) {
+            Some(t) => t,
+            None => {
+                errors.push((id.clone(), "not found".to_string()));
+                continue;
+            }
+        };
+        match state.gateway.revoke_key(&token).await {
+            Ok(_) => {
+                state.keys_meta.remove(id);
+                revoked.push(id.clone());
+            }
+            Err(e) => {
+                errors.push((id.clone(), e.to_string()));
+            }
+        }
+    }
+    state.flush_persist();
+    Ok(Json(serde_json::json!({
+        "revoked": revoked,
+        "errors": errors,
+    })))
+}
+
 async fn get_cache_ops(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CacheOpsView>, (StatusCode, String)> {
@@ -1127,6 +1235,8 @@ async fn get_cache_config(
         l0_ttl_secs: config.l0_ttl_secs,
         l1_ttl_secs: config.l1_ttl_secs,
         default_ttl_secs: config.default_ttl_secs,
+        model_overrides: config.model_overrides.clone(),
+        consumer_overrides: config.consumer_overrides.clone(),
     }))
 }
 
@@ -1134,10 +1244,15 @@ async fn update_cache_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UpdateCacheConfigRequest>,
 ) -> Result<Json<CacheConfig>, StatusCode> {
-    let put_req = {
+    {
         let mut config = state.cache_config.write();
         config.l0_ttl_secs = req.l0_ttl_secs;
         config.l1_ttl_secs = req.l1_ttl_secs;
+        config.model_overrides = req.model_overrides.clone();
+        config.consumer_overrides = req.consumer_overrides.clone();
+    }
+    let put_req = {
+        let config = state.cache_config.read();
         PutTtlConfigRequest {
             default_ttl_secs: config.l1_ttl_secs,
             model_overrides: config
@@ -1169,6 +1284,8 @@ async fn update_cache_config(
         l0_ttl_secs: config.l0_ttl_secs,
         l1_ttl_secs: config.l1_ttl_secs,
         default_ttl_secs: config.default_ttl_secs,
+        model_overrides: config.model_overrides.clone(),
+        consumer_overrides: config.consumer_overrides.clone(),
     }))
 }
 
@@ -1185,6 +1302,9 @@ async fn update_semantic_config(
     Json(req): Json<UpdateSemanticConfigRequest>,
 ) -> Json<SemanticConfig> {
     let mut config = state.semantic_config.write();
+    if let Some(enabled) = req.enabled {
+        config.enabled = enabled;
+    }
     config.similarity_threshold = req.similarity_threshold as f32;
 
     Json(SemanticConfig {
@@ -1209,6 +1329,7 @@ async fn get_routing_status(
             name: b.name,
             request_count: 0,
             healthy: b.healthy,
+            addr: b.addr,
         })
         .collect();
     let active_count = backends.len();
@@ -1219,6 +1340,104 @@ async fn get_routing_status(
         total_requests: 0,
         backends,
     }))
+}
+
+async fn put_routing_backends(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PutBackendsRequest>,
+) -> Result<Json<RoutingStatus>, (StatusCode, String)> {
+    let endpoints: Vec<String> = req.backends.iter().map(|b| b.addr.clone()).collect();
+    let default_weight = req.backends.first().map(|b| b.weight).unwrap_or(1);
+    let view = state
+        .gateway
+        .put_backends(&crab_control::PutBackendsRequest {
+            endpoints,
+            default_weight,
+            tls_sni: "api.deepseek.com".to_string(),
+        })
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let backends: Vec<BackendStatus> = view
+        .backends
+        .into_iter()
+        .map(|b| BackendStatus {
+            name: b.name,
+            request_count: 0,
+            healthy: b.healthy,
+            addr: b.addr,
+        })
+        .collect();
+
+    Ok(Json(RoutingStatus {
+        total_backends: backends.len(),
+        active_backends: backends.len(),
+        total_requests: 0,
+        backends,
+    }))
+}
+
+async fn get_cursor_models(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CursorModelsConfig>, (StatusCode, String)> {
+    let view = state
+        .gateway
+        .get_cursor_models()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let aliases: Vec<CursorModelAlias> = view
+        .aliases
+        .into_iter()
+        .map(|(model, alias)| CursorModelAlias {
+            model: model.clone(),
+            alias: alias.upstream.clone(),
+        })
+        .collect();
+
+    Ok(Json(CursorModelsConfig { aliases }))
+}
+
+async fn put_cursor_models(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CursorModelsConfig>,
+) -> Result<Json<CursorModelsConfig>, (StatusCode, String)> {
+    let aliases: std::collections::HashMap<String, crab_control::CursorModelAliasView> = req
+        .aliases
+        .into_iter()
+        .map(|a| {
+            (
+                a.model.clone(),
+                crab_control::CursorModelAliasView {
+                    upstream: a.alias.clone(),
+                    pipeline: "cursor_deepseek_v4".to_string(),
+                },
+            )
+        })
+        .collect();
+
+    let gateway_req = CursorModelsConfigView {
+        force_deepseek_profile_for_aliases: false,
+        synthetic_models_enabled: true,
+        aliases,
+    };
+
+    let view = state
+        .gateway
+        .put_cursor_models(&gateway_req)
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+
+    let aliases: Vec<CursorModelAlias> = view
+        .aliases
+        .into_iter()
+        .map(|(model, alias)| CursorModelAlias {
+            model: model.clone(),
+            alias: alias.upstream.clone(),
+        })
+        .collect();
+
+    Ok(Json(CursorModelsConfig { aliases }))
 }
 
 async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
@@ -1420,6 +1639,21 @@ async fn update_connection_config(
         idle_timeout_secs: config.idle_timeout_secs,
         h2_ping_interval_secs: config.h2_ping_interval_secs,
     })
+}
+
+async fn get_reasoning_config(
+    State(state): State<Arc<AppState>>,
+) -> Json<ReasoningConfig> {
+    Json(state.reasoning_config.read().clone())
+}
+
+async fn put_reasoning_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ReasoningConfig>,
+) -> Json<ReasoningConfig> {
+    *state.reasoning_config.write() = req;
+    state.flush_persist();
+    Json(state.reasoning_config.read().clone())
 }
 
 async fn get_upstream_keys_pool(

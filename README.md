@@ -8,7 +8,7 @@
 
 **一个基于 Cloudflare Pingora 框架的高性能 API 网关，专为 DeepSeek V4 大语言模型设计**
 
-[特性](#特性) • [架构](#架构) • [快速开始](#快速开始) • [配置](#配置) • [管理系统](#管理系统) • [性能](#性能) • [测试](#测试)
+[特性](#特性) • [架构](#架构) • [快速开始](#快速开始) • [配置](#配置) • [管理系统](#管理系统) • [性能](#性能) • [测试](#测试) • [CI/CD](#cicd)
 
 </div>
 
@@ -578,6 +578,72 @@ cargo fmt --check
 | `crab-gateway` | 配置加载、管理 API 端点集成测试 |
 | `crab-control` | 后端端点解析 |
 | `crab-semantic` | 模拟嵌入和搜索测试 |
+
+## 🔄 CI/CD
+
+CrabCache 使用 GitHub Actions 进行持续集成和交付。CI 不会在每次提交时触发，仅在以下情况运行：
+
+### 触发条件
+
+| 事件 | 触发条件 | 执行内容 |
+|------|---------|---------|
+| **Tag 推送** (`v0.1.0` 等) | 推送版本标签 | 全量流水线：Lint → Test → Build → Docker → Release |
+| **Push 到 main/master** | 核心代码变更 | Lint + Test（跳过纯文档/README 变更） |
+| **PR 到 main/master** | 核心代码变更 | Lint + Test（跳过纯文档/README 变更） |
+
+非核心文件变更（如 `docs/**`、`*.md`、`LICENSE`）不会触发 CI。
+
+### 流水线架构
+
+```
+Tag 推送:
+  check (fmt + clippy)
+    └── test (核心 crate 测试 + Redis)
+          ├── build-gateway (release → 上传二进制)
+          ├── build-admin  (release + WASM → 上传二进制)
+          ├── docker-gateway (构建 & 推送 ghcr.io)
+          ├── docker-admin    (构建 & 推送 ghcr.io)
+          └── release (创建 GitHub Release)
+
+Push / PR (核心文件变更):
+  check (fmt + clippy)
+    └── test (核心 crate 测试 + Redis)
+```
+
+### 版本发布
+
+发布新版本时执行：
+
+```bash
+# 确保本地通过所有检查
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+
+# 创建并推送版本标签触发 CI 发布流程
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+标签推送后，CI 将自动：
+1. 运行完整测试套件
+2. 构建 `crab-gateway` 和 `crab-admin` release 二进制
+3. 构建 Docker 镜像并推送到 `ghcr.io/{owner}/crabcache-gateway` 和 `ghcr.io/{owner}/crabcache-admin`
+4. 创建 GitHub Release 并附加编译好的二进制文件
+
+Docker 镜像标签策略：
+- `v0.1.0` → 镜像标签: `0.1.0`, `0.1`, `0`, `latest`
+- `v0.1.0-alpha.1` → 镜像标签: `0.1.0-alpha.1`（预发布标记）
+
+### 本地验证 CI
+
+```bash
+# 模拟 CI 检查（推荐在推送前执行）
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p crab-control -p crab-cache -p crab-route -p crab-proxy \
+  -p crab-gateway -p crab-metrics -p crab-admin -p crab-state --no-fail-fast
+```
 
 ## 📁 项目结构
 

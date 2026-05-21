@@ -1,4 +1,5 @@
 pub mod cache_ops;
+pub mod cursor_models;
 pub mod domains;
 pub mod keys;
 pub mod live;
@@ -6,6 +7,7 @@ pub mod logs;
 pub mod models;
 pub mod overview;
 pub mod pipeline;
+pub mod reasoning;
 pub mod routing;
 pub mod trace;
 pub mod upstream;

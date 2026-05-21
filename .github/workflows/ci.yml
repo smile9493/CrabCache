@@ -2,20 +2,45 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop]
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
+    branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'NOTICE'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.gitattributes'
+      - 'assets/**'
+      - '**.png'
+      - '**.svg'
   pull_request:
     branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'NOTICE'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.gitattributes'
+      - 'assets/**'
+      - '**.png'
+      - '**.svg'
+
+env:
+  CARGO_TERM_COLOR: always
+  CRABCACHE_TEST_REDIS_URL: redis://127.0.0.1:6379
+  RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  check:
+    name: Lint & Format
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-    env:
-      CRABCACHE_TEST_REDIS_URL: redis://127.0.0.1:6379
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -32,15 +57,318 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
 
       - name: Cache cargo build
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
 
-      - name: Run tests (core crates)
+      - name: Cargo fmt
+        run: cargo fmt --all --check
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test (core crates)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
         run: |
-          cargo test -p crab-control -p crab-cache -p crab-route -p crab-proxy -p crab-gateway -p crab-metrics -p crab-admin --no-fail-fast
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev clang
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-test-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-test-${{ hashFiles('**/Cargo.lock') }}-
+
+      - name: Run tests
+        run: |
+          cargo test -p crab-control \
+            -p crab-cache \
+            -p crab-route \
+            -p crab-proxy \
+            -p crab-gateway \
+            -p crab-metrics \
+            -p crab-admin \
+            -p crab-state \
+            --no-fail-fast
+
+  build-gateway:
+    name: Build Gateway (release)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev clang
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-release-
+
+      - name: Build crab-gateway
+        run: cargo build --release -p crab-gateway
+
+      - name: Strip binary
+        run: strip target/release/crab-gateway
+
+      - name: Upload gateway artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crab-gateway-${{ github.ref_name }}
+          path: target/release/crab-gateway
+          retention-days: 7
+
+  build-admin:
+    name: Build Admin (release)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev clang
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-release-
+
+      - name: Build crab-admin
+        run: cargo build --release -p crab-admin
+
+      - name: Build dashboard (WASM)
+        working-directory: crates/crab-dashboard
+        run: trunk build --release
+
+      - name: Strip binary
+        run: strip target/release/crab-admin
+
+      - name: Upload admin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crab-admin-${{ github.ref_name }}
+          path: |
+            target/release/crab-admin
+            crates/crab-dashboard/dist/
+          retention-days: 7
+
+  docker-gateway:
+    name: Docker Image (gateway)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-gateway]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/crabcache-gateway
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-admin:
+    name: Docker Image (admin)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-admin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/crabcache-admin
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push admin image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.admin
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [docker-gateway, docker-admin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download gateway artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: crab-gateway-${{ github.ref_name }}
+
+      - name: Download admin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: crab-admin-${{ github.ref_name }}
+
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ github.ref_name }} --strip all
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CrabCache ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.content || 'No changelog available.' }}
+          files: |
+            crab-gateway
+            crab-admin
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

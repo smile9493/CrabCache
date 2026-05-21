@@ -67,6 +67,18 @@ impl Translations {
             Locale::EnUS => "Models",
         }
     }
+    pub fn sidebar_reasoning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理管线",
+            Locale::EnUS => "Reasoning",
+        }
+    }
+    pub fn sidebar_cursor_models(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Cursor 别名",
+            Locale::EnUS => "Cursor Aliases",
+        }
+    }
     pub fn sidebar_logs(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "日志与追踪",
@@ -1458,6 +1470,156 @@ impl Translations {
             Locale::EnUS => "Scope is required",
         }
     }
+    pub fn cache_ops_ttl_config_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存 TTL 配置",
+            Locale::EnUS => "Cache TTL Config",
+        }
+    }
+    pub fn cache_ops_l0_ttl(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L0 TTL (秒)",
+            Locale::EnUS => "L0 TTL (s)",
+        }
+    }
+    pub fn cache_ops_l1_ttl(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L1 TTL (秒)",
+            Locale::EnUS => "L1 TTL (s)",
+        }
+    }
+    pub fn cache_ops_model_overrides(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型 TTL 覆盖",
+            Locale::EnUS => "Model TTL Overrides",
+        }
+    }
+    pub fn cache_ops_consumer_overrides(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者 TTL 覆盖",
+            Locale::EnUS => "Consumer TTL Overrides",
+        }
+    }
+    pub fn cache_ops_add_override(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "添加",
+            Locale::EnUS => "Add",
+        }
+    }
+    pub fn cache_ops_key_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "名称 (例如 deepseek-chat)",
+            Locale::EnUS => "Name (e.g. deepseek-chat)",
+        }
+    }
+    pub fn cache_ops_remove(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除",
+            Locale::EnUS => "Remove",
+        }
+    }
+    pub fn keys_batch_revoke_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确定批量吊销所选密钥？此操作不可撤销。",
+            Locale::EnUS => "Are you sure you want to revoke the selected keys? This action cannot be undone.",
+        }
+    }
+    pub fn keys_batch_revoke_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "批量吊销密钥",
+            Locale::EnUS => "Batch Revoke Keys",
+        }
+    }
+    pub fn keys_confirm_revoke_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确定吊销此密钥？此操作不可撤销。",
+            Locale::EnUS => "Are you sure you want to revoke this key? This action cannot be undone.",
+        }
+    }
+    pub fn cache_ops_semantic_enabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "启用语义缓存",
+            Locale::EnUS => "Enable Semantic Cache",
+        }
+    }
+    pub fn cache_ops_semantic_threshold(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "相似度阈值",
+            Locale::EnUS => "Similarity Threshold",
+        }
+    }
+    pub fn reasoning_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Reasoning 配置",
+            Locale::EnUS => "Reasoning Config",
+        }
+    }
+    pub fn reasoning_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理 DeepSeek 推理处理管线",
+            Locale::EnUS => "Manage DeepSeek reasoning pipeline",
+        }
+    }
+    pub fn reasoning_thinking_mode(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "思考模式",
+            Locale::EnUS => "Thinking Mode",
+        }
+    }
+    pub fn reasoning_effort(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理力度",
+            Locale::EnUS => "Reasoning Effort",
+        }
+    }
+    pub fn reasoning_recovery(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理恢复",
+            Locale::EnUS => "Reasoning Recovery",
+        }
+    }
+    pub fn reasoning_sqlite_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "SQLite 缓存",
+            Locale::EnUS => "SQLite Cache",
+        }
+    }
+    pub fn reasoning_sqlite_path(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存路径",
+            Locale::EnUS => "Cache Path",
+        }
+    }
+    pub fn cursor_models_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Cursor 模型别名",
+            Locale::EnUS => "Cursor Model Aliases",
+        }
+    }
+    pub fn cursor_models_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理 Cursor 模型别名映射",
+            Locale::EnUS => "Manage Cursor model alias map",
+        }
+    }
+    pub fn cursor_models_col_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn cursor_models_col_alias(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "别名",
+            Locale::EnUS => "Alias",
+        }
+    }
+    pub fn cursor_models_alias_add(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "添加别名",
+            Locale::EnUS => "Add Alias",
+        }
+    }
     pub fn auth_tagline(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "DeepSeek V4 高性能 API 网关控制台",
@@ -2393,6 +2555,42 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "没有匹配的密钥",
             Locale::EnUS => "No keys match your search",
+        }
+    }
+    pub fn keys_project_id_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "项目 ID",
+            Locale::EnUS => "Project ID",
+        }
+    }
+    pub fn keys_edit_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "编辑",
+            Locale::EnUS => "Edit",
+        }
+    }
+    pub fn keys_edit_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "编辑密钥",
+            Locale::EnUS => "Edit Key",
+        }
+    }
+    pub fn keys_save_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存",
+            Locale::EnUS => "Save",
+        }
+    }
+    pub fn keys_edit_success(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥更新成功",
+            Locale::EnUS => "Key updated successfully",
+        }
+    }
+    pub fn keys_edit_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥更新失败",
+            Locale::EnUS => "Failed to update key",
         }
     }
 }

@@ -4,7 +4,7 @@ use crate::api;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::use_translations;
-use crate::types::{CacheConfig, ConnectionConfig, RoutingStatus, SemanticConfig};
+use crate::types::{BackendEndpoint, CacheConfig, ConnectionConfig, PutBackendsRequest, RoutingStatus, SemanticConfig};
 
 #[component]
 pub fn RoutingPage() -> impl IntoView {
@@ -103,7 +103,10 @@ pub fn RoutingPage() -> impl IntoView {
                     Some(Err(e)) => view! {
                         <div class="config-card glass-card text-error text-sm">{e}</div>
                     }.into_any(),
-                    Some(Ok(status)) => view! { <RoutingStatusPanel status /> }.into_any(),
+                    Some(Ok(status)) => view! {
+                        <RoutingStatusPanel status=status.clone() />
+                        <BackendEditPanel status feedback />
+                    }.into_any(),
                 }}
             </section>
         </div>
@@ -120,6 +123,8 @@ fn CacheConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl Int
         let req = crate::types::UpdateCacheConfigRequest {
             l0_ttl_secs: l0_ttl.get(),
             l1_ttl_secs: l1_ttl.get(),
+            model_overrides: config.model_overrides.clone(),
+            consumer_overrides: config.consumer_overrides.clone(),
         };
         leptos::task::spawn_local(async move {
             match api::update_cache_config(&req).await {
@@ -168,6 +173,7 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
 
     let on_save = move |_| {
         let req = crate::types::UpdateSemanticConfigRequest {
+            enabled: None,
             similarity_threshold: threshold.get(),
         };
         leptos::task::spawn_local(async move {
@@ -347,6 +353,163 @@ fn RoutingStatusPanel(status: RoutingStatus) -> impl IntoView {
                                 </div>
                             }
                         }).collect::<Vec<_>>()}
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl IntoView {
+    let t = use_translations();
+
+    let backends: RwSignal<Vec<(RwSignal<String>, RwSignal<String>, RwSignal<u32>)>> = {
+        let pairs: Vec<(RwSignal<String>, RwSignal<String>, RwSignal<u32>)> = status
+            .backends
+            .into_iter()
+            .map(|b| {
+                (
+                    RwSignal::new(b.name),
+                    RwSignal::new(b.addr),
+                    RwSignal::new(1),
+                )
+            })
+            .collect();
+        RwSignal::new(pairs)
+    };
+    let saving: RwSignal<bool> = RwSignal::new(false);
+
+    let on_add = move |_| {
+        backends.update(|list| {
+            list.push((
+                RwSignal::new(String::new()),
+                RwSignal::new(String::new()),
+                RwSignal::new(1),
+            ));
+        });
+    };
+
+    let on_remove = move |idx: usize| {
+        backends.update(|list| {
+            if idx < list.len() {
+                list.remove(idx);
+            }
+        });
+    };
+
+    let on_save = move |_| {
+        saving.set(true);
+        let pairs = backends.get();
+        let req = PutBackendsRequest {
+            backends: pairs
+                .into_iter()
+                .map(|(name, addr, weight)| BackendEndpoint {
+                    name: name.get(),
+                    addr: addr.get(),
+                    weight: weight.get(),
+                })
+                .filter(|b| !b.name.is_empty() || !b.addr.is_empty())
+                .collect(),
+        };
+        leptos::task::spawn_local(async move {
+            match api::update_routing_backends(&req).await {
+                Ok(_) => feedback.set(t.routing_saved().to_string()),
+                Err(e) => feedback.set(e),
+            }
+            saving.set(false);
+        });
+    };
+
+    view! {
+        <div class="config-card glass-card mt-4">
+            <div class="config-card-head">
+                <h4 class="config-card-title">{t.routing_affinity_title()}</h4>
+                <p class="config-card-desc">"Edit backend endpoints"</p>
+            </div>
+            <div class="config-card-body">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-theme-secondary border-b border-theme-border">
+                            <th class="pb-2 pr-2 font-medium">"Name"</th>
+                            <th class="pb-2 pr-2 font-medium">"Address"</th>
+                            <th class="pb-2 pr-2 font-medium w-16">"Weight"</th>
+                            <th class="pb-2 w-10"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {move || backends.get().into_iter().enumerate().map(|(idx, (name_sig, addr_sig, weight_sig))| {
+                            let remove_idx = idx;
+                            view! {
+                                <tr class="border-b border-theme-border/50">
+                                    <td class="py-2 pr-2">
+                                        <input
+                                            type="text"
+                                            class="input w-full text-sm"
+                                            prop:value=move || name_sig.get()
+                                            on:input=move |e| name_sig.set(event_target_value(&e))
+                                            placeholder="backend-1"
+                                        />
+                                    </td>
+                                    <td class="py-2 pr-2">
+                                        <input
+                                            type="text"
+                                            class="input w-full text-sm font-mono"
+                                            prop:value=move || addr_sig.get()
+                                            on:input=move |e| addr_sig.set(event_target_value(&e))
+                                            placeholder="127.0.0.1:443"
+                                        />
+                                    </td>
+                                    <td class="py-2 pr-2">
+                                        <input
+                                            type="number"
+                                            class="input w-full text-sm"
+                                            prop:value=move || weight_sig.get().to_string()
+                                            on:input=move |e| {
+                                                if let Ok(v) = event_target_value(&e).parse::<u32>() {
+                                                    weight_sig.set(v);
+                                                }
+                                            }
+                                            min="1"
+                                            max="100"
+                                        />
+                                    </td>
+                                    <td class="py-2 text-center">
+                                        <button
+                                            on:click=move |_| on_remove(remove_idx)
+                                            class="btn btn-ghost text-xs text-error"
+                                        >
+                                            "✕"
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </tbody>
+                </table>
+
+                <div class="flex items-center justify-between mt-4 pt-3 border-t border-theme-border/50">
+                    <button
+                        on:click=on_add
+                        class="btn btn-secondary text-xs"
+                    >
+                        "Add Backend"
+                    </button>
+                    <div class="flex items-center gap-3">
+                        {move || if !feedback.get().is_empty() {
+                            view! {
+                                <span class="text-xs text-theme-secondary">{feedback.get()}</span>
+                            }.into_any()
+                        } else {
+                            view! { <span></span> }.into_any()
+                        }}
+                        <button
+                            on:click=on_save
+                            disabled=move || saving.get()
+                            class="btn btn-primary text-sm"
+                        >
+                            {t.routing_save()}
+                        </button>
                     </div>
                 </div>
             </div>

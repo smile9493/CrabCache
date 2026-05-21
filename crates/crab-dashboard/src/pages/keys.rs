@@ -4,7 +4,8 @@ use crate::api;
 use crate::clipboard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
-use crate::types::{ApiKey, CreateKeyRequest, NetworkInfo};
+use crate::types::{ApiKey, CreateKeyRequest, NetworkInfo, PatchKeyRequest};
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyNoticeKind {
@@ -62,6 +63,7 @@ pub fn KeysPage() -> impl IntoView {
     let show_create = RwSignal::new(false);
     let new_key_name = RwSignal::new(String::new());
     let new_key_domain = RwSignal::new(String::new());
+    let new_key_project_id = RwSignal::new(String::new());
     let new_key_rpm = RwSignal::new(60u32);
     let new_key_budget = RwSignal::new(1_000_000u64);
     let new_key_unlimited = RwSignal::new(true);
@@ -71,6 +73,62 @@ pub fn KeysPage() -> impl IntoView {
     let pipeline_profiles: RwSignal<Option<Vec<String>>> = RwSignal::new(None);
     let creating = RwSignal::new(false);
     let create_error = RwSignal::new(String::new());
+
+    let selected_keys: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
+    let show_confirm_revoke: RwSignal<Option<String>> = RwSignal::new(None);
+    let show_confirm_batch_revoke = RwSignal::new(false);
+    let revoke_message: RwSignal<String> = RwSignal::new(String::new());
+
+    let toggle_select = move |id: &str| {
+        let mut set = selected_keys.get();
+        if set.contains(id) {
+            set.remove(id);
+        } else {
+            set.insert(id.to_string());
+        }
+        selected_keys.set(set);
+    };
+
+    let toggle_select_all = move |ids: &[String]| {
+        let current = selected_keys.get();
+        let all_selected = ids.iter().all(|id| current.contains(id));
+        if all_selected {
+            selected_keys.set(HashSet::new());
+        } else {
+            selected_keys.set(ids.iter().cloned().collect());
+        }
+    };
+
+    let do_batch_revoke = move || {
+        let ids: Vec<String> = selected_keys.get().into_iter().collect();
+        if ids.is_empty() {
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            match api::batch_revoke_keys(&ids).await {
+                Ok(_) => {
+                    show_confirm_batch_revoke.set(false);
+                    selected_keys.set(HashSet::new());
+                    load_keys();
+                }
+                Err(e) => {
+                    revoke_message.set(e);
+                }
+            }
+        });
+    };
+
+    let do_revoke = move |id: &str| {
+        let id = id.to_string();
+        show_confirm_revoke.set(None);
+        leptos::task::spawn_local(async move {
+            if let Err(e) = api::revoke_key(&id).await {
+                revoke_message.set(e);
+            } else {
+                load_keys();
+            }
+        });
+    };
 
     let on_create = move |_| {
         creating.set(true);
@@ -92,6 +150,14 @@ pub fn KeysPage() -> impl IntoView {
                 None
             } else {
                 Some(domain.trim().to_string())
+            },
+            project_id: {
+                let p = new_key_project_id.get();
+                if p.trim().is_empty() {
+                    None
+                } else {
+                    Some(p.trim().to_string())
+                }
             },
             pipeline: {
                 let p = new_key_pipeline.get();
@@ -130,10 +196,63 @@ pub fn KeysPage() -> impl IntoView {
         load_keys();
     };
 
-    let on_revoke = move |id: String| {
-        let id = id.clone();
+    let editing_key_id: RwSignal<Option<String>> = RwSignal::new(None);
+    let edit_name = RwSignal::new(String::new());
+    let edit_domain = RwSignal::new(String::new());
+    let edit_project_id = RwSignal::new(String::new());
+    let edit_pipeline = RwSignal::new(String::new());
+    let edit_upstream_profile = RwSignal::new(String::new());
+    let edit_enabled = RwSignal::new(true);
+
+    let start_edit = move |key: ApiKey| {
+        editing_key_id.set(Some(key.id.clone()));
+        edit_name.set(key.name.clone());
+        edit_domain.set(key.domain.clone().unwrap_or_default());
+        edit_project_id.set(key.project_id.clone().unwrap_or_default());
+        edit_pipeline.set(key.pipeline.clone().unwrap_or_default());
+        edit_upstream_profile.set(key.upstream_profile.clone().unwrap_or_default());
+        edit_enabled.set(key.active);
+    };
+
+    let cancel_edit = move || {
+        editing_key_id.set(None);
+    };
+
+    let on_save_edit = move |id: &str| {
+        let id = id.to_string();
+        let name_val = edit_name.get();
+        let domain_val = edit_domain.get();
+        let project_id_val = edit_project_id.get();
+        let pipeline_val = edit_pipeline.get();
+        let upstream_profile_val = edit_upstream_profile.get();
+        let enabled_val = edit_enabled.get();
+
+        let req = PatchKeyRequest {
+            name: {
+                let v = name_val.trim().to_string();
+                if v.is_empty() { None } else { Some(v) }
+            },
+            enabled: Some(enabled_val),
+            domain: {
+                let v = domain_val.trim().to_string();
+                if v.is_empty() { None } else { Some(v) }
+            },
+            project_id: {
+                let v = project_id_val.trim().to_string();
+                if v.is_empty() { None } else { Some(v) }
+            },
+            pipeline: {
+                let v = pipeline_val.trim().to_string();
+                if v.is_empty() || v == "auto" { None } else { Some(v) }
+            },
+            upstream_profile: {
+                let v = upstream_profile_val.trim().to_string();
+                if v.is_empty() { None } else { Some(v) }
+            },
+        };
         leptos::task::spawn_local(async move {
-            let _ = api::revoke_key(&id).await;
+            let _ = api::patch_key(&id, &req).await;
+            editing_key_id.set(None);
             load_keys();
         });
     };
@@ -313,6 +432,18 @@ pub fn KeysPage() -> impl IntoView {
                                         }
                                         class="input"
                                         placeholder="e.g. backend-team"
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_project_id_label()}</label>
+                                    <input
+                                        type="text"
+                                        prop:value=move || new_key_project_id.get()
+                                        on:input=move |ev| {
+                                            new_key_project_id.set(event_target_value(&ev));
+                                        }
+                                        class="input"
+                                        placeholder="e.g. project-alpha"
                                     />
                                 </div>
                                 <div>
@@ -498,11 +629,45 @@ pub fn KeysPage() -> impl IntoView {
                         view! { <EmptyState message=t.keys_no_results() /> }.into_any()
                     } else {
                         let t = use_translations();
+                        let all_ids: Vec<String> = filtered_keys.iter().map(|k| k.id.clone()).collect();
+                        let select_count = move || selected_keys.get().len();
                         view! {
+                            {move || {
+                                let count = select_count();
+                                if count > 0 {
+                                    view! {
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <span class="text-xs text-theme-secondary">{format!("{} selected", count)}</span>
+                                            <button
+                                                on:click=move |_| show_confirm_batch_revoke.set(true)
+                                                class="btn btn-secondary text-xs"
+                                            >
+                                                {t.keys_revoke_btn()}
+                                            </button>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    ().into_any()
+                                }
+                            }}
                             <div class="glass-card-flat overflow-hidden p-0">
                                 <table class="table">
                                     <thead>
                                         <tr>
+                                            <th class="w-8">
+                                                <input
+                                                    type="checkbox"
+                                                    prop:checked={
+                                                        let ids = all_ids.clone();
+                                                        move || { let s = selected_keys.get(); ids.iter().all(|id| s.contains(id)) && !ids.is_empty() }
+                                                    }
+                                                    on:change={
+                                                        let ids = all_ids;
+                                                        move |_| toggle_select_all(&ids)
+                                                    }
+                                                    class="rounded"
+                                                />
+                                            </th>
                                             <th>{t.keys_col_name()}</th>
                                             <th>{t.keys_col_key()}</th>
                                             <th>{t.keys_col_quota()}</th>
@@ -524,77 +689,218 @@ pub fn KeysPage() -> impl IntoView {
                                             } else {
                                                 format!("{}", key.remain_quota)
                                             };
+                                            let id_for_check = id.clone();
+                                            let is_checked = move || selected_keys.get().contains(&id_for_check);
+                                            let id_for_edit = id.clone();
+                                            let is_editing = move || editing_key_id.get().as_deref() == Some(&id_for_edit);
+                                            let key_for_edit = key.clone();
                                             let t = use_translations();
-                                            view! {
-                                                <tr>
-                                                    <td class="text-theme font-medium">{key.name.clone()}</td>
-                                                    <td>
-                                                        <div class="flex items-center gap-2">
-                                                            <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
-                                                                {display_key.clone()}
-                                                            </code>
-                                                            {if can_copy {
-                                                                view! {
-                                                                    <button
-                                                                        on:click={
-                                                                            let token = display_key.clone();
-                                                                            move |_| copy_text(token.clone())
+                                            if is_editing() {
+                                                view! {
+                                                            <tr class="bg-theme-tertiary/40">
+                                                                <td colspan="7" class="p-3">
+                                                                    <div class="grid grid-cols-2 gap-3">
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_name_label()}</label>
+                                                                            <input type="text" prop:value=move || edit_name.get() on:input=move |ev| edit_name.set(event_target_value(&ev)) class="input text-sm" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_domain_label()}</label>
+                                                                            <input type="text" prop:value=move || edit_domain.get() on:input=move |ev| edit_domain.set(event_target_value(&ev)) class="input text-sm" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_project_id_label()}</label>
+                                                                            <input type="text" prop:value=move || edit_project_id.get() on:input=move |ev| edit_project_id.set(event_target_value(&ev)) class="input text-sm" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_pipeline_label()}</label>
+                                                                            <select prop:value=move || edit_pipeline.get() on:change=move |ev| edit_pipeline.set(event_target_value(&ev)) class="input w-full text-sm">
+                                                                                <option value="auto">{t.keys_override_auto()}</option>
+                                                                                <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
+                                                                                <option value="deepseek_light">"deepseek_light"</option>
+                                                                                <option value="generic_relay">"generic_relay"</option>
+                                                                            </select>
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_upstream_profile_label()}</label>
+                                                                            <input type="text" prop:value=move || edit_upstream_profile.get() on:input=move |ev| edit_upstream_profile.set(event_target_value(&ev)) class="input text-sm" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="flex items-center gap-2 text-xs text-theme-muted mt-5">
+                                                                                <input type="checkbox" prop:checked=move || edit_enabled.get() on:change=move |ev| edit_enabled.set(event_target_checked(&ev)) class="rounded" />
+                                                                                {t.keys_status_active()}
+                                                                            </label>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div class="flex gap-2 mt-3">
+                                                                        <button on:click={
+                                                                            let id = id.clone();
+                                                                            move |_| on_save_edit(&id)
+                                                                        } class="btn btn-primary text-xs">{t.keys_save_btn()}</button>
+                                                                        <button on:click=move |_| cancel_edit() class="btn btn-secondary text-xs">{t.keys_cancel()}</button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <tr>
+                                                                <td class="w-8">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        prop:checked=move || is_checked()
+                                                                        on:change={
+                                                                            let id = id.clone();
+                                                                            move |_| toggle_select(&id)
                                                                         }
-                                                                        class="text-xs text-accent hover:text-accent transition-colors"
-                                                                    >
-                                                                        {t.keys_copy_btn()}
-                                                                    </button>
-                                                                }.into_any()
-                                                            } else {
-                                                                view! {
-                                                                    <span
-                                                                        class="text-xs text-theme-muted"
-                                                                        title=t.keys_copy_unavailable()
-                                                                    >
-                                                                        {t.keys_copy_unavailable()}
-                                                                    </span>
-                                                                }.into_any()
-                                                            }}
-                                                        </div>
-                                                    </td>
-                                                    <td class="font-mono tabular-nums text-theme">
-                                                        {quota_str}
-                                                    </td>
-                                                    <td class="font-mono tabular-nums text-theme">
-                                                        {format!("{}", key.tokens_used_this_month)}
-                                                    </td>
-                                                    <td>
-                                                        {if key.active {
-                                                            view! { <Badge text=t.keys_status_active().to_string() color="teal" /> }
-                                                        } else {
-                                                            view! { <Badge text=t.keys_status_revoked().to_string() color="rose" /> }
-                                                        }}
-                                                    </td>
-                                                    <td class="text-right">
-                                                        {if key.active {
-                                                            view! {
-                                                                <button
-                                                                    on:click={
-                                                                        let id = id.clone();
-                                                                        move |_| on_revoke(id.clone())
-                                                                    }
-                                                                    class="text-xs text-error hover:text-error transition-colors"
-                                                                >
-                                                                    {t.keys_revoke_btn()}
-                                                                </button>
-                                                            }.into_any()
-                                                        } else {
-                                                            view! { <span></span> }.into_any()
-                                                        }}
-                                                    </td>
-                                                </tr>
-                                            }
-                                        }).collect::<Vec<_>>()}
+                                                                        class="rounded"
+                                                                    />
+                                                                </td>
+                                                                <td class="text-theme font-medium">{key_for_edit.name.clone()}</td>
+                                                                <td>
+                                                                    <div class="flex items-center gap-2">
+                                                                        <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
+                                                                            {display_key.clone()}
+                                                                        </code>
+                                                                        {if can_copy {
+                                                                            view! {
+                                                                                <button
+                                                                                    on:click={
+                                                                                        let token = display_key.clone();
+                                                                                        move |_| copy_text(token.clone())
+                                                                                    }
+                                                                                    class="text-xs text-accent hover:text-accent transition-colors"
+                                                                                >
+                                                                                    {t.keys_copy_btn()}
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! {
+                                                                                <span
+                                                                                    class="text-xs text-theme-muted"
+                                                                                    title=t.keys_copy_unavailable()
+                                                                                >
+                                                                                    {t.keys_copy_unavailable()}
+                                                                                </span>
+                                                                            }.into_any()
+                                                                        }}
+                                                                    </div>
+                                                                </td>
+                                                                <td class="font-mono tabular-nums text-theme">
+                                                                    {quota_str}
+                                                                </td>
+                                                                <td class="font-mono tabular-nums text-theme">
+                                                                    {format!("{}", key_for_edit.tokens_used_this_month)}
+                                                                </td>
+                                                                <td>
+                                                                    {if key_for_edit.active {
+                                                                        view! { <Badge text=t.keys_status_active().to_string() color="teal" /> }
+                                                                    } else {
+                                                                        view! { <Badge text=t.keys_status_revoked().to_string() color="rose" /> }
+                                                                    }}
+                                                                </td>
+                                                                <td class="text-right whitespace-nowrap">
+                                                                    {if key_for_edit.active {
+                                                                        view! {
+                                                                            <button
+                                                                                on:click={
+                                                                                    let k = key_for_edit.clone();
+                                                                                    move |_| start_edit(k.clone())
+                                                                                }
+                                                                                class="text-xs text-accent hover:text-accent transition-colors mr-3"
+                                                                            >
+                                                                                {t.keys_edit_btn()}
+                                                                            </button>
+                                                                            <button
+                                                                                on:click={
+                                                                                    let id = id.clone();
+                                                                                    move |_| show_confirm_revoke.set(Some(id.clone()))
+                                                                                }
+                                                                                class="text-xs text-error hover:text-error transition-colors"
+                                                                            >
+                                                                                {t.keys_revoke_btn()}
+                                                                            </button>
+                                                                        }.into_any()
+                                                                    } else {
+                                                                        view! { <span></span> }.into_any()
+                                                                    }}
+                                                                </td>
+                                                            </tr>
+                                                        }.into_any()
+                                                    }
+                                                }).collect::<Vec<_>>()}
                                     </tbody>
                                 </table>
                             </div>
                         }.into_any()
                     }
+                }
+            }}
+
+            {move || {
+                if let Some(id) = show_confirm_revoke.get() {
+                    let t = use_translations();
+                    view! {
+                        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                            <div class="glass-card max-w-md w-full space-y-4">
+                                <h4 class="text-sm font-semibold text-theme">{t.keys_revoke_btn()}</h4>
+                                <p class="text-xs text-theme-muted">{t.keys_confirm_revoke_body()}</p>
+                                <div class="flex gap-2 justify-end">
+                                    <button class="btn btn-secondary text-xs" on:click=move |_| show_confirm_revoke.set(None)>{t.keys_cancel()}</button>
+                                    <button
+                                        class="btn btn-primary text-xs"
+                                        on:click={
+                                            let id = id.clone();
+                                            move |_| do_revoke(&id)
+                                        }
+                                    >
+                                        {t.keys_revoke_btn()}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
+
+            {move || {
+                if show_confirm_batch_revoke.get() {
+                    let t = use_translations();
+                    view! {
+                        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                            <div class="glass-card max-w-md w-full space-y-4">
+                                <h4 class="text-sm font-semibold text-theme">{t.keys_batch_revoke_title()}</h4>
+                                <p class="text-xs text-theme-muted">{t.keys_batch_revoke_body()}</p>
+                                <div class="flex gap-2 justify-end">
+                                    <button class="btn btn-secondary text-xs" on:click=move |_| show_confirm_batch_revoke.set(false)>{t.keys_cancel()}</button>
+                                    <button class="btn btn-primary text-xs" on:click=move |_| do_batch_revoke()>{t.keys_revoke_btn()}</button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
+
+            {move || {
+                let msg = revoke_message.get();
+                if !msg.is_empty() {
+                    let t = use_translations();
+                    view! {
+                        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                            <div class="glass-card max-w-md w-full space-y-4">
+                                <p class="text-xs text-error">{msg}</p>
+                                <div class="flex gap-2 justify-end">
+                                    <button class="btn btn-secondary text-xs" on:click=move |_| revoke_message.set(String::new())>{t.keys_cancel()}</button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
                 }
             }}
         </div>

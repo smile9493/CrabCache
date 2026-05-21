@@ -1,6 +1,6 @@
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
-use crate::types::{DomainPolicy, TraceSummary};
+use crate::types::{DomainPolicy, ReasoningConfig, TraceSummary};
 use std::time::Instant;
 use crab_control::{GatewayAdminClient, GatewayStatus, UpstreamTestResult};
 use dashmap::DashMap;
@@ -58,6 +58,7 @@ pub struct AppState {
     pub cache_config: RwLock<StoredCacheConfig>,
     pub semantic_config: RwLock<StoredSemanticConfig>,
     pub connection_config: RwLock<StoredConnectionConfig>,
+    pub reasoning_config: RwLock<ReasoningConfig>,
     pub upstream_config: RwLock<StoredUpstreamConfig>,
     pub models: RwLock<StoredModelList>,
     pub backends: RwLock<Vec<StoredBackend>>,
@@ -318,6 +319,13 @@ impl AppState {
                 tcp_keepalive_count: 3,
                 idle_timeout_secs: 90,
                 h2_ping_interval_secs: 30,
+            }),
+            reasoning_config: RwLock::new(ReasoningConfig {
+                thinking_mode: "auto".to_string(),
+                reasoning_effort: "medium".to_string(),
+                reasoning_recovery: true,
+                sqlite_cache_enabled: true,
+                sqlite_cache_path: None,
             }),
             upstream_config: RwLock::new(upstream_cfg),
             models: RwLock::new(models),
