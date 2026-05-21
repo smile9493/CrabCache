@@ -104,9 +104,11 @@ async fn main() -> anyhow::Result<()> {
         let interval_secs = crate::metrics_history::sample_interval_secs();
         tokio::spawn(async move {
             loop {
-                if let Err(e) =
-                    crate::metrics_history::sample_metrics_history(&metrics_state.metrics_history)
-                        .await
+                if let Err(e) = crate::metrics_history::sample_metrics_history(
+                    &metrics_state.gateway_metrics_cache,
+                    &metrics_state.metrics_history,
+                )
+                .await
                 {
                     tracing::debug!(error = %e, "Metrics history sample failed");
                 }
@@ -149,6 +151,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     state.sync_domain_policies_to_gateway().await;
+
+    {
+        let prefetch = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = prefetch.fetch_gateway_metrics().await {
+                tracing::warn!(error = %e, "Initial gateway metrics prefetch failed");
+            }
+        });
+    }
 
     match state.gateway.list_keys().await {
         Ok(specs) => {

@@ -60,7 +60,7 @@ pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
 }
 
 pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, String> {
-    let body = metrics_history::fetch_gateway_metrics_body().await?;
+    let body = state.fetch_gateway_metrics().await?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

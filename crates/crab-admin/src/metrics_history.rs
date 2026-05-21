@@ -6,10 +6,50 @@ use crate::types::{
 };
 use chrono::{DateTime, Datelike, Utc};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex as AsyncMutex;
 
 const MAX_RETENTION_SECS: u64 = 25 * 3600;
 const DEFAULT_MAX_SAMPLES: usize = 1500;
 pub const WINDOW_5M_SECS: u64 = 300;
+
+/// TTL cache for raw Prometheus text from the gateway `:9090/metrics` endpoint.
+#[derive(Default)]
+pub struct GatewayMetricsCache {
+    entry: parking_lot::RwLock<Option<(Instant, String)>>,
+    pub fetch_lock: AsyncMutex<()>,
+}
+
+impl GatewayMetricsCache {
+    pub fn fresh_body(&self, ttl: Duration) -> Option<String> {
+        let guard = self.entry.read();
+        let (at, body) = guard.as_ref()?;
+        if at.elapsed() < ttl {
+            Some(body.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn stale_body(&self, max_age: Duration) -> Option<String> {
+        let guard = self.entry.read();
+        let (at, body) = guard.as_ref()?;
+        if at.elapsed() < max_age {
+            Some(body.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn store(&self, body: String) {
+        *self.entry.write() = Some((Instant::now(), body));
+    }
+
+    pub fn age_secs(&self) -> Option<u64> {
+        let guard = self.entry.read();
+        guard.as_ref().map(|(at, _)| at.elapsed().as_secs())
+    }
+}
 
 /// Parsed gateway counters at one point in time.
 #[derive(Debug, Clone, Default)]
@@ -365,8 +405,61 @@ pub fn sample_interval_secs() -> u64 {
         .unwrap_or(60)
 }
 
-/// Fetch raw Prometheus text from the gateway metrics endpoint.
+pub fn metrics_cache_ttl() -> Duration {
+    std::env::var("CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(2))
+}
+
+pub fn metrics_stale_max_age() -> Duration {
+    std::env::var("CRABCACHE_GATEWAY_METRICS_STALE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(30))
+}
+
+/// Fetch Prometheus text with TTL cache, in-flight dedup, and stale fallback on transient errors.
+pub async fn fetch_gateway_metrics_cached(cache: &GatewayMetricsCache) -> Result<String, String> {
+    let ttl = metrics_cache_ttl();
+    if let Some(body) = cache.fresh_body(ttl) {
+        return Ok(body);
+    }
+
+    let _guard = cache.fetch_lock.lock().await;
+    if let Some(body) = cache.fresh_body(ttl) {
+        return Ok(body);
+    }
+
+    match fetch_gateway_metrics_body_raw().await {
+        Ok(body) => {
+            cache.store(body.clone());
+            Ok(body)
+        }
+        Err(e) => {
+            if let Some(body) = cache.stale_body(metrics_stale_max_age()) {
+                tracing::warn!(
+                    error = %e,
+                    stale_age_secs = cache.age_secs().unwrap_or(0),
+                    "Using stale gateway metrics after fetch failure"
+                );
+                return Ok(body);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Uncached fetch (tests / one-off diagnostics).
 pub async fn fetch_gateway_metrics_body() -> Result<String, String> {
+    fetch_gateway_metrics_body_raw().await
+}
+
+async fn fetch_gateway_metrics_body_raw() -> Result<String, String> {
     let metrics_url = gateway_metrics_url();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -377,12 +470,27 @@ pub async fn fetch_gateway_metrics_body() -> Result<String, String> {
     let mut last_err = String::new();
     for attempt in 0..2 {
         match client.get(&metrics_url).send().await {
-            Ok(resp) => return resp.text().await.map_err(|e| e.to_string()),
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    last_err = format!(
+                        "fetch {metrics_url}: HTTP {}",
+                        resp.status().as_u16()
+                    );
+                    if attempt == 0 {
+                        tracing::debug!(error = %last_err, "metrics fetch retry after non-success status");
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    tracing::warn!(error = %last_err, "Failed to fetch gateway metrics");
+                    return Err(last_err);
+                }
+                return resp.text().await.map_err(|e| e.to_string());
+            }
             Err(e) => {
                 last_err = format!("fetch {metrics_url}: {e}");
                 if attempt == 0 && (e.is_timeout() || e.is_connect()) {
                     tracing::debug!(error = %e, "metrics fetch retry");
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                     continue;
                 }
                 tracing::warn!(error = %last_err, "Failed to fetch gateway metrics");
@@ -884,9 +992,10 @@ fn parse_domain_tokens_from_body(body: &str) -> HashMap<String, (u64, u64)> {
 }
 
 pub async fn sample_metrics_history(
+    cache: &GatewayMetricsCache,
     history: &parking_lot::RwLock<MetricsHistory>,
 ) -> Result<(), String> {
-    let body = fetch_gateway_metrics_body().await?;
+    let body = fetch_gateway_metrics_cached(cache).await?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

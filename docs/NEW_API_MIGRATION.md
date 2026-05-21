@@ -25,6 +25,43 @@ Cursor → OpenResty :18000 → crab-gateway :8080 → api.deepseek.com
 | Python 无答案缓存 | CrabCache **L0/L1** + Coalescing（需部署后 invalidate 一次） |
 | ngrok 公网 URL | OpenResty + Let's Encrypt（`docs/deploy-1panel-openresty.md`） |
 | new-api `thinking_to_content` | CrabCache `display_reasoning` + 流式 `rewrite_sse_chunk` |
+| new-api 多渠道路由（不同 Base URL） | `[[upstream.profiles]]` + Key/域名 `upstream_profile` |
+| 非 V4 DeepSeek 模型走轻量路径 | 自动 `deepseek_light`（无 thinking 注入） |
+| OpenAI 兼容渠道 | `provider = "openai"` profile → `generic_relay` |
+
+### 多厂商上游（单网关实例）
+
+在 `gateway.toml` 中为每个厂商增加 profile（独立 Key 池与 Ketama 环）：
+
+```toml
+[gateway]
+default_upstream_profile = "deepseek"
+
+[[upstream.profiles]]
+id = "deepseek"
+provider = "deepseek"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+# keys = ["sk-deepseek-1"]
+
+[[upstream.profiles]]
+id = "openai"
+provider = "openai"
+base_url = "https://api.openai.com"
+model = "gpt-4o"
+# keys = ["sk-openai-1"]
+```
+
+客户端 Key 可绑定 profile，避免 Cursor 专用逻辑污染 OpenAI 请求：
+
+```bash
+curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"openai-app","enabled":true,"upstream_profile":"openai","pipeline":"generic_relay"}'
+```
+
+Prometheus：`gateway_pipeline_selected_total{pipeline,profile,reason}`。
 
 ## 迁移步骤
 

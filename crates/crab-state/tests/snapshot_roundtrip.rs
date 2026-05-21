@@ -21,6 +21,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool =
         UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
+    let pool_handle = Arc::new(RwLock::new(upstream_pool));
     let mut profiles = HashMap::new();
     profiles.insert(
         "deepseek".to_string(),
@@ -31,7 +32,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             fallback_model: "deepseek-v4-pro".to_string(),
             tls_sni: "api.deepseek.com".to_string(),
             router: AffinityRouter::new(&backends).unwrap(),
-            upstream_pool: upstream_pool.clone(),
+            upstream_pool: pool_handle.clone(),
         }),
     );
     RuntimeConfig::new(
@@ -42,7 +43,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         FingerprintConfig::default(),
         "https://api.deepseek.com".to_string(),
         "deepseek-v4-pro".to_string(),
-        upstream_pool,
+        pool_handle,
         profiles,
         "deepseek".to_string(),
         PipelineGlobals::default(),
@@ -96,6 +97,22 @@ fn empty_upstream_keys_replaces_pool() {
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_none());
+}
+
+#[test]
+fn replace_upstream_pool_updates_default_profile() {
+    let runtime = test_runtime();
+    let profile_before = runtime.default_profile().resolve_upstream_pool();
+    assert!(profile_before.acquire().is_some());
+
+    let new_pool = UpstreamKeyPool::from_secrets(vec!["sk-replaced-upstream-key".into()], 60);
+    runtime.replace_upstream_pool(new_pool);
+
+    assert!(runtime.upstream_pool().acquire().is_some());
+    let profile_after = runtime.default_profile().resolve_upstream_pool();
+    let guard = profile_after.acquire().expect("profile pool should see hot-replaced keys");
+    assert_eq!(guard.key_id(), "key-1");
+    assert_eq!(guard.bearer_secret(), "sk-replaced-upstream-key");
 }
 
 #[test]

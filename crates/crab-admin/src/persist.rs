@@ -34,6 +34,10 @@ pub struct PersistedDomainPolicy {
     pub monthly_cost_budget_usd: f64,
     pub min_hit_rate: f64,
     pub enabled: bool,
+    #[serde(default)]
+    pub pipeline: Option<String>,
+    #[serde(default)]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

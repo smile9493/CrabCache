@@ -33,8 +33,8 @@ struct MetricsServer {
 
 #[async_trait]
 impl pingora_core::services::background::BackgroundService for MetricsServer {
-    async fn start(&self, _shutdown: pingora_core::server::ShutdownWatch) {
-        let listener = match std::net::TcpListener::bind(&self.addr) {
+    async fn start(&self, mut shutdown: pingora_core::server::ShutdownWatch) {
+        let listener = match tokio::net::TcpListener::bind(&self.addr).await {
             Ok(l) => l,
             Err(e) => {
                 tracing::error!(addr = %self.addr, error = %e, "Failed to bind metrics addr");
@@ -42,28 +42,43 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
             }
         };
 
-        for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(s) => s,
-                Err(_) => continue,
+        loop {
+            let accept = tokio::select! {
+                _ = shutdown.changed() => break,
+                result = listener.accept() => result,
             };
+            let Ok((mut stream, _)) = accept else {
+                continue;
+            };
+            let registry = self.registry.clone();
+            tokio::spawn(async move {
+                let output = match tokio::task::spawn_blocking(move || {
+                    let encoder = prometheus::TextEncoder::new();
+                    let metric_families = registry.gather();
+                    encoder.encode_to_string(&metric_families)
+                })
+                .await
+                {
+                    Ok(Ok(body)) => body,
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "Failed to encode prometheus metrics");
+                        String::new()
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Metrics gather task join failed");
+                        String::new()
+                    }
+                };
 
-            let encoder = prometheus::TextEncoder::new();
-            let metric_families = self.registry.gather();
-            let output = encoder
-                .encode_to_string(&metric_families)
-                .unwrap_or_default();
-
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n{}",
-                output.len(),
-                output
-            );
-
-            use std::io::Write;
-            let mut stream = stream;
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.flush();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n{}",
+                    output.len(),
+                    output
+                );
+                use tokio::io::AsyncWriteExt;
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+            });
         }
     }
 }
@@ -262,7 +277,7 @@ fn main() -> Result<()> {
 
     let upstream_pool = default_profile.upstream_pool.clone();
     info!(
-        upstream_key_count = upstream_pool.len(),
+        upstream_key_count = upstream_pool.read().map(|p| p.len()).unwrap_or(0),
         default_profile = %default_profile_id,
         "Upstream key pool initialized (default profile)"
     );
@@ -415,7 +430,12 @@ fn main() -> Result<()> {
         None
     };
 
-    for profile in runtime.upstream_profiles.values() {
+    for profile in runtime
+        .upstream_profiles
+        .read()
+        .expect("upstream profiles lock poisoned")
+        .values()
+    {
         if let Ok(mut health) = runtime.backend_health.write() {
             for b in profile.router.backends() {
                 health

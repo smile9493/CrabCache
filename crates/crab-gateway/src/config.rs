@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 pub use crab_state::StateBackendConfig;
@@ -630,6 +630,7 @@ impl GatewayConfig {
                 .unwrap_or_else(|| self.resolved_tls_sni());
             let keys = self.profile_key_secrets(&profile);
             let pool = UpstreamKeyPool::from_secrets(keys, cooldown);
+            let pool_handle = Arc::new(RwLock::new(pool));
             map.insert(
                 profile.id.clone(),
                 Arc::new(UpstreamProfileRuntime {
@@ -639,7 +640,7 @@ impl GatewayConfig {
                     fallback_model,
                     tls_sni,
                     router,
-                    upstream_pool: pool,
+                    upstream_pool: pool_handle,
                 }),
             );
         }

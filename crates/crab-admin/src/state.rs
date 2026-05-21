@@ -1,4 +1,4 @@
-use crate::metrics_history::MetricsHistory;
+use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
 use crate::types::{DomainPolicy, TraceSummary};
 use std::time::Instant;
@@ -69,6 +69,7 @@ pub struct AppState {
     /// Last successful upstream reconcile from gateway Management API.
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
     pub gateway_probe_cache: RwLock<Option<(Instant, GatewayProbe)>>,
+    pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (1s TTL, mtime-invalidated).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
 }
@@ -327,6 +328,7 @@ impl AppState {
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
+            gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             domain_policies: RwLock::new(
                 loaded
@@ -338,11 +340,17 @@ impl AppState {
                         monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                         min_hit_rate: p.min_hit_rate,
                         enabled: p.enabled,
+                        pipeline: p.pipeline,
+                        upstream_profile: p.upstream_profile,
                     })
                     .collect(),
             ),
             last_invalidate: RwLock::new(None),
         }
+    }
+
+    pub async fn fetch_gateway_metrics(&self) -> Result<String, String> {
+        crate::metrics_history::fetch_gateway_metrics_cached(&self.gateway_metrics_cache).await
     }
 
     pub async fn sync_domain_policies_to_gateway(&self) {
@@ -356,8 +364,8 @@ impl AppState {
                 monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                 min_hit_rate: p.min_hit_rate,
                 enabled: p.enabled,
-                pipeline: None,
-                upstream_profile: None,
+                pipeline: p.pipeline.clone(),
+                upstream_profile: p.upstream_profile.clone(),
             })
             .collect();
         if let Err(e) = self
@@ -402,6 +410,8 @@ impl AppState {
                 monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                 min_hit_rate: p.min_hit_rate,
                 enabled: p.enabled,
+                pipeline: p.pipeline.clone(),
+                upstream_profile: p.upstream_profile.clone(),
             })
             .collect();
         let file = persist::build_state_file(

@@ -16,7 +16,6 @@ use crab_control::{
 };
 use crate::metrics_history::{
     domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
-    fetch_gateway_metrics_body,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -97,6 +96,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_stream_cache).put(put_stream_cache),
         )
         .route(
+            "/api/admin/runtime/pipeline",
+            get(get_pipeline_runtime).put(put_pipeline_runtime),
+        )
+        .route(
             "/api/admin/semantic/config",
             get(get_semantic_config).put(update_semantic_config),
         )
@@ -142,12 +145,10 @@ async fn get_network_info() -> Json<NetworkInfo> {
 async fn get_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MetricsSnapshot>, StatusCode> {
-    let body = crate::metrics_history::fetch_gateway_metrics_body()
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "Failed to fetch gateway metrics");
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
+    let body = state.fetch_gateway_metrics().await.map_err(|e| {
+        tracing::warn!(error = %e, "Failed to fetch gateway metrics");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -181,7 +182,8 @@ async fn get_overview(
 async fn list_domains(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<DomainMetricsBucket>>, StatusCode> {
-    let body = fetch_gateway_metrics_body()
+    let body = state
+        .fetch_gateway_metrics()
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let now = SystemTime::now()
@@ -200,7 +202,8 @@ async fn get_domain_detail(
     State(state): State<Arc<AppState>>,
     Path(domain): Path<String>,
 ) -> Result<Json<DomainDetailBundle>, StatusCode> {
-    let body = fetch_gateway_metrics_body()
+    let body = state
+        .fetch_gateway_metrics()
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let now = SystemTime::now()
@@ -258,26 +261,10 @@ async fn put_domain_policies(
 async fn get_prefix_cache_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PrefixCacheMetricsSnapshot>, StatusCode> {
-    let metrics_url = std::env::var("CRABCACHE_GATEWAY_METRICS_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9090/metrics".to_string());
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .http1_only()
-        .build()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let resp = client.get(&metrics_url).send().await.map_err(|e| {
-        tracing::warn!(url = %metrics_url, error = %e, "Failed to fetch gateway metrics");
+    let body = state.fetch_gateway_metrics().await.map_err(|e| {
+        tracing::warn!(error = %e, "Failed to fetch gateway metrics");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
-
-    let body = resp
-        .text()
-        .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-
-    let _ = state;
     Ok(Json(
         crate::metrics_history::build_prefix_cache_snapshot(&body),
     ))
@@ -838,6 +825,8 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
                 active: spec.enabled,
                 domain: spec.domain,
                 project_id: spec.project_id,
+                pipeline: spec.pipeline,
+                upstream_profile: spec.upstream_profile,
                 rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
                 monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
                 tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
@@ -867,8 +856,8 @@ async fn create_key(
             token: None,
             domain: req.domain.clone(),
             project_id: req.project_id.clone(),
-            pipeline: None,
-            upstream_profile: None,
+            pipeline: req.pipeline.clone(),
+            upstream_profile: req.upstream_profile.clone(),
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -902,6 +891,8 @@ async fn create_key(
         active: created.enabled,
         domain: created.domain,
         project_id: created.project_id,
+        pipeline: created.pipeline,
+        upstream_profile: created.upstream_profile,
         rpm_limit: req.rpm_limit,
         monthly_token_budget: req.monthly_token_budget,
         tokens_used_this_month: 0,
@@ -1069,6 +1060,62 @@ async fn put_stream_cache(
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
     Ok(Json(StreamCacheConfig {
         enabled: cfg.enabled,
+    }))
+}
+
+async fn get_pipeline_runtime(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PipelineRuntimeConfig>, (StatusCode, String)> {
+    let cfg = state
+        .gateway
+        .get_pipeline_runtime()
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    Ok(Json(PipelineRuntimeConfig {
+        pipeline_mode: cfg.pipeline_mode,
+        default_upstream_profile: cfg.default_upstream_profile,
+        profiles: cfg
+            .profiles
+            .into_iter()
+            .map(|p| PipelineProfileView {
+                id: p.id,
+                provider: p.provider,
+            })
+            .collect(),
+    }))
+}
+
+async fn put_pipeline_runtime(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PipelineRuntimeConfig>,
+) -> Result<Json<PipelineRuntimeConfig>, (StatusCode, String)> {
+    let cfg = state
+        .gateway
+        .put_pipeline_runtime(&crab_control::PipelineRuntimeConfigView {
+            pipeline_mode: req.pipeline_mode,
+            default_upstream_profile: req.default_upstream_profile,
+            profiles: req
+                .profiles
+                .into_iter()
+                .map(|p| crab_control::PipelineProfileView {
+                    id: p.id,
+                    provider: p.provider,
+                })
+                .collect(),
+        })
+        .await
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    Ok(Json(PipelineRuntimeConfig {
+        pipeline_mode: cfg.pipeline_mode,
+        default_upstream_profile: cfg.default_upstream_profile,
+        profiles: cfg
+            .profiles
+            .into_iter()
+            .map(|p| PipelineProfileView {
+                id: p.id,
+                provider: p.provider,
+            })
+            .collect(),
     }))
 }
 

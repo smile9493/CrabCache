@@ -149,6 +149,10 @@ pub struct DomainPolicy {
     pub monthly_cost_budget_usd: f64,
     pub min_hit_rate: f64,
     pub enabled: bool,
+    #[serde(default)]
+    pub pipeline: Option<String>,
+    #[serde(default)]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +255,10 @@ pub struct ApiKey {
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +274,23 @@ pub struct CreateKeyRequest {
     pub domain: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub pipeline: Option<String>,
+    #[serde(default)]
+    pub upstream_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineProfileView {
+    pub id: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRuntimeConfig {
+    pub pipeline_mode: String,
+    pub default_upstream_profile: String,
+    pub profiles: Vec<PipelineProfileView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
