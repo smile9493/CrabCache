@@ -59,7 +59,7 @@ curl -sf -o /dev/null http://127.0.0.1:18001/   # admin 本地
 `.env` 建议包含：
 
 ```env
-CRABCACHE_BOOTSTRAP_CLIENT_KEYS=sk-87c7a5b1f06142368434e9af8590e5f5
+CRABCACHE_BOOTSTRAP_CLIENT_KEYS=sk-cc-your-client-key-here
 CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 ```
 
@@ -71,7 +71,9 @@ CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 
 ### 2) `proxy_pass` 必须指向 8080 / 18001
 
-错误示例：`http://127.0.0.1:18080` → 站点 `error.log` 会出现 `connect() failed (111: Connection refused)`。
+错误示例：`http://127.0.0.1:18080` → 站点 `error.log` 会出现 `connect() failed (111: Connection refused)`，浏览器显示 **502 Bad Gateway**。
+
+仪表盘需 **`docker compose --profile admin`** 启动；仅起 `gateway` 时 `18001` 无进程监听，刷新 `https://域名:18010` 会偶发 502。详见 [OBSERVABILITY.md](./OBSERVABILITY.md)「Dashboard 502 / 503 troubleshooting」。
 
 ### 3) 内网用公网域名访问可能 403
 
@@ -84,6 +86,19 @@ curl -sk https://127.0.0.1:18000/ready -H 'Host: v4.wumingaicg.website'
 ### 4) 流式 SSE
 
 `location` 中保留 **`proxy_buffering off;`**、`proxy_read_timeout 300s`。
+
+## 稳定 `x-conversation-id`（ReasoningStore）
+
+Cursor / 子代理往往不带会话头时，网关会用 **`client:<sk-cc>`** 作 ReasoningStore scope；仍建议在 **18000 API** 的 `location` 中注入稳定 `x-conversation-id`，使同一线程多轮 tool 历史更易命中 Redis。
+
+仓库示例（注释形式，按环境启用其一）：
+
+- **Cookie**：`proxy_set_header x-conversation-id $cookie_<your_cookie>;`
+- **Authorization 派生（示例配置默认启用）**：[`deploy/nginx/crabcache-openresty-1panel.example.conf`](../deploy/nginx/crabcache-openresty-1panel.example.conf) 顶部 `map` + `proxy_set_header x-conversation-id $crabcache_conv_id_final;`（可被 cookie `crabcache_thread_id` 覆盖）
+
+详见 [`deploy/nginx/crabcache-openresty-1panel.example.conf`](../deploy/nginx/crabcache-openresty-1panel.example.conf) 与 **[REASONING_STORE.md](REASONING_STORE.md)**。
+
+网关内置兜底：无会话头时使用 `req:<SHA256 前 16 位>`，不依赖 OpenResty。
 
 ## 验证清单
 

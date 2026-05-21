@@ -47,3 +47,23 @@ CRABCACHE_UPSTREAM_KEYS=sk-ds-1,sk-ds-2,sk-ds-3
 ```
 
 网关会在缓存未命中时轮换使用池内 Key，客户端仍只需一个 `sk-cc-*`。
+
+## 多实例与 Redis 控制面
+
+生产环境若运行多个 Gateway 副本（`docker compose up --scale gateway=2`），须在配置中启用：
+
+```toml
+[state]
+backend = "redis"
+```
+
+客户端 Key、TTL 热更新、路由与上游池由 Redis `crab:state:*` 共享。首次启动且 Redis 为空时，网关会用 `gateway.toml` 与 `CRABCACHE_BOOTSTRAP_CLIENT_KEYS` 初始化并写入。
+
+导出已有 Key（一次性迁移）：
+
+```bash
+curl -s "http://127.0.0.1:9080/v1/keys" \
+  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" | jq .
+```
+
+详见 [PERSISTENCE.md](./PERSISTENCE.md)。

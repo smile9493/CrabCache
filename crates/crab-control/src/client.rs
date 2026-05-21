@@ -138,6 +138,35 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn list_domain_policies(&self) -> Result<Vec<DomainPolicySpec>, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/domains/policies")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_domain_policies(
+        &self,
+        req: &PutDomainPoliciesRequest,
+    ) -> Result<Vec<DomainPolicySpec>, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/domains/policies")
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn delete_domain_policy(&self, domain: &str) -> Result<(), ControlError> {
+        let path = format!("/v1/domains/policies/{domain}");
+        let resp = self.authed(reqwest::Method::DELETE, &path).send().await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
     pub async fn put_ttl(&self, req: &PutTtlConfigRequest) -> Result<TtlConfigView, ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/cache/ttl")

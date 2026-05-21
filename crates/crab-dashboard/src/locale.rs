@@ -277,6 +277,32 @@ impl Translations {
             Locale::EnUS => "Failed to load metrics",
         }
     }
+    pub fn overview_error_hint_502(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "502：检查 crab-admin 是否在运行，OpenResty proxy_pass 是否指向 127.0.0.1:18001（非 8080）。"
+            }
+            Locale::EnUS => {
+                "502: ensure crab-admin is running and OpenResty proxy_pass targets 127.0.0.1:18001 (not 8080)."
+            }
+        }
+    }
+    pub fn overview_error_hint_503(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "503：检查网关 :9090/metrics 与 CRABCACHE_GATEWAY_METRICS_URL，确认 gateway 容器健康。"
+            }
+            Locale::EnUS => {
+                "503: check gateway :9090/metrics and CRABCACHE_GATEWAY_METRICS_URL; verify gateway is healthy."
+            }
+        }
+    }
+    pub fn overview_suggestions_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维建议",
+            Locale::EnUS => "Suggestions",
+        }
+    }
 
     pub fn keys_title(self) -> &'static str {
         match self.locale {
@@ -695,6 +721,102 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "Consumer",
             Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn sidebar_domains(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "领域",
+            Locale::EnUS => "Domains",
+        }
+    }
+    pub fn domains_page_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "领域缓存分析",
+            Locale::EnUS => "Domain cache analytics",
+        }
+    }
+    pub fn domains_page_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按业务领域聚合的 Token 命中率、成本节省与 QPS。",
+            Locale::EnUS => "Token hit rate, cost saved, and QPS grouped by business domain.",
+        }
+    }
+    pub fn domains_table_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "领域缓存总览",
+            Locale::EnUS => "Domain cache overview",
+        }
+    }
+    pub fn domains_compare_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "多项目命中率对比",
+            Locale::EnUS => "Cross-domain hit rate",
+        }
+    }
+    pub fn domains_col_domain(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "领域",
+            Locale::EnUS => "Domain",
+        }
+    }
+    pub fn domains_col_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率",
+            Locale::EnUS => "Hit rate",
+        }
+    }
+    pub fn domains_col_cost(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "节省成本",
+            Locale::EnUS => "Cost saved",
+        }
+    }
+    pub fn domains_col_qps(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "QPS (5m)",
+            Locale::EnUS => "QPS (5m)",
+        }
+    }
+    pub fn domains_col_alert(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "告警",
+            Locale::EnUS => "Alert",
+        }
+    }
+    pub fn domains_view_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "查看全部",
+            Locale::EnUS => "View all",
+        }
+    }
+    pub fn domains_back(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "← 返回领域列表",
+            Locale::EnUS => "← Back to domains",
+        }
+    }
+    pub fn domains_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token 命中率",
+            Locale::EnUS => "Token hit rate",
+        }
+    }
+    pub fn domains_cost_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "累计节省",
+            Locale::EnUS => "Cost saved",
+        }
+    }
+    pub fn domains_tier_breakdown(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存层级 (5m)",
+            Locale::EnUS => "Cache tiers (5m)",
+        }
+    }
+    pub fn keys_domain_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "领域 (可选)",
+            Locale::EnUS => "Domain (optional)",
         }
     }
     pub fn overview_trend_hit_rate(self) -> &'static str {

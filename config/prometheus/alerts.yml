@@ -49,3 +49,25 @@ groups:
         annotations:
           summary: "Semantic cache guard rejection ratio > 50%"
           description: "Review similarity threshold and model guard settings."
+
+  - name: crabcache_domain
+    rules:
+      - alert: CrabCacheDomainHitRateLow
+        expr: |
+          (
+            sum by (domain) (rate(gateway_deepseek_input_tokens_total{cache_status="hit"}[1h]))
+            / clamp_min(sum by (domain) (rate(gateway_deepseek_input_tokens_total[1h])), 1e-9)
+          ) < 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Domain {{ $labels.domain }} token hit rate below 85% (1h)"
+
+      - alert: CrabCacheDomainQuotaExceeded
+        expr: increase(gateway_rejected_requests_total{reason="domain_quota_exceeded"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Domain quota rejections detected"

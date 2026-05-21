@@ -1,6 +1,9 @@
 //! Prometheus counter snapshots and time-series rollups for the admin dashboard.
 
-use crate::types::{ConsumerMetricsBucket, PrefixCacheModelBucket, TierDeltas5m, TimeSeriesPoint};
+use crate::types::{
+    ConsumerMetricsBucket, DomainMetricsBucket, PrefixCacheModelBucket, TierDeltas5m,
+    TimeSeriesPoint,
+};
 use chrono::{DateTime, Datelike, Utc};
 use std::collections::HashMap;
 
@@ -9,7 +12,7 @@ const DEFAULT_MAX_SAMPLES: usize = 1500;
 pub const WINDOW_5M_SECS: u64 = 300;
 
 /// Parsed gateway counters at one point in time.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MetricsCounterSnapshot {
     pub sampled_at: u64,
     pub l0_hits: u64,
@@ -29,6 +32,7 @@ pub struct MetricsCounterSnapshot {
     pub reasoning_store_hits: u64,
     pub reasoning_store_misses: u64,
     pub stream_cache_sse_omitted: u64,
+    pub domain_tokens: HashMap<String, (u64, u64)>,
 }
 
 impl MetricsCounterSnapshot {
@@ -370,13 +374,23 @@ pub async fn fetch_gateway_metrics_body() -> Result<String, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let resp = client
-        .get(&metrics_url)
-        .send()
-        .await
-        .map_err(|e| format!("fetch {metrics_url}: {e}"))?;
-
-    resp.text().await.map_err(|e| e.to_string())
+    let mut last_err = String::new();
+    for attempt in 0..2 {
+        match client.get(&metrics_url).send().await {
+            Ok(resp) => return resp.text().await.map_err(|e| e.to_string()),
+            Err(e) => {
+                last_err = format!("fetch {metrics_url}: {e}");
+                if attempt == 0 && (e.is_timeout() || e.is_connect()) {
+                    tracing::debug!(error = %e, "metrics fetch retry");
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                tracing::warn!(error = %last_err, "Failed to fetch gateway metrics");
+                return Err(last_err);
+            }
+        }
+    }
+    Err(last_err)
 }
 
 /// Parse gateway counters from Prometheus exposition text.
@@ -448,6 +462,87 @@ pub fn scrape_gateway_counters(body: &str, sampled_at: u64) -> MetricsCounterSna
             "gateway_stream_cache_sse_omitted_total",
             &[],
         ),
+        domain_tokens: parse_domain_tokens_from_body(body),
+    }
+}
+
+impl MetricsHistory {
+    /// Token hit-rate time series for one domain over `window_secs`.
+    pub fn domain_token_hit_rate_series(
+        &self,
+        domain: &str,
+        window_secs: u64,
+        now: u64,
+    ) -> Vec<TimeSeriesPoint> {
+        let start = now.saturating_sub(window_secs);
+        let in_window: Vec<&MetricsCounterSnapshot> = self
+            .samples
+            .iter()
+            .filter(|s| s.sampled_at >= start && s.sampled_at <= now)
+            .collect();
+        if in_window.len() < 2 {
+            return Vec::new();
+        }
+
+        let mut points = Vec::new();
+        for w in in_window.windows(2) {
+            let first = w[0];
+            let last = w[1];
+            let (fh, fm) = first
+                .domain_tokens
+                .get(domain)
+                .copied()
+                .unwrap_or((0, 0));
+            let (lh, lm) = last.domain_tokens.get(domain).copied().unwrap_or((0, 0));
+            let dh = lh.saturating_sub(fh);
+            let dm = lm.saturating_sub(fm);
+            let total = dh + dm;
+            let hit_rate = if total > 0 {
+                dh as f64 / total as f64
+            } else {
+                0.0
+            };
+            let ts = DateTime::from_timestamp(last.sampled_at as i64, 0)
+                .unwrap_or_else(Utc::now)
+                .format("%H:%M")
+                .to_string();
+            points.push(TimeSeriesPoint {
+                timestamp: ts,
+                requests: 0,
+                tokens: total,
+                cache_hits: dh,
+                avg_latency_ms: 0.0,
+                hit_rate,
+            });
+        }
+        points
+    }
+
+    pub fn domain_qps_5m(&self, domain: &str, now: u64) -> f64 {
+        let window_secs = WINDOW_5M_SECS;
+        let start = now.saturating_sub(window_secs);
+        let in_window: Vec<&MetricsCounterSnapshot> = self
+            .samples
+            .iter()
+            .filter(|s| s.sampled_at >= start && s.sampled_at <= now)
+            .collect();
+        if in_window.len() < 2 {
+            return 0.0;
+        }
+        let first = in_window.first().unwrap();
+        let last = in_window.last().unwrap();
+        let (fh, fm) = first
+            .domain_tokens
+            .get(domain)
+            .copied()
+            .unwrap_or((0, 0));
+        let (lh, lm) = last.domain_tokens.get(domain).copied().unwrap_or((0, 0));
+        let delta_tokens = lh.saturating_sub(fh) + lm.saturating_sub(fm);
+        let elapsed = last
+            .sampled_at
+            .saturating_sub(first.sampled_at)
+            .max(1) as f64;
+        delta_tokens as f64 / elapsed
     }
 }
 
@@ -589,6 +684,203 @@ pub fn consumer_token_buckets(body: &str, top_n: usize) -> Vec<ConsumerMetricsBu
     });
     buckets.truncate(top_n);
     buckets
+}
+
+/// Top domains by input token volume.
+pub fn domain_token_buckets(body: &str, top_n: usize) -> Vec<DomainMetricsBucket> {
+    let mut per_domain: HashMap<String, (u64, u64)> = HashMap::new();
+
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_deepseek_input_tokens_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        let status = label_value(labels, "cache_status");
+        let value_part = line[close + 1..].trim();
+        let Ok(tokens) = value_part.parse::<u64>() else {
+            continue;
+        };
+        let entry = per_domain.entry(domain).or_insert((0, 0));
+        match status.as_deref() {
+            Some("hit") => entry.0 += tokens,
+            Some("miss") => entry.1 += tokens,
+            _ => {}
+        }
+    }
+
+    let cost_by_domain = domain_cost_saved(body);
+    let mut buckets: Vec<DomainMetricsBucket> = per_domain
+        .into_iter()
+        .map(|(domain, (hit, miss))| {
+            let total = hit + miss;
+            DomainMetricsBucket {
+                domain: domain.clone(),
+                hit_tokens: hit,
+                miss_tokens: miss,
+                hit_ratio: if total > 0 {
+                    hit as f64 / total as f64
+                } else {
+                    0.0
+                },
+                cost_saved_usd: cost_by_domain.get(&domain).copied().unwrap_or(0.0),
+                qps_5m: 0.0,
+                alert: None,
+            }
+        })
+        .collect();
+
+    buckets.sort_by(|a, b| {
+        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
+    });
+    buckets.truncate(top_n);
+    buckets
+}
+
+fn domain_cost_saved(body: &str) -> HashMap<String, f64> {
+    let mut per_domain: HashMap<String, f64> = HashMap::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_cache_cost_saved_usd_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        let value_part = line[close + 1..].trim();
+        let Ok(usd) = value_part.parse::<f64>() else {
+            continue;
+        };
+        *per_domain.entry(domain).or_insert(0.0) += usd;
+    }
+    per_domain
+}
+
+pub fn domain_consumer_buckets(body: &str, domain: &str) -> Vec<ConsumerMetricsBucket> {
+    let mut per_consumer: HashMap<String, (u64, u64)> = HashMap::new();
+
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_deepseek_input_tokens_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let line_domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        if line_domain != domain {
+            continue;
+        }
+        let consumer = label_value(labels, "consumer").unwrap_or_else(|| "unknown".to_string());
+        let status = label_value(labels, "cache_status");
+        let value_part = line[close + 1..].trim();
+        let Ok(tokens) = value_part.parse::<u64>() else {
+            continue;
+        };
+        let entry = per_consumer.entry(consumer).or_insert((0, 0));
+        match status.as_deref() {
+            Some("hit") => entry.0 += tokens,
+            Some("miss") => entry.1 += tokens,
+            _ => {}
+        }
+    }
+
+    let mut buckets: Vec<ConsumerMetricsBucket> = per_consumer
+        .into_iter()
+        .map(|(consumer, (hit, miss))| {
+            let total = hit + miss;
+            ConsumerMetricsBucket {
+                consumer,
+                hit_tokens: hit,
+                miss_tokens: miss,
+                hit_ratio: if total > 0 {
+                    hit as f64 / total as f64
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
+    buckets.sort_by(|a, b| {
+        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
+    });
+    buckets
+}
+
+pub fn domain_tier_deltas_5m(body: &str, domain: &str) -> TierDeltas5m {
+    let mut d = TierDeltas5m::default();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_cache_requests_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let line_domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        if line_domain != domain {
+            continue;
+        }
+        let tier = label_value(labels, "tier");
+        let result = label_value(labels, "result");
+        let value_part = line[close + 1..].trim();
+        let Ok(v) = value_part.parse::<u64>() else {
+            continue;
+        };
+        match (tier.as_deref(), result.as_deref()) {
+            (Some("L0_moka"), Some("hit")) => d.l0 += v,
+            (Some("L1_redis"), Some("hit")) => d.l1 += v,
+            (Some("L2_semantic"), Some("hit")) => d.l2 += v,
+            (Some("miss"), Some("miss")) => d.miss += v,
+            _ => {}
+        }
+    }
+    d
+}
+
+fn parse_domain_tokens_from_body(body: &str) -> HashMap<String, (u64, u64)> {
+    let mut per_domain: HashMap<String, (u64, u64)> = HashMap::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || !line.starts_with("gateway_deepseek_input_tokens_total")
+        {
+            continue;
+        }
+        let Some(open) = line.find('{') else { continue };
+        let Some(close) = line.find('}') else { continue };
+        let labels = &line[open + 1..close];
+        let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        let status = label_value(labels, "cache_status");
+        let value_part = line[close + 1..].trim();
+        let Ok(tokens) = value_part.parse::<u64>() else {
+            continue;
+        };
+        let entry = per_domain.entry(domain).or_insert((0, 0));
+        match status.as_deref() {
+            Some("hit") => entry.0 += tokens,
+            Some("miss") => entry.1 += tokens,
+            _ => {}
+        }
+    }
+    per_domain
 }
 
 pub async fn sample_metrics_history(

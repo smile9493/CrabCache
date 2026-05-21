@@ -957,6 +957,7 @@ dependencies = [
  "crab-reasoning",
  "crab-route",
  "crab-semantic",
+ "crab-state",
  "dashmap",
  "jemallocator",
  "pingora",
@@ -1019,11 +1020,13 @@ dependencies = [
  "anyhow",
  "crab-metrics",
  "hex",
+ "redis",
  "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "tracing",
 ]
 
@@ -1057,6 +1060,26 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokenizers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "crab-state"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bb8",
+ "bb8-redis",
+ "crab-cache",
+ "crab-control",
+ "crab-metrics",
+ "crab-proxy",
+ "crab-route",
+ "futures-util",
+ "redis",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

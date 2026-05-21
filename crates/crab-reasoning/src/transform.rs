@@ -1,4 +1,4 @@
-use crate::store::ReasoningStore;
+use crate::backend::ReasoningBackend;
 use crate::streaming::{
     CursorReasoningDisplayAdapter, StreamAccumulator, fold_reasoning_into_content,
 };
@@ -34,7 +34,7 @@ fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
 
 pub fn record_response_reasoning(
     response_payload: &Value,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     _request_messages: &[Value],
     cache_namespace: &str,
     recording_contexts: &[(String, Vec<Value>)],
@@ -65,7 +65,7 @@ pub fn record_response_reasoning(
 pub fn rewrite_response_body(
     body: &[u8],
     original_model: &str,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     request_messages: &[Value],
     cache_namespace: &str,
     content_prefix: Option<&str>,
@@ -206,7 +206,7 @@ pub fn rewrite_sse_chunk(
     response_contexts: &[(String, Vec<Value>)],
     display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
     pending_recovery_notice: Option<&str>,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
 ) -> SseRewriteResult {
     let stripped = {
         let start = line

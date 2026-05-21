@@ -45,10 +45,8 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 
 | 选项 | 说明 |
 |------|------|
-| `missing_reasoning_strategy = "fill_only"` | **Cursor / Agent 推荐**：仅从 ReasoningStore 补全，不截断历史（多轮 tool 稳定） |
-| `missing_reasoning_strategy = "recover"` | 自动截断不可恢复历史并注入 reasoning（**降低 L3**，仅调试） |
-| `missing_reasoning_on_fill_only` | `omit_reasoning`（默认）：Store 未命中时在 **thinking 模式** 自动 `recover`；仍缺则 **409**（不再裸发 DeepSeek 400） |
-| `missing_reasoning_strategy = "reject"` | 严格模式：无法恢复时返回 **HTTP 409**（调试用） |
+| `missing_reasoning_strategy = "recover"` | **默认（与 deepseek-cursor-proxy 一致）**；`client_key`/`x-conversation-id` 下就地补 reasoning，不截断 tool 历史 |
+| `missing_reasoning_strategy = "reject"` | 无法恢复时 **HTTP 409**（与 proxy `--missing-reasoning-strategy reject` 一致） |
 | `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：仅增量 `delta.content`，不下发 `reasoning_content`（避免 Cursor 断连） |
 | `stream_cache_enabled`（`[cache]`） | 流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning |
 
@@ -60,14 +58,27 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 [reasoning]
 thinking_mode = "enabled"
 reasoning_effort = "max"
-missing_reasoning_strategy = "fill_only"
-missing_reasoning_on_fill_only = "omit_reasoning"
+missing_reasoning_strategy = "recover"
 display_reasoning = true
 collapsible_reasoning = true
 
 [cache]
 stream_cache_enabled = true
+
+[reasoning]
+backend = "redis"
+redis_url = "redis://127.0.0.1:6379"
 ```
+
+### ReasoningStore 持久化 + 稳定会话（减少 recover / notice）
+
+完整说明见 **[REASONING_STORE.md](REASONING_STORE.md)**（scope 优先级、部署检查清单、验收脚本）。
+
+1. **`[reasoning].backend = "redis"`**（或 `CRABCACHE_REASONING_BACKEND=redis`）：思考链写入 Redis `crab:reasoning:*`，容器重启、多副本共享；Docker 见 `config/gateway.docker.toml`（已默认 redis）。
+2. **稳定会话 ID**：`x-conversation-id` / `prompt_cache_key` / **`client:<sk-cc>`** → ReasoningStore 固定 scope；多轮 tool 历史从 Redis 补全。
+3. **Cursor 侧**：尽量带 `x-conversation-id`；否则自动用 `sk-cc` 哈希作 scope。
+4. **任务卡住**：入站 recovery notice 会先剥离；有稳定 scope 时不做 `latest_user` 截断（见 H-G `upstream_msg_count`）。
+5. **验收**：日志 `Prepared upstream request` 中 `patched > 0`、`recovered = 0` 表示 Store 补全成功；若频繁 `recovered > 0` 且出现 `[crabcache] Refreshed reasoning_content history.`，检查 Redis 与是否缺少会话头。
 
 部署或升级网关后，**务必清理一次 L0/L1 旧缓存**（旧条目可能混用 `stream:true/false` 键）：
 
@@ -81,22 +92,11 @@ curl -s -X POST "http://127.0.0.1:9080/v1/cache/invalidate" \
 
 可选：将 `fingerprint_version` 加 1（`PUT /v1/cache/fingerprint`）使旧精确缓存键自然 miss。
 
-**仅调试**时可改用 `missing_reasoning_strategy = "recover"`（牺牲 L3 前缀命中）。请求头建议：`x-conversation-id: <stable-id>`。
-
-**高 L3 前缀命中**（固定 system + 只追加消息）同样使用 `fill_only`，并配合 `x-conversation-id` 或 `x-prompt-cache-key`（见 [`DEEPSEEK_PREFIX_CACHE.md`](DEEPSEEK_PREFIX_CACHE.md)）。
-
-请求头建议：`x-conversation-id` 或 `x-prompt-cache-key`（与 body `prompt_cache_key` 二选一即可）。
+**L3 前缀**：`recover` 会截断不可恢复历史（与 proxy 一致）；冲 L3 时固定 system + 追加消息，并配 `x-conversation-id`（见 [`DEEPSEEK_PREFIX_CACHE.md`](DEEPSEEK_PREFIX_CACHE.md)）。
 
 热更新（无需重启）：
 
 ```bash
-# 高 L3
-curl -s -X PUT "http://127.0.0.1:9080/v1/runtime/reasoning" \
-  -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"thinking_mode":"enabled","reasoning_effort":"max","missing_reasoning_strategy":"fill_only","missing_reasoning_on_fill_only":"omit_reasoning","display_reasoning":true,"collapsible_reasoning":true}'
-
-# 高 Cursor 兼容
 curl -s -X PUT "http://127.0.0.1:9080/v1/runtime/reasoning" \
   -H "x-gateway-admin-key: ${CRABCACHE_GATEWAY_ADMIN_KEY}" \
   -H "Content-Type: application/json" \

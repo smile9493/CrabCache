@@ -1,5 +1,6 @@
 mod metrics_history;
 mod overview;
+mod suggestions;
 mod trace_summary;
 mod network;
 mod openresty;
@@ -145,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
             }
         });
     }
+
+    state.sync_domain_policies_to_gateway().await;
 
     match state.gateway.list_keys().await {
         Ok(specs) => {

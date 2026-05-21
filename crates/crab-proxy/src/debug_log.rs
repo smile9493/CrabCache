@@ -29,7 +29,6 @@ pub fn debug_agent_log(
     let run_id =
         std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
     let line = serde_json::json!({
-        "sessionId": "3f9816",
         "runId": run_id,
         "hypothesisId": hypothesis_id,
         "location": location,

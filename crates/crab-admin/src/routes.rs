@@ -10,9 +10,12 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use crab_control::{
-    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest, PutBackendsRequest,
-    PutTtlConfigRequest, PutUpstreamKeysRequest, UpstreamKeyInput, UpstreamKeysPutMode,
-    parse_upstream_base_url, validate_deepseek_key,
+    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
+    PutTtlConfigRequest, PutUpstreamKeysRequest,
+    UpstreamKeyInput, UpstreamKeysPutMode, parse_upstream_base_url, validate_deepseek_key,
+};
+use crate::metrics_history::{
+    domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets, fetch_gateway_metrics_body,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -67,6 +70,12 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
         .route("/api/admin/overview", get(get_overview))
+        .route("/api/admin/domains", get(list_domains))
+        .route("/api/admin/domains/{domain}", get(get_domain_detail))
+        .route(
+            "/api/admin/domains/policies",
+            get(get_domain_policies).put(put_domain_policies),
+        )
         .route(
             "/api/admin/metrics/prefix-cache",
             get(get_prefix_cache_metrics),
@@ -148,7 +157,8 @@ async fn get_metrics(
             history.append(counters);
         }
     }
-    crate::overview::build_metrics_snapshot(&body, &state, now)
+    let probe = crate::overview::fetch_gateway_probe_cached(&state).await;
+    crate::overview::build_metrics_snapshot(&body, &state, now, probe.status.as_ref())
         .await
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
@@ -164,6 +174,83 @@ async fn get_overview(
             tracing::warn!(error = %e, "Failed to build overview");
             StatusCode::SERVICE_UNAVAILABLE
         })
+}
+
+async fn list_domains(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<DomainMetricsBucket>>, StatusCode> {
+    let body = fetch_gateway_metrics_body()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut buckets = domain_token_buckets(&body, 50);
+    let history = state.metrics_history.read();
+    for bucket in &mut buckets {
+        bucket.qps_5m = history.domain_qps_5m(&bucket.domain, now);
+    }
+    Ok(Json(buckets))
+}
+
+async fn get_domain_detail(
+    State(state): State<Arc<AppState>>,
+    Path(domain): Path<String>,
+) -> Result<Json<DomainDetailBundle>, StatusCode> {
+    let body = fetch_gateway_metrics_body()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut buckets = domain_token_buckets(&body, 50);
+    let history = state.metrics_history.read();
+    let bucket = buckets
+        .iter_mut()
+        .find(|b| b.domain == domain)
+        .cloned()
+        .unwrap_or_else(|| DomainMetricsBucket {
+            domain: domain.clone(),
+            hit_tokens: 0,
+            miss_tokens: 0,
+            hit_ratio: 0.0,
+            cost_saved_usd: 0.0,
+            qps_5m: history.domain_qps_5m(&domain, now),
+            alert: None,
+        });
+    let policy = state
+        .domain_policies
+        .read()
+        .iter()
+        .find(|p| p.domain == domain)
+        .cloned();
+    Ok(Json(DomainDetailBundle {
+        domain: domain.clone(),
+        bucket,
+        consumer_buckets: domain_consumer_buckets(&body, &domain),
+        history_7d: history.domain_token_hit_rate_series(&domain, 7 * 24 * 3600, now),
+        history_30d: history.domain_token_hit_rate_series(&domain, 30 * 24 * 3600, now),
+        tier_deltas_5m: domain_tier_deltas_5m(&body, &domain),
+        policy,
+    }))
+}
+
+async fn get_domain_policies(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<DomainPolicy>>, StatusCode> {
+    Ok(Json(state.domain_policies.read().clone()))
+}
+
+async fn put_domain_policies(
+    State(state): State<Arc<AppState>>,
+    Json(policies): Json<Vec<DomainPolicy>>,
+) -> Result<Json<Vec<DomainPolicy>>, StatusCode> {
+    *state.domain_policies.write() = policies;
+    state.flush_persist();
+    state.sync_domain_policies_to_gateway().await;
+    Ok(Json(state.domain_policies.read().clone()))
 }
 
 async fn get_prefix_cache_metrics(
@@ -747,6 +834,7 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
                     })
                     .or(spec.key_full),
                 active: spec.enabled,
+                domain: spec.domain,
                 rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
                 monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
                 tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
@@ -774,6 +862,7 @@ async fn create_key(
             name: req.name.clone(),
             enabled: true,
             token: None,
+            domain: req.domain.clone(),
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -797,6 +886,7 @@ async fn create_key(
         unlimited_quota,
     };
     state.keys_meta.insert(created.id.clone(), meta);
+    state.flush_persist();
 
     Ok(Json(ApiKey {
         id: created.id,
@@ -804,6 +894,7 @@ async fn create_key(
         key_preview: created.key_preview,
         key_full: Some(created.key_full),
         active: created.enabled,
+        domain: created.domain,
         rpm_limit: req.rpm_limit,
         monthly_token_budget: req.monthly_token_budget,
         tokens_used_this_month: 0,
@@ -831,6 +922,7 @@ async fn revoke_key(
         .map_err(|e| gateway_status_code(&e))?;
 
     state.keys_meta.remove(&id);
+    state.flush_persist();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1374,7 +1466,7 @@ fn build_upstream_config_view(state: &AppState) -> UpstreamConfig {
 }
 
 async fn get_upstream_config(State(state): State<Arc<AppState>>) -> Json<UpstreamConfig> {
-    state.reconcile_upstream_from_gateway().await;
+    state.reconcile_upstream_if_stale(false).await;
     Json(build_upstream_config_view(&state))
 }
 
@@ -1551,10 +1643,7 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
     use std::collections::HashMap;
 
     let trace_path = crate::trace_log::trace_log_path();
-    let entries = crate::trace_log::filter_trace_by_hours(
-        crate::trace_log::load_trace_entries(&trace_path),
-        query.hours,
-    );
+    let entries = crate::trace_log::load_trace_entries_async(&trace_path, query.hours).await;
 
     if entries.is_empty() {
         return Json(empty_trace_analysis());

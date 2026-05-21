@@ -132,6 +132,22 @@ pub async fn fetch_overview() -> Result<crate::types::OverviewBundle, String> {
     fetch_json(&format!("{}/overview", API_BASE)).await
 }
 
+pub async fn fetch_domains() -> Result<Vec<DomainMetricsBucket>, String> {
+    fetch_json(&format!("{}/domains", API_BASE)).await
+}
+
+pub async fn fetch_domain_detail(domain: &str) -> Result<DomainDetailBundle, String> {
+    fetch_json(&format!("{}/domains/{}", API_BASE, domain)).await
+}
+
+pub async fn fetch_domain_policies() -> Result<Vec<DomainPolicy>, String> {
+    fetch_json(&format!("{}/domains/policies", API_BASE)).await
+}
+
+pub async fn put_domain_policies(policies: Vec<DomainPolicy>) -> Result<Vec<DomainPolicy>, String> {
+    put_json(&format!("{}/domains/policies", API_BASE), &policies).await
+}
+
 pub async fn fetch_gateway_health() -> Result<GatewayHealth, String> {
     fetch_json(&format!("{}/gateway/health", API_BASE)).await
 }

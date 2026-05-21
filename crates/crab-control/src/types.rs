@@ -96,6 +96,8 @@ pub struct ApiKeySpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_full: Option<String>,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +107,8 @@ pub struct CreateGatewayKeyRequest {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -118,6 +122,8 @@ pub struct CreateGatewayKeyResponse {
     pub key_full: String,
     pub key_preview: String,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +132,22 @@ pub struct PatchGatewayKeyRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainPolicySpec {
+    pub domain: String,
+    pub monthly_token_budget: u64,
+    pub monthly_cost_budget_usd: f64,
+    pub min_hit_rate: f64,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutDomainPoliciesRequest {
+    pub policies: Vec<DomainPolicySpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,14 +217,8 @@ pub struct ReasoningRuntimeConfigView {
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub missing_reasoning_strategy: String,
-    #[serde(default = "default_missing_reasoning_on_fill_only")]
-    pub missing_reasoning_on_fill_only: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
-}
-
-fn default_missing_reasoning_on_fill_only() -> String {
-    "omit_reasoning".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,11 +13,15 @@
 #
 # Optional: attach to an external reverse-proxy network (e.g. OpenResty):
 #   docker compose -f docker-compose.yml -f docker-compose.openresty.yml up -d
+#
+# Multi-instance gateway (shared Redis control plane; see docs/PERSISTENCE.md):
+#   docker compose up -d --scale gateway=2
+#   Use config/gateway.docker.toml with [state].backend=redis and [reasoning].backend=redis.
 
 services:
   gateway:
     build: .
-    container_name: crabcache-gateway
+    # container_name omitted so `docker compose up --scale gateway=N` works
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9080:9080"
@@ -47,8 +51,10 @@ services:
       - CRABCACHE_L1_REDIS_URL=${CRABCACHE_L1_REDIS_URL:-redis://redis:6379}
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
       - CRABCACHE_BOOTSTRAP_CLIENT_KEYS=${CRABCACHE_BOOTSTRAP_CLIENT_KEYS:-}
-      - CRABCACHE_DEBUG_LOG_PATH=/app/.cursor/debug-3f9816.log
-      - CRABCACHE_DEBUG_RUN_ID=cursor-debug
+      - CRABCACHE_STATE_BACKEND=${CRABCACHE_STATE_BACKEND:-redis}
+      # Opt-in NDJSON debug (H-G stagnation verify); set on host before `docker compose up`
+      - CRABCACHE_DEBUG_LOG_PATH=${CRABCACHE_DEBUG_LOG_PATH:-}
+      - CRABCACHE_DEBUG_RUN_ID=${CRABCACHE_DEBUG_RUN_ID:-}
     restart: unless-stopped
 
   admin:
@@ -62,6 +68,7 @@ services:
       - "127.0.0.1:18001:3000"
     volumes:
       - gateway_logs:/app/logs:ro
+      - admin_data:/app/data
       # 1Panel OpenResty site configs (read-only) for Keys page base URL auto-detect
       - /opt/1panel/www/conf.d:/host/openresty/conf.d:ro
     environment:
@@ -79,10 +86,18 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 25s
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    # Production: set requirepass and use redis://:password@redis:6379 in .env
+    # (CRABCACHE_L1_REDIS_URL / state / reasoning URLs — see .env.example).
     container_name: crabcache-redis
     expose:
       - "6379"
@@ -114,3 +129,4 @@ volumes:
   qdrant_data:
   gateway_data:
   gateway_logs:
+  admin_data:

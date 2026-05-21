@@ -4,10 +4,10 @@ use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_metrics::CacheTier;
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, PreparedRequest, ReasoningStore, StreamAccumulator,
+    CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
 use crab_semantic::{SemanticCache, SemanticGateConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -19,9 +19,10 @@ pub struct StoredKey {
     pub name: String,
     pub key_hash: String,
     pub enabled: bool,
+    pub domain: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConnectionConfig {
     pub tcp_keepalive_idle_secs: Option<u64>,
     pub tcp_keepalive_interval_secs: Option<u64>,
@@ -97,12 +98,16 @@ pub struct ReasoningConfig {
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub missing_reasoning_strategy: String,
-    /// When `missing_reasoning_strategy = "fill_only"`: `omit_reasoning` (default) or `reject`.
-    #[serde(default = "default_missing_reasoning_on_fill_only")]
-    pub missing_reasoning_on_fill_only: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
+    /// `sqlite` (default) or `redis` (required for multi-instance gateway).
+    #[serde(default = "default_reasoning_backend")]
+    pub backend: String,
     pub cache_db_path: String,
+    #[serde(default)]
+    pub redis_url: Option<String>,
+    #[serde(default = "default_max_reasoning_entry_bytes")]
+    pub max_reasoning_entry_bytes: usize,
     pub cache_max_age_secs: Option<u64>,
     pub cache_max_rows: Option<usize>,
     /// Append a tail summary user message when message count exceeds this (0 = disabled).
@@ -113,8 +118,12 @@ pub struct ReasoningConfig {
     pub prefix_validate: bool,
 }
 
-fn default_missing_reasoning_on_fill_only() -> String {
-    "omit_reasoning".to_string()
+fn default_reasoning_backend() -> String {
+    "sqlite".to_string()
+}
+
+fn default_max_reasoning_entry_bytes() -> usize {
+    512 * 1024
 }
 
 impl Default for ReasoningConfig {
@@ -123,10 +132,12 @@ impl Default for ReasoningConfig {
             thinking_mode: "enabled".to_string(),
             reasoning_effort: "max".to_string(),
             missing_reasoning_strategy: "recover".to_string(),
-            missing_reasoning_on_fill_only: default_missing_reasoning_on_fill_only(),
             display_reasoning: true,
             collapsible_reasoning: true,
+            backend: default_reasoning_backend(),
             cache_db_path: ":memory:".to_string(),
+            redis_url: None,
+            max_reasoning_entry_bytes: default_max_reasoning_entry_bytes(),
             cache_max_age_secs: Some(30 * 24 * 3600),
             cache_max_rows: Some(100_000),
             context_summary_message_threshold: 0,
@@ -192,6 +203,7 @@ pub struct GatewayContext {
     pub upstream_host: Option<String>,
     pub model: String,
     pub consumer: Option<String>,
+    pub domain: Option<String>,
     pub request_start: Instant,
     pub upstream_start: Option<Instant>,
     pub ttft: Option<std::time::Duration>,
@@ -229,6 +241,10 @@ pub struct GatewayContext {
     pub upstream_connection_close: bool,
     /// Downstream retry buffer exceeded 64KiB while reading in `request_filter`.
     pub upstream_retry_buffer_truncated: bool,
+    /// Upstream HTTP status from `response_filter` (for error body correlation).
+    pub upstream_http_status: Option<u16>,
+    /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
+    pub upstream_error_body_logged: bool,
 }
 
 impl GatewayContext {
@@ -243,6 +259,7 @@ impl GatewayContext {
             upstream_host: None,
             model: String::new(),
             consumer: None,
+            domain: None,
             request_start: Instant::now(),
             upstream_start: None,
             ttft: None,
@@ -273,6 +290,8 @@ impl GatewayContext {
             upstream_headers_prepared_at: None,
             upstream_connection_close: false,
             upstream_retry_buffer_truncated: false,
+            upstream_http_status: None,
+            upstream_error_body_logged: false,
         }
     }
 }
@@ -283,7 +302,7 @@ pub struct GatewayState {
     pub semantic_cache: Option<Arc<SemanticCache>>,
     pub semantic_gate: SemanticGateConfig,
     pub coalescer: Arc<RequestCoalescer>,
-    pub reasoning_store: Arc<ReasoningStore>,
+    pub reasoning_store: Arc<ReasoningBackend>,
     pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
     pub cors_enabled: bool,
     pub trace_logger: Option<Arc<TraceLogger>>,

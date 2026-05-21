@@ -162,4 +162,9 @@ if [[ -n "${VERIFY_MODEL:-}" && "${VERIFY_MODEL}" != "deepseek-v4-pro" ]]; then
   bash "${SCRIPT_DIR}/verify_stream_sse.sh" "${GATEWAY_URL}" "${CLIENT_API_KEY}" "${VERIFY_MODEL}"
 fi
 
+if [[ "${VERIFY_REASONING:-0}" == "1" ]]; then
+  echo "==> ReasoningStore (VERIFY_REASONING=1)"
+  bash "${SCRIPT_DIR}/verify_reasoning_store.sh"
+fi
+
 echo "All deployment checks passed."

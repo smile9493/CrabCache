@@ -4,7 +4,7 @@
 # Cursor production preset:
 #   - CRABCACHE_UPSTREAM_KEYS with 2+ DeepSeek keys (comma-separated in .env)
 #   - Cursor uses sk-cc-* only; upstream sk-ds-* stays on the server
-#   - [reasoning] reasoning_effort = "medium", missing_reasoning_strategy = "fill_only"
+#   - [reasoning] reasoning_effort = "medium", missing_reasoning_strategy = "recover"
 #   - Models: deepseek-v4-flash or deepseek-v4-flash-max (suffix auto-mapped)
 #   - See docs/CURSOR_SETUP.md and scripts/verify_cursor_e2e.sh
 
@@ -61,6 +61,16 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # max_coalesce_inflight = 1000
 # Coalesce wait timeout in seconds (default: 60)
 # coalesce_timeout_secs = 60
+
+# Control plane persistence (client keys, TTL/routing, domain policies, connection).
+# Single instance / bare-metal dev: backend = "memory" (default).
+# Multi-gateway replicas or docker compose --scale gateway=N: backend = "redis"
+#   (see config/gateway.docker.toml; env CRABCACHE_STATE_BACKEND=redis).
+[state]
+backend = "memory"
+# redis_url = ""      # empty → reuse cache.l1_redis_url
+# key_prefix = "crab:state"
+# refresh_interval_secs = 5
 
 [cache]
 default_ttl_secs = 3600
@@ -127,14 +137,15 @@ ttl_secs = 86400
 # embed_only_on_exact_miss = true
 
 [reasoning]
+# Multi-instance / Docker: backend = "redis" (gateway.docker.toml).
+# Single-process dev: omit backend or backend = "sqlite".
+backend = "redis"
+redis_url = "redis://127.0.0.1:6379"
+max_reasoning_entry_bytes = 524288
 thinking_mode = "enabled"
 reasoning_effort = "max"
-# fill_only (recommended for Cursor Agent + tools): fill from ReasoningStore only, no history truncation
-# recover: auto-truncate and patch missing reasoning (debug / sacrifices L3 prefix cache)
-# reject: HTTP 409 when cached reasoning cannot be restored (debug)
-missing_reasoning_strategy = "fill_only"
-# When fill_only: omit_reasoning (forward without reasoning) | reject (409)
-missing_reasoning_on_fill_only = "omit_reasoning"
+# recover (default) | reject (409 only) — same as deepseek-cursor-proxy
+missing_reasoning_strategy = "recover"
 # Append tail summary when message count exceeds threshold (0 = disabled, L3-safe append-only)
 # context_summary_message_threshold = 0
 # prefix_validate = false

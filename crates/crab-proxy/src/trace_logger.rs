@@ -16,6 +16,8 @@ pub struct SanitizedLogEntry {
     pub conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consumer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     pub model: String,
     pub prompt_tokens: usize,
     pub latency_ms: f64,
@@ -34,6 +36,7 @@ impl SanitizedLogEntry {
         body: &[u8],
         conversation_id: Option<String>,
         consumer: Option<String>,
+        domain: Option<String>,
         model: &str,
         prompt_tokens: usize,
         latency_ms: f64,
@@ -66,6 +69,7 @@ impl SanitizedLogEntry {
             semantic_cluster,
             conversation_id,
             consumer,
+            domain,
             model: model.to_string(),
             prompt_tokens,
             latency_ms,
@@ -229,6 +233,7 @@ mod tests {
             body,
             Some("conv-123".to_string()),
             Some("test-consumer".to_string()),
+            Some("backend-team".to_string()),
             "deepseek-chat",
             100,
             150.5,
@@ -248,8 +253,10 @@ mod tests {
     #[test]
     fn test_hash_consistency() {
         let body = b"identical request";
-        let entry1 = SanitizedLogEntry::from_request(body, None, None, "model", 0, 0.0, false, None);
-        let entry2 = SanitizedLogEntry::from_request(body, None, None, "model", 0, 0.0, false, None);
+        let entry1 =
+            SanitizedLogEntry::from_request(body, None, None, None, "model", 0, 0.0, false, None);
+        let entry2 =
+            SanitizedLogEntry::from_request(body, None, None, None, "model", 0, 0.0, false, None);
 
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert_eq!(entry1.semantic_cluster, entry2.semantic_cluster);

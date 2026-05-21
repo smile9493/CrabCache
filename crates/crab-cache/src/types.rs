@@ -38,7 +38,7 @@ impl Default for L0Config {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TtlConfig {
     pub default_ttl_secs: u64,
     pub model_overrides: HashMap<String, u64>,

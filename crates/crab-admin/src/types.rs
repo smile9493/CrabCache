@@ -52,6 +52,8 @@ pub struct MetricsSnapshot {
     pub coalesced_total: u64,
     #[serde(default)]
     pub consumer_buckets: Vec<ConsumerMetricsBucket>,
+    #[serde(default)]
+    pub domain_buckets: Vec<DomainMetricsBucket>,
     /// True when the 5m window has fewer than 5 request deltas (low traffic).
     #[serde(default)]
     pub metrics_sample_insufficient: bool,
@@ -102,6 +104,13 @@ pub struct TraceSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewSuggestion {
+    pub severity: String,
+    pub target: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverviewBundle {
     pub metrics: MetricsSnapshot,
     pub health: GatewayHealthView,
@@ -109,6 +118,8 @@ pub struct OverviewBundle {
     pub semantic: SemanticConfig,
     pub trace_summary: TraceSummary,
     pub ops: OverviewOpsMetrics,
+    #[serde(default)]
+    pub suggestions: Vec<OverviewSuggestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +128,38 @@ pub struct ConsumerMetricsBucket {
     pub hit_tokens: u64,
     pub miss_tokens: u64,
     pub hit_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainMetricsBucket {
+    pub domain: String,
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub hit_ratio: f64,
+    pub cost_saved_usd: f64,
+    pub qps_5m: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alert: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainPolicy {
+    pub domain: String,
+    pub monthly_token_budget: u64,
+    pub monthly_cost_budget_usd: f64,
+    pub min_hit_rate: f64,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainDetailBundle {
+    pub domain: String,
+    pub bucket: DomainMetricsBucket,
+    pub consumer_buckets: Vec<ConsumerMetricsBucket>,
+    pub history_7d: Vec<TimeSeriesPoint>,
+    pub history_30d: Vec<TimeSeriesPoint>,
+    pub tier_deltas_5m: TierDeltas5m,
+    pub policy: Option<DomainPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +247,8 @@ pub struct ApiKey {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +260,8 @@ pub struct CreateKeyRequest {
     pub model_limits: Option<Vec<String>>,
     pub remain_quota: Option<i64>,
     pub unlimited_quota: Option<bool>,
+    #[serde(default)]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

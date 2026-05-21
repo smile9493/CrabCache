@@ -5,6 +5,7 @@ use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
+pub use crab_state::StateBackendConfig;
 
 /// A wrapper around `String` that redacts its value in `Debug` output
 /// and `Display` output, preventing accidental leakage of secrets
@@ -94,6 +95,8 @@ pub struct GatewayConfig {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub gateway: GatewaySection,
+    #[serde(default)]
+    pub state: StateBackendConfig,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -536,15 +539,9 @@ impl GatewayConfig {
 
         if let Some(reasoning) = &self.reasoning {
             let strategy = reasoning.missing_reasoning_strategy.as_str();
-            if strategy != "recover" && strategy != "reject" && strategy != "fill_only" {
+            if strategy != "recover" && strategy != "reject" {
                 errors.push(format!(
-                    "reasoning.missing_reasoning_strategy must be \"recover\", \"reject\", or \"fill_only\", got \"{strategy}\""
-                ));
-            }
-            let on_fill = reasoning.missing_reasoning_on_fill_only.as_str();
-            if on_fill != "omit_reasoning" && on_fill != "reject" {
-                errors.push(format!(
-                    "reasoning.missing_reasoning_on_fill_only must be \"omit_reasoning\" or \"reject\", got \"{on_fill}\""
+                    "reasoning.missing_reasoning_strategy must be \"recover\" or \"reject\" (deepseek-cursor-proxy), got \"{strategy}\""
                 ));
             }
             if reasoning.thinking_mode != "enabled" && reasoning.thinking_mode != "disabled" {
@@ -758,6 +755,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             trace_logging: None,
             management: None,
             limits: LimitsConfig::default(),
+            state: StateBackendConfig::default(),
         };
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("max_coalesce_inflight")));
@@ -820,6 +818,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 invalidate_scan_timeout_secs: 300,
             }),
             limits: LimitsConfig::default(),
+            state: StateBackendConfig::default(),
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));

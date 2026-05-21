@@ -58,7 +58,10 @@ async fn tiered_cache_put_then_get_hit() {
         .await
         .expect("put");
 
-    let (got, tier) = cache.get(&key).await.expect("cache hit");
+    let (got, tier) = cache
+        .get(&key, Some("test-consumer"), Some("test-domain"))
+        .await
+        .expect("cache hit");
     assert_eq!(got.response_body, entry.response_body);
     assert!(matches!(tier, CacheTier::L0Moka | CacheTier::L1Redis));
 }

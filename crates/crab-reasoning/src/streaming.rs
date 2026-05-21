@@ -1,4 +1,4 @@
-use crate::store::ReasoningStore;
+use crate::backend::ReasoningBackend;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -164,7 +164,7 @@ impl StreamAccumulator {
 
     pub fn store_reasoning(
         &mut self,
-        store: &ReasoningStore,
+        store: &ReasoningBackend,
         scope: &str,
         cache_namespace: &str,
         prior_messages: &[Value],
@@ -196,7 +196,7 @@ impl StreamAccumulator {
 
     pub fn store_ready_reasoning(
         &mut self,
-        store: &ReasoningStore,
+        store: &ReasoningBackend,
         scope: &str,
         cache_namespace: &str,
         prior_messages: &[Value],
@@ -439,7 +439,8 @@ mod tests {
 
     #[test]
     fn store_ready_reasoning_on_tool_call_before_finish() {
-        let store = ReasoningStore::new(":memory:", Some(3600), Some(1000)).expect("memory db");
+        let store =
+            ReasoningBackend::open_sqlite(":memory:", Some(3600), Some(1000)).expect("memory db");
         let mut acc = StreamAccumulator::new();
         acc.ingest_chunk(&serde_json::json!({
             "choices": [{

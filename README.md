@@ -54,7 +54,7 @@ CrabCache 是一个生产级的 Rust API 网关，通过三级缓存架构、会
 - **推理内容缓存**: SQLite 持久化缓存 DeepSeek 推理过程，避免重复计算
 - **流式推理恢复**: SSE 流中实时检测和恢复缺失的推理内容
 - **Cursor 兼容**: 支持 Cursor IDE 的推理内容显示协议（可折叠区块）
-- **多种策略**: `recover` / `fill_only` / `reject`；`fill_only` 保持 messages 前缀稳定以提升 DeepSeek L3 命中率（见 [`docs/DEEPSEEK_PREFIX_CACHE.md`](docs/DEEPSEEK_PREFIX_CACHE.md)）
+- **Reasoning 策略**: `recover` / `reject`（与 deepseek-cursor-proxy 一致）；稳定 session 下就地补 reasoning（见 [`docs/REASONING_STORE.md`](docs/REASONING_STORE.md)）
 
 ### 🛡️ 企业级特性
 
@@ -533,7 +533,12 @@ docker compose exec gateway curl -s -X POST http://127.0.0.1:9080/v1/keys \
 
 **Cursor + DeepSeek thinking**：参见 [`docs/CURSOR_SETUP.md`](docs/CURSOR_SETUP.md)。**上游 L3 前缀缓存**：参见 [`docs/DEEPSEEK_PREFIX_CACHE.md`](docs/DEEPSEEK_PREFIX_CACHE.md)。清空 reasoning SQLite：`crab-gateway --clear-reasoning-cache config/gateway.toml` 或 `DELETE /v1/reasoning/cache`。
 
-**Admin 辅助持久化**：`CRABCACHE_ADMIN_STATE_PATH`（默认 `data/admin-state.json`）保存模型列表元数据、上次连通性测试结果等；运行时 relay 与 Key 池以 Gateway 为准，Admin 启动时会与 Gateway 对齐。
+**持久化**（多实例部署见 [docs/PERSISTENCE.md](docs/PERSISTENCE.md)）：
+
+- **Redis 控制面**（`[state].backend = "redis"`）：客户端 `sk-cc-*`、TTL/指纹/路由/连接参数、域策略、上游池；Pub/Sub + 轮询同步；Management 写穿带重试指标。
+- **Reasoning**（`[reasoning].backend = "redis"`）：多实例下思考链恢复须用 Redis（`SCAN` 清理 + `cache_max_rows` 修剪）；单实例可用 SQLite。
+- **Admin**：`admin-state.json`（`keys_meta`、本地 `domain_policies` 缓存）；运行时域策略以 Gateway Redis 为准，Admin 启动会同步到 Management API。
+- **不持久化**：L0 Moka、`domain_usage` 当月计数、Coalescing inflight。
 
 可选 Admin Dashboard（需先 [`scripts/build_dashboard.sh`](scripts/build_dashboard.sh) 构建前端）：
 

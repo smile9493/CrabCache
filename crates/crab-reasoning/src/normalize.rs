@@ -1,7 +1,8 @@
 use crate::keys::{
-    conversation_scope, message_signature, tool_call_ids, tool_call_names, tool_call_signature,
+    message_signature, resolve_reasoning_scope, tool_call_ids, tool_call_names,
+    tool_call_signature,
 };
-use crate::store::ReasoningStore;
+use crate::backend::ReasoningBackend;
 use crab_metrics::global_metrics;
 use regex::Regex;
 use serde_json::Value;
@@ -312,11 +313,15 @@ fn assistant_needs_reasoning_for_tool_context(message: &Value, prior_messages: &
     false
 }
 
+/// Placeholder when ReasoningStore has no entry yet; avoids latest_user truncation loops.
+const REASONING_PLACEHOLDER: &str = ".";
+
 fn reasoning_lookup_keys(
     message: &Value,
     scope: &str,
     cache_namespace: &str,
     prior_messages: &[Value],
+    prefer_portable_first: bool,
 ) -> Vec<serde_json::Value> {
     let mut keys = Vec::new();
 
@@ -410,7 +415,89 @@ fn reasoning_lookup_keys(
         }
     }
 
-    keys
+    if prefer_portable_first {
+        let (portable, other): (Vec<_>, Vec<_>) = keys
+            .into_iter()
+            .partition(|k| k.get("portable").and_then(|p| p.as_bool()).unwrap_or(false));
+        portable.into_iter().chain(other).collect()
+    } else {
+        keys
+    }
+}
+
+fn try_restore_reasoning_from_store(
+    msg: &serde_json::Map<String, Value>,
+    store: &ReasoningBackend,
+    prior_messages: &[Value],
+    stable_session_id: Option<&str>,
+    cache_namespace: &str,
+) -> Option<String> {
+    let lookup_scope = resolve_reasoning_scope(stable_session_id, prior_messages, cache_namespace);
+    let prefer_portable = stable_session_id.is_some_and(|s| !s.trim().is_empty());
+    let lookup_keys = reasoning_lookup_keys(
+        &Value::Object(msg.clone()),
+        &lookup_scope,
+        cache_namespace,
+        prior_messages,
+        prefer_portable,
+    );
+    for lookup_key in &lookup_keys {
+        if let Some(key_str) = lookup_key.get("key").and_then(|k| k.as_str()) {
+            if let Some(restored) = store.get(key_str) {
+                return Some(restored);
+            }
+        }
+    }
+    None
+}
+
+/// Patch missing `reasoning_content` in place without dropping tool/assistant history.
+fn patch_missing_reasoning_inplace(
+    messages: &mut [Value],
+    missing_indexes: &[usize],
+    store: Option<&ReasoningBackend>,
+    cache_namespace: &str,
+    stable_session_id: Option<&str>,
+) -> usize {
+    let mut patched = 0;
+    for &idx in missing_indexes {
+        let prior: Vec<Value> = messages.get(..idx).unwrap_or(&[]).to_vec();
+        if let Some(store) = store {
+            if let Some(msg_obj) = messages.get(idx).and_then(|m| m.as_object()) {
+                if let Some(restored) = try_restore_reasoning_from_store(
+                    msg_obj,
+                    store,
+                    &prior,
+                    stable_session_id,
+                    cache_namespace,
+                ) {
+                    if let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) {
+                        obj.insert("reasoning_content".into(), Value::String(restored));
+                        patched += 1;
+                    }
+                    continue;
+                }
+            }
+        }
+        let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) else {
+            continue;
+        };
+        let has_tool_calls = obj
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .is_some_and(|a| !a.is_empty());
+        let content = obj.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        // Tool-call assistants: minimal placeholder (DeepSeek requires the field).
+        // Text-only assistants without Store: use content so upstream sees progress.
+        let placeholder = if has_tool_calls || content.is_empty() {
+            REASONING_PLACEHOLDER.to_string()
+        } else {
+            content.to_string()
+        };
+        obj.insert("reasoning_content".into(), Value::String(placeholder));
+        patched += 1;
+    }
+    patched
 }
 
 struct NormalizeResult {
@@ -421,9 +508,10 @@ struct NormalizeResult {
 
 fn normalize_message(
     message: &Value,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     prior_messages: &[Value],
     cache_namespace: &str,
+    stable_session_id: Option<&str>,
     repair_reasoning: bool,
     keep_reasoning: bool,
 ) -> NormalizeResult {
@@ -486,12 +574,16 @@ fn normalize_message(
                     prior_messages,
                 );
                 if needs_reasoning {
-                    let lookup_scope = conversation_scope(prior_messages, cache_namespace);
+                    let lookup_scope =
+                        resolve_reasoning_scope(stable_session_id, prior_messages, cache_namespace);
+                    let prefer_portable =
+                        stable_session_id.is_some_and(|s| !s.trim().is_empty());
                     let lookup_keys = reasoning_lookup_keys(
                         &Value::Object(msg.clone()),
                         &lookup_scope,
                         cache_namespace,
                         prior_messages,
+                        prefer_portable,
                     );
                     if let Some(store) = store {
                         for lookup_key in &lookup_keys {
@@ -530,8 +622,9 @@ pub struct NormalizeMessagesResult {
 
 pub fn normalize_messages(
     messages: &[Value],
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     cache_namespace: &str,
+    stable_session_id: Option<&str>,
     repair_reasoning: bool,
     keep_reasoning: bool,
 ) -> NormalizeMessagesResult {
@@ -545,6 +638,7 @@ pub fn normalize_messages(
             store,
             &normalized,
             cache_namespace,
+            stable_session_id,
             repair_reasoning,
             keep_reasoning,
         );
@@ -571,6 +665,16 @@ fn has_recovery_notice(message: &Value) -> bool {
             .and_then(|c| c.as_str())
             .map(content_starts_with_recovery_notice)
             .unwrap_or(false)
+}
+
+fn history_has_recovery_notice(messages: &[Value]) -> bool {
+    messages.iter().any(has_recovery_notice)
+}
+
+/// Only the first recover in a thread should surface the user-visible notice (Cursor sub-agents
+/// retry the same body without x-conversation-id and would otherwise stack duplicate notices).
+fn should_attach_recovery_notice(messages: &[Value]) -> bool {
+    !history_has_recovery_notice(messages)
 }
 
 fn strip_recovery_notice_for_upstream(messages: &[Value]) -> Vec<Value> {
@@ -688,10 +792,12 @@ fn recover_messages_from_missing_reasoning(
         let omitted = messages.len() - recovered.len() - 1;
         recovered.push(serde_json::json!({"role": "system", "content": RECOVERY_SYSTEM_CONTENT}));
         recovered.push(messages[lui].clone());
+        let notice = should_attach_recovery_notice(messages)
+            .then(|| RECOVERY_NOTICE_CONTENT.to_string());
         return (
             recovered,
             omitted,
-            Some(RECOVERY_NOTICE_CONTENT.to_string()),
+            notice,
             serde_json::json!({
                 "strategy": "latest_user",
                 "missing_indexes": missing_indexes,
@@ -707,6 +813,19 @@ fn recover_messages_from_missing_reasoning(
         None,
         serde_json::json!({"strategy": "none", "missing_indexes": missing_indexes}),
     )
+}
+
+/// Truncate to leading system + last user (drops tool-call assistants that still lack reasoning).
+fn force_latest_user_recover(messages: &[Value]) -> Option<(Vec<Value>, usize, Option<String>)> {
+    let last_user_index = messages
+        .iter()
+        .rposition(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))?;
+    let mut recovered = leading_system_messages(messages);
+    let omitted = messages.len().saturating_sub(recovered.len() + 1);
+    recovered.push(serde_json::json!({"role": "system", "content": RECOVERY_SYSTEM_CONTENT}));
+    recovered.push(messages[last_user_index].clone());
+    let notice = should_attach_recovery_notice(messages).then(|| RECOVERY_NOTICE_CONTENT.to_string());
+    Some((recovered, omitted, notice))
 }
 
 pub fn reasoning_cache_namespace(
@@ -899,16 +1018,16 @@ pub struct PreparedRequest {
 
 pub fn prepare_upstream_request(
     payload: &Value,
-    store: Option<&ReasoningStore>,
+    store: Option<&ReasoningBackend>,
     upstream_base_url: &str,
     fallback_model: &str,
     thinking_mode: &str,
     reasoning_effort: &str,
     missing_reasoning_strategy: &str,
-    missing_reasoning_on_fill_only: &str,
     context_summary_message_threshold: usize,
     prefix_validate: bool,
     authorization: Option<&str>,
+    stable_session_id: Option<&str>,
 ) -> PreparedRequest {
     let original_model = payload
         .get("model")
@@ -1010,19 +1129,30 @@ pub fn prepare_upstream_request(
         authorization,
     );
 
+    let raw_inbound_messages = payload
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let inbound_had_recovery_notice = history_has_recovery_notice(raw_inbound_messages);
+    // Cursor echoes prior recovery notices into assistant content; strip before repair so
+    // active_messages_from_recovery_boundary does not freeze history to a tiny tail.
+    let inbound_messages: Vec<Value> = strip_recovery_notice_for_upstream(raw_inbound_messages);
+
     let pre_repair = normalize_messages(
-        payload
-            .get("messages")
-            .and_then(|m| m.as_array())
-            .map(|a| a.as_slice())
-            .unwrap_or(&[]),
+        &inbound_messages,
         None,
         &cache_namespace,
+        stable_session_id,
         false,
         !thinking_disabled,
     );
     let record_response_messages = pre_repair.messages.clone();
-    let record_response_scope = conversation_scope(&record_response_messages, &cache_namespace);
+    let record_response_scope = resolve_reasoning_scope(
+        stable_session_id,
+        &record_response_messages,
+        &cache_namespace,
+    );
 
     let mut messages_for_repair = pre_repair.messages.clone();
     let mut retired_prefix_messages = 0;
@@ -1030,9 +1160,14 @@ pub fn prepare_upstream_request(
     let mut recovery_dropped_messages = 0;
     let mut recovery_notice = None;
 
-    let fill_only = missing_reasoning_strategy == "fill_only";
+    let stable_scope = stable_session_id.filter(|s| !s.trim().is_empty());
 
-    if thinking_enabled && missing_reasoning_strategy == "recover" {
+    // deepseek-cursor-proxy: boundary only on `recover` without stable session (see transform.py).
+    // Stable session (client_key / conversation): skip boundary — preserves tool history (H-G fix).
+    if thinking_enabled
+        && missing_reasoning_strategy == "recover"
+        && stable_scope.is_none()
+    {
         if let Some((active, retired, _step)) =
             active_messages_from_recovery_boundary(&pre_repair.messages)
         {
@@ -1053,12 +1188,39 @@ pub fn prepare_upstream_request(
         &messages_for_repair,
         store,
         &cache_namespace,
+        stable_session_id,
         thinking_enabled,
         !thinking_disabled,
     );
 
     let mut missing_indexes = result.missing_indexes;
-    while !missing_indexes.is_empty() && missing_reasoning_strategy == "recover" {
+
+    // Stable session: never truncate to latest_user; patch reasoning in place so tool history grows.
+    if stable_scope.is_some() && thinking_enabled && !missing_indexes.is_empty() {
+        let inline_patched = patch_missing_reasoning_inplace(
+            &mut result.messages,
+            &missing_indexes,
+            store,
+            &cache_namespace,
+            stable_scope,
+        );
+        let repaired_messages = result.messages.clone();
+        result = normalize_messages(
+            &repaired_messages,
+            store,
+            &cache_namespace,
+            stable_session_id,
+            thinking_enabled,
+            !thinking_disabled,
+        );
+        result.patched_count += inline_patched;
+        missing_indexes = result.missing_indexes;
+    }
+
+    while !missing_indexes.is_empty()
+        && missing_reasoning_strategy == "recover"
+        && stable_scope.is_none()
+    {
         let (recovered, dropped, notice, _step) =
             recover_messages_from_missing_reasoning(&result.messages, &missing_indexes);
         if dropped == 0 {
@@ -1073,47 +1235,18 @@ pub fn prepare_upstream_request(
             &recovered,
             store,
             &cache_namespace,
+            stable_session_id,
             thinking_enabled,
             !thinking_disabled,
         );
         missing_indexes = result.missing_indexes;
     }
 
-    // fill_only + omit_reasoning: fill from ReasoningStore first; if still missing under
-    // thinking mode, DeepSeek requires reasoning_content — recover history (do not forward bare).
-    if fill_only
-        && missing_reasoning_on_fill_only == "omit_reasoning"
-        && thinking_enabled
-        && !missing_indexes.is_empty()
-    {
-        while !missing_indexes.is_empty() {
-            let (recovered, dropped, notice, _step) =
-                recover_messages_from_missing_reasoning(&result.messages, &missing_indexes);
-            if dropped == 0 {
-                break;
-            }
-            recovered_count += missing_indexes.len();
-            recovery_dropped_messages += dropped;
-            if notice.is_some() {
-                recovery_notice = notice;
-            }
-            result = normalize_messages(
-                &recovered,
-                store,
-                &cache_namespace,
-                thinking_enabled,
-                !thinking_disabled,
-            );
-            missing_indexes = result.missing_indexes;
-        }
-    } else if fill_only && missing_reasoning_on_fill_only == "omit_reasoning" {
-        missing_indexes.clear();
-    }
-
     let mut final_messages = result.messages.clone();
     maybe_append_context_summary(&mut final_messages, context_summary_message_threshold);
 
-    let active_scope = conversation_scope(&final_messages, &cache_namespace);
+    let active_scope =
+        resolve_reasoning_scope(stable_session_id, &final_messages, &cache_namespace);
     let mut record_response_contexts = Vec::new();
     record_response_contexts.push((
         record_response_scope.clone(),
@@ -1121,6 +1254,10 @@ pub fn prepare_upstream_request(
     ));
     if active_scope != record_response_scope {
         record_response_contexts.push((active_scope, final_messages.clone()));
+    }
+
+    if recovery_notice.is_some() && inbound_had_recovery_notice {
+        recovery_notice = None;
     }
 
     let upstream_messages = strip_recovery_notice_for_upstream(&final_messages);
@@ -1146,6 +1283,7 @@ pub fn prepare_upstream_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ReasoningBackend;
 
     #[test]
     fn test_normalize_reasoning_effort() {
@@ -1259,9 +1397,9 @@ mod tests {
             "enabled",
             "max",
             "recover",
-            "omit_reasoning",
             0,
             false,
+            None,
             None,
         );
         assert_eq!(result.original_model, "deepseek-v4-pro");
@@ -1294,9 +1432,9 @@ mod tests {
             "enabled",
             "max",
             "reject",
-            "omit_reasoning",
             0,
             false,
+            None,
             None,
         );
         assert!(result.missing_reasoning_messages > 0);
@@ -1319,9 +1457,9 @@ mod tests {
             "enabled",
             "max",
             "recover",
-            "omit_reasoning",
             0,
             false,
+            None,
             None,
         );
         let tools = result
@@ -1334,7 +1472,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_only_recovers_when_store_miss_under_thinking() {
+    fn test_recover_when_store_miss_under_thinking() {
         let payload = serde_json::json!({
             "model": "deepseek-v4-pro",
             "messages": [
@@ -1359,10 +1497,10 @@ mod tests {
             "deepseek-v4-pro",
             "enabled",
             "max",
-            "fill_only",
-            "omit_reasoning",
+            "recover",
             0,
             false,
+            None,
             None,
         );
         assert!(result.recovered_reasoning_messages > 0);
@@ -1383,7 +1521,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_only_omit_clears_missing_when_thinking_disabled() {
+    fn test_thinking_disabled_does_not_require_reasoning() {
         let payload = serde_json::json!({
             "model": "deepseek-v4-pro",
             "messages": [
@@ -1406,12 +1544,230 @@ mod tests {
             "deepseek-v4-pro",
             "disabled",
             "medium",
-            "fill_only",
-            "omit_reasoning",
+            "recover",
             0,
             false,
             None,
+            None,
         );
         assert_eq!(result.missing_reasoning_messages, 0);
+    }
+
+    #[test]
+    fn test_stable_session_preserves_growing_tool_history() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "explore the repo"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+                {"role": "assistant", "content": "partial progress"},
+                {"role": "user", "content": "explore the repo"}
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            Some("client:stable-1"),
+        );
+        let msgs = result
+            .payload
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .expect("messages");
+        assert!(
+            msgs.len() >= 5,
+            "stable session must not collapse to latest_user tail, got {}",
+            msgs.len()
+        );
+        assert_eq!(result.recovered_reasoning_messages, 0);
+        assert_eq!(result.recovery_dropped_messages, 0);
+        assert_eq!(result.missing_reasoning_messages, 0);
+        assert!(
+            result.patched_reasoning_messages >= 1,
+            "inline patch should satisfy missing reasoning"
+        );
+    }
+
+    #[test]
+    fn test_stable_session_id_fills_from_store_without_recover() {
+        let store = ReasoningBackend::open_sqlite(":memory:", Some(3600), Some(1000))
+            .expect("memory store");
+        let assistant = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "list_dir", "arguments": "{}"}
+            }]
+        });
+        let prior = vec![serde_json::json!({"role": "user", "content": "plan"})];
+        let thinking = serde_json::json!({"type": "enabled"});
+        let namespace = reasoning_cache_namespace(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &thinking,
+            "max",
+            None,
+        );
+        let scope = resolve_reasoning_scope(Some("cursor-thread-1"), &prior, &namespace);
+        let mut assistant_with_reasoning = assistant.clone();
+        assistant_with_reasoning
+            .as_object_mut()
+            .expect("assistant object")
+            .insert(
+                "reasoning_content".into(),
+                serde_json::Value::String("stored chain of thought".into()),
+            );
+        assert!(
+            store.store_assistant_message(&assistant_with_reasoning, &scope, &namespace, &prior) > 0
+        );
+
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "plan"},
+                assistant,
+                {"role": "user", "content": "continue with more context"}
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            Some(&store),
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            Some("cursor-thread-1"),
+        );
+        assert_eq!(result.patched_reasoning_messages, 1);
+        assert_eq!(result.recovered_reasoning_messages, 0);
+        assert_eq!(result.recovery_dropped_messages, 0);
+        assert!(result.recovery_notice.is_none());
+        assert_eq!(result.missing_reasoning_messages, 0);
+    }
+
+    #[test]
+    fn test_recover_does_not_repeat_recovery_notice_when_notice_stripped_from_inbound() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "explore the repo"},
+                {
+                    "role": "assistant",
+                    "content": RECOVERY_NOTICE_CONTENT.to_string() + "partial answer"
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                },
+                {"role": "user", "content": "explore the repo"}
+            ],
+        });
+        let result = prepare_upstream_request(
+            &payload,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            Some("cursor-subagent-1"),
+        );
+        assert!(
+            result.recovery_notice.is_none(),
+            "inbound notice stripped; must not inject again"
+        );
+    }
+
+    #[test]
+    fn test_latest_user_recover_notice_only_once_per_thread() {
+        let first = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": "task"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "list_dir", "arguments": "{}"}
+                    }]
+                }
+            ],
+        });
+        let first_result = prepare_upstream_request(
+            &first,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            None,
+        );
+        assert!(first_result.recovery_notice.is_some());
+
+        let mut second_messages = first
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap();
+        second_messages.push(serde_json::json!({
+            "role": "assistant",
+            "content": RECOVERY_NOTICE_CONTENT.to_string() + "done"
+        }));
+        second_messages.push(serde_json::json!({"role": "user", "content": "task"}));
+        let second = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": second_messages,
+        });
+        let second_result = prepare_upstream_request(
+            &second,
+            None,
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "enabled",
+            "max",
+            "recover",
+            0,
+            false,
+            None,
+            None,
+        );
+        assert!(second_result.recovery_notice.is_none());
     }
 }
