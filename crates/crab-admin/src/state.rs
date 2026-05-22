@@ -47,6 +47,8 @@ pub struct UpstreamPoolSecret {
 
 pub struct AppState {
     pub start_time: u64,
+    pub current_version: String,
+    pub admin_key: Arc<RwLock<String>>,
     pub upstream_api_key: String,
     /// Secrets last pushed to the gateway key pool (used by sync_models).
     pub upstream_pool_secrets: RwLock<Vec<UpstreamPoolSecret>>,
@@ -245,6 +247,27 @@ impl Default for StoredMetrics {
 }
 
 impl AppState {
+    /// Load admin key from file, falling back to env var.
+    fn load_or_init_admin_key() -> String {
+        let state_dir = std::env::var("CRABCACHE_ADMIN_STATE_PATH")
+            .ok()
+            .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("data"));
+        let key_path = state_dir.join("admin-key.txt");
+
+        if let Ok(content) = std::fs::read_to_string(&key_path) {
+            let key = content.trim().to_string();
+            if !key.is_empty() {
+                return key;
+            }
+        }
+
+        let key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string());
+        let _ = std::fs::create_dir_all(&state_dir);
+        let _ = std::fs::write(&key_path, &key);
+        key
+    }
+
     pub fn new() -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -303,6 +326,8 @@ impl AppState {
 
         Self {
             start_time: now,
+            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            admin_key: Arc::new(RwLock::new(Self::load_or_init_admin_key())),
             upstream_api_key,
             upstream_pool_secrets: RwLock::new(pool_secrets),
             upstream_notes: RwLock::new(loaded.upstream_notes),

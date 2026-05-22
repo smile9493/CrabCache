@@ -18,6 +18,7 @@ use crate::pages::overview::OverviewPage;
 use crate::pages::pipeline::PipelinePage;
 use crate::pages::reasoning::ReasoningPage;
 use crate::pages::routing::RoutingPage;
+use crate::pages::system::SystemPage;
 use crate::pages::trace::TracePage;
 use crate::pages::upstream::UpstreamPage;
 use crate::theme::provide_theme;
@@ -58,6 +59,7 @@ fn AuthenticatedShell() -> impl IntoView {
                         <Route path=path!("/routing") view=RoutingPage />
                         <Route path=path!("/reasoning") view=ReasoningPage />
                         <Route path=path!("/pipeline") view=PipelinePage />
+                        <Route path=path!("/system") view=SystemPage />
                         <Route path=path!("/cache") view=CacheOpsPage />
                         <Route path=path!("/logs") view=LogsPage />
                         <Route path=path!("/trace") view=TracePage />

@@ -394,3 +394,28 @@ pub async fn fetch_reasoning_config() -> Result<ReasoningConfig, String> {
 pub async fn update_reasoning_config(req: &ReasoningConfig) -> Result<ReasoningConfig, String> {
     put_json(&format!("{}/reasoning/config", API_BASE), req).await
 }
+
+// ── System / Update ──────────────────────────────────────────────
+
+pub async fn fetch_system_version() -> Result<SystemVersion, String> {
+    fetch_json(&format!("{}/system/version", API_BASE)).await
+}
+
+pub async fn check_for_updates() -> Result<UpdateCheckResult, String> {
+    post_json(&format!("{}/system/check-update", API_BASE), &serde_json::json!({})).await
+}
+
+pub async fn trigger_system_update() -> Result<SystemUpdateResult, String> {
+    post_json(&format!("{}/system/update", API_BASE), &serde_json::json!({})).await
+}
+
+pub async fn change_admin_key(
+    old_key: &str,
+    new_key: &str,
+) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({
+        "old_key": old_key,
+        "new_key": new_key,
+    });
+    put_json(&format!("{}/system/admin-key", API_BASE), &body).await
+}

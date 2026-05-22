@@ -12,7 +12,7 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace", "compression-gzip", "compression-br"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 prometheus = "0.13"
@@ -34,3 +34,5 @@ axum-server = { version = "0.7", features = ["tls-rustls"] }
 ring = "0.17"
 crab-control.workspace = true
 rusqlite.workspace = true
+sha2.workspace = true
+hex.workspace = true

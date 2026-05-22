@@ -9,5 +9,6 @@ pub mod overview;
 pub mod pipeline;
 pub mod reasoning;
 pub mod routing;
+pub mod system;
 pub mod trace;
 pub mod upstream;

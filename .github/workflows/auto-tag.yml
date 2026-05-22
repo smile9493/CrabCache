@@ -1,0 +1,31 @@
+name: Auto Tag 0.1.0
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag:
+    name: Create tag 0.1.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.ref_type == 'branch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or update tag 0.1.0
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f 0.1.0
+          git push -f origin 0.1.0

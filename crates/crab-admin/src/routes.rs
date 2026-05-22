@@ -9,6 +9,7 @@ use axum::{
     response::Response,
     routing::{delete, get, patch, post, put},
 };
+use serde::Deserialize;
 use crab_control::{
     CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
     PutTtlConfigRequest, PutUpstreamKeysRequest,
@@ -21,14 +22,13 @@ use crate::metrics_history::{
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Returns the admin API key from the environment, or a default dev key.
-fn admin_api_key() -> String {
-    std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string())
-}
-
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
-async fn admin_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
-    let expected_key = admin_api_key();
+async fn admin_auth(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let expected_key = state.admin_key.read().clone();
     let provided_key = req
         .headers()
         .get("x-admin-key")
@@ -139,8 +139,270 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs/{id}", get(get_log_detail))
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .route("/api/admin/live-metrics", get(get_live_metrics))
-        .layer(middleware::from_fn(admin_auth))
+        .route("/api/admin/system/admin-key", put(put_admin_key))
+        .route("/api/admin/system/version", get(get_system_version))
+        .route("/api/admin/system/check-update", post(post_check_update))
+        .route("/api/admin/system/update", post(post_system_update))
+        .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
         .with_state(state)
+}
+
+/// Request body for changing the admin API key.
+#[derive(Debug, Deserialize)]
+struct ChangeAdminKeyRequest {
+    old_key: String,
+    new_key: String,
+}
+
+async fn put_admin_key(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ChangeAdminKeyRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let current = state.admin_key.read().clone();
+    if req.old_key != current {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if req.new_key.is_empty() || req.new_key.len() < 4 {
+        return Ok(Json(serde_json::json!({
+            "error": "New key must be at least 4 characters"
+        })));
+    }
+
+    let state_dir = std::env::var("CRABCACHE_ADMIN_STATE_PATH")
+        .ok()
+        .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("data"));
+    let key_path = state_dir.join("admin-key.txt");
+
+    if let Err(e) = std::fs::create_dir_all(&state_dir) {
+        return Ok(Json(serde_json::json!({
+            "error": format!("Failed to create data dir: {e}")
+        })));
+    }
+    if let Err(e) = std::fs::write(&key_path, &req.new_key) {
+        return Ok(Json(serde_json::json!({
+            "error": format!("Failed to persist key: {e}")
+        })));
+    }
+
+    *state.admin_key.write() = req.new_key;
+    tracing::info!("Admin API key changed successfully");
+
+    Ok(Json(serde_json::json!({"success": true})))
+}
+
+/// Version information including the latest GitHub release if reachable.
+async fn get_system_version(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let current_version = &state.current_version;
+    // Try to fetch latest release from GitHub (non-blocking, soft-fail on error).
+    let latest = match crate::update::check_latest_release().await {
+        Ok(release) => {
+            let latest_version = release.tag_name.trim_start_matches('v');
+            serde_json::json!({
+                "tag_name": release.tag_name,
+                "published_at": release.published_at,
+                "assets": release.assets.iter().map(|a| serde_json::json!({
+                    "name": a.name,
+                    "download_url": a.browser_download_url,
+                    "size": a.size,
+                })).collect::<Vec<_>>(),
+                "update_available": latest_version != current_version,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to fetch latest GitHub release for version endpoint");
+            serde_json::json!(null)
+        }
+    };
+
+    Ok(Json(serde_json::json!({
+        "current_version": current_version,
+        "latest": latest,
+    })))
+}
+
+/// Explicitly check for updates from GitHub.
+async fn post_check_update(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match crate::update::check_update(&state.current_version).await {
+        Ok(result) => Ok(Json(serde_json::json!({
+            "current_version": result.current_version,
+            "latest_version": result.latest_version,
+            "update_available": result.update_available,
+            "release": result.release.map(|r| serde_json::json!({
+                "tag_name": r.tag_name,
+                "published_at": r.published_at,
+                "assets": r.assets.iter().map(|a| serde_json::json!({
+                    "name": a.name,
+                    "download_url": a.browser_download_url,
+                    "size": a.size,
+                })).collect::<Vec<_>>(),
+            })),
+        }))),
+        Err(e) => {
+            tracing::warn!(error = %e, "Update check failed");
+            Ok(Json(serde_json::json!({
+                "error": e
+            })))
+        }
+    }
+}
+
+/// Trigger a full system update: download latest binaries from GitHub,
+/// replace gateway and admin, and restart both services.
+async fn post_system_update(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Step 1: Get the latest release from GitHub
+    let release = match crate::update::check_latest_release().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "check_release",
+                "error": e,
+            })));
+        }
+    };
+
+    let download_dir = std::path::PathBuf::from("/tmp/crabcache-update");
+    let _ = std::fs::create_dir_all(&download_dir);
+
+    // Step 2: Download gateway binary
+    let gateway_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == "crab-gateway");
+
+    let gateway_path = download_dir.join("crab-gateway");
+    if let Some(asset) = gateway_asset {
+        if let Err(e) = crate::update::download_asset(&asset.browser_download_url, &gateway_path)
+            .await
+        {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "download_gateway",
+                "error": e,
+            })));
+        }
+        // Verify checksum
+        if let Err(e) =
+            crate::update::verify_checksum("crab-gateway", &gateway_path, &release).await
+        {
+            tracing::warn!(error = %e, "Gateway checksum verification failed");
+            let _ = std::fs::remove_file(&gateway_path);
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "verify_gateway",
+                "error": e,
+            })));
+        }
+    } else {
+        tracing::warn!("No crab-gateway asset found in release");
+    }
+
+    // Step 3: Download admin binary
+    let admin_asset = release.assets.iter().find(|a| a.name == "crab-admin");
+    let admin_path = download_dir.join("crab-admin");
+    if let Some(asset) = admin_asset {
+        if let Err(e) = crate::update::download_asset(&asset.browser_download_url, &admin_path)
+            .await
+        {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "download_admin",
+                "error": e,
+            })));
+        }
+        // Verify checksum
+        if let Err(e) =
+            crate::update::verify_checksum("crab-admin", &admin_path, &release).await
+        {
+            tracing::warn!(error = %e, "Admin checksum verification failed");
+            let _ = std::fs::remove_file(&admin_path);
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "verify_admin",
+                "error": e,
+            })));
+        }
+    } else {
+        tracing::warn!("No crab-admin asset found in release");
+    }
+
+    // Step 4: Replace gateway binary and restart it
+    let gateway_target =
+        std::env::var("CRABCACHE_GATEWAY_BINARY_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/app/crab-gateway"));
+
+    if gateway_path.exists() {
+        if let Err(e) = crate::update::replace_binary(&gateway_path, &gateway_target) {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "replace_gateway",
+                "error": e,
+            })));
+        }
+
+        let gateway_control_url = std::env::var("CRABCACHE_GATEWAY_CONTROL_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:9080".to_string());
+        let gateway_admin_key = std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY")
+            .unwrap_or_else(|_| String::new());
+
+        if let Err(e) =
+            crate::update::restart_gateway(&gateway_control_url, &gateway_admin_key).await
+        {
+            return Ok(Json(serde_json::json!({
+                "success": false,
+                "stage": "restart_gateway",
+                "error": e,
+            })));
+        }
+
+        // Wait a moment for gateway to begin restarting
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    // Step 5: Self-update admin binary and restart
+    let result = if admin_path.exists() {
+        match crate::update::self_update_and_restart(&admin_path) {
+            Ok(()) => {
+                // The restart script is now running. The current process will exit
+                // after this response. Give the script a moment to take over.
+                tracing::info!("Self-update initiated, exiting after response");
+                serde_json::json!({
+                    "success": true,
+                    "message": "Update complete. Admin is restarting.",
+                    "tag": release.tag_name,
+                })
+            }
+            Err(e) => {
+                serde_json::json!({
+                    "success": false,
+                    "stage": "self_update",
+                    "error": e,
+                })
+            }
+        }
+    } else if gateway_asset.is_some() {
+        serde_json::json!({
+            "success": true,
+            "message": "Gateway updated and restarting. No admin binary in release.",
+            "tag": release.tag_name,
+        })
+    } else {
+        serde_json::json!({
+            "success": false,
+            "stage": "no_assets",
+            "error": "No gateway or admin assets found in release",
+        })
+    };
+
+    Ok(Json(result))
 }
 
 async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {

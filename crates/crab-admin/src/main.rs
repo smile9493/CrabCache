@@ -11,14 +11,18 @@ mod trace_log;
 mod live_metrics;
 mod routes;
 mod state;
+mod static_cache;
 mod types;
+mod update;
 mod upstream;
 
+use axum::{middleware, Router};
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -216,10 +220,17 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = routes::router(state).layer(cors).fallback_service(
-        ServeDir::new("crates/crab-dashboard/dist")
-            .fallback(ServeFile::new("crates/crab-dashboard/dist/index.html")),
-    );
+    let dashboard_static = Router::new()
+        .fallback_service(
+            ServeDir::new("crates/crab-dashboard/dist")
+                .fallback(ServeFile::new("crates/crab-dashboard/dist/index.html")),
+        )
+        .layer(middleware::from_fn(static_cache::static_cache_headers));
+
+    let app = routes::router(state)
+        .layer(cors)
+        .layer(CompressionLayer::new())
+        .fallback_service(dashboard_static);
 
     let protocol = if config.is_https() { "https" } else { "http" };
 

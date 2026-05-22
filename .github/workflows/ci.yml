@@ -135,8 +135,7 @@ jobs:
             --no-fail-fast
 
   build-gateway:
-    name: Build Gateway (release)
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Build Gateway (linux-amd64)
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -175,7 +174,16 @@ jobs:
       - name: Strip binary
         run: strip target/release/crab-gateway
 
-      - name: Upload gateway artifact
+      - name: Upload gateway artifact (branch)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crab-gateway-${{ github.sha }}
+          path: target/release/crab-gateway
+          retention-days: 3
+
+      - name: Upload gateway artifact (tag)
+        if: github.ref_type == 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: crab-gateway-${{ github.ref_name }}
@@ -183,8 +191,7 @@ jobs:
           retention-days: 7
 
   build-admin:
-    name: Build Admin (release)
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Build Admin (linux-amd64)
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -234,7 +241,18 @@ jobs:
       - name: Strip binary
         run: strip target/release/crab-admin
 
-      - name: Upload admin artifact
+      - name: Upload admin artifact (branch)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crab-admin-${{ github.sha }}
+          path: |
+            target/release/crab-admin
+            crates/crab-dashboard/dist/
+          retention-days: 3
+
+      - name: Upload admin artifact (tag)
+        if: github.ref_type == 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: crab-admin-${{ github.ref_name }}
@@ -245,7 +263,7 @@ jobs:
 
   docker-gateway:
     name: Docker Image (gateway)
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref_type == 'tag'
     needs: [build-gateway]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -290,7 +308,7 @@ jobs:
 
   docker-admin:
     name: Docker Image (admin)
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref_type == 'tag'
     needs: [build-admin]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -335,7 +353,7 @@ jobs:
 
   release:
     name: Create Release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref_type == 'tag'
     needs: [docker-gateway, docker-admin]
     runs-on: ubuntu-latest
     timeout-minutes: 10

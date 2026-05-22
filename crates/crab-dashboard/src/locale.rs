@@ -121,6 +121,18 @@ impl Translations {
             Locale::EnUS => "Select consumer…",
         }
     }
+    pub fn live_pick_consumer_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请从上方下拉框选择一个 Consumer，以查看实时指标",
+            Locale::EnUS => "Select a consumer above to view live metrics",
+        }
+    }
+    pub fn live_keys_load_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法加载 Consumer 列表",
+            Locale::EnUS => "Failed to load consumer list",
+        }
+    }
     pub fn live_window_5m(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "近 5 分钟",
@@ -729,6 +741,150 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "全局管道模式、默认上游 profile；Key 可单独覆盖 pipeline / profile",
             Locale::EnUS => "Global pipeline mode and default upstream profile; keys can override per client.",
+        }
+    }
+    pub fn sidebar_system(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "系统",
+            Locale::EnUS => "System",
+        }
+    }
+    pub fn system_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "系统管理",
+            Locale::EnUS => "System",
+        }
+    }
+    pub fn system_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "版本更新、Admin 密钥管理",
+            Locale::EnUS => "Binary updates and admin key management.",
+        }
+    }
+    pub fn system_version_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "版本与更新",
+            Locale::EnUS => "Version & Updates",
+        }
+    }
+    pub fn system_current_version(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "当前版本",
+            Locale::EnUS => "Current Version",
+        }
+    }
+    pub fn system_latest_version(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最新版本",
+            Locale::EnUS => "Latest Version",
+        }
+    }
+    pub fn system_check_updates(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查更新",
+            Locale::EnUS => "Check for Updates",
+        }
+    }
+    pub fn system_update_now(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "立即更新",
+            Locale::EnUS => "Update Now",
+        }
+    }
+    pub fn system_update_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认要更新到最新版本吗？更新过程中服务会短暂重启。",
+            Locale::EnUS => "Are you sure you want to update? Services will restart briefly during the process.",
+        }
+    }
+    pub fn system_update_available(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "有新版本可用",
+            Locale::EnUS => "Update available",
+        }
+    }
+    pub fn system_up_to_date(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已是最新版本",
+            Locale::EnUS => "Up to date",
+        }
+    }
+    pub fn system_checking(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查中...",
+            Locale::EnUS => "Checking...",
+        }
+    }
+    pub fn system_admin_key_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Admin 密钥管理",
+            Locale::EnUS => "Admin Key Management",
+        }
+    }
+    pub fn system_admin_key_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "修改后立即生效，下次登录需使用新密钥。",
+            Locale::EnUS => "Takes effect immediately. Use the new key for your next login.",
+        }
+    }
+    pub fn system_current_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "当前密钥",
+            Locale::EnUS => "Current Key",
+        }
+    }
+    pub fn system_new_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "新密钥",
+            Locale::EnUS => "New Key",
+        }
+    }
+    pub fn system_confirm_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认新密钥",
+            Locale::EnUS => "Confirm New Key",
+        }
+    }
+    pub fn system_change_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "更改密钥",
+            Locale::EnUS => "Change Key",
+        }
+    }
+    pub fn system_key_mismatch(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "新密钥与确认密码不一致",
+            Locale::EnUS => "New keys do not match",
+        }
+    }
+    pub fn system_key_too_short(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "新密钥至少 4 个字符",
+            Locale::EnUS => "New key must be at least 4 characters",
+        }
+    }
+    pub fn system_key_changed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥已更新，请使用新密钥重新登录",
+            Locale::EnUS => "Key updated. Please re-login with the new key.",
+        }
+    }
+    pub fn system_key_change_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥修改失败",
+            Locale::EnUS => "Failed to change key",
+        }
+    }
+    pub fn system_published(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "发布时间",
+            Locale::EnUS => "Published",
+        }
+    }
+    pub fn system_no_release(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法获取 GitHub 版本信息",
+            Locale::EnUS => "Unable to fetch GitHub release info",
         }
     }
     pub fn pipeline_mode_label(self) -> &'static str {

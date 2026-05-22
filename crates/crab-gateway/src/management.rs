@@ -142,6 +142,7 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/upstream/relay",
             get(get_upstream_relay).put(put_upstream_relay),
         )
+        .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
 }
 
@@ -1379,6 +1380,24 @@ async fn put_backends(
     drop(router);
     schedule_persist_state(&state);
     Ok(Json(RoutingBackendsView { backends }))
+}
+
+/// Trigger a graceful restart of the gateway process.
+/// Returns 200 OK, then spawns a task that calls std::process::exit(0)
+/// after a short delay to allow the response to be sent.
+async fn restart_gateway_handler(
+    headers: HeaderMap,
+    State(state): State<ManagementState>,
+) -> Result<Json<serde_json::Value>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    tracing::info!("Gateway restart requested via management API");
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
+
+    Ok(Json(serde_json::json!({"status": "restarting"})))
 }
 
 fn internal_error(msg: &str) -> Response {
