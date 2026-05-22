@@ -464,6 +464,9 @@ impl AppState {
                 let mut cfg = self.upstream_config.write();
                 cfg.base_url = relay.base_url;
                 cfg.model = relay.model;
+                if let Some(key) = relay.api_key.filter(|k| !k.is_empty() && !k.contains("****")) {
+                    cfg.api_key = key;
+                }
             }
             Err(e) => {
                 *self.gateway_reachable.write() = false;

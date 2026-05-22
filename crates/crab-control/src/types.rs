@@ -28,6 +28,8 @@ pub struct GatewayStatus {
 pub struct UpstreamRelayConfigView {
     pub base_url: String,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -535,7 +535,12 @@ fn upstream_relay_view(runtime: &RuntimeConfig) -> UpstreamRelayConfigView {
         .read()
         .map(|m| m.clone())
         .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
-    UpstreamRelayConfigView { base_url, model }
+    let api_key = runtime.upstream_pool().admin_secret();
+    UpstreamRelayConfigView {
+        base_url,
+        model,
+        api_key,
+    }
 }
 
 async fn get_upstream_relay(

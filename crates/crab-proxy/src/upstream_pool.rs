@@ -163,6 +163,19 @@ impl UpstreamKeyPool {
             .collect()
     }
 
+    /// Return the first enabled key's full secret for admin / sync usage.
+    /// Returns `None` if no enabled key is available.
+    pub fn admin_secret(&self) -> Option<String> {
+        let now = now_ms();
+        self.slots
+            .iter()
+            .find(|s| {
+                s.enabled.load(Ordering::Relaxed)
+                    && s.cooldown_until_ms.load(Ordering::Relaxed) <= now
+            })
+            .map(|s| s.secret.to_string())
+    }
+
     /// Append keys by secret (dedupe); preserve existing slots.
     pub fn merge_append(pool: &Arc<Self>, incoming: Vec<UpstreamKeySpec>) -> Arc<Self> {
         let mut specs = pool.to_specs();
