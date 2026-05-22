@@ -32,6 +32,7 @@ pkg/
 Thumbs.db
 
 # --- Secrets & local config ---
+.git-credentials
 config/gateway.toml
 .env
 .env.*
