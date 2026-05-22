@@ -5,17 +5,20 @@ use gloo_net::http::{Request, RequestBuilder, Response};
 const API_BASE: &str = "/api/admin";
 const ADMIN_KEY_HEADER: &str = "x-admin-key";
 
-fn apply_admin_auth(mut builder: RequestBuilder) -> RequestBuilder {
+fn apply_admin_auth(mut builder: RequestBuilder) -> (RequestBuilder, u64) {
+    let epoch = crate::auth::auth_epoch();
     if let Some(key) = admin_key_header_value() {
         builder = builder.header(ADMIN_KEY_HEADER, &key);
     }
-    builder
+    (builder, epoch)
 }
 
-async fn http_error(resp: Response) -> String {
+async fn http_error(resp: Response, request_epoch: u64) -> String {
     let status = resp.status();
     if status == 401 {
-        handle_unauthorized();
+        if admin_key_header_value().is_some() {
+            handle_unauthorized(request_epoch);
+        }
         return "unauthorized".to_string();
     }
 
@@ -32,14 +35,31 @@ async fn http_error(resp: Response) -> String {
     format!("HTTP {}", status)
 }
 
+/// Check admin key against the server before entering the authenticated shell.
+pub async fn verify_admin_key(key: &str) -> Result<(), String> {
+    let url = format!("{}/overview", API_BASE);
+    let resp = Request::get(&url)
+        .header(ADMIN_KEY_HEADER, key)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    match resp.status() {
+        401 => Err("invalid_admin_key".to_string()),
+        status if !resp.ok() => Err(format!("HTTP {}", status)),
+        _ => Ok(()),
+    }
+}
+
 async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T, String> {
-    let resp = apply_admin_auth(Request::get(url))
+    let (builder, epoch) = apply_admin_auth(Request::get(url));
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     resp.json::<T>()
@@ -51,7 +71,8 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
     url: &str,
     body: &B,
 ) -> Result<T, String> {
-    let resp = apply_admin_auth(Request::post(url))
+    let (builder, epoch) = apply_admin_auth(Request::post(url));
+    let resp = builder
         .json(body)
         .map_err(|e| format!("Serialization error: {}", e))?
         .send()
@@ -59,7 +80,7 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     resp.json::<T>()
@@ -68,13 +89,14 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
 }
 
 async fn delete_json(url: &str) -> Result<(), String> {
-    let resp = apply_admin_auth(Request::delete(url))
+    let (builder, epoch) = apply_admin_auth(Request::delete(url));
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     Ok(())
@@ -84,7 +106,8 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
     url: &str,
     body: &B,
 ) -> Result<T, String> {
-    let resp = apply_admin_auth(Request::put(url))
+    let (builder, epoch) = apply_admin_auth(Request::put(url));
+    let resp = builder
         .json(body)
         .map_err(|e| format!("Serialization error: {}", e))?
         .send()
@@ -92,7 +115,7 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     resp.json::<T>()
@@ -104,7 +127,8 @@ async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
     url: &str,
     body: &B,
 ) -> Result<T, String> {
-    let resp = apply_admin_auth(Request::patch(url))
+    let (builder, epoch) = apply_admin_auth(Request::patch(url));
+    let resp = builder
         .json(body)
         .map_err(|e| format!("Serialization error: {}", e))?
         .send()
@@ -112,7 +136,7 @@ async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     resp.json::<T>()
@@ -302,13 +326,14 @@ pub async fn fetch_models() -> Result<ModelListResponse, String> {
 }
 
 pub async fn sync_models() -> Result<SyncResult, String> {
-    let resp = apply_admin_auth(Request::post(&format!("{}/models", API_BASE)))
+    let (builder, epoch) = apply_admin_auth(Request::post(&format!("{}/models", API_BASE)));
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
     if !resp.ok() {
-        return Err(http_error(resp).await);
+        return Err(http_error(resp, epoch).await);
     }
 
     resp.json::<SyncResult>()

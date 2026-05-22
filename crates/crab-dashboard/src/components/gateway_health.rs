@@ -24,27 +24,47 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
     let t = use_translations();
     let health: RwSignal<Option<GatewayHealth>> = RwSignal::new(None);
 
-    let poll = move || {
+    Effect::new(move |_| {
+        let alive = StoredValue::new(true);
+
+        let fetch_health = {
+            let health = health;
+            move || {
+                leptos::task::spawn_local(async move {
+                    if !alive.get_value() {
+                        return;
+                    }
+                    let next = match api::fetch_gateway_health().await {
+                        Ok(h) => h,
+                        Err(e) => GatewayHealth {
+                            healthy: false,
+                            error: Some(e),
+                            ..GatewayHealth::default()
+                        },
+                    };
+                    if !alive.get_value() {
+                        return;
+                    }
+                    health.set(Some(next));
+                });
+            }
+        };
+
+        fetch_health();
+
         leptos::task::spawn_local(async move {
-            let next = match api::fetch_gateway_health().await {
-                Ok(h) => h,
-                Err(e) => GatewayHealth {
-                    healthy: false,
-                    error: Some(e),
-                    ..GatewayHealth::default()
-                },
-            };
-            health.set(Some(next));
+            loop {
+                TimeoutFuture::new(POLL_INTERVAL_MS).await;
+                if !alive.get_value() {
+                    break;
+                }
+                fetch_health();
+            }
         });
-    };
 
-    poll();
-
-    leptos::task::spawn_local(async move {
-        loop {
-            TimeoutFuture::new(POLL_INTERVAL_MS).await;
-            poll();
-        }
+        on_cleanup(move || {
+            alive.set_value(false);
+        });
     });
 
     view! {

@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
-use crate::auth::{save_admin_key, use_admin_key};
+use crate::api;
+use crate::auth::{complete_login, use_admin_key};
 use crate::locale::{Translations, use_translations};
 
 #[component]
@@ -9,6 +10,7 @@ pub fn AuthGate() -> impl IntoView {
     let admin_key = use_admin_key();
     let input = RwSignal::new(String::new());
     let error = RwSignal::new(String::new());
+    let verifying = RwSignal::new(false);
 
     let do_submit = {
         let t = t;
@@ -18,13 +20,28 @@ pub fn AuthGate() -> impl IntoView {
                 error.set(t.auth_error_empty().to_string());
                 return;
             }
-            match save_admin_key(&value) {
-                Ok(()) => {
-                    error.set(String::new());
-                    admin_key.set(value);
-                }
-                Err(msg) => error.set(msg),
+            if verifying.get_untracked() {
+                return;
             }
+            verifying.set(true);
+            error.set(String::new());
+            leptos::task::spawn_local(async move {
+                let result = api::verify_admin_key(&value).await;
+                match result {
+                    Ok(()) => match complete_login(&value) {
+                        Ok(()) => {
+                            error.set(String::new());
+                            admin_key.set(value);
+                        }
+                        Err(msg) => error.set(msg),
+                    },
+                    Err(e) if e == "invalid_admin_key" => {
+                        error.set(t.auth_error_invalid().to_string());
+                    }
+                    Err(e) => error.set(e),
+                }
+                verifying.set(false);
+            });
         }
     };
 
@@ -47,7 +64,7 @@ pub fn AuthGate() -> impl IntoView {
             <div class="auth-screen-glow" aria-hidden="true"></div>
             <div class="auth-card glass-card-raised">
                 <div class="auth-brand">
-                    <img src="/style/favicon.svg" alt="" class="brand-logo brand-logo-lg" width="40" height="40" />
+                    <div class="brand-logo brand-logo-lg" aria-hidden="true">"🦀"</div>
                     <div>
                         <h1 class="auth-title">{Translations::sidebar_brand}</h1>
                         <p class="auth-tagline">{t.auth_tagline()}</p>
@@ -79,8 +96,19 @@ pub fn AuthGate() -> impl IntoView {
                             view! { <p class="text-sm text-error">{error.get()}</p> }.into_any()
                         }
                     }}
-                    <button type="button" class="btn btn-primary w-full" on:click=submit_click>
-                        {t.auth_submit()}
+                    <button
+                        type="button"
+                        class="btn btn-primary w-full"
+                        on:click=submit_click
+                        disabled=move || verifying.get()
+                    >
+                        {move || {
+                            if verifying.get() {
+                                t.auth_verifying().to_string()
+                            } else {
+                                t.auth_submit().to_string()
+                            }
+                        }}
                     </button>
                     <DevDefaultKeyButton admin_key=admin_key />
                 </div>
@@ -98,12 +126,18 @@ fn DevDefaultKeyButton(admin_key: RwSignal<String>) -> impl IntoView {
 
         let use_dev_default = move |_| {
             const DEV_KEY: &str = "admin";
-            if save_admin_key(DEV_KEY).is_ok() {
-                error.set(String::new());
-                admin_key.set(DEV_KEY.to_string());
-            } else {
-                error.set(t.auth_error_save().to_string());
-            }
+            leptos::task::spawn_local(async move {
+                if api::verify_admin_key(DEV_KEY).await.is_ok() {
+                    if complete_login(DEV_KEY).is_ok() {
+                        error.set(String::new());
+                        admin_key.set(DEV_KEY.to_string());
+                    } else {
+                        error.set(t.auth_error_save().to_string());
+                    }
+                } else {
+                    error.set(t.auth_error_invalid().to_string());
+                }
+            });
         };
 
         return view! {

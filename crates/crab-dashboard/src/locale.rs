@@ -1837,6 +1837,18 @@ impl Translations {
             Locale::EnUS => "Failed to save key (localStorage unavailable)",
         }
     }
+    pub fn auth_error_invalid(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "密钥无效，请确认与服务器 CRABCACHE_ADMIN_KEY 一致",
+            Locale::EnUS => "Invalid key — must match the server CRABCACHE_ADMIN_KEY",
+        }
+    }
+    pub fn auth_verifying(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "验证中…",
+            Locale::EnUS => "Verifying…",
+        }
+    }
     pub fn sidebar_change_admin_key(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "更改 Admin 密钥",

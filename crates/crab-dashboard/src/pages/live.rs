@@ -51,27 +51,33 @@ pub fn LivePage() -> impl IntoView {
     let selected_consumer: RwSignal<Option<String>> = RwSignal::new(None);
     let window_secs: RwSignal<u32> = RwSignal::new(300);
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
+    let keys_loaded = RwSignal::new(false);
+    let keys_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
 
     let load_keys = move || {
         leptos::task::spawn_local(async move {
-            if let Ok(keys) = api::fetch_keys().await {
-                let names: Vec<String> = keys
-                    .into_iter()
-                    .map(|k| k.name)
-                    .filter(|n| !n.is_empty())
-                    .collect();
-                if !names.is_empty() {
-                    if selected_consumer.get().is_none() {
-                        if let Some(first) = names.first() {
-                            selected_consumer.set(Some(first.clone()));
+            match api::fetch_keys().await {
+                Ok(keys) => {
+                    let names: Vec<String> = keys
+                        .into_iter()
+                        .map(|k| k.name)
+                        .filter(|n| !n.is_empty())
+                        .collect();
+                    if !names.is_empty() {
+                        if selected_consumer.get_untracked().is_none() {
+                            if let Some(first) = names.first() {
+                                selected_consumer.set(Some(first.clone()));
+                            }
                         }
+                        consumers.set(names);
                     }
-                    consumers.set(names);
                 }
+                Err(e) => keys_error.set(Some(e)),
             }
+            keys_loaded.set(true);
         });
     };
 
@@ -205,7 +211,30 @@ pub fn LivePage() -> impl IntoView {
                 </div>
             </div>
 
-            {move || match live_data.get() {
+            {move || {
+                if !keys_loaded.get() {
+                    return view! {
+                        <div class="glass-card p-8 flex justify-center">
+                            <Spinner />
+                        </div>
+                    }.into_any();
+                }
+                if let Some(err) = keys_error.get() {
+                    return view! {
+                        <div class="glass-card p-6 text-error text-sm space-y-1">
+                            <p>{t.live_keys_load_error()}</p>
+                            <p class="text-theme-muted text-xs">{err}</p>
+                        </div>
+                    }.into_any();
+                }
+                if selected_consumer.get().is_none() {
+                    return view! {
+                        <div class="glass-card p-6 text-sm text-theme-muted">
+                            {t.live_pick_consumer_hint()}
+                        </div>
+                    }.into_any();
+                }
+                match live_data.get() {
                 None => view! {
                     <div class="glass-card p-8 flex justify-center">
                         <Spinner />
@@ -236,6 +265,7 @@ pub fn LivePage() -> impl IntoView {
                         <LiveTokenChart buckets=chart_buckets />
                         <LiveLatestCard data=data />
                     }.into_any()
+                }
                 }
             }}
         </div>

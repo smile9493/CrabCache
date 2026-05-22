@@ -1,6 +1,11 @@
 [build]
 target = "index.html"
 dist = "dist"
+# Avoid SRI blocking CSS/JS/WASM behind reverse proxies or cached HTML mismatches.
+no_sri = true
+# Shrink WASM for faster download/compile on login.
+[wasm]
+wasm-opt = ["-Oz"]
 
 [watch]
 ignore = ["dist", "target"]

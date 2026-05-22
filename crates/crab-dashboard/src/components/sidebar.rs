@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::components::*;
 
-use crate::auth::{clear_admin_key, use_admin_key};
+use crate::auth::{logout, use_admin_key};
 use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{Translations, use_locale, use_translations};
@@ -51,7 +51,7 @@ pub fn Sidebar() -> impl IntoView {
     let nav_open = use_mobile_nav();
 
     let change_admin_key = move |_| {
-        clear_admin_key();
+        logout();
         admin_key.set(String::new());
     };
 

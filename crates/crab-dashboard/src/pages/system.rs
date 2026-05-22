@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::auth::{clear_admin_key, use_admin_key};
+use crate::auth::{complete_login, use_admin_key};
 use crate::components::ui::{SectionHeader, Spinner};
 use crate::locale::use_translations;
 use crate::types::{SystemUpdateResult, SystemVersion, UpdateCheckResult};
@@ -68,12 +68,12 @@ pub fn SystemPage() -> impl IntoView {
         let confirm = confirm_key.get();
 
         if new.len() < 4 {
-            key_message.set(Some(t.system_key_too_short()));
+            key_message.set(Some(t.system_key_too_short().to_string()));
             key_error.set(true);
             return;
         }
         if new != confirm {
-            key_message.set(Some(t.system_key_mismatch()));
+            key_message.set(Some(t.system_key_mismatch().to_string()));
             key_error.set(true);
             return;
         }
@@ -85,16 +85,13 @@ pub fn SystemPage() -> impl IntoView {
                 Ok(val) => {
                     let success = val.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
                     if success {
-                        key_message.set(Some(t.system_key_changed()));
+                        key_message.set(Some(t.system_key_changed().to_string()));
                         key_error.set(false);
                         new_key.set(String::new());
                         confirm_key.set(String::new());
                         current_key.set(String::new());
-                        // Update the admin key in localStorage and signal
-                        leptos::task::spawn_local(async move {
-                            clear_admin_key();
-                            admin_key_signal.set(new_clone);
-                        });
+                        let _ = complete_login(&new_clone);
+                        admin_key_signal.set(new_clone);
                     } else {
                         let err = val
                             .get("error")
@@ -117,7 +114,7 @@ pub fn SystemPage() -> impl IntoView {
 
     view! {
         <div class="page-content">
-            <SectionHeader title=t.system_title description=t.system_desc />
+            <SectionHeader title=t.system_title() description=t.system_desc() />
 
             // ── Version & Update ──────────────────────────────
             <div class="card">
@@ -223,8 +220,11 @@ pub fn SystemPage() -> impl IntoView {
                                         disabled=move || updating.get()
                                     >
                                         {move || {
-                                            if updating.get() { format!("{}...", t.system_update_now()) }
-                                            else { t.system_update_now() }
+                                            if updating.get() {
+                                                format!("{}...", t.system_update_now())
+                                            } else {
+                                                t.system_update_now().to_string()
+                                            }
                                         }}
                                     </button>
                                 }.into_any()

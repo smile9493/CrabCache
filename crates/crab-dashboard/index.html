@@ -1,16 +1,98 @@
 <!DOCTYPE html>
-<html lang="en" class="antialiased">
+<html lang="en" class="antialiased theme-dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
     <title>CrabCache &mdash; Gateway Control</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
     <link data-trunk rel="css" href="/style/output.css" />
     <link data-trunk rel="icon" type="image/svg+xml" href="/style/favicon.svg" />
+    <style>
+      /* Critical boot styles — visible even if hashed CSS fails to load (SRI/proxy). */
+      #boot-shell {
+        min-height: 100vh;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1c1b18;
+        color: #eceae4;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      #boot-shell .boot-card {
+        text-align: center;
+        padding: 2rem;
+        max-width: 420px;
+      }
+      #boot-shell .boot-title { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0 0; }
+      #boot-shell .boot-tagline { font-size: 0.75rem; opacity: 0.65; margin: 0.25rem 0 0; }
+      #boot-shell .boot-spinner {
+        width: 2rem;
+        height: 2rem;
+        margin: 1.25rem auto 0;
+        border: 2px solid rgba(255,255,255,0.15);
+        border-top-color: #c9a227;
+        border-radius: 50%;
+        animation: boot-spin 0.7s linear infinite;
+      }
+      #boot-shell-status { font-size: 0.875rem; margin-top: 1rem; min-height: 1.25rem; opacity: 0.75; }
+      #boot-shell-status.boot-error { color: #e57373; opacity: 1; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script>
+    (function () {
+        function showBootError(msg) {
+            var status = document.getElementById('boot-shell-status');
+            if (status) {
+                status.textContent = msg;
+                status.classList.add('boot-error');
+            }
+        }
+        function removeBootShell() {
+            var attempts = 0;
+            function tick() {
+                var app = document.getElementById('app');
+                if (app && app.childElementCount > 0) {
+                    var shell = document.getElementById('boot-shell');
+                    if (shell) shell.remove();
+                    return;
+                }
+                if (++attempts < 600) {
+                    requestAnimationFrame(tick);
+                }
+            }
+            tick();
+        }
+        window.addEventListener('TrunkApplicationStarted', removeBootShell);
+        window.addEventListener('error', function (e) {
+            var t = e.target;
+            if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) {
+                showBootError('Failed to load dashboard assets. Hard-refresh (Ctrl+Shift+R) or check the network tab.');
+            }
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+            var msg = e.reason && (e.reason.message || String(e.reason));
+            if (msg) showBootError('Dashboard failed to start: ' + msg);
+        });
+        window.setTimeout(function () {
+            var app = document.getElementById('app');
+            var shell = document.getElementById('boot-shell');
+            if (!shell || !app || app.childElementCount > 0) return;
+            showBootError('Failed to load dashboard. Refresh the page or check the browser console.');
+        }, 60000);
+    })();
+    </script>
 </head>
 <body>
+    <div id="boot-shell" aria-busy="true" aria-label="Loading">
+        <div class="boot-card">
+            <div class="boot-title">CrabCache</div>
+            <div class="boot-tagline">Gateway Control</div>
+            <div class="boot-spinner" role="status" aria-hidden="true"></div>
+            <p id="boot-shell-status"></p>
+        </div>
+    </div>
     <div id="app"></div>
 </body>
 </html>
