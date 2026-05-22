@@ -94,5 +94,7 @@ upstream_tls_curves = "X25519:P-256:P-384"
 enabled = true
 path = "/app/logs/trace.jsonl"
 # Production: raise max_lines (e.g. 50000) and max_files (e.g. 10) under sustained traffic.
+# max_lines = 50000
+# max_files = 10
 max_lines = 10000
 max_files = 5

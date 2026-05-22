@@ -879,6 +879,7 @@ async fn create_key(
 
     let meta = KeyMetadata {
         id: created.id.clone(),
+        name: created.name.clone(),
         token: created.key_full.clone(),
         rpm_limit: req.rpm_limit as u64,
         monthly_token_limit: req.monthly_token_budget,
@@ -890,6 +891,7 @@ async fn create_key(
         model_limits: model_limits.clone(),
         remain_quota,
         unlimited_quota,
+        usage_month: String::new(),
     };
     state.keys_meta.insert(created.id.clone(), meta);
     state.flush_persist();
@@ -1440,13 +1442,18 @@ async fn put_cursor_models(
     Ok(Json(CursorModelsConfig { aliases }))
 }
 
-async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
+async fn get_logs(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<crate::types::LogsQuery>,
+) -> Json<crate::types::LogsPageResponse> {
+    let limit = query.limit.unwrap_or(100).min(500);
+
     let memory_logs = state.request_logs.read().clone();
     let trace_path = crate::trace_log::trace_log_path();
-    let trace_entries = crate::trace_log::load_recent_trace_entries(&trace_path, 500);
 
-    if !memory_logs.is_empty() {
-        let result: Vec<RequestLog> = memory_logs
+    // If we have memory logs and no archive query, use memory.
+    if !memory_logs.is_empty() && query.cursor.is_none() && query.from_ms.is_none() && query.to_ms.is_none() && query.consumer.is_none() {
+        let items: Vec<RequestLog> = memory_logs
             .into_iter()
             .map(|log| {
                 RequestLog {
@@ -1463,11 +1470,38 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
                 }
             })
             .collect();
-        return Json(result);
+        return Json(crate::types::LogsPageResponse {
+            items: items.into_iter().take(limit).collect(),
+            next_cursor: None,
+            has_more: false,
+            total_in_window: 0,
+        });
     }
 
-    let result: Vec<RequestLog> = trace_entries
+    // Use archive-aware loading with pagination.
+    let opts = crate::trace_log::TraceLoadOpts {
+        from_ms: query.from_ms,
+        to_ms: query.to_ms,
+        consumer: query.consumer,
+        limit: limit + 1, // fetch +1 to determine has_more
+        cursor: query.cursor,
+    };
+
+    let entries = crate::trace_log::load_trace_with_opts(&trace_path, &opts);
+
+    let has_more = entries.len() > limit;
+
+    // Build cursor from raw trace entry data BEFORE consuming entries.
+    let next_cursor = if has_more {
+        let tail = &entries[limit - 1];
+        Some(format!("{}:{}", tail.timestamp_ms, tail.request_hash))
+    } else {
+        None
+    };
+
+    let items: Vec<RequestLog> = entries
         .into_iter()
+        .take(limit)
         .map(|e| {
             let datetime =
                 crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
@@ -1485,7 +1519,8 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
                 "request_hash": e.request_hash,
                 "content_length": e.content_length,
                 "semantic_cluster": e.semantic_cluster,
-                "prompt_tokens": e.prompt_tokens,
+                "input_tokens": e.resolved_input_tokens(),
+                "output_tokens": e.resolved_output_tokens(),
                 "cache_hit": e.cache_hit,
                 "cache_tier": e.cache_tier,
             });
@@ -1495,7 +1530,7 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
                 model: e.model.clone(),
                 consumer,
                 latency_ms: e.latency_ms.round() as u64,
-                total_tokens: e.prompt_tokens as u64,
+                total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
                 cache_status: e.cache_status_label(),
                 request_payload: serde_json::to_string_pretty(&summary).unwrap_or_default(),
                 response_preview: String::new(),
@@ -1503,7 +1538,12 @@ async fn get_logs(State(state): State<Arc<AppState>>) -> Json<Vec<RequestLog>> {
         })
         .collect();
 
-    Json(result)
+    Json(crate::types::LogsPageResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_in_window: 0,
+    })
 }
 
 async fn get_log_detail(

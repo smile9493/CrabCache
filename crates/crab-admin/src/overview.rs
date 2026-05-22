@@ -164,6 +164,17 @@ pub async fn build_metrics_snapshot(
         sample_count: history.sample_count(),
         oldest_sample_at_secs: history.oldest_sample_at(),
         sampling_interval_secs: metrics_history::sample_interval_secs(),
+        gateway_counter_reset: {
+            // Gateway restart detection: if the gateway uptime is shorter than
+            // the oldest persisted sample, the Prometheus counters have been reset.
+            let g_uptime = gateway_status.map(|s| s.uptime_secs).unwrap_or(0);
+            let oldest_ts = history.oldest_sample_at();
+            if g_uptime > 0 && oldest_ts > 0 && oldest_ts > now.saturating_sub(g_uptime) {
+                true
+            } else {
+                false
+            }
+        },
     };
 
     let hourly_stats = history.build_hourly_stats(now);

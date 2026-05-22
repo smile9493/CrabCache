@@ -320,8 +320,23 @@ pub async fn fetch_routing_status() -> Result<RoutingStatus, String> {
     fetch_json(&format!("{}/routing/status", API_BASE)).await
 }
 
-pub async fn fetch_logs() -> Result<Vec<RequestLog>, String> {
-    fetch_json(&format!("{}/logs", API_BASE)).await
+pub async fn fetch_logs(
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<LogsPageResponse, String> {
+    let mut path = format!("{}/logs", API_BASE);
+    let mut params = Vec::new();
+    if let Some(l) = limit {
+        params.push(format!("limit={}", l));
+    }
+    if let Some(c) = cursor.filter(|s| !s.is_empty()) {
+        params.push(format!("cursor={}", c));
+    }
+    if !params.is_empty() {
+        path.push('?');
+        path.push_str(&params.join("&"));
+    }
+    fetch_json(&path).await
 }
 
 pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {

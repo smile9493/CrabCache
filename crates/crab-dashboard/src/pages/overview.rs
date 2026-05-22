@@ -251,6 +251,9 @@ fn HistoryMetaHint(metrics: MetricsSnapshot) -> impl IntoView {
                 }}
             </p>
         })}
+        {meta.gateway_counter_reset.then(|| view! {
+            <p class="text-xs text-warning mt-1">{t.overview_gateway_reset()}</p>
+        })}
     }
 }
 

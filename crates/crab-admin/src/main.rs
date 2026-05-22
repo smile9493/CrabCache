@@ -1,4 +1,6 @@
 mod metrics_history;
+mod metrics_store;
+mod key_usage_sync;
 mod overview;
 mod suggestions;
 mod trace_summary;
@@ -104,9 +106,18 @@ async fn main() -> anyhow::Result<()> {
         let interval_secs = crate::metrics_history::sample_interval_secs();
         tokio::spawn(async move {
             loop {
+                // Read current gateway uptime for uptime-based metrics persistence.
+                let uptime = metrics_state
+                    .gateway_probe_cache
+                    .read()
+                    .as_ref()
+                    .and_then(|(_, p)| p.status.as_ref().map(|s| s.uptime_secs))
+                    .unwrap_or(0);
                 if let Err(e) = crate::metrics_history::sample_metrics_history(
                     &metrics_state.gateway_metrics_cache,
                     &metrics_state.metrics_history,
+                    metrics_state.metrics_store.as_ref(),
+                    uptime,
                 )
                 .await
                 {
@@ -152,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
 
     state.sync_domain_policies_to_gateway().await;
 
+    // Start key usage sync (reads trace, accumulates keys_meta monthly counters).
+    crate::key_usage_sync::spawn(Arc::clone(&state));
+
     {
         let prefetch = Arc::clone(&state);
         tokio::spawn(async move {
@@ -168,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
                     spec.id.clone(),
                     crate::state::KeyMetadata {
                         id: spec.id,
+                        name: spec.name,
                         token: spec.key_full.unwrap_or_default(),
                         rpm_limit: 0,
                         monthly_token_limit: 0,
@@ -179,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
                         model_limits: Vec::new(),
                         remain_quota: -1,
                         unlimited_quota: true,
+                        usage_month: String::new(),
                     },
                 );
             }

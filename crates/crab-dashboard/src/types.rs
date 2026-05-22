@@ -100,6 +100,8 @@ pub struct MetricsHistoryMeta {
     pub sample_count: usize,
     pub oldest_sample_at_secs: u64,
     pub sampling_interval_secs: u64,
+    #[serde(default)]
+    pub gateway_counter_reset: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -425,6 +427,17 @@ pub struct RequestDetail {
     pub request_payload: String,
     pub response_body: String,
     pub route_backend: String,
+}
+
+/// Paginated logs response from `GET /api/admin/logs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogsPageResponse {
+    pub items: Vec<RequestLog>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    #[serde(default)]
+    pub total_in_window: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

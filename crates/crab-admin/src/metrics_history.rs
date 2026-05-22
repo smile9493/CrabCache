@@ -5,11 +5,12 @@ use crate::types::{
     TimeSeriesPoint,
 };
 use chrono::{DateTime, Datelike, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 
-const MAX_RETENTION_SECS: u64 = 25 * 3600;
+pub(crate) const MAX_RETENTION_SECS: u64 = 25 * 3600;
 const DEFAULT_MAX_SAMPLES: usize = 1500;
 pub const WINDOW_5M_SECS: u64 = 300;
 
@@ -52,7 +53,7 @@ impl GatewayMetricsCache {
 }
 
 /// Parsed gateway counters at one point in time.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsCounterSnapshot {
     pub sampled_at: u64,
     pub l0_hits: u64,
@@ -994,6 +995,8 @@ fn parse_domain_tokens_from_body(body: &str) -> HashMap<String, (u64, u64)> {
 pub async fn sample_metrics_history(
     cache: &GatewayMetricsCache,
     history: &parking_lot::RwLock<MetricsHistory>,
+    store: Option<&crate::metrics_store::MetricsStore>,
+    gateway_uptime_secs: u64,
 ) -> Result<(), String> {
     let body = fetch_gateway_metrics_cached(cache).await?;
     let now = std::time::SystemTime::now()
@@ -1001,7 +1004,15 @@ pub async fn sample_metrics_history(
         .unwrap_or_default()
         .as_secs();
     let snapshot = scrape_gateway_counters(&body, now);
-    history.write().append(snapshot);
+    history.write().append(snapshot.clone());
+
+    // Write through to SQLite cold store.
+    if let Some(store) = store {
+        store.insert_snapshot(&snapshot, gateway_uptime_secs);
+        let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());
+        store.prune_older_than(cutoff);
+    }
+
     Ok(())
 }
 

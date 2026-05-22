@@ -872,6 +872,7 @@ dependencies = [
  "prometheus",
  "reqwest",
  "ring",
+ "rusqlite",
  "rustls",
  "rustls-pemfile",
  "serde",

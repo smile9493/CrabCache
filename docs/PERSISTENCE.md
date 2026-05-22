@@ -14,7 +14,8 @@
 | 域用量计数 | `domain_usage`（当月 token/成本累计） | 进程内存 | **不**持久化 |
 | Reasoning | 思考链恢复 | SQLite 或 Redis `crab:reasoning:*` | 多实例需 `redis` |
 | 影子日志 | 脱敏 Trace | JSONL 文件 / 卷 | 每实例或集中采集 |
-| Admin UI | 模型元数据、Key 配额 | `data/admin-state.json` | Admin 单实例卷 |
+| Admin UI | 模型元数据、Key 配额、Keys 月度用量 | `data/admin-state.json` | Admin 单实例卷 |
+| Admin 指标采样 | 历史采样点（Prometheus 快照） | `data/metrics.sqlite` | Admin 单实例卷 |
 | 配置基线 | 启动默认值 | `gateway.toml` + 环境变量 | 各实例相同文件 |
 
 ## Redis Key 命名
@@ -128,7 +129,7 @@ docker compose --profile admin up -d
 - L0 Moka、Request Coalescing inflight
 - **`domain_usage`**（域当月用量；策略在 Redis，计数器每实例内存）
 - Prometheus 进程计数器（靠外部 TSDB）
-- Admin `metrics_history` 时序环（重启清空，见 [OBSERVABILITY.md](./OBSERVABILITY.md)）
+- Admin `metrics_history` 时序环（现由 SQLite `data/metrics.sqlite` 持久化，重启不丢）
 
 ## 迁移
 

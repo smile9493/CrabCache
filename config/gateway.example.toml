@@ -210,5 +210,7 @@ upstream_connection_timeout_secs = 60
 enabled = true
 path = "/var/log/crabcache/trace.jsonl"
 # Production: raise max_lines (e.g. 50000) and max_files (e.g. 10) under sustained Cursor traffic.
+# max_lines = 50000
+# max_files = 10
 max_lines = 10000
 max_files = 5

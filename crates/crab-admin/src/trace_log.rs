@@ -138,7 +138,7 @@ pub async fn load_trace_entries_async(path: &str, hours: u32) -> Vec<TraceLogEnt
     }
 }
 
-fn load_trace_bytes(path: &str, max_bytes: usize) -> (Vec<u8>, bool) {
+pub fn load_trace_bytes(path: &str, max_bytes: usize) -> (Vec<u8>, bool) {
     let mut file = match File::open(path) {
         Ok(f) => f,
         Err(_) => return (Vec::new(), false),
@@ -240,7 +240,7 @@ pub fn distinct_consumers(entries: &[TraceLogEntry], limit: usize) -> Vec<String
     out
 }
 
-fn parse_trace_lines(slice: &[u8], truncated: bool) -> Vec<TraceLogEntry> {
+pub fn parse_trace_lines(slice: &[u8], truncated: bool) -> Vec<TraceLogEntry> {
     let text = std::str::from_utf8(slice).unwrap_or("");
     let mut lines = text.lines();
     if truncated {
@@ -261,6 +261,175 @@ pub fn load_recent_trace_entries(path: &str, limit: usize) -> Vec<TraceLogEntry>
     entries.sort_by_key(|e| std::cmp::Reverse(e.timestamp_ms));
     entries.truncate(limit);
     entries
+}
+
+// ---------------------------------------------------------------------------
+// Archive scanning: discover rotated trace files, merge + paginate.
+// ---------------------------------------------------------------------------
+
+/// A discovered trace source file.
+#[derive(Debug, Clone)]
+pub struct TraceSource {
+    pub path: String,
+    /// File modification time in ms; used for ordering merge.
+    pub mtime_ms: u64,
+}
+
+/// List all trace source files in the directory of `base_path`.
+///
+/// The default glob is `{dir}/trace.jsonl*` to catch the active file plus
+/// all rotated archives (e.g. `trace.jsonl.20250522_120000`).
+pub fn list_trace_sources(base_path: &str) -> Vec<TraceSource> {
+    let dir = std::path::Path::new(base_path).parent().unwrap_or(std::path::Path::new("."));
+    let base_name = std::path::Path::new(base_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("trace.jsonl");
+
+    let mut sources = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = match name.to_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            // Match base name or base name with a suffix (rotated).
+            // Reject common non-rotation extensions to avoid picking up temp files.
+            let is_rotation = name_str == base_name
+                || (name_str.starts_with(&format!("{}.", base_name))
+                    && !name_str.ends_with(".tmp")
+                    && !name_str.ends_with(".bak")
+                    && !name_str.ends_with('.'));
+            if is_rotation {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        let mtime = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        sources.push(TraceSource {
+                            path: entry.path().to_string_lossy().to_string(),
+                            mtime_ms: mtime,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Sort newest-first so the active file is scanned first.
+    sources.sort_by(|a, b| b.mtime_ms.cmp(&a.mtime_ms));
+    sources
+}
+
+/// Options for loading trace entries from multiple sources.
+#[derive(Debug, Clone, Default)]
+pub struct TraceLoadOpts {
+    pub from_ms: Option<u64>,
+    pub to_ms: Option<u64>,
+    pub consumer: Option<String>,
+    pub limit: usize,
+    pub cursor: Option<String>, // "timestamp_ms:request_hash"
+}
+
+/// Parse a cursor string `timestamp_ms:request_hash` into `(ts, hash)`.
+fn parse_cursor(cursor: &str) -> (u64, String) {
+    if let Some((ts_str, hash)) = cursor.split_once(':') {
+        let ts = ts_str.parse::<u64>().unwrap_or(u64::MAX);
+        (ts, hash.to_string())
+    } else {
+        (u64::MAX, String::new())
+    }
+}
+
+/// Load trace entries from multiple source files, respecting options.
+///
+/// The current implementation:
+/// 1. Lists all sources via `list_trace_sources`.
+/// 2. Reads the newest one (active) with `load_trace_bytes`.
+/// 3. (Future) could walk older sources for cursor pagination.
+fn entry_matches_opts(e: &TraceLogEntry, opts: &TraceLoadOpts, cursor_ts: u64, cursor_hash: &str) -> bool {
+    if let Some(from) = opts.from_ms {
+        if e.timestamp_ms < from {
+            return false;
+        }
+    }
+    if let Some(to) = opts.to_ms {
+        if e.timestamp_ms > to {
+            return false;
+        }
+    }
+    if let Some(ref consumer) = opts.consumer {
+        if !consumer.is_empty() {
+            let entry_consumer = e.consumer.as_deref().unwrap_or("");
+            if entry_consumer != consumer.as_str() {
+                return false;
+            }
+        }
+    }
+    if cursor_ts < u64::MAX {
+        if e.timestamp_ms < cursor_ts {
+            return false;
+        }
+        if e.timestamp_ms == cursor_ts && e.id().as_str() <= cursor_hash {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn load_trace_with_opts(base_path: &str, opts: &TraceLoadOpts) -> Vec<TraceLogEntry> {
+    let (cursor_ts, cursor_hash) = match &opts.cursor {
+        Some(c) if !c.is_empty() => parse_cursor(c),
+        _ => (u64::MAX, String::new()),
+    };
+
+    let sources = list_trace_sources(base_path);
+    // For MVP, only scan the first (newest) source for common queries.
+    // Cursor pagination scans all.
+    let scan_all = opts.cursor.is_some();
+    // Cap the entries we buffer from older sources when paginating.
+    // Since sources are sorted newest-first, once we have enough entries
+    // from newer sources, older sources cannot affect the top-N after sorting.
+    let early_stop_cap = if scan_all && opts.limit > 0 {
+        opts.limit.saturating_mul(2).max(1024)
+    } else {
+        usize::MAX
+    };
+
+    let mut all = Vec::new();
+    for source in &sources {
+        if !scan_all {
+            // Common short-queries: only read newest source.
+            if !all.is_empty() {
+                break;
+            }
+        } else if all.len() >= early_stop_cap {
+            // Pagination: once we've collected enough from newer sources,
+            // remaining older sources cannot add entries that sort ahead.
+            break;
+        }
+
+        let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
+        let entries = parse_trace_lines(&raw.0, raw.1);
+
+        // Apply filters per-source to avoid buffering non-matching entries.
+        for e in entries {
+            if entry_matches_opts(&e, opts, cursor_ts, &cursor_hash) {
+                all.push(e);
+            }
+        }
+    }
+
+    // Sort newest-first.
+    all.sort_by_key(|e| std::cmp::Reverse(e.timestamp_ms));
+
+    if opts.limit > 0 && all.len() > opts.limit {
+        all.truncate(opts.limit);
+    }
+    all
 }
 
 /// Keep entries with `timestamp_ms` within the last `hours` (0 = no filter).
@@ -403,11 +572,23 @@ mod tests {
 }
 
 pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
+    // First check the active file.
     if Path::new(path).exists() {
-        load_trace_entries(path)
-            .into_iter()
-            .find(|e| e.id() == id)
-    } else {
-        None
+        if let Some(e) = load_trace_entries(path).into_iter().find(|e| e.id() == id)
+        {
+            return Some(e);
+        }
     }
+    // Fall back to archive sources.
+    for source in list_trace_sources(path) {
+        if source.path == path {
+            continue; // already scanned above
+        }
+        let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
+        let entries = parse_trace_lines(&raw.0, raw.1);
+        if let Some(e) = entries.into_iter().find(|e| e.id() == id) {
+            return Some(e);
+        }
+    }
+    None
 }

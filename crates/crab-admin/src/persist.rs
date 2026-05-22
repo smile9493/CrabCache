@@ -50,6 +50,18 @@ pub struct PersistedKeyMetadata {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+    /// Admin-side key name (consumer label). Added in v2.
+    #[serde(default)]
+    pub name: String,
+    /// Month key (YYYY-MM) for accumulated usage counters. Added in v2.
+    #[serde(default)]
+    pub usage_month: String,
+    #[serde(default)]
+    pub tokens_this_month: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -151,12 +163,17 @@ impl From<&KeyMetadata> for PersistedKeyMetadata {
         Self {
             id: m.id.clone(),
             token: m.token.clone(),
+            name: m.name.clone(),
             rpm_limit: m.rpm_limit,
             monthly_token_limit: m.monthly_token_limit,
             expired_at: m.expired_at,
             model_limits: m.model_limits.clone(),
             remain_quota: m.remain_quota,
             unlimited_quota: m.unlimited_quota,
+            usage_month: m.usage_month.clone(),
+            tokens_this_month: m.tokens_this_month,
+            input_tokens: m.input_tokens,
+            output_tokens: m.output_tokens,
         }
     }
 }
@@ -166,16 +183,18 @@ impl From<PersistedKeyMetadata> for KeyMetadata {
         Self {
             id: p.id,
             token: p.token,
+            name: p.name,
             rpm_limit: p.rpm_limit,
             monthly_token_limit: p.monthly_token_limit,
             current_rpm: 0,
-            tokens_this_month: 0,
-            input_tokens: 0,
-            output_tokens: 0,
+            tokens_this_month: p.tokens_this_month,
+            input_tokens: p.input_tokens,
+            output_tokens: p.output_tokens,
             expired_at: p.expired_at,
             model_limits: p.model_limits,
             remain_quota: p.remain_quota,
             unlimited_quota: p.unlimited_quota,
+            usage_month: p.usage_month,
         }
     }
 }

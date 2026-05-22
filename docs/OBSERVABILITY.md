@@ -50,6 +50,9 @@
 | `CRABCACHE_TRACE_LOG_PATH` | `/app/logs/trace.jsonl` | Trace/日志页面的影子日志 |
 | `CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS` | `30` | `GET /upstream/config` 网关协调的最小间隔 |
 | `CRABCACHE_GATEWAY_PROBE_TTL_SECS` | `3` | 概览中 `/v1/ready` + `/v1/status` 捆绑探针的缓存 TTL |
+| `CRABCACHE_ADMIN_METRICS_DB_PATH` | `data/metrics.sqlite` | Admin 指标采样 SQLite 数据库路径 |
+| `CRABCACHE_METRICS_DB_RETENTION_SECS` | `2592000`（30 天） | 指标采样保留时长 |
+| `CRABCACHE_KEY_USAGE_SYNC_INTERVAL_SECS` | `60` | Key 月度用量同步周期（秒）；设为 0 禁用 |
 
 Trace 分析：`GET /api/admin/trace/analysis?hours=24`（默认 24；`hours=0` = 全文）。
 
@@ -156,7 +159,7 @@ curl -sf http://127.0.0.1:9090/metrics | head
 
 ## 限制
 
-- Admin 指标历史为**内存存储**；重启 `crab-admin` 会清空时序数据（网关上的 Counter 不受影响）。
+- Admin 指标历史现由 SQLite `data/metrics.sqlite` 持久化；重启 `crab-admin` 后时序数据从数据库恢复（网关上的 Counter 不受影响）。
 - 低流量部署可能显示不稳定的 5 分钟窗口速率，直到积累足够的样本。
 - Overview `trace_summary` 在 Admin 服务器上缓存 60 秒（与 Trace 页面相比最多 1 分钟延迟）。
 
@@ -166,6 +169,6 @@ curl -sf http://127.0.0.1:9090/metrics | head
 2. L3 **按模型** 表格在有流量时显示行；`cost_saved_usd_total` 与 `:9090/metrics` 上的 `gateway_cache_cost_saved_usd_total` 匹配。
 3. 网关配置中 `semantic.enabled = false` 时，Overview 显示已禁用徽标；Trace 横幅 `cache_hit_ratio` 与 Trace 页面 24h 值匹配。
 4. 有负载时，Ops 行 TTFT/coalescing/rejected **5m** 值在 5 分钟窗口内变化。
-5. 重启 `crab-admin` 后，`HistoryMetaHint` 指示指标环已重置。
+5. 重启 `crab-admin` 后，时序曲线在 1–2 分钟内恢复；若网关同时重启，概览将显示 `HistoryMetaHint` 提示。
 
-**Admin 指标时序环**为进程内存，重启 `crab-admin` 会清空 Dashboard 历史曲线；Prometheus 网关计数器不受影响。Key 配额等扩展字段见 `data/admin-state.json`（[PERSISTENCE.md](./PERSISTENCE.md)）。
+**Admin 指标时序环**现由 SQLite `data/metrics.sqlite` 持久化，重启 `crab-admin` 后从数据库恢复；若网关同时重启，累计值可能归零但历史曲线尚存。Key 配额等扩展字段见 `data/admin-state.json`（[PERSISTENCE.md](./PERSISTENCE.md)）。

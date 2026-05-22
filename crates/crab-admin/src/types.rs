@@ -68,6 +68,10 @@ pub struct MetricsHistoryMeta {
     pub sample_count: usize,
     pub oldest_sample_at_secs: u64,
     pub sampling_interval_secs: u64,
+    /// Set when the gateway's uptime is shorter than the oldest snapshot
+    /// in the history ring, indicating the gateway was restarted since.
+    #[serde(default)]
+    pub gateway_counter_reset: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -476,6 +480,29 @@ pub struct RequestDetail {
     pub route_backend: String,
 }
 
+/// Paginated logs response returned by `GET /api/admin/logs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogsPageResponse {
+    pub items: Vec<RequestLog>,
+    /// Opaque cursor for the next page (`timestamp_ms:request_hash`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    /// Approximate count of entries within the filter window (may be capped).
+    #[serde(default)]
+    pub total_in_window: u64,
+}
+
+/// Query parameters for `GET /api/admin/logs`.
+#[derive(Debug, Deserialize)]
+pub struct LogsQuery {
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+    pub from_ms: Option<u64>,
+    pub to_ms: Option<u64>,
+    pub consumer: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateCacheConfigRequest {
     pub l0_ttl_secs: u64,
@@ -526,7 +553,7 @@ pub struct CursorModelsConfig {
 }
 
 pub use crab_control::{
-    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, UpstreamKeyView, UpstreamKeysView,
+    PatchUpstreamKeyRequest, UpstreamKeyView, UpstreamKeysView,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

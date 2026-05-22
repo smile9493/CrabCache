@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone)]
 pub struct KeyMetadata {
     pub id: String,
+    pub name: String,
     pub token: String,
     pub rpm_limit: u64,
     pub monthly_token_limit: u64,
@@ -23,6 +24,9 @@ pub struct KeyMetadata {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+    /// Month key (YYYY-MM) for the accumulated tokens_this_month/input_tokens/output_tokens.
+    /// When the current month differs from this value on load, counters are reset.
+    pub usage_month: String,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +68,8 @@ pub struct AppState {
     pub backends: RwLock<Vec<StoredBackend>>,
     pub metrics: RwLock<StoredMetrics>,
     pub metrics_history: RwLock<MetricsHistory>,
+    /// SQLite-backed cold storage for Prometheus counter snapshots.
+    pub metrics_store: Option<crate::metrics_store::MetricsStore>,
     pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
     pub trace_summary_cache: RwLock<Option<(Instant, TraceSummary)>>,
     pub domain_policies: RwLock<Vec<DomainPolicy>>,
@@ -73,6 +79,8 @@ pub struct AppState {
     pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (1s TTL, mtime-invalidated).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
+    /// Timestamp (ms) of the last trace entry synced for key usage accumulation.
+    pub key_usage_last_synced: parking_lot::Mutex<u64>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -278,6 +286,21 @@ impl AppState {
             upstream_cfg.endpoints = snap.endpoints;
         }
 
+        // Open MetricsStore and hydrate memory ring from SQLite.
+        let metrics_store = crate::metrics_store::MetricsStore::open().ok();
+        let mut history = MetricsHistory::new();
+        if let Some(ref store) = metrics_store {
+            let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+            let snapshots = store.load_snapshots_since(cutoff);
+            for s in snapshots {
+                history.append(s);
+            }
+            tracing::info!(
+                hydrated = history.sample_count(),
+                "Metrics history restored from SQLite"
+            );
+        }
+
         Self {
             start_time: now,
             upstream_api_key,
@@ -331,13 +354,15 @@ impl AppState {
             models: RwLock::new(models),
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
-            metrics_history: RwLock::new(MetricsHistory::new()),
+            metrics_history: RwLock::new(history),
+            metrics_store,
             trace_entries: RwLock::new(Vec::new()),
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
             gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
+            key_usage_last_synced: parking_lot::Mutex::new(0),
             domain_policies: RwLock::new(
                 loaded
                     .domain_policies

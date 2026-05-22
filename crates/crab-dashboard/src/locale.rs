@@ -1353,11 +1353,17 @@ impl Translations {
     pub fn overview_history_meta(self, samples: usize, oldest_secs: u64) -> String {
         match self.locale {
             Locale::ZhCN => format!(
-                "指标环：{samples} 个采样点，最早约 {oldest_secs}s 前（Admin 重启会清空）"
+                "指标环：{samples} 个采样点，最早约 {oldest_secs}s 前（已持久化到 SQLite）"
             ),
             Locale::EnUS => format!(
-                "Metrics ring: {samples} samples, oldest ~{oldest_secs}s ago (cleared on admin restart)"
+                "Metrics ring: {samples} samples, oldest ~{oldest_secs}s ago (persisted via SQLite)"
             ),
+        }
+    }
+    pub fn overview_gateway_reset(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "⚠ 检测到网关最近重启过，累计计数器已归零；历史曲线不受影响。",
+            Locale::EnUS => "⚠ Gateway was recently restarted; cumulative counters have reset but history curves are preserved.",
         }
     }
     pub fn overview_l3_input_ratio(self) -> &'static str {
@@ -2090,6 +2096,18 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "加载日志失败",
             Locale::EnUS => "Failed to load logs",
+        }
+    }
+    pub fn logs_load_more(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载更多",
+            Locale::EnUS => "Load more",
+        }
+    }
+    pub fn logs_loading(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载中…",
+            Locale::EnUS => "Loading…",
         }
     }
 
