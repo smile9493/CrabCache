@@ -56,7 +56,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 
 ```
 CrabCache/
-├── Cargo.toml                       # Workspace 配置（10 个 crates）
+├── Cargo.toml                       # Workspace 配置（12 个 crates）
 ├── config/
 │   └── gateway.example.toml         # 运行时配置模板
 ├── docker-compose.yml               # Docker 编排（gateway + redis + qdrant）
@@ -99,6 +99,18 @@ CrabCache/
 │   │   ├── src/transform.rs         # 响应体重写、SSE chunk 改写
 │   │   ├── src/keys.rs              # Reasoning 键生成
 │   │   └── src/store.rs             # ReasoningStore（SQLite 存储）
+│   ├── crab-pipeline/               # 请求管线选择（Cursor/DeepSeek/Generic）
+│   │   ├── src/lib.rs               # Pipeline 类型、select_request_pipeline
+│   │   ├── src/select.rs            # 管线选择逻辑
+│   │   ├── src/types.rs             # PipelineOverride / PipelineRequestContext
+│   │   ├── src/profile.rs           # 上游配置档描述
+│   │   ├── src/cursor_models.rs     # Cursor 模型别名表（gpt-4o→deepseek-v4-pro 等）
+│   │   └── src/signals.rs           # 信号定义
+│   ├── crab-state/                  # Redis 控制面状态（密钥/策略持久化）
+│   │   ├── src/lib.rs               # RedisStateStore
+│   │   ├── src/redis_store.rs       # snapshot 序列化/反序列化
+│   │   ├── src/sync.rs              # apply_snapshot_to_runtime, spawn_state_refresh_task
+│   │   └── src/snapshot.rs          # 快照类型定义
 │   ├── crab-control/                # 控制平面类型和客户端
 │   │   ├── src/types.rs             # 共享 API 类型
 │   │   ├── src/backends.rs          # 后端端点解析
@@ -394,7 +406,7 @@ DeepSeek V4 的硬盘级前缀缓存要求请求必须路由到同一后端节�
 
 ## 监控指标
 
-Admin Dashboard Overview 通过 **`GET /api/admin/overview`** 每 5s 聚合拉取（metrics、health、L3 前缀、语义配置、24h Trace 摘要、运维 ops）；展示 **5 分钟窗口**命中率（`hit_rate_5m`、`token_hit_rate_5m`）与 **进程累计**命中率，并区分 L0–L2 与 L3 口径。时序图来自 `crab-admin` 每 60s 采样的指标环。影子日志 Trace 页为近 24h 实测命中率。详见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
+Admin Dashboard Overview 通过 **`GET /api/admin/overview/core`** 每 10s 轮询（metrics 核心、health、L3 前缀、语义配置、运维 ops）；**`GET /api/admin/overview/timeseries`** 与 **`GET /api/admin/overview/trace`** 分别加载时序与 24h Trace 摘要。展示 **5 分钟窗口**命中率（`hit_rate_5m`、`token_hit_rate_5m`）与 **进程累计**命中率，并区分 L0–L2 与 L3 口径。时序图来自 `crab-admin` 每 60s 采样的指标环。完整 **`GET /api/admin/overview`** 仍可用。影子日志 Trace 页为近 24h 实测命中率。详见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
 
 关键 Prometheus 指标（通过 `metrics_addr` 暴露）：
 

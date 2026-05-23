@@ -1,7 +1,9 @@
 use crate::TraceLogger;
 use crate::runtime::RuntimeConfig;
+use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
 use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
+use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
 use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
 use crab_reasoning::{
@@ -23,9 +25,11 @@ pub struct StoredKey {
     pub domain: Option<String>,
     /// DeepSeek `user_id` / tenant bucket; bound to this client key when set.
     pub project_id: Option<String>,
-    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `generic_relay`
+    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `mimo_relay` | `generic_relay`
     pub pipeline: Option<String>,
     pub upstream_profile: Option<String>,
+    /// Max simultaneous in-flight requests (0 = unlimited).
+    pub max_concurrent: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -198,6 +202,85 @@ impl PricingConfig {
     }
 }
 
+/// Token usage statistics collected during upstream response processing.
+#[derive(Debug, Default)]
+pub struct TokenStats {
+    pub total: u64,
+    pub last_input: u64,
+    pub last_output: u64,
+    pub last_prompt_cache_hit: u64,
+    pub last_prompt_cache_miss: u64,
+}
+
+/// Upstream connection, retry, and error state.
+pub struct UpstreamState {
+    /// HTTP `Host` / TLS SNI for the selected upstream peer.
+    pub host: Option<String>,
+    /// Backend name for circuit breaker tracking.
+    pub backend_name: Option<String>,
+    pub start: Option<Instant>,
+    /// Upstream body completion latency (response headers → EOS), miss paths only.
+    pub latency_ms: Option<f64>,
+    pub key_guard: Option<UpstreamKeyGuard>,
+    pub miss: bool,
+    /// Remaining same-request upstream retries after 429 (non-streaming only).
+    pub retry_budget: u8,
+    /// Upstream HTTP status from `response_filter` (for error body correlation).
+    pub http_status: Option<u16>,
+    pub connection_close: bool,
+    /// Downstream retry buffer exceeded 64KiB while reading in `request_filter`.
+    pub retry_buffer_truncated: bool,
+    /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
+    pub error_body_logged: bool,
+}
+
+impl UpstreamState {
+    fn default_retry_budget() -> u8 {
+        1
+    }
+}
+
+impl Default for UpstreamState {
+    fn default() -> Self {
+        Self {
+            host: None,
+            backend_name: None,
+            start: None,
+            latency_ms: None,
+            key_guard: None,
+            miss: false,
+            retry_budget: Self::default_retry_budget(),
+            http_status: None,
+            connection_close: false,
+            retry_buffer_truncated: false,
+            error_body_logged: false,
+        }
+    }
+}
+
+/// Streaming response processing state (SSE rewriting, reasoning accumulation).
+pub struct StreamState {
+    pub accumulator: Option<StreamAccumulator>,
+    pub display_adapter: Option<CursorReasoningDisplayAdapter>,
+    /// Set when streaming SSE receives upstream `[DONE]` and reasoning was stored.
+    pub reasoning_finalized: bool,
+    /// Incomplete SSE line bytes spanning upstream body chunks.
+    pub sse_remainder: Vec<u8>,
+    pub pending_recovery_notice: Option<String>,
+}
+
+impl Default for StreamState {
+    fn default() -> Self {
+        Self {
+            accumulator: None,
+            display_adapter: None,
+            reasoning_finalized: false,
+            sse_remainder: Vec::new(),
+            pending_recovery_notice: None,
+        }
+    }
+}
+
 pub struct GatewayContext {
     pub request_id: String,
     pub cache_key: Option<String>,
@@ -205,8 +288,6 @@ pub struct GatewayContext {
     pub cache_tier: Option<CacheTier>,
     pub is_streaming: bool,
     pub is_models_list: bool,
-    /// HTTP `Host` / TLS SNI for the selected upstream peer.
-    pub upstream_host: Option<String>,
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
@@ -214,7 +295,6 @@ pub struct GatewayContext {
     pub pipeline_reason: Option<PipelineSelectionReason>,
     pub upstream_profile_id: Option<String>,
     pub request_start: Instant,
-    pub upstream_start: Option<Instant>,
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
     pub is_coalesced_follower: bool,
@@ -222,45 +302,28 @@ pub struct GatewayContext {
     pub original_request_body: Option<Vec<u8>>,
     pub prepared_request: Option<PreparedRequest>,
     pub new_request_body: Option<Vec<u8>>,
-    pub stream_accumulator: Option<StreamAccumulator>,
-    pub display_adapter: Option<CursorReasoningDisplayAdapter>,
-    pub pending_recovery_notice: Option<String>,
     pub authorization: Option<String>,
     pub req_hash: Option<String>,
     pub content_length: usize,
-    pub total_tokens: u64,
-    /// Last known prompt/completion tokens (upstream usage or cache entry).
-    pub last_input_tokens: u64,
-    pub last_output_tokens: u64,
-    /// Upstream body completion latency (response headers → EOS), miss paths only.
-    pub upstream_latency_ms: Option<f64>,
     pub conversation_id: Option<String>,
     /// Resolved tenant id for upstream `user_id` and cache namespaces.
     pub project_id: Option<String>,
     /// OpenAI-style `prompt_cache_key` from request body (affinity + L3 stickiness).
     pub prompt_cache_key: Option<String>,
-    pub last_prompt_cache_hit_tokens: u64,
-    pub last_prompt_cache_miss_tokens: u64,
     pub request_permit: Option<OwnedSemaphorePermit>,
-    pub upstream_key_guard: Option<UpstreamKeyGuard>,
-    pub upstream_miss: bool,
-    /// Remaining same-request upstream retries after 429 (non-streaming only).
-    pub upstream_retry_budget: u8,
-    /// Set when streaming SSE receives upstream `[DONE]` and reasoning was stored.
-    pub stream_reasoning_finalized: bool,
-    /// Incomplete SSE line bytes spanning upstream body chunks.
-    pub stream_sse_remainder: Vec<u8>,
+    pub client_key_guard: Option<ClientKeyGuard>,
     /// Serialized upstream JSON body length after reasoning prepare (for diagnostics).
     pub upstream_outbound_body_len: usize,
     /// Set in `upstream_request_filter` before Pingora writes upstream headers.
     pub upstream_headers_prepared_at: Option<Instant>,
-    pub upstream_connection_close: bool,
-    /// Downstream retry buffer exceeded 64KiB while reading in `request_filter`.
-    pub upstream_retry_buffer_truncated: bool,
-    /// Upstream HTTP status from `response_filter` (for error body correlation).
-    pub upstream_http_status: Option<u16>,
-    /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
-    pub upstream_error_body_logged: bool,
+    /// Request composition fingerprint (extracted in request_filter after pipeline prepare).
+    pub request_composition: Option<RequestComposition>,
+    /// Token usage statistics.
+    pub tokens: TokenStats,
+    /// Upstream connection and retry state.
+    pub upstream: UpstreamState,
+    /// Streaming response processing state.
+    pub stream: StreamState,
 }
 
 impl GatewayContext {
@@ -272,7 +335,6 @@ impl GatewayContext {
             cache_tier: None,
             is_streaming: false,
             is_models_list: false,
-            upstream_host: None,
             model: String::new(),
             consumer: None,
             domain: None,
@@ -280,7 +342,6 @@ impl GatewayContext {
             pipeline_reason: None,
             upstream_profile_id: None,
             request_start: Instant::now(),
-            upstream_start: None,
             ttft: None,
             accumulated_body: Vec::new(),
             is_coalesced_follower: false,
@@ -288,33 +349,20 @@ impl GatewayContext {
             original_request_body: None,
             prepared_request: None,
             new_request_body: None,
-            stream_accumulator: None,
-            display_adapter: None,
-            pending_recovery_notice: None,
             authorization: None,
             req_hash: None,
             content_length: 0,
-            total_tokens: 0,
-            last_input_tokens: 0,
-            last_output_tokens: 0,
-            upstream_latency_ms: None,
             conversation_id: None,
             project_id: None,
             prompt_cache_key: None,
-            last_prompt_cache_hit_tokens: 0,
-            last_prompt_cache_miss_tokens: 0,
             request_permit: None,
-            upstream_key_guard: None,
-            upstream_miss: false,
-            upstream_retry_budget: 1,
-            stream_reasoning_finalized: false,
-            stream_sse_remainder: Vec::new(),
+            client_key_guard: None,
             upstream_outbound_body_len: 0,
             upstream_headers_prepared_at: None,
-            upstream_connection_close: false,
-            upstream_retry_buffer_truncated: false,
-            upstream_http_status: None,
-            upstream_error_body_logged: false,
+            request_composition: None,
+            tokens: TokenStats::default(),
+            upstream: UpstreamState::default(),
+            stream: StreamState::default(),
         }
     }
 }
@@ -335,4 +383,5 @@ pub struct GatewayState {
     pub max_sse_cache_bytes: usize,
     pub max_request_body_bytes: usize,
     pub request_semaphore: Arc<Semaphore>,
+    pub client_key_limiter: Arc<ClientKeyLimiter>,
 }

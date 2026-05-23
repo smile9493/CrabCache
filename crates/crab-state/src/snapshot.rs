@@ -22,6 +22,8 @@ pub struct StoredKeySnapshot {
     pub pipeline: Option<String>,
     #[serde(default)]
     pub upstream_profile: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +98,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                     project_id: k.project_id.clone(),
                     pipeline: k.pipeline.clone(),
                     upstream_profile: k.upstream_profile.clone(),
+                    max_concurrent: k.max_concurrent,
                 },
             )
         })
@@ -207,6 +210,7 @@ pub fn apply_snapshot_to_runtime(
                 project_id: k.project_id.clone(),
                 pipeline: k.pipeline.clone(),
                 upstream_profile: k.upstream_profile.clone(),
+                max_concurrent: k.max_concurrent,
             },
         );
     }

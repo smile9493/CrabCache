@@ -9,6 +9,7 @@ mod openresty;
 mod persist;
 mod trace_log;
 mod live_metrics;
+mod composition;
 mod routes;
 mod state;
 mod static_cache;
@@ -222,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
                         model_limits: Vec::new(),
                         remain_quota: -1,
                         unlimited_quota: true,
+                        max_concurrent: spec.max_concurrent,
                         usage_month: String::new(),
                     },
                 );

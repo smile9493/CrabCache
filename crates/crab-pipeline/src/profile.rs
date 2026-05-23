@@ -6,6 +6,9 @@ pub fn model_prefix_to_profile(model: &str) -> &'static str {
     if lower.starts_with("deepseek-") {
         return "deepseek";
     }
+    if lower.starts_with("xiaomi/mimo-") || lower.starts_with("mimo-") {
+        return "mimo";
+    }
     if lower.starts_with("gpt-")
         || lower.starts_with("o1")
         || lower.starts_with("o3")
@@ -113,6 +116,22 @@ mod tests {
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles(), &ctx);
         assert_eq!(id, "openai");
         assert_eq!(provider, UpstreamProvider::Openai);
+    }
+
+    #[test]
+    fn model_prefix_mimo() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "mimo".into(),
+            provider: UpstreamProvider::Mimo,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "mimo");
+        assert_eq!(provider, UpstreamProvider::Mimo);
     }
 
     #[test]

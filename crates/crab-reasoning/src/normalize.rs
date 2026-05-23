@@ -3,6 +3,7 @@ use crate::keys::{
     tool_call_signature,
 };
 use crate::backend::ReasoningBackend;
+use crab_composition::immutable_prefix_block_hash;
 use crab_metrics::global_metrics;
 use regex::Regex;
 use serde_json::Value;
@@ -926,24 +927,6 @@ fn validate_prefix_append_only(scope: &str, messages: &[Value]) {
     }
 }
 
-fn immutable_prefix_block_hash(messages: &[Value], tools: Option<&Value>) -> String {
-    let mut hasher = Sha256::new();
-    for msg in messages
-        .iter()
-        .take_while(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-    {
-        if let Ok(bytes) = serde_json::to_vec(msg) {
-            hasher.update(&bytes);
-        }
-    }
-    if let Some(tools) = tools {
-        if let Ok(bytes) = serde_json::to_vec(tools) {
-            hasher.update(&bytes);
-        }
-    }
-    hex::encode(hasher.finalize())
-}
-
 fn track_immutable_prefix_block(scope: &str, block_hash: &str) {
     let Ok(mut guard) = IMMUTABLE_PREFIX_BLOCKS.lock() else {
         return;
@@ -1123,6 +1106,44 @@ pub fn prepare_light_request(
 pub struct GenericPreparedRequest {
     pub payload: Value,
     pub model: String,
+}
+
+/// Normalize MiMo model id for the OpenAI-compatible API (`xiaomi/mimo-v2.5-pro`).
+pub fn normalize_mimo_model(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_lowercase().replace('_', "-");
+    if lower.starts_with("xiaomi/") {
+        return lower;
+    }
+    if lower.starts_with("mimo-") {
+        return format!("xiaomi/{lower}");
+    }
+    lower
+}
+
+/// MiMo relay: field filter + OpenAI model id normalization; no reasoning/thinking transforms.
+pub fn prepare_mimo_request(payload: &Value, fallback_model: &str) -> GenericPreparedRequest {
+    let raw = payload
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or(fallback_model);
+    let model = {
+        let normalized = normalize_mimo_model(raw);
+        if normalized.is_empty() {
+            normalize_mimo_model(fallback_model)
+        } else {
+            normalized
+        }
+    };
+    let mut prepared = filter_supported_request_fields(payload);
+    prepared.insert("model".into(), Value::String(model.clone()));
+    GenericPreparedRequest {
+        payload: Value::Object(prepared),
+        model,
+    }
 }
 
 /// Minimal relay: field filter + token alias; messages and model unchanged.
@@ -1326,7 +1347,7 @@ pub fn prepare_upstream_request(
     }
 
     let tools_for_block = prepared.get("tools").cloned();
-    let block_hash = immutable_prefix_block_hash(&pre_repair.messages, tools_for_block.as_ref());
+    let block_hash = crab_composition::immutable_prefix_block_hash(&pre_repair.messages, tools_for_block.as_ref());
     track_immutable_prefix_block(&record_response_scope, &block_hash);
 
     if prefix_validate {
@@ -1558,6 +1579,33 @@ mod tests {
         });
         let result = prepare_generic_request(&payload);
         assert_eq!(result.model, "gpt-4");
+        assert!(!result.payload.to_string().contains("thinking"));
+    }
+
+    #[test]
+    fn normalize_mimo_model_adds_vendor_prefix() {
+        assert_eq!(
+            normalize_mimo_model("mimo-v2.5-pro"),
+            "xiaomi/mimo-v2.5-pro"
+        );
+        assert_eq!(
+            normalize_mimo_model("xiaomi/mimo-v2-flash"),
+            "xiaomi/mimo-v2-flash"
+        );
+        assert_eq!(
+            normalize_mimo_model("MiMo-V2.5-Pro"),
+            "xiaomi/mimo-v2.5-pro"
+        );
+    }
+
+    #[test]
+    fn prepare_mimo_request_normalizes_model() {
+        let payload = serde_json::json!({
+            "model": "mimo-v2.5-pro",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro");
+        assert_eq!(result.model, "xiaomi/mimo-v2.5-pro");
         assert!(!result.payload.to_string().contains("thinking"));
     }
 

@@ -13,6 +13,7 @@
 | `cache_hit_ratio`（Trace 页面） | `trace.jsonl` 近 N 小时 | 影子日志实测命中率 |
 | `semantic_hits/rejected/skipped` | `gateway_semantic_cache_requests_total` | 语义守卫状态（非 L2 层级命中） |
 | `coalesced_total` / `coalesced_5m` | `gateway_coalesced_requests_total` | 合并的并发重复键数（5m 来自环增量） |
+| `client_key_inflight` | `gateway_client_key_inflight{key_id,consumer}` | 客户端 Key 当前 in-flight 请求数 |
 | `cost_saved_usd_total` / `cost_saved_usd_5m` | `gateway_cache_cost_saved_usd_total` | 网关估算的节省美元金额 |
 | `rejected_total` / `rejected_5m` | `gateway_rejected_requests_total` | 被拒绝的请求数 |
 | `ttft_ms` | `gateway_stream_first_token_latency_seconds` | 平均首字延迟（直方图） |
@@ -22,7 +23,7 @@
 
 ## Admin Dashboard
 
-- 概览每 **5 秒**轮询 **`GET /api/admin/overview`**（单次请求包）。`GET /api/admin/metrics` 保留向后兼容。
+- 概览每 **10 秒**轮询 **`GET /api/admin/overview/core`**（轻量指标，无时序数组）；时序与 24h Trace 分别由 **`GET /api/admin/overview/timeseries?window=1h|24h|7d`** 与 **`GET /api/admin/overview/trace`** 加载。完整包 **`GET /api/admin/overview`** 保留向后兼容。`GET /api/admin/metrics` 保留向后兼容。
 - 概览包字段：
 
 | 字段 | 说明 |
@@ -82,6 +83,28 @@ Dashboard **实时监控 / Live** 页面每 **2 秒**轮询 **`GET /api/admin/li
 
 **响应字段：** `available_consumers`（最多 50 个来自 trace 的名称，Dashboard 优先从此端点获取以移除 keys 硬依赖）、`buckets[].upstream_latency_ms` / `ttft_ms` 在桶中没有上游/TTFT 样本时（缓存命中）为 `null`，桶中还包含 `upstream_sample_count` / `ttft_sample_count` 以支持加权聚合。
 
+### 客户端 Key 并发（in-flight）
+
+每个 `sk-cc-*` 客户端 Key 可配置 `max_concurrent`（0 = 不限制）。超限时网关返回 **429**，`code: client_concurrency_exceeded`，`gateway_rejected_requests_total{reason="client_concurrency_exceeded"}` 递增。
+
+| 能力 | 说明 |
+|------|------|
+| Prometheus | `gateway_client_key_inflight{key_id, consumer}` — 当前 in-flight 数 |
+| Management API | `GET /v1/keys` 返回 `inflight` + `max_concurrent`；`PATCH` 可热更新上限 |
+| Dashboard Keys | **并发** 列显示 `inflight / max`（max=0 显示 ∞），每 5s 刷新 |
+
+PromQL 按 consumer 聚合：
+
+```promql
+sum by (consumer) (gateway_client_key_inflight)
+```
+
+单 Key 精确查询（`key_id` 为 Management API 返回的 `id` 字段）：
+
+```promql
+gateway_client_key_inflight{key_id="..."}
+```
+
 ## 影子日志
 
 在 `gateway.toml` 中配置：
@@ -96,7 +119,172 @@ max_files = 5
 
 每行是一个 `SanitizedLogEntry`（不含原始 body）。包含 `consumer`（API Key name）、`cache_tier`、`prompt_cache_hit_ratio`，以及（当前网关构建版本）`upstream_latency_ms`、`ttft_ms`、`input_tokens`、`output_tokens`。
 
+当 `crab-composition` crate 启用时，每条日志条目还包含 `composition` 字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `composition` | `Option<RequestComposition>` | 请求组成结构的脱敏指纹（不含原始消息内容，仅含哈希与计数） |
+
 Docker：网关写入 `gateway_logs` 卷；admin 以只读方式挂载。
+
+## 请求组成分析（Request Composition）
+
+`crab-composition` crate 从请求的 OpenAI-compatible JSON payload 中提取结构化指纹，存储在 `SanitizedLogEntry.composition` 字段中。**绝不存储原始消息内容**——仅存储哈希值与计数，适用于隐私合规的离线分析。
+
+### RequestComposition 结构
+
+```rust
+pub struct RequestComposition {
+    // ── 身份维度（来自 GatewayContext） ──
+    consumer: String,           // API Key name / consumer 标签
+    domain: String,             // 业务域（来自 API Key domain 或 "default"）
+    project_id: Option<String>, // 多租户项目 ID（X-Project-Id）
+    pipeline: String,           // 请求管线：cursor_deepseek_v4 / deepseek_light / generic_relay / mimo_relay
+    user_agent: Option<String>, // User-Agent（超 128 字符时截断）
+
+    // ── 模型 ──
+    client_model: String,       // 客户端请求中的 model 字段
+    upstream_model: Option<String>,  // 网关解析后的上游模型名
+
+    // ── 系统前缀块 ──
+    system_prefix_hash: Option<String>,  // 首个连续 system 消息 + tools JSON 的 SHA256
+    system_message_count: u32,           // 连续 system 消息数量
+    system_chars: u32,                   // system 消息内容总字符数
+
+    // ── 工具 ──
+    tool_count: u32,                    // tools 数组长度
+    tool_names_hash: Option<String>,    // 排序后工具名称的 SHA256（无工具时为空）
+    has_tools: bool,                    // 是否存在工具定义
+
+    // ── 对话历史 ──
+    message_count: u32,                 // messages 数组总长度
+    roles: RoleCounts,                  // 各角色消息数 { system, user, assistant, tool }
+    tool_turn_count: u32,               // role == "tool" 的轮次计数
+    assistant_with_tool_calls_count: u32,  // 包含 tool_calls 的 assistant 消息数
+
+    // ── Cursor Agent 组件 ──
+    components: CursorComponents,       // 系统消息中检测到的 Cursor 构造
+}
+
+pub struct CursorComponents {
+    rules:    ComponentFingerprint,  // workspace rules / .cursor/rules / always_applied_workspace_rules
+    skills:   ComponentFingerprint,  // available_skills / SKILL.md / agent_skill
+    mcp:      ComponentFingerprint,  // mcpServers / CallMcpTool / mcp_file_system
+    subagent: ComponentFingerprint,  // subagent_type / Task tool / Launch.*agent
+}
+
+pub struct ComponentFingerprint {
+    present: bool,                   // 是否检测到该组件
+    fingerprint: Option<String>,     // 检测到的内容段的 SHA256 前缀指纹
+}
+
+pub struct RoleCounts {
+    system: u32,
+    user: u32,
+    assistant: u32,
+    tool: u32,
+}
+```
+
+### Admin 组成分析 API
+
+两个端点位于 `/api/admin/composition/*`，均需 `x-admin-key` 认证：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/composition/summary?hours=24&project_id=&consumer=` | 聚合组成统计——模型分布、工具直方图、组件检测率、租户/消费者分布 |
+| GET | `/api/admin/composition/trends` | 过去 24 小时逐小时请求量趋势 |
+
+**`GET /api/admin/composition/summary`** 查询参数：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `hours` | u32 | 24 | 回溯小时数 |
+| `project_id` | string | — | 按项目 ID 筛选（可选） |
+| `consumer` | string | — | 按消费者名称筛选（可选） |
+
+响应：
+
+```json
+{
+    "total_entries_in_window": 1847,
+    "summary": {
+        "total_entries": 1847,
+        "tenant_count": 3,
+        "consumer_count": 12,
+        "model_distribution": [
+            { "name": "deepseek-v4-pro", "count": 1200 },
+            { "name": "deepseek-chat", "count": 400 }
+        ],
+        "project_distribution": [
+            { "name": "project-alpha", "count": 900 }
+        ],
+        "consumer_distribution": [
+            { "name": "cursor-user", "count": 800 }
+        ],
+        "tool_count_histogram": [
+            { "bucket_label": "0", "count": 1400 },
+            { "bucket_label": "1", "count": 200 },
+            { "bucket_label": "2-5", "count": 150 },
+            { "bucket_label": "6-10", "count": 50 },
+            { "bucket_label": "11-20", "count": 30 },
+            { "bucket_label": "20+", "count": 17 }
+        ],
+        "message_count_histogram": [
+            { "bucket_label": "0-10", "count": 800 },
+            { "bucket_label": "11-50", "count": 600 },
+            { "bucket_label": "51-100", "count": 300 },
+            { "bucket_label": "100+", "count": 147 }
+        ],
+        "component_rates": [
+            { "component": "rules", "present_count": 500, "rate": 0.27 },
+            { "component": "skills", "present_count": 200, "rate": 0.11 },
+            { "component": "mcp", "present_count": 700, "rate": 0.38 },
+            { "component": "subagent", "present_count": 100, "rate": 0.05 }
+        ],
+        "avg_latency_ms": 320.5,
+        "avg_total_tokens": 4500
+    }
+}
+```
+
+**`GET /api/admin/composition/trends`** 响应：
+
+```json
+{
+    "hours": 24,
+    "points": [
+        { "timestamp_ms": 1716480000000, "request_count": 85 },
+        { "timestamp_ms": 1716483600000, "request_count": 120 }
+    ]
+}
+```
+
+### Dashboard 组成页面
+
+在 **Monitor** 组新增 `/composition` 路由。页面功能：
+
+| 组件 | 说明 |
+|------|------|
+| **汇总卡片** | 总条目数、平均延迟、平均 Token、租户数、消费者数 |
+| **模型分布** | 垂直柱状图，展示 Top 10 模型请求量 |
+| **工具直方图** | 按桶展示工具数量分布（0、1、2-5、6-10、11-20、20+） |
+| **组件检测率** | rules / skills / mcp / subagent 的检测率条形图 |
+| **消息直方图** | 按桶展示消息数量分布（0-10、11-50、51-100、100+） |
+| **项目分布** | 按项目 ID 的请求量排名 |
+| **消费者分布** | 按消费者的请求量排名 |
+| **趋势图** | 过去 24 小时逐小时请求量折线图 |
+| **时间窗口选择** | 1h / 6h / 24h / 72h / 168h |
+
+页面每 **10 秒**轮询 summary 和 trends，浏览器标签页隐藏时自动暂停。
+
+### Prometheus 组成指标
+
+| 指标 | 类型 | 标签 | 描述 |
+|------|------|------|------|
+| `gateway_composition_requests_total` | Counter | `project_id`, `pipeline`, `has_tools`, `msg_bucket` | 按项目、管线、工具状态和消息桶计数的请求组成统计 |
+| `gateway_composition_component_total` | Counter | `component`, `present` | Cursor 组件检测计数（rules / skills / mcp / subagent） |
+| `gateway_composition_tool_count` | Histogram | — | 每次请求的工具数量分布（桶：0, 1, 5, 10, 20, 50） |
 
 ## Prometheus / Grafana（可选）
 

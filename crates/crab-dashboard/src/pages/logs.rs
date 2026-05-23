@@ -15,8 +15,11 @@ pub fn LogsPage() -> impl IntoView {
     let detail: RwSignal<Option<Result<RequestDetail, String>>> = RwSignal::new(None);
     let detail_loading = RwSignal::new(false);
     let next_cursor: RwSignal<Option<String>> = RwSignal::new(None);
-    let has_more: RwSignal<bool> = RwSignal::new(false);
+    let prev_cursors: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
     let loading_more: RwSignal<bool> = RwSignal::new(false);
+    let total_in_window: RwSignal<u64> = RwSignal::new(0);
+    let has_next: RwSignal<bool> = RwSignal::new(false);
+    let has_prev: RwSignal<bool> = RwSignal::new(false);
 
     let load_detail = move |id: String| {
         detail_loading.set(true);
@@ -37,10 +40,20 @@ pub fn LogsPage() -> impl IntoView {
 
     // Initial / refresh load — resets the list.
     let load_logs = move || {
+        next_cursor.set(None);
+        prev_cursors.set(Vec::new());
+        has_next.set(false);
+        has_prev.set(false);
         leptos::task::spawn_local(async move {
             match api::fetch_logs(Some(100), None).await {
                 Ok(resp) => {
-                    if let Some(first) = resp.items.first().cloned() {
+                    logs.set(Some(Ok(resp.items)));
+                    next_cursor.set(resp.next_cursor);
+                    total_in_window.set(resp.total_in_window);
+                    has_next.set(resp.has_more);
+                    has_prev.set(false);
+                    // Auto-select first log if none selected.
+                    if let Some(first) = logs.get().and_then(|r| r.ok()).and_then(|v| v.into_iter().next()) {
                         if selected_id.get().is_none() {
                             let id = first.id.clone();
                             selected_id.set(Some(id.clone()));
@@ -48,9 +61,6 @@ pub fn LogsPage() -> impl IntoView {
                             load_detail(id);
                         }
                     }
-                    logs.set(Some(Ok(resp.items)));
-                    next_cursor.set(resp.next_cursor);
-                    has_more.set(resp.has_more);
                 }
                 Err(e) => {
                     logs.set(Some(Err(e)));
@@ -59,10 +69,8 @@ pub fn LogsPage() -> impl IntoView {
         });
     };
 
-    load_logs();
-
-    // "Load More" — appends to the existing list.
-    let load_more = move || {
+    // Load the next page — replaces the current list instead of appending.
+    let load_next = move || {
         if loading_more.get() {
             return;
         }
@@ -71,31 +79,64 @@ pub fn LogsPage() -> impl IntoView {
             return;
         }
         loading_more.set(true);
-        leptos::task::spawn_local({
-            let current_items = logs.get();
-            async move {
-                match api::fetch_logs(Some(100), current_cursor.as_deref()).await {
-                    Ok(resp) => {
-                        let mut all = match current_items {
-                            Some(Ok(items)) => items,
-                            _ => Vec::new(),
-                        };
-                        all.extend(resp.items);
-                        logs.set(Some(Ok(all)));
-                        next_cursor.set(resp.next_cursor);
-                        has_more.set(resp.has_more);
+        let cursor_for_fetch = current_cursor.clone();
+        leptos::task::spawn_local(async move {
+            match api::fetch_logs(Some(100), cursor_for_fetch.as_deref()).await {
+                Ok(resp) => {
+                    // Save the cursor we used as a "back" cursor.
+                    if let Some(c) = cursor_for_fetch {
+                        prev_cursors.update(|cursors| cursors.push(c));
                     }
-                    Err(_e) => {
-                        // Keep existing items on error.
-                    }
+                    logs.set(Some(Ok(resp.items)));
+                    next_cursor.set(resp.next_cursor);
+                    total_in_window.set(resp.total_in_window);
+                    has_next.set(resp.has_more);
+                    has_prev.set(true);
                 }
-                loading_more.set(false);
+                Err(_e) => {}
             }
+            loading_more.set(false);
         });
     };
 
-    let loading_more_clone = loading_more;
-    let has_more_clone = has_more;
+    // Load the previous page — restore from prev cursor.
+    let load_prev = move || {
+        if loading_more.get() {
+            return;
+        }
+        let mut cursors = prev_cursors.get();
+        let prev = cursors.pop();
+        if prev.is_none() {
+            return;
+        }
+        prev_cursors.set(cursors);
+        loading_more.set(true);
+        let cursor_for_fetch = prev.clone();
+        leptos::task::spawn_local(async move {
+            match api::fetch_logs(Some(100), cursor_for_fetch.as_deref()).await {
+                Ok(resp) => {
+                    logs.set(Some(Ok(resp.items)));
+                    next_cursor.set(resp.next_cursor);
+                    total_in_window.set(resp.total_in_window);
+                    has_next.set(true);
+                    has_prev.set(!prev_cursors.get().is_empty());
+                }
+                Err(_e) => {}
+            }
+            loading_more.set(false);
+        });
+    };
+
+    load_logs();
+
+    let page_info = Signal::derive(move || {
+        let total = total_in_window.get();
+        if total > 0 {
+            format!("{} total", total)
+        } else {
+            String::new()
+        }
+    });
 
     view! {
         <div class="page-content logs-page space-y-6">
@@ -122,7 +163,10 @@ pub fn LogsPage() -> impl IntoView {
                     if log_list.is_empty() {
                         view! { <EmptyState message=t.logs_empty() /> }.into_any()
                     } else {
-                        let show_load_more = has_more_clone.get();
+                        let has_next_val = has_next.get();
+                        let has_prev_val = has_prev.get();
+                        let loading = loading_more.get();
+                        let page_str = page_info.get();
                         view! {
                             <div class="logs-split">
                                 <div class="logs-split-list glass-card-flat">
@@ -176,23 +220,29 @@ pub fn LogsPage() -> impl IntoView {
                                             }).collect::<Vec<_>>()}
                                         </tbody>
                                     </table>
-                                    {show_load_more.then(|| {
-                                        view! {
-                                            <div class="flex justify-center py-4">
-                                                <button
-                                                    on:click=move |_| load_more()
-                                                    disabled=loading_more_clone.get()
-                                                    class="btn btn-secondary text-sm"
-                                                >
-                                                    {if loading_more_clone.get() {
-                                                        t.logs_loading()
-                                                    } else {
-                                                        t.logs_load_more()
-                                                    }}
-                                                </button>
-                                            </div>
-                                        }
-                                    })}
+                                    <div class="flex items-center justify-between px-4 py-3 border-t border-theme">
+                                        <span class="text-xs text-theme-muted">{page_str}</span>
+                                        <div class="flex items-center gap-2">
+                                            <button
+                                                on:click=move |_| load_prev()
+                                                disabled=!has_prev_val || loading
+                                                class="btn btn-secondary text-sm"
+                                            >
+                                                "←"
+                                            </button>
+                                            <button
+                                                on:click=move |_| load_next()
+                                                disabled=!has_next_val || loading
+                                                class="btn btn-secondary text-sm"
+                                            >
+                                                {if loading {
+                                                    t.logs_loading()
+                                                } else {
+                                                    "→"
+                                                }}
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div class="logs-split-detail glass-card">

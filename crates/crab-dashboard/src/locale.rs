@@ -711,6 +711,24 @@ impl Translations {
             Locale::EnUS => "Quota",
         }
     }
+    pub fn keys_col_concurrency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "并发",
+            Locale::EnUS => "Concurrency",
+        }
+    }
+    pub fn keys_max_concurrent_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大并发（0 = 不限制）",
+            Locale::EnUS => "Max concurrent (0 = unlimited)",
+        }
+    }
+    pub fn keys_concurrency_unlimited(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "∞",
+            Locale::EnUS => "∞",
+        }
+    }
     pub fn keys_unlimited(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "无限",
@@ -2379,6 +2397,169 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "聚类分布",
             Locale::EnUS => "Cluster Distribution",
+        }
+    }
+
+    // ── Composition page ──────────────────────────────────────────
+
+    pub fn sidebar_composition(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求组成",
+            Locale::EnUS => "Composition",
+        }
+    }
+
+    pub fn composition_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求组成分析",
+            Locale::EnUS => "Request Composition Analysis",
+        }
+    }
+
+    pub fn composition_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "分析请求的组成结构：模型分布、工具使用、Cursor 组件检测与消息数量",
+            Locale::EnUS => "Analyze request composition: model distribution, tool usage, Cursor component detection, and message counts",
+        }
+    }
+
+    pub fn composition_total_entries(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "总条目",
+            Locale::EnUS => "Total Entries",
+        }
+    }
+
+    pub fn composition_avg_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均延迟",
+            Locale::EnUS => "Avg Latency",
+        }
+    }
+
+    pub fn composition_avg_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均 Token",
+            Locale::EnUS => "Avg Tokens",
+        }
+    }
+
+    pub fn composition_model_distribution(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型分布",
+            Locale::EnUS => "Model Distribution",
+        }
+    }
+
+    pub fn composition_tool_histogram(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "工具数量直方",
+            Locale::EnUS => "Tool Count Histogram",
+        }
+    }
+
+    pub fn composition_component_rates(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Cursor 组件检测率",
+            Locale::EnUS => "Cursor Component Rates",
+        }
+    }
+
+    pub fn composition_msg_histogram(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消息数量分布",
+            Locale::EnUS => "Message Count Distribution",
+        }
+    }
+
+    pub fn composition_project_distribution(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "项目分布",
+            Locale::EnUS => "Project Distribution",
+        }
+    }
+
+    pub fn composition_consumer_distribution(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者分布",
+            Locale::EnUS => "Consumer Distribution",
+        }
+    }
+
+    pub fn composition_trends(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "24h 请求趋势",
+            Locale::EnUS => "24h Request Trend",
+        }
+    }
+
+    pub fn composition_load_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载组成数据失败",
+            Locale::EnUS => "Failed to load composition data",
+        }
+    }
+
+    pub fn composition_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无请求组成数据。请确认已启用 trace_logging 且存在带 composition 字段的日志条目。",
+            Locale::EnUS => "No composition data yet. Ensure trace_logging is enabled and log entries contain composition fields.",
+        }
+    }
+
+    pub fn composition_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刷新",
+            Locale::EnUS => "Refresh",
+        }
+    }
+
+    pub fn composition_hours(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "小时",
+            Locale::EnUS => "hours",
+        }
+    }
+
+    pub fn composition_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数量",
+            Locale::EnUS => "Count",
+        }
+    }
+
+    pub fn composition_tenant_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "租户数",
+            Locale::EnUS => "Tenants",
+        }
+    }
+
+    pub fn composition_consumer_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者数",
+            Locale::EnUS => "Consumers",
+        }
+    }
+
+    pub fn composition_present(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "存在",
+            Locale::EnUS => "Present",
+        }
+    }
+
+    pub fn composition_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检测率",
+            Locale::EnUS => "Detection Rate",
+        }
+    }
+
+    pub fn composition_hourly_volume(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "小时请求量",
+            Locale::EnUS => "Hourly Request Volume",
         }
     }
 

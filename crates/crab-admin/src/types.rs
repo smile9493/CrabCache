@@ -114,6 +114,76 @@ pub struct OverviewSuggestion {
     pub message: String,
 }
 
+/// Metrics without time-series arrays (lighter overview poll payload).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSnapshotCore {
+    pub qps: f64,
+    pub tps: f64,
+    pub l0_hits: u64,
+    pub l1_hits: u64,
+    pub l2_hits: u64,
+    pub cache_misses: u64,
+    pub cache_hit_tokens: u64,
+    pub cache_miss_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tokens: u64,
+    pub latency_l0_ms: f64,
+    pub latency_l1_ms: f64,
+    pub latency_l2_ms: f64,
+    pub latency_upstream_ms: f64,
+    pub active_keys: u64,
+    pub uptime_hours: u64,
+    #[serde(default)]
+    pub uptime_secs: u64,
+    pub semantic_hits: u64,
+    pub semantic_rejected: u64,
+    pub semantic_skipped: u64,
+    #[serde(default)]
+    pub prefix_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_miss_tokens: u64,
+    #[serde(default)]
+    pub prefix_cache_hit_ratio: f64,
+    #[serde(default)]
+    pub hit_rate_cumulative: f64,
+    #[serde(default)]
+    pub hit_rate_5m: f64,
+    #[serde(default)]
+    pub token_hit_rate_5m: f64,
+    #[serde(default)]
+    pub qps_5m: f64,
+    #[serde(default)]
+    pub coalesced_total: u64,
+    #[serde(default)]
+    pub consumer_buckets: Vec<ConsumerMetricsBucket>,
+    #[serde(default)]
+    pub domain_buckets: Vec<DomainMetricsBucket>,
+    #[serde(default)]
+    pub metrics_sample_insufficient: bool,
+    #[serde(default)]
+    pub history_meta: MetricsHistoryMeta,
+    #[serde(default)]
+    pub tier_deltas_5m: TierDeltas5m,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewCore {
+    pub metrics: MetricsSnapshotCore,
+    pub health: GatewayHealthView,
+    pub prefix_cache: PrefixCacheMetricsSnapshot,
+    pub semantic: SemanticConfig,
+    pub ops: OverviewOpsMetrics,
+    #[serde(default)]
+    pub suggestions: Vec<OverviewSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewTimeseriesResponse {
+    pub window: String,
+    pub points: Vec<TimeSeriesPoint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverviewBundle {
     pub metrics: MetricsSnapshot,
@@ -255,6 +325,10 @@ pub struct ApiKey {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+    #[serde(default)]
+    pub max_concurrent: u32,
+    #[serde(default)]
+    pub inflight: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -279,6 +353,8 @@ pub struct PatchKeyRequest {
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +374,8 @@ pub struct CreateKeyRequest {
     pub pipeline: Option<String>,
     #[serde(default)]
     pub upstream_profile: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,6 +643,28 @@ pub struct CursorModelsConfig {
 pub use crab_control::{
     PatchUpstreamKeyRequest, UpstreamKeyView, UpstreamKeysView,
 };
+
+use crab_composition::CompositionSummary;
+
+// ── Composition API types ────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompositionSummaryResponse {
+    pub total_entries_in_window: usize,
+    pub summary: CompositionSummary,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompositionTrendsResponse {
+    pub hours: u32,
+    pub points: Vec<HourlyPoint>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HourlyPoint {
+    pub timestamp_ms: u64,
+    pub request_count: u32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {

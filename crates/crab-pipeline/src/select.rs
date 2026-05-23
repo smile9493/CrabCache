@@ -72,6 +72,13 @@ fn pipeline_from_override(
                 Some(RequestPipeline::GenericRelay)
             }
         }
+        PipelineOverride::MimoRelay => {
+            if provider == UpstreamProvider::Mimo {
+                Some(RequestPipeline::MimoRelay)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
         PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
     }
 }
@@ -101,7 +108,24 @@ fn auto_pipeline_with_reason(
                         PipelineSelectionReason::ModelAlias,
                     );
                 }
+                PipelineOverride::MimoRelay | PipelineOverride::Auto => {}
+            }
+        }
+    }
+
+    if provider == UpstreamProvider::Mimo {
+        if let Some(alias_pipe) = ctx.model_alias_pipeline {
+            match alias_pipe {
+                PipelineOverride::MimoRelay | PipelineOverride::GenericRelay => {
+                    let pipeline = if alias_pipe == PipelineOverride::MimoRelay {
+                        RequestPipeline::MimoRelay
+                    } else {
+                        RequestPipeline::GenericRelay
+                    };
+                    return (pipeline, PipelineSelectionReason::ModelAlias);
+                }
                 PipelineOverride::Auto => {}
+                _ => {}
             }
         }
     }
@@ -110,6 +134,7 @@ fn auto_pipeline_with_reason(
     let reason = match pipeline {
         RequestPipeline::CursorDeepSeekV4 => PipelineSelectionReason::CursorSignals,
         RequestPipeline::DeepSeekLight => PipelineSelectionReason::DeepSeekNonV4,
+        RequestPipeline::MimoRelay => PipelineSelectionReason::MimoProvider,
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
     };
     (pipeline, reason)
@@ -132,6 +157,7 @@ fn auto_pipeline_legacy(ctx: &PipelineRequestContext<'_>, provider: UpstreamProv
                 RequestPipeline::DeepSeekLight
             }
         }
+        UpstreamProvider::Mimo => RequestPipeline::MimoRelay,
         UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Other => {
             RequestPipeline::GenericRelay
         }
@@ -149,6 +175,9 @@ pub fn validate_pipeline_override(
         {
             Some("cursor_deepseek_v4 and deepseek_light require a deepseek upstream profile")
         }
+        PipelineOverride::MimoRelay if provider != UpstreamProvider::Mimo => {
+            Some("mimo_relay requires a mimo upstream profile")
+        }
         _ => None,
     }
 }
@@ -156,6 +185,7 @@ pub fn validate_pipeline_override(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::resolve_upstream_profile_id;
     use serde_json::json;
 
     fn deepseek_profiles() -> Vec<ProfileDescriptor> {
@@ -266,5 +296,45 @@ mod tests {
         let sel = select_request_pipeline(&globals, &profiles, &ctx);
         assert_eq!(sel.upstream_profile_id, "openai");
         assert_eq!(sel.pipeline, RequestPipeline::GenericRelay);
+    }
+
+    #[test]
+    fn mimo_model_selects_mimo_relay() {
+        let globals =
+            PipelineGlobals::with_profiles("deepseek", ["deepseek", "mimo"].map(String::from));
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "deepseek".into(),
+                provider: UpstreamProvider::Deepseek,
+            },
+            ProfileDescriptor {
+                id: "mimo".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "mimo");
+        assert_eq!(sel.pipeline, RequestPipeline::MimoRelay);
+        assert_eq!(sel.reason, PipelineSelectionReason::MimoProvider);
+    }
+
+    #[test]
+    fn xiaomi_prefixed_model_routes_to_mimo_profile() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "mimo".into(),
+            provider: UpstreamProvider::Mimo,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "xiaomi/mimo-v2-flash",
+            ..Default::default()
+        };
+        let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "mimo");
+        assert_eq!(provider, UpstreamProvider::Mimo);
     }
 }

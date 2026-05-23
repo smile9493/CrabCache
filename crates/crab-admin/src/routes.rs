@@ -4,9 +4,9 @@ use crate::types::*;
 use axum::{
     Json, Router,
     extract::{Path, Query, Request, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
 use serde::Deserialize;
@@ -21,6 +21,7 @@ use crate::metrics_history::{
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::hash::Hasher;
 
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
 async fn admin_auth(
@@ -71,6 +72,9 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/admin/metrics", get(get_metrics))
         .route("/api/admin/overview", get(get_overview))
+        .route("/api/admin/overview/core", get(get_overview_core))
+        .route("/api/admin/overview/timeseries", get(get_overview_timeseries))
+        .route("/api/admin/overview/trace", get(get_overview_trace))
         .route("/api/admin/domains", get(list_domains))
         .route("/api/admin/domains/{domain}", get(get_domain_detail))
         .route(
@@ -144,6 +148,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/system/version", get(get_system_version))
         .route("/api/admin/system/check-update", post(post_check_update))
         .route("/api/admin/system/update", post(post_system_update))
+        .route(
+            "/api/admin/composition/summary",
+            get(crate::composition::get_composition_summary),
+        )
+        .route(
+            "/api/admin/composition/trends",
+            get(crate::composition::get_composition_trends),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
         .with_state(state)
 }
@@ -451,6 +463,82 @@ async fn get_overview(
             tracing::warn!(error = %e, "Failed to build overview");
             StatusCode::SERVICE_UNAVAILABLE
         })
+}
+
+#[derive(Debug, Deserialize)]
+struct OverviewTimeseriesQuery {
+    #[serde(default = "default_timeseries_window")]
+    window: String,
+}
+
+fn default_timeseries_window() -> String {
+    "1h".to_string()
+}
+
+async fn get_overview_core(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let core = crate::overview::build_overview_core(&state)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build overview core");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    // Compute ETag from serialized body using DefaultHasher (fast, non-cryptographic).
+    let json_bytes = serde_json::to_vec(&core).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&json_bytes, &mut hasher);
+    let etag_val = format!("\"{:x}\"", hasher.finish());
+
+    // If-None-Match → 304 when content unchanged.
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
+        if if_none_match == etag_val {
+            let mut resp = Response::new(axum::body::Body::empty());
+            *resp.status_mut() = StatusCode::NOT_MODIFIED;
+            resp.headers_mut().insert(
+                header::ETAG,
+                HeaderValue::from_str(&etag_val).unwrap(),
+            );
+            return Ok(resp);
+        }
+    }
+
+    // 200 with ETag header for client-side caching.
+    let mut resp = Json(core).into_response();
+    resp.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag_val).unwrap(),
+    );
+    Ok(resp)
+}
+
+async fn get_overview_timeseries(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<OverviewTimeseriesQuery>,
+) -> Result<Json<OverviewTimeseriesResponse>, StatusCode> {
+    let window = match query.window.as_str() {
+        "1h" | "24h" | "7d" => query.window.as_str(),
+        _ => "1h",
+    };
+    crate::overview::build_overview_timeseries(&state, window)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build overview timeseries");
+            StatusCode::SERVICE_UNAVAILABLE
+        })
+}
+
+async fn get_overview_trace(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<TraceSummary>, StatusCode> {
+    let summary = crate::overview::build_overview_trace(&state).await;
+    Ok(Json(summary))
 }
 
 async fn list_domains(
@@ -1111,6 +1199,8 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
                     .unwrap_or_default(),
                 remain_quota: meta.as_ref().map(|m| m.remain_quota).unwrap_or(-1),
                 unlimited_quota: meta.as_ref().map(|m| m.unlimited_quota).unwrap_or(true),
+                max_concurrent: spec.max_concurrent,
+                inflight: spec.inflight,
             }
         })
         .collect();
@@ -1132,6 +1222,7 @@ async fn create_key(
             project_id: req.project_id.clone(),
             pipeline: req.pipeline.clone(),
             upstream_profile: req.upstream_profile.clone(),
+            max_concurrent: req.max_concurrent,
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -1140,6 +1231,7 @@ async fn create_key(
     let remain_quota = req.remain_quota.unwrap_or(-1);
     let unlimited_quota = req.unlimited_quota.unwrap_or(true);
 
+    let max_concurrent = req.max_concurrent.unwrap_or(created.max_concurrent);
     let meta = KeyMetadata {
         id: created.id.clone(),
         name: created.name.clone(),
@@ -1154,6 +1246,7 @@ async fn create_key(
         model_limits: model_limits.clone(),
         remain_quota,
         unlimited_quota,
+        max_concurrent,
         usage_month: String::new(),
     };
     state.keys_meta.insert(created.id.clone(), meta);
@@ -1176,6 +1269,8 @@ async fn create_key(
         model_limits,
         remain_quota,
         unlimited_quota,
+        max_concurrent: created.max_concurrent,
+        inflight: 0,
     }))
 }
 
@@ -1222,6 +1317,7 @@ async fn patch_key(
                 project_id: req.project_id.clone(),
                 pipeline: req.pipeline.clone(),
                 upstream_profile: req.upstream_profile.clone(),
+                max_concurrent: req.max_concurrent,
             },
         )
         .await
@@ -1230,6 +1326,9 @@ async fn patch_key(
     if let Some(mut meta) = state.keys_meta.get_mut(&id) {
         if req.enabled == Some(false) {
             meta.token = String::new();
+        }
+        if let Some(max_concurrent) = req.max_concurrent {
+            meta.max_concurrent = max_concurrent;
         }
     }
     state.flush_persist();
@@ -1258,6 +1357,8 @@ async fn patch_key(
         project_id: updated.project_id,
         pipeline: updated.pipeline,
         upstream_profile: updated.upstream_profile,
+        max_concurrent: updated.max_concurrent,
+        inflight: updated.inflight,
     }))
 }
 

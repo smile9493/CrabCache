@@ -53,6 +53,12 @@ pub struct TraceLogEntry {
     pub output_tokens: Option<u64>,
     pub cache_hit: bool,
     pub cache_tier: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub composition: Option<crab_composition::RequestComposition>,
 }
 
 impl TraceLogEntry {
@@ -679,6 +685,9 @@ mod tests {
             output_tokens: None,
             cache_hit: false,
             cache_tier: None,
+            domain: None,
+            project_id: None,
+            composition: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -696,6 +705,9 @@ mod tests {
             output_tokens: None,
             cache_hit: true,
             cache_tier: Some("L0_moka".into()),
+            domain: None,
+            project_id: None,
+            composition: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -753,6 +765,9 @@ mod tests {
                 output_tokens: None,
                 cache_hit: false,
                 cache_tier: None,
+                domain: None,
+                project_id: None,
+                composition: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -770,6 +785,9 @@ mod tests {
                 output_tokens: None,
                 cache_hit: false,
                 cache_tier: None,
+                domain: None,
+                project_id: None,
+                composition: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);

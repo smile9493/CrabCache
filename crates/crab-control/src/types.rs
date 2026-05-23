@@ -106,6 +106,10 @@ pub struct ApiKeySpec {
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: u32,
+    #[serde(default)]
+    pub inflight: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +127,8 @@ pub struct CreateGatewayKeyRequest {
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<u32>,
 }
 
 fn default_enabled() -> bool {
@@ -144,6 +150,8 @@ pub struct CreateGatewayKeyResponse {
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +168,8 @@ pub struct PatchGatewayKeyRequest {
     pub pipeline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

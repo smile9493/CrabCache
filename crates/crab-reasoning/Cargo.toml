@@ -13,5 +13,6 @@ tracing = { workspace = true }
 rusqlite = { workspace = true }
 regex = { workspace = true }
 crab-metrics = { path = "../crab-metrics" }
+crab-composition = { path = "../crab-composition" }
 redis = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }

@@ -4,7 +4,7 @@ use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
-use crab_proxy::{GatewayProxy, GatewayState, RuntimeConfig};
+use crab_proxy::{ClientKeyLimiter, GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
@@ -381,6 +381,7 @@ fn main() -> Result<()> {
                             project_id: None,
                             pipeline: None,
                             upstream_profile: None,
+                            max_concurrent: 0,
                         },
                     );
                     info!(
@@ -426,6 +427,7 @@ fn main() -> Result<()> {
                         project_id: None,
                         pipeline: None,
                         upstream_profile: None,
+                        max_concurrent: 0,
                     },
                 );
                 info!(
@@ -510,6 +512,9 @@ fn main() -> Result<()> {
 
     let reasoning_config_shared = Arc::new(RwLock::new(reasoning_config));
 
+    let client_key_limiter = ClientKeyLimiter::new();
+    client_key_limiter.sync_all_keys(&runtime.keys);
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -521,6 +526,7 @@ fn main() -> Result<()> {
         invalidate_job: Arc::new(Mutex::new(None)),
         invalidate_rate: Arc::new(Mutex::new(InvalidateRateState::default())),
         invalidate_scan_timeout_secs: mgmt_cfg.invalidate_scan_timeout_secs,
+        client_key_limiter: client_key_limiter.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -562,6 +568,7 @@ fn main() -> Result<()> {
         max_sse_cache_bytes: config.cache.max_sse_cache_bytes,
         max_request_body_bytes: config.limits.max_request_body_bytes,
         request_semaphore,
+        client_key_limiter,
     });
 
     let proxy = GatewayProxy::new(state);

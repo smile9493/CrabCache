@@ -915,6 +915,7 @@ dependencies = [
  "axum-server",
  "bytes",
  "chrono",
+ "crab-composition",
  "crab-control",
  "dashmap",
  "hex",
@@ -966,6 +967,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-composition"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "crab-control"
 version = "0.1.0"
 dependencies = [
@@ -983,6 +994,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
+ "futures",
  "gloo-net",
  "gloo-timers",
  "js-sys",
@@ -1034,6 +1046,7 @@ dependencies = [
 name = "crab-metrics"
 version = "0.1.0"
 dependencies = [
+ "crab-composition",
  "once_cell",
  "prometheus",
  "tracing",
@@ -1057,6 +1070,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-cache",
+ "crab-composition",
  "crab-metrics",
  "crab-pipeline",
  "crab-reasoning",
@@ -1083,6 +1097,7 @@ name = "crab-reasoning"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crab-composition",
  "crab-metrics",
  "hex",
  "redis",

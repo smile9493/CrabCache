@@ -2,6 +2,7 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 
 use crate::api;
+use crate::page_visible::page_visible;
 use crate::components::line_chart::{ChartSeries, LineChart, TokenLineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
@@ -17,12 +18,6 @@ fn format_bucket_time(ts_ms: u64) -> String {
         .unwrap_or_else(|| "—".to_string())
 }
 
-fn page_visible() -> bool {
-    web_sys::window()
-        .and_then(|w| w.document())
-        .map(|d| !d.hidden())
-        .unwrap_or(true)
-}
 
 fn poll_interval_ms(window_secs: u32) -> u32 {
     if window_secs >= 900 {

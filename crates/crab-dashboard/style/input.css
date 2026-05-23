@@ -4,6 +4,28 @@
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  --color-theme: var(--cc-text);
+  --color-theme-muted: var(--cc-text-muted);
+  --color-theme-secondary: var(--text-secondary);
+  --color-theme-border: var(--cc-border);
+}
+
+/* Theme text utilities (fallback if Tailwind scan misses usage) */
+.text-theme { color: var(--cc-text); }
+.text-theme-muted { color: var(--cc-text-muted); }
+.text-theme-secondary { color: var(--text-secondary); }
+.border-theme { border-color: var(--cc-border); }
+
+body {
+  color: var(--cc-text);
+  background: var(--cc-bg);
+}
+.theme-dark,
+.theme-midnight {
+  color-scheme: dark;
+}
+.theme-light {
+  color-scheme: light;
 }
 
 /* CrabCache Design System v3 — tokens in design-tokens.css (see docs/DESIGN.md) */
@@ -468,7 +490,7 @@
    MISC UTILITY
    ============================================================== */
 
-.brand-logo    { border-radius: 0.5rem; flex-shrink: 0; }
+.brand-logo    { border-radius: 0.5rem; flex-shrink: 0; display: block; }
 .brand-logo-lg { width: 2.5rem; height: 2.5rem; }
 
 .nav-group-label {

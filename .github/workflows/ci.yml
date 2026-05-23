@@ -50,9 +50,7 @@ jobs:
           sudo apt-get install -y cmake pkg-config libssl-dev clang
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        uses: dtolnay/rust-toolchain@master
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -78,6 +76,12 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
   test:
     name: Test (core crates)
     needs: check
@@ -102,7 +106,7 @@ jobs:
           sudo apt-get install -y cmake pkg-config libssl-dev clang
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -148,7 +152,7 @@ jobs:
           sudo apt-get install -y cmake pkg-config libssl-dev clang
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -204,9 +208,7 @@ jobs:
           sudo apt-get install -y cmake pkg-config libssl-dev clang
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+        uses: dtolnay/rust-toolchain@master
 
       - name: Install trunk
         uses: taiki-e/install-action@v2

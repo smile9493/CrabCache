@@ -1,3 +1,4 @@
+use crab_composition::RequestComposition;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
@@ -40,6 +41,8 @@ pub struct SanitizedLogEntry {
     pub reasoning_strategy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_hit_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composition: Option<RequestComposition>,
 }
 
 impl SanitizedLogEntry {
@@ -54,6 +57,7 @@ impl SanitizedLogEntry {
         latency_ms: f64,
         cache_hit: bool,
         cache_tier: Option<String>,
+        composition: Option<RequestComposition>,
     ) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(body);
@@ -95,6 +99,7 @@ impl SanitizedLogEntry {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
+            composition,
         }
     }
 }
@@ -257,6 +262,7 @@ mod tests {
             150.5,
             false,
             None,
+            None,
         );
 
         assert_eq!(entry.content_length, 17);
@@ -272,10 +278,10 @@ mod tests {
     fn test_hash_consistency() {
         let body = b"identical request";
         let entry1 = SanitizedLogEntry::from_request(
-            body, None, None, None, None, "model", 0, 0.0, false, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None,
         );
         let entry2 = SanitizedLogEntry::from_request(
-            body, None, None, None, None, "model", 0, 0.0, false, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None,
         );
 
         assert_eq!(entry1.request_hash, entry2.request_hash);

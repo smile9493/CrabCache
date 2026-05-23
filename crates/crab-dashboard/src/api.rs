@@ -37,7 +37,7 @@ async fn http_error(resp: Response, request_epoch: u64) -> String {
 
 /// Check admin key against the server before entering the authenticated shell.
 pub async fn verify_admin_key(key: &str) -> Result<(), String> {
-    let url = format!("{}/overview", API_BASE);
+    let url = format!("{}/overview/core", API_BASE);
     let resp = Request::get(&url)
         .header(ADMIN_KEY_HEADER, key)
         .send()
@@ -46,6 +46,7 @@ pub async fn verify_admin_key(key: &str) -> Result<(), String> {
 
     match resp.status() {
         401 => Err("invalid_admin_key".to_string()),
+        304 => Ok(()),
         status if !resp.ok() => Err(format!("HTTP {}", status)),
         _ => Ok(()),
     }
@@ -154,6 +155,61 @@ pub async fn fetch_metrics() -> Result<MetricsSnapshot, String> {
 
 pub async fn fetch_overview() -> Result<crate::types::OverviewBundle, String> {
     fetch_json(&format!("{}/overview", API_BASE)).await
+}
+
+/// Result of an ETag-aware overview/core fetch.
+pub struct OverviewCoreResult {
+    pub core: Option<crate::types::OverviewCore>,
+    pub etag: String,
+}
+
+/// Fetch overview/core with If-None-Match for 304 support.
+/// When the server returns 304, `core` is `None` and the caller should not update signals.
+pub async fn fetch_overview_core(current_etag: &str) -> Result<OverviewCoreResult, String> {
+    let url = format!("{}/overview/core", API_BASE);
+    let (builder, epoch) = apply_admin_auth(Request::get(&url));
+    let builder = if !current_etag.is_empty() {
+        builder.header("If-None-Match", current_etag)
+    } else {
+        builder
+    };
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let new_etag = resp
+        .headers()
+        .get("etag")
+        .unwrap_or_default();
+
+    if resp.status() == 304 {
+        return Ok(OverviewCoreResult {
+            core: None,
+            etag: new_etag,
+        });
+    }
+
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+
+    let core: crate::types::OverviewCore = resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+    Ok(OverviewCoreResult {
+        core: Some(core),
+        etag: new_etag,
+    })
+}
+
+pub async fn fetch_overview_timeseries(window: &str) -> Result<crate::types::OverviewTimeseriesResponse, String> {
+    fetch_json(&format!("{}/overview/timeseries?window={}", API_BASE, window)).await
+}
+
+pub async fn fetch_overview_trace() -> Result<crate::types::TraceSummary, String> {
+    fetch_json(&format!("{}/overview/trace", API_BASE)).await
 }
 
 pub async fn fetch_domains() -> Result<Vec<DomainMetricsBucket>, String> {
@@ -455,4 +511,25 @@ pub async fn change_admin_key(
         "new_key": new_key,
     });
     put_json(&format!("{}/system/admin-key", API_BASE), &body).await
+}
+
+// ── Composition API ──────────────────────────────────────────────
+
+pub async fn fetch_composition_summary(
+    hours: u32,
+    project_id: Option<&str>,
+    consumer: Option<&str>,
+) -> Result<crate::types::CompositionSummaryResponse, String> {
+    let mut path = format!("{}/composition/summary?hours={}", API_BASE, hours);
+    if let Some(pid) = project_id.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&project_id={}", percent_encode_query(pid)));
+    }
+    if let Some(c) = consumer.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&consumer={}", percent_encode_query(c)));
+    }
+    fetch_json(&path).await
+}
+
+pub async fn fetch_composition_trends() -> Result<crate::types::CompositionTrendsResponse, String> {
+    fetch_json(&format!("{}/composition/trends", API_BASE)).await
 }

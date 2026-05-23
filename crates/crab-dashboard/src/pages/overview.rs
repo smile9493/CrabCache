@@ -2,49 +2,147 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
+use crate::page_visible::page_visible;
+use crate::types::TimeSeriesPoint;
 use crate::locale::{Translations, use_translations};
 use crate::types::{
-    GatewayHealth, MetricsSnapshot, OverviewBundle, OverviewOpsMetrics, OverviewSuggestion,
-    PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
+    GatewayHealth, MetricsSnapshot, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics,
+    OverviewSuggestion, PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
 };
+
+fn metrics_from_core(
+    core: &MetricsSnapshotCore,
+    points: &[TimeSeriesPoint],
+    window: &str,
+) -> MetricsSnapshot {
+    let (hourly_stats, daily_stats) = if window == "7d" {
+        (vec![], points.to_vec())
+    } else {
+        (points.to_vec(), vec![])
+    };
+    MetricsSnapshot {
+        qps: core.qps,
+        tps: core.tps,
+        l0_hits: core.l0_hits,
+        l1_hits: core.l1_hits,
+        l2_hits: core.l2_hits,
+        cache_misses: core.cache_misses,
+        cache_hit_tokens: core.cache_hit_tokens,
+        cache_miss_tokens: core.cache_miss_tokens,
+        total_input_tokens: core.total_input_tokens,
+        total_output_tokens: core.total_output_tokens,
+        total_tokens: core.total_tokens,
+        latency_l0_ms: core.latency_l0_ms,
+        latency_l1_ms: core.latency_l1_ms,
+        latency_l2_ms: core.latency_l2_ms,
+        latency_upstream_ms: core.latency_upstream_ms,
+        active_keys: core.active_keys,
+        uptime_hours: core.uptime_hours,
+        uptime_secs: core.uptime_secs,
+        hourly_stats,
+        daily_stats,
+        weekly_stats: vec![],
+        monthly_stats: vec![],
+        semantic_hits: core.semantic_hits,
+        semantic_rejected: core.semantic_rejected,
+        semantic_skipped: core.semantic_skipped,
+        prefix_cache_hit_tokens: core.prefix_cache_hit_tokens,
+        prefix_cache_miss_tokens: core.prefix_cache_miss_tokens,
+        prefix_cache_hit_ratio: core.prefix_cache_hit_ratio,
+        hit_rate_cumulative: core.hit_rate_cumulative,
+        hit_rate_5m: core.hit_rate_5m,
+        token_hit_rate_5m: core.token_hit_rate_5m,
+        qps_5m: core.qps_5m,
+        coalesced_total: core.coalesced_total,
+        consumer_buckets: core.consumer_buckets.clone(),
+        domain_buckets: core.domain_buckets.clone(),
+        metrics_sample_insufficient: core.metrics_sample_insufficient,
+        history_meta: core.history_meta.clone(),
+        tier_deltas_5m: core.tier_deltas_5m,
+    }
+}
 
 #[component]
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
-    let overview: RwSignal<Option<Result<OverviewBundle, String>>> = RwSignal::new(None);
+    let overview_core: RwSignal<Option<Result<OverviewCore, String>>> = RwSignal::new(None);
+    let trace_summary: RwSignal<Option<TraceSummary>> = RwSignal::new(None);
+    let ts_points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
+    let ts_window = RwSignal::new("1h".to_string());
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
+    let ts_generation = RwSignal::new(0u64);
+    let etag = RwSignal::new(String::new());
 
-    let load_overview = move || {
+    let load_core = move || {
         load_generation.update(|g| *g += 1);
         let request_id = load_generation.get();
+        let current_etag = etag.get();
         leptos::task::spawn_local(async move {
-            match api::fetch_overview().await {
-                Ok(b) => {
+            match api::fetch_overview_core(&current_etag).await {
+                Ok(result) => {
+                    etag.set(result.etag);
                     if load_generation.get() == request_id {
-                        overview.set(Some(Ok(b)));
-                        last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                        if let Some(core) = result.core {
+                            overview_core.set(Some(Ok(core)));
+                            last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                        }
                     }
                 }
                 Err(e) => {
                     if load_generation.get() == request_id {
-                        overview.set(Some(Err(e)));
+                        overview_core.set(Some(Err(e)));
                     }
                 }
             }
         });
     };
 
-    load_overview();
+    let load_trace = move || {
+        leptos::task::spawn_local(async move {
+            if let Ok(summary) = api::fetch_overview_trace().await {
+                trace_summary.set(Some(summary));
+            }
+        });
+    };
+
+    let load_timeseries = move || {
+        ts_generation.update(|g| *g += 1);
+        let request_id = ts_generation.get();
+        let window = ts_window.get_untracked();
+        leptos::task::spawn_local(async move {
+            match api::fetch_overview_timeseries(&window).await {
+                Ok(resp) => {
+                    if ts_generation.get() == request_id {
+                        ts_points.set(resp.points);
+                    }
+                }
+                Err(_) => {}
+            }
+        });
+    };
+
+    load_core();
+    load_trace();
+    load_timeseries();
+
+    Effect::new({
+        let load_timeseries = load_timeseries;
+        move |_| {
+            let _ = ts_window.get();
+            load_timeseries();
+        }
+    });
 
     leptos::task::spawn_local(async move {
         loop {
-            TimeoutFuture::new(5000).await;
-            if auto_refresh.get() {
-                load_overview();
+            TimeoutFuture::new(10_000).await;
+            if auto_refresh.get() && page_visible() {
+                load_core();
             }
         }
     });
@@ -69,7 +167,11 @@ pub fn OverviewPage() -> impl IntoView {
                         {t.overview_auto_refresh()}
                     </label>
                     <button
-                        on:click=move |_| load_overview()
+                        on:click=move |_| {
+                            load_core();
+                            load_trace();
+                            load_timeseries();
+                        }
                         class="btn btn-secondary text-xs"
                     >
                         {t.overview_refresh()}
@@ -77,7 +179,7 @@ pub fn OverviewPage() -> impl IntoView {
                 </div>
             </PageHeader>
 
-            {move || match overview.get() {
+            {move || match overview_core.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => {
                     let t = use_translations();
@@ -89,60 +191,173 @@ pub fn OverviewPage() -> impl IntoView {
                         </div>
                     }.into_any()
                 }
-                Some(Ok(b)) => {
-                    let m = b.metrics.clone();
-                    let health = b.health.clone();
-                    let prefix = b.prefix_cache.clone();
-                    let semantic = b.semantic.clone();
-                    let trace = b.trace_summary.clone();
-                    let ops = b.ops.clone();
-                    let suggestions = b.suggestions.clone();
-                    let show_upstream_cta = health.upstream_key_count == 0 && ops.upstream_key_count == 0;
-                    view! {
-                        <div class="space-y-6">
-                            {show_upstream_cta.then(|| view! {
-                                <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
-                                    <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
-                                    <a href="/upstream" class="btn btn-primary text-sm">
-                                        {t.overview_setup_upstream_link()}
-                                    </a>
-                                </div>
-                            })}
-                            <MetricsLegend />
-                            <OverviewHealthStrip health=health />
-                            <HistoryMetaHint metrics=m.clone() />
-                            <MetricsBento metrics=m.clone() suggestions=suggestions.clone() />
-                            <TraceCompareBanner trace=trace metrics=m.clone() />
-                            <OpsMetricsRow ops=ops.clone() />
-                            <PrefixCacheCard prefix=prefix.clone() />
-                            <TokenStats metrics=m.clone() prefix=prefix />
-                            <TimeSeriesChart metrics=m.clone() suggestions=suggestions />
-                            <div class="bento-grid-2">
-                                <CoalescingCard metrics=m.clone() ops=ops.clone() />
-                                <SemanticCacheCard metrics=m.clone() semantic=semantic />
-                            </div>
-                            <ConsumerHitTable metrics=m.clone() />
-                            <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() />
-                            <div class="bento-grid-3">
-                                <div class="bento-cell">
-                                    <CacheHitSection metrics=m.clone() />
-                                </div>
-                                <div class="bento-cell">
-                                    <CostSavingsSection ops=ops.clone() />
-                                </div>
-                                <div class="bento-cell">
-                                    <LatencySection metrics=m.clone() />
-                                </div>
-                            </div>
-                            <div class="bento-grid-2">
-                                <UpstreamKeyStrip ops=ops.clone() />
-                                <PrefixHealthCard ops=ops />
-                            </div>
-                            <ObservabilityFooter />
-                        </div>
-                    }.into_any()
-                }
+                Some(Ok(_b)) => view! {
+                    <OverviewContent
+                        overview_core
+                        trace_summary
+                        ts_points
+                        ts_window
+                    />
+                }.into_any(),
             }}
+        </div>
+    }
+}
+
+/// Content section rendered when core data is available.
+/// Uses Memo internally so each subsection only re-renders when its
+/// specific data has changed (by PartialEq).
+#[component]
+fn OverviewContent(
+    overview_core: RwSignal<Option<Result<OverviewCore, String>>>,
+    trace_summary: RwSignal<Option<TraceSummary>>,
+    ts_points: RwSignal<Vec<TimeSeriesPoint>>,
+    ts_window: RwSignal<String>,
+) -> impl IntoView {
+    let t = use_translations();
+
+    // Memo for metrics snapshot — only changes when derived value differs.
+    let metrics_memo = Memo::new(move |_| {
+        let core_opt = overview_core.get();
+        let core = match core_opt {
+            Some(Ok(ref c)) => c,
+            _ => return None,
+        };
+        let window = ts_window.get();
+        let points = ts_points.get();
+        Some(metrics_from_core(&core.metrics, &points, &window))
+    });
+
+    // Memo for health.
+    let health_memo = Memo::new(move |_| {
+        overview_core
+            .get()
+            .and_then(|r| r.ok())
+            .map(|c| c.health)
+    });
+
+    // Memo for prefix cache.
+    let prefix_memo = Memo::new(move |_| {
+        overview_core
+            .get()
+            .and_then(|r| r.ok())
+            .map(|c| c.prefix_cache)
+    });
+
+    // Memo for semantic config.
+    let semantic_memo = Memo::new(move |_| {
+        overview_core
+            .get()
+            .and_then(|r| r.ok())
+            .map(|c| c.semantic)
+    });
+
+    // Memo for ops.
+    let ops_memo = Memo::new(move |_| {
+        overview_core
+            .get()
+            .and_then(|r| r.ok())
+            .map(|c| c.ops)
+    });
+
+    // Memo for suggestions.
+    let suggestions_memo = Memo::new(move |_| {
+        overview_core
+            .get()
+            .and_then(|r| r.ok())
+            .map(|c| c.suggestions)
+    });
+
+    // Derive the upstream CTA signal — boolean-only, very cheap.
+    let show_cta = Memo::new(move |_| {
+        let core_opt = overview_core.get();
+        let core = match core_opt {
+            Some(Ok(ref c)) => c,
+            _ => return false,
+        };
+        core.health.upstream_key_count == 0 && core.ops.upstream_key_count == 0
+    });
+
+    // Trace from its own signal.
+    let trace = Memo::new(move |_| {
+        trace_summary.get().unwrap_or(TraceSummary {
+            hours: 24,
+            total_requests: 0,
+            cache_hit_ratio: 0.0,
+        })
+    });
+
+    view! {
+        <div class="space-y-6">
+            {move || show_cta.get().then(|| view! {
+                <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
+                    <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
+                    <a href="/upstream" class="btn btn-primary text-sm">
+                        {t.overview_setup_upstream_link()}
+                    </a>
+                </div>
+            })}
+            <MetricsLegend />
+            {move || health_memo.get().map(|h| view! { <OverviewHealthStrip health=h /> })}
+            {move || metrics_memo.get().map(|m| view! {
+                <HistoryMetaHint metrics=m.clone() />
+            })}
+            {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
+                <MetricsBento metrics=m.clone() suggestions=s.clone() />
+            })}
+            {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
+                <TraceCompareBanner trace=tr metrics=m.clone() />
+            })}
+            {move || ops_memo.get().map(|ops| view! {
+                <OpsMetricsRow ops=ops.clone() />
+            })}
+            {move || prefix_memo.get().zip(metrics_memo.get()).map(|(pref, _m)| view! {
+                <PrefixCacheCard prefix=pref.clone() />
+            })}
+            {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
+                <TokenStats metrics=m.clone() prefix=pref.clone() />
+            })}
+            {move || suggestions_memo.get().map(|s| {
+                view! {
+                    <TimeSeriesChart
+                        points=ts_points
+                        selected_view=ts_window
+                        suggestions=s
+                    />
+                }
+            })}
+            {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                <div class="bento-grid-2">
+                    <CoalescingCard metrics=m.clone() ops=ops.clone() />
+                    <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
+                </div>
+            })}
+            {move || metrics_memo.get().map(|m| view! {
+                <ConsumerHitTable metrics=m.clone() />
+            })}
+            {move || metrics_memo.get().map(|m| view! {
+                <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() />
+            })}
+            {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                <div class="bento-grid-3">
+                    <div class="bento-cell">
+                        <CacheHitSection metrics=m.clone() />
+                    </div>
+                    <div class="bento-cell">
+                        <CostSavingsSection ops=ops.clone() />
+                    </div>
+                    <div class="bento-cell">
+                        <LatencySection metrics=m.clone() />
+                    </div>
+                </div>
+            })}
+            {move || ops_memo.get().map(|ops| view! {
+                <div class="bento-grid-2">
+                    <UpstreamKeyStrip ops=ops.clone() />
+                    <PrefixHealthCard ops=ops.clone() />
+                </div>
+            })}
+            <ObservabilityFooter />
         </div>
     }
 }
@@ -595,26 +810,56 @@ fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> i
     }
 }
 
+const MAX_TIMESERIES_CHART_POINTS: usize = 36;
+
+fn compress_timeseries_points(data: Vec<TimeSeriesPoint>) -> Vec<TimeSeriesPoint> {
+    if data.len() <= MAX_TIMESERIES_CHART_POINTS {
+        return data;
+    }
+    data[data.len() - MAX_TIMESERIES_CHART_POINTS..].to_vec()
+}
+
 #[component]
 fn TimeSeriesChart(
-    metrics: MetricsSnapshot,
+    points: RwSignal<Vec<TimeSeriesPoint>>,
+    selected_view: RwSignal<String>,
     suggestions: Vec<OverviewSuggestion>,
 ) -> impl IntoView {
     let t = use_translations();
-    let selected_view = RwSignal::new("1h".to_string());
 
-    let current_data = move || {
-        let slice_last = |data: &[crate::types::TimeSeriesPoint], n: usize| {
-            let start = data.len().saturating_sub(n);
-            data[start..].to_vec()
-        };
-        match selected_view.get().as_str() {
-            "1h" => slice_last(&metrics.hourly_stats, 60),
-            "24h" => metrics.hourly_stats.clone(),
-            "7d" => metrics.daily_stats.clone(),
-            _ => slice_last(&metrics.hourly_stats, 60),
-        }
-    };
+    let chart_points = Memo::new(move |_| compress_timeseries_points(points.get()));
+
+    let x_labels = Signal::derive(move || {
+        chart_points
+            .get()
+            .iter()
+            .map(|p| p.timestamp.clone())
+            .collect::<Vec<_>>()
+    });
+
+    let series = Signal::derive(move || {
+        let points = chart_points.get();
+        vec![
+            ChartSeries {
+                label: t.overview_input_tokens().to_string(),
+                color: "var(--accent-primary)",
+                values: points
+                    .iter()
+                    .map(|p| Some(p.tokens as f64))
+                    .collect(),
+                dashed: false,
+            },
+            ChartSeries {
+                label: t.overview_requests().to_string(),
+                color: "var(--info)",
+                values: points
+                    .iter()
+                    .map(|p| Some(p.requests as f64))
+                    .collect(),
+                dashed: false,
+            },
+        ]
+    });
 
     view! {
         <div class="glass-card">
@@ -662,71 +907,13 @@ fn TimeSeriesChart(
 
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
-            <div class="space-y-4">
-                {move || {
-                    let data = current_data();
-                    let t = use_translations();
-                    if data.is_empty() {
-                        view! {
-                            <div class="text-center py-8 text-theme-muted text-sm">
-                                {t.overview_collecting_timeseries()}
-                            </div>
-                        }.into_any()
-                    } else {
-                        let max_tokens = data.iter().map(|d| d.tokens).max().unwrap_or(1);
-                        let max_req = data.iter().map(|d| d.requests).max().unwrap_or(1) as f64;
-                        view! {
-                            <div class="space-y-3">
-                                {data.into_iter().map(|point| {
-                                    let pct = point.tokens as f64 / max_tokens as f64 * 100.0;
-                                    let hit_pct = if point.hit_rate > 0.0 {
-                                        point.hit_rate * 100.0
-                                    } else if point.requests > 0 {
-                                        point.cache_hits as f64 / point.requests as f64 * 100.0
-                                    } else {
-                                        0.0
-                                    };
-                                    let req_bar_pct = point.requests as f64 / max_req * 100.0;
-                                    let t = use_translations();
-                                    view! {
-                                        <div class="flex items-center gap-3">
-                                            <span class="w-20 text-xs text-theme-secondary font-mono">
-                                                {point.timestamp}
-                                            </span>
-                                            <div class="flex-1 space-y-1">
-                                                <div class="progress-bar h-4" title="tokens">
-                                                    <div
-                                                        class="progress-bar-fill flex items-center justify-end pr-2"
-                                                        style=format!("width: {}%", pct.min(100.0))
-                                                    >
-                                                        <span class="text-xs font-mono tabular-nums text-theme">
-                                                            {format_number(point.tokens)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div class="progress-bar h-2 opacity-70" title="requests">
-                                                    <div
-                                                        class="progress-bar-fill bg-accent/60"
-                                                        style=format!("width: {}%", req_bar_pct.min(100.0))
-                                                    ></div>
-                                                </div>
-                                            </div>
-                                            <div class="w-28 text-right">
-                                                <div class="text-xs text-theme-muted">
-                                                    {format!("{} {}", point.requests, t.overview_requests())}
-                                                </div>
-                                                <div class="text-xs text-accent">
-                                                    {format!("{:.0}% {}", hit_pct, t.overview_trend_hit_rate())}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    }
-                                }).collect::<Vec<_>>()}
-                            </div>
-                        }.into_any()
-                    }
-                }}
-            </div>
+            <LineChart
+                x_labels=x_labels
+                series=series
+                height_px=220
+                y_unit="tokens"
+                empty_message=t.overview_collecting_timeseries()
+            />
         </div>
     }
 }

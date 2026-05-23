@@ -65,6 +65,7 @@ pub struct GatewayMetrics {
     pub rejected_requests: IntCounterVec,
     pub upstream_key_requests: IntCounterVec,
     pub upstream_key_inflight: IntGaugeVec,
+    pub client_key_inflight: IntGaugeVec,
     pub upstream_key_retries: IntCounterVec,
     pub reasoning_store_lookups: IntCounterVec,
     pub prefix_break: IntCounter,
@@ -74,6 +75,9 @@ pub struct GatewayMetrics {
     pub state_persist_errors_total: IntCounter,
     pub reasoning_store_rejected_bytes: IntCounter,
     pub pipeline_selected: IntCounterVec,
+    pub composition_requests: IntCounterVec,
+    pub composition_component: IntCounterVec,
+    pub composition_tool_count: HistogramVec,
 }
 
 impl GatewayMetrics {
@@ -215,6 +219,14 @@ impl GatewayMetrics {
             &["key_id"],
         )?;
 
+        let client_key_inflight = IntGaugeVec::new(
+            Opts::new(
+                "gateway_client_key_inflight",
+                "In-flight client API key requests by key id and consumer name",
+            ),
+            &["key_id", "consumer"],
+        )?;
+
         let upstream_key_retries = IntCounterVec::new(
             Opts::new(
                 "gateway_upstream_key_retries_total",
@@ -269,6 +281,31 @@ impl GatewayMetrics {
             &["pipeline", "profile", "reason"],
         )?;
 
+        let composition_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_composition_requests_total",
+                "Request composition counts by project_id, pipeline, has_tools, and message count bucket",
+            ),
+            &["project_id", "pipeline", "has_tools", "msg_bucket"],
+        )?;
+
+        let composition_component = IntCounterVec::new(
+            Opts::new(
+                "gateway_composition_component_total",
+                "Cursor component detection counts by component name and presence",
+            ),
+            &["component", "present"],
+        )?;
+
+        let composition_tool_count = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_composition_tool_count",
+                "Distribution of tool count per request",
+            )
+            .buckets(vec![0.0, 1.0, 5.0, 10.0, 20.0, 50.0]),
+            &[],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -286,6 +323,7 @@ impl GatewayMetrics {
             rejected_requests,
             upstream_key_requests,
             upstream_key_inflight,
+            client_key_inflight,
             upstream_key_retries,
             reasoning_store_lookups,
             prefix_break,
@@ -295,6 +333,9 @@ impl GatewayMetrics {
             state_persist_errors_total,
             reasoning_store_rejected_bytes,
             pipeline_selected,
+            composition_requests,
+            composition_component,
+            composition_tool_count,
         })
     }
 
@@ -315,6 +356,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.rejected_requests.clone()))?;
         registry.register(Box::new(self.upstream_key_requests.clone()))?;
         registry.register(Box::new(self.upstream_key_inflight.clone()))?;
+        registry.register(Box::new(self.client_key_inflight.clone()))?;
         registry.register(Box::new(self.upstream_key_retries.clone()))?;
         registry.register(Box::new(self.reasoning_store_lookups.clone()))?;
         registry.register(Box::new(self.prefix_break.clone()))?;
@@ -324,6 +366,9 @@ impl GatewayMetrics {
         registry.register(Box::new(self.state_persist_errors_total.clone()))?;
         registry.register(Box::new(self.reasoning_store_rejected_bytes.clone()))?;
         registry.register(Box::new(self.pipeline_selected.clone()))?;
+        registry.register(Box::new(self.composition_requests.clone()))?;
+        registry.register(Box::new(self.composition_component.clone()))?;
+        registry.register(Box::new(self.composition_tool_count.clone()))?;
         Ok(())
     }
 
@@ -331,6 +376,39 @@ impl GatewayMetrics {
         self.pipeline_selected
             .with_label_values(&[pipeline, profile, reason])
             .inc();
+    }
+
+    pub fn record_composition_metrics(&self, comp: &crab_composition::RequestComposition) {
+        let project_id = comp.project_id.as_deref().unwrap_or("none");
+        let has_tools = if comp.has_tools { "true" } else { "false" };
+        let mc = comp.message_count;
+        let msg_bucket = if mc <= 10 { "0-10" }
+            else if mc <= 50 { "11-50" }
+            else if mc <= 100 { "51-100" }
+            else { "100+" };
+
+        self.composition_requests
+            .with_label_values(&[project_id, &comp.pipeline, has_tools, msg_bucket])
+            .inc();
+
+        // Component detection counters
+        let components = [
+            ("rules", comp.components.rules.present),
+            ("skills", comp.components.skills.present),
+            ("mcp", comp.components.mcp.present),
+            ("subagent", comp.components.subagent.present),
+        ];
+        for (name, present) in &components {
+            let present_str = if *present { "true" } else { "false" };
+            self.composition_component
+                .with_label_values(&[name, present_str])
+                .inc();
+        }
+
+        // Tool count histogram
+        self.composition_tool_count
+            .with_label_values(&[])
+            .observe(comp.tool_count as f64);
     }
 
     pub fn record_state_persist_success(&self) {
@@ -368,6 +446,18 @@ impl GatewayMetrics {
         self.upstream_key_inflight
             .with_label_values(&[key_id])
             .set(inflight);
+    }
+
+    pub fn set_client_key_inflight(&self, key_id: &str, consumer: &str, inflight: i64) {
+        self.client_key_inflight
+            .with_label_values(&[key_id, consumer])
+            .set(inflight);
+    }
+
+    pub fn remove_client_key_inflight(&self, key_id: &str, consumer: &str) {
+        let _ = self
+            .client_key_inflight
+            .remove_label_values(&[key_id, consumer]);
     }
 
     pub fn record_upstream_key_retry(&self, outcome: &str) {

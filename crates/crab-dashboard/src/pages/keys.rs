@@ -60,6 +60,13 @@ pub fn KeysPage() -> impl IntoView {
     load_keys();
     load_network_info();
 
+    leptos::task::spawn_local(async move {
+        loop {
+            gloo_timers::future::TimeoutFuture::new(5_000).await;
+            load_keys();
+        }
+    });
+
     let show_create = RwSignal::new(false);
     let new_key_name = RwSignal::new(String::new());
     let new_key_domain = RwSignal::new(String::new());
@@ -68,6 +75,7 @@ pub fn KeysPage() -> impl IntoView {
     let new_key_budget = RwSignal::new(1_000_000u64);
     let new_key_unlimited = RwSignal::new(true);
     let new_key_quota = RwSignal::new(1_000_000i64);
+    let new_key_max_concurrent = RwSignal::new(0u32);
     let new_key_pipeline = RwSignal::new(String::new());
     let new_key_upstream_profile = RwSignal::new(String::new());
     let pipeline_profiles: RwSignal<Option<Vec<String>>> = RwSignal::new(None);
@@ -175,6 +183,7 @@ pub fn KeysPage() -> impl IntoView {
                     Some(p)
                 }
             },
+            max_concurrent: Some(new_key_max_concurrent.get()),
         };
         leptos::task::spawn_local(async move {
             match api::create_key(&req).await {
@@ -203,6 +212,7 @@ pub fn KeysPage() -> impl IntoView {
     let edit_pipeline = RwSignal::new(String::new());
     let edit_upstream_profile = RwSignal::new(String::new());
     let edit_enabled = RwSignal::new(true);
+    let edit_max_concurrent = RwSignal::new(0u32);
 
     let start_edit = move |key: ApiKey| {
         editing_key_id.set(Some(key.id.clone()));
@@ -212,6 +222,7 @@ pub fn KeysPage() -> impl IntoView {
         edit_pipeline.set(key.pipeline.clone().unwrap_or_default());
         edit_upstream_profile.set(key.upstream_profile.clone().unwrap_or_default());
         edit_enabled.set(key.active);
+        edit_max_concurrent.set(key.max_concurrent);
     };
 
     let cancel_edit = move || {
@@ -226,6 +237,7 @@ pub fn KeysPage() -> impl IntoView {
         let pipeline_val = edit_pipeline.get();
         let upstream_profile_val = edit_upstream_profile.get();
         let enabled_val = edit_enabled.get();
+        let max_concurrent_val = edit_max_concurrent.get();
 
         let req = PatchKeyRequest {
             name: {
@@ -249,6 +261,7 @@ pub fn KeysPage() -> impl IntoView {
                 let v = upstream_profile_val.trim().to_string();
                 if v.is_empty() { None } else { Some(v) }
             },
+            max_concurrent: Some(max_concurrent_val),
         };
         leptos::task::spawn_local(async move {
             let _ = api::patch_key(&id, &req).await;
@@ -515,6 +528,12 @@ pub fn KeysPage() -> impl IntoView {
                                     />
                                 </div>
                             </div>
+                            <div>
+                                <label class="block text-xs text-theme-muted mb-1">{t.keys_max_concurrent_label()}</label>
+                                <input type="number" min="0" prop:value=move || new_key_max_concurrent.get() on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse() { new_key_max_concurrent.set(v); }
+                                } class="input w-full" />
+                            </div>
                             {move || {
                                 if !create_error.get().is_empty() {
                                     view! { <div class="text-xs text-error">{create_error.get()}</div> }.into_any()
@@ -671,6 +690,7 @@ pub fn KeysPage() -> impl IntoView {
                                             <th>{t.keys_col_name()}</th>
                                             <th>{t.keys_col_key()}</th>
                                             <th>{t.keys_col_quota()}</th>
+                                            <th>{t.keys_col_concurrency()}</th>
                                             <th>{t.keys_col_tokens()}</th>
                                             <th>{t.keys_col_status()}</th>
                                             <th class="text-right">""</th>
