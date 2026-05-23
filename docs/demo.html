@@ -1,393 +1,75 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="theme-dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CrabCache Admin Dashboard — 在线演示</title>
-  <style>
-    :root {
-      --bg: #0d1117;
-      --bg-sidebar: #0a0e13;
-      --bg-card: #161b22;
-      --bg-elevated: #21262d;
-      --bg-input: #0d1117;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --accent: #f78166;
-      --accent-bright: #ff967d;
-      --green: #3fb950;
-      --blue: #58a6ff;
-      --yellow: #d2991d;
-      --purple: #bc8cff;
-      --red: #f85149;
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-      --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
-    }
-
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: var(--font);
-      background: var(--bg);
-      color: var(--text);
-      display: flex;
-      min-height: 100vh;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    /* Sidebar */
-    aside {
-      width: 230px;
-      min-width: 230px;
-      background: var(--bg-sidebar);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-    }
-
-    .sidebar-header {
-      padding: 20px 18px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .sidebar-header .logo { font-size: 1.5em; }
-    .sidebar-header h2 {
-      font-size: 1.1em;
-      font-weight: 700;
-      background: linear-gradient(135deg, var(--accent), var(--yellow));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    nav { padding: 12px 10px; flex: 1; }
-    .nav-section {
-      font-size: 0.68em;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: var(--text-muted);
-      padding: 12px 8px 6px;
-    }
-    .nav-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.88em;
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.15s;
-      text-decoration: none;
-    }
-    .nav-item:hover { background: var(--bg-elevated); color: var(--text); }
-    .nav-item.active { background: rgba(247,129,102,0.12); color: var(--accent-bright); }
-    .nav-item .icon { font-size: 1.1em; width: 20px; text-align: center; }
-
-    /* Main */
-    main {
-      flex: 1;
-      padding: 28px 32px;
-      overflow-y: auto;
-      max-height: 100vh;
-    }
-
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 28px;
-    }
-    .topbar h1 { font-size: 1.4em; font-weight: 600; }
-    .topbar-right {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 0.85em;
-      color: var(--text-muted);
-    }
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      display: inline-block;
-      box-shadow: 0 0 6px var(--green);
-      animation: pulse 2s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-
-    /* Stats row */
-    .stats-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-    .stat-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 18px 20px;
-    }
-    .stat-card .label {
-      font-size: 0.8em;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .stat-card .value {
-      font-size: 1.9em;
-      font-weight: 700;
-      font-family: var(--mono);
-    }
-    .stat-card .trend {
-      font-size: 0.78em;
-      margin-top: 4px;
-    }
-    .trend.up { color: var(--green); }
-    .trend.down { color: var(--red); }
-
-    .value.accent { background: linear-gradient(135deg, var(--accent), var(--yellow)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-    .value.green { color: var(--green); }
-    .value.blue { color: var(--blue); }
-
-    /* Panel */
-    .panel {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      margin-bottom: 20px;
-      overflow: hidden;
-    }
-    .panel-header {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-weight: 600;
-      font-size: 0.92em;
-    }
-    .panel-header .meta { font-size: 0.8em; color: var(--text-muted); font-weight: 400; }
-
-    /* Cache chart */
-    .cache-chart { padding: 20px 24px 24px; }
-    .chart-row { display: flex; gap: 20px; align-items: flex-end; margin-bottom: 8px; }
-    .chart-bar-group { flex: 1; text-align: center; }
-    .chart-bar-wrap { display: flex; justify-content: center; gap: 4px; align-items: flex-end; height: 160px; }
-    .chart-bar {
-      width: 22px;
-      border-radius: 4px 4px 0 0;
-      transition: height 0.3s;
-      position: relative;
-    }
-    .chart-bar:hover { filter: brightness(1.3); }
-    .chart-bar.hit { background: linear-gradient(180deg, var(--green), rgba(63,185,80,0.4)); }
-    .chart-bar.miss { background: linear-gradient(180deg, var(--accent), rgba(247,129,102,0.4)); width: 16px; }
-    .chart-label { font-size: 0.72em; color: var(--text-muted); margin-top: 6px; }
-    .chart-legend {
-      display: flex;
-      gap: 20px;
-      justify-content: center;
-      margin-top: 12px;
-      font-size: 0.78em;
-      color: var(--text-muted);
-    }
-    .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
-    .legend-dot.hit { background: var(--green); }
-    .legend-dot.miss { background: var(--accent); }
-
-    /* Table */
-    table { width: 100%; border-collapse: collapse; font-size: 0.84em; }
-    th {
-      text-align: left;
-      padding: 10px 20px;
-      font-weight: 600;
-      color: var(--text-muted);
-      font-size: 0.8em;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      border-bottom: 1px solid var(--border);
-    }
-    td { padding: 10px 20px; border-bottom: 1px solid var(--border); }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255,255,255,0.02); }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 10px;
-      border-radius: 10px;
-      font-size: 0.78em;
-      font-weight: 600;
-    }
-    .badge-success { background: rgba(63,185,80,0.15); color: var(--green); }
-    .badge-warning { background: rgba(210,153,29,0.15); color: var(--yellow); }
-    .badge-error { background: rgba(248,81,73,0.15); color: var(--red); }
-    .badge-info { background: rgba(88,166,255,0.15); color: var(--blue); }
-
-    code { font-family: var(--mono); font-size: 0.82em; }
-    .mono { font-family: var(--mono); font-size: 0.85em; }
-
-    /* Tabs */
-    .tabs {
-      display: flex;
-      gap: 0;
-      border-bottom: 1px solid var(--border);
-      padding: 0 20px;
-    }
-    .tab {
-      padding: 10px 16px;
-      font-size: 0.84em;
-      color: var(--text-muted);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      transition: all 0.15s;
-      background: none;
-      border-top: none;
-      border-left: none;
-      border-right: none;
-      font-family: var(--font);
-    }
-    .tab:hover { color: var(--text); }
-    .tab.active { color: var(--accent-bright); border-bottom-color: var(--accent); }
-
-    /* Cache tier cards */
-    .tier-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      padding: 20px 24px;
-    }
-    .tier-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-    }
-    .tier-card .tier-name { font-size: 0.72em; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px; }
-    .tier-card .tier-val { font-size: 1.4em; font-weight: 700; font-family: var(--mono); }
-    .tier-card .tier-sub { font-size: 0.76em; color: var(--text-muted); margin-top: 2px; }
-
-    .c0 { color: var(--accent-bright); }
-    .c1 { color: var(--blue); }
-    .c2 { color: var(--purple); }
-
-    .progress-bar {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--bg-elevated);
-      margin-top: 8px;
-      overflow: hidden;
-    }
-    .progress-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.5s;
-    }
-    .fill-green { background: var(--green); }
-    .fill-accent { background: var(--accent); }
-    .fill-blue { background: var(--blue); }
-
-    /* Footer watermark */
-    .demo-watermark {
-      text-align: center;
-      padding: 8px;
-      font-size: 0.72em;
-      color: var(--text-muted);
-      border-top: 1px solid var(--border);
-      margin-top: auto;
-    }
-
-    /* Responsive */
-    @media (max-width: 900px) {
-      aside { display: none; }
-      .stats-row { grid-template-columns: repeat(2, 1fr); }
-      .tier-row { grid-template-columns: 1fr; }
-      main { padding: 20px 16px; }
-    }
-  </style>
+  <link rel="stylesheet" href="assets/design-tokens.css">
+  <link rel="stylesheet" href="assets/demo-layout.css">
 </head>
 <body>
 
-<!-- Sidebar -->
-<aside>
+<aside class="sidebar">
   <div class="sidebar-header">
     <span class="logo">🦀</span>
-    <h2>CrabCache</h2>
+    <h2 class="brand-gradient-text">CrabCache</h2>
   </div>
-  <nav>
-    <div class="nav-section">主菜单</div>
+  <nav class="sidebar-nav">
+    <div class="nav-group-label">主菜单</div>
     <a class="nav-item active" href="#"><span class="icon">📊</span> 概览</a>
     <a class="nav-item" href="#"><span class="icon">🔑</span> API 密钥</a>
     <a class="nav-item" href="#"><span class="icon">🗄️</span> 缓存配置</a>
     <a class="nav-item" href="#"><span class="icon">🧠</span> Reasoning</a>
-    <div class="nav-section">监控</div>
+    <div class="nav-group-label">监控</div>
     <a class="nav-item" href="#"><span class="icon">📈</span> 实时指标</a>
     <a class="nav-item" href="#"><span class="icon">📋</span> 请求日志</a>
     <a class="nav-item" href="#"><span class="icon">🔍</span> Trace 分析</a>
-    <div class="nav-section">管理</div>
+    <div class="nav-group-label">管理</div>
     <a class="nav-item" href="#"><span class="icon">🔗</span> 路由管理</a>
     <a class="nav-item" href="#"><span class="icon">⚙️</span> 系统配置</a>
   </nav>
   <div class="demo-watermark">
-    模拟演示 · 数据为示例<br>
-    v2.0.0 · MIT License
+    界面规范预览 · 数据为示意（非 Dashboard API）<br>
+    规范见 <a href="DESIGN.md" style="color:var(--cc-info)">docs/DESIGN.md</a>
   </div>
 </aside>
 
-<!-- Main Content -->
-<main>
-  <div class="topbar">
-    <h1>📊 仪表盘概览</h1>
+<main class="main-content">
+  <header class="page-header">
+    <h1 class="page-header-title">📊 仪表盘概览</h1>
     <div class="topbar-right">
       <span class="status-dot"></span> 网关运行中 · 已运行 <strong>14d 6h</strong>
     </div>
-  </div>
+  </header>
 
-  <!-- Stats -->
   <div class="stats-row">
-    <div class="stat-card">
-      <div class="label">📈 请求速率 (5min)</div>
-      <div class="value accent">1,247</div>
-      <div class="trend up">▲ 12.3% QPS</div>
+    <div class="metric-card">
+      <div class="metric-card-label">📈 请求速率 (5min)</div>
+      <div class="metric-card-value value accent">1,247</div>
+      <div class="metric-card-trend trend up">▲ 12.3% QPS</div>
     </div>
-    <div class="stat-card">
-      <div class="label">🎯 缓存命中率 (5min)</div>
-      <div class="value green">99.68%</div>
-      <div class="trend up">▲ 0.5% vs 24h</div>
+    <div class="metric-card">
+      <div class="metric-card-label">🎯 L3 前缀命中率 (5min)</div>
+      <div class="metric-card-value value green">示例</div>
+      <div class="metric-card-trend trend up">▲ 见 Prometheus / Dashboard</div>
     </div>
-    <div class="stat-card">
-      <div class="label">⚡ P99 缓存延迟</div>
-      <div class="value blue">19.2ms</div>
-      <div class="trend down">▼ 2.1ms vs 1h</div>
+    <div class="metric-card">
+      <div class="metric-card-label">⚡ P99 代理延迟</div>
+      <div class="metric-card-value value blue">19.2ms</div>
+      <div class="metric-card-trend trend down">▼ 示意数据</div>
     </div>
-    <div class="stat-card">
-      <div class="label">💰 今日成本节省 (估算)</div>
-      <div class="value">$<span class="accent">847.32</span></div>
-      <div class="trend up">▲ 估算基于 DeepSeek 定价</div>
+    <div class="metric-card">
+      <div class="metric-card-label">🗄️ 网关 L0–L2 命中 (5min)</div>
+      <div class="metric-card-value">低</div>
+      <div class="metric-card-trend trend up">▲ 典型聊天场景占比小</div>
     </div>
   </div>
 
-  <!-- Cache hit rate chart + tier breakdown -->
-  <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:20px;">
-    <!-- Chart -->
-    <div class="panel">
+  <div class="demo-grid-2-1">
+    <div class="glass-card">
       <div class="panel-header">
-        缓存命中率趋势（近 12 小时）
-        <span class="meta">综合 L0+L1+L2</span>
+        <span>L3 前缀命中趋势（近 12 小时）</span>
+        <span class="panel-header-meta">示例数据 · 非实测</span>
       </div>
       <div class="cache-chart">
         <div class="chart-row">
@@ -411,39 +93,37 @@
       </div>
     </div>
 
-    <!-- Cache tier breakdown -->
-    <div class="panel">
-      <div class="panel-header">缓存层级分布</div>
+    <div class="glass-card">
+      <div class="panel-header"><span>缓存层级分布</span></div>
       <div class="tier-row" style="grid-template-columns:1fr;">
         <div class="tier-card">
-          <div class="tier-name c0">L0 · Moka 内存缓存</div>
-          <div class="tier-val c0">93.0%</div>
-          <div class="tier-sub">P99 &lt; 100ns · 命中 11,482 req/h</div>
-          <div class="progress-bar"><div class="progress-fill fill-accent" style="width:93%"></div></div>
+          <div class="tier-name c0">L3 · DeepSeek 前缀</div>
+          <div class="tier-val c0">主路径</div>
+          <div class="tier-sub">prompt_cache_hit_tokens · 多轮对话降本</div>
+          <div class="progress-bar"><div class="progress-fill fill-accent" style="width:72%"></div></div>
         </div>
         <div class="tier-card">
-          <div class="tier-name c1">L1 · Redis 分布式</div>
-          <div class="tier-val c1">0.4%</div>
-          <div class="tier-sub">P99 &lt; 5ms · 命中 49 req/h</div>
-          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:0.4%"></div></div>
+          <div class="tier-name c1">L0–L1 · 网关精确缓存</div>
+          <div class="tier-val c1">低</div>
+          <div class="tier-sub">需请求 body 完全一致</div>
+          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:8%"></div></div>
         </div>
         <div class="tier-card">
-          <div class="tier-name c2">L2 · Qdrant 语义</div>
-          <div class="tier-val c2">6.3%</div>
-          <div class="tier-sub">P99 &lt; 20ms · 相似度 ≥ 0.95</div>
-          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:6.3%"></div></div>
+          <div class="tier-name c2">L2 · 语义（可选）</div>
+          <div class="tier-val c2">可选</div>
+          <div class="tier-sub">相似 ≠ 可复用输出，收益有限</div>
+          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:5%"></div></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- API Keys table -->
-  <div class="panel">
+  <div class="glass-card">
     <div class="panel-header">
-      🔑 API 密钥管理
-      <span class="meta">共 24 个密钥 · 21 启用 · 3 已吊销</span>
+      <span>🔑 API 密钥管理</span>
+      <span class="panel-header-meta">共 24 个密钥 · 21 启用 · 3 已吊销</span>
     </div>
-    <table>
+    <table class="table">
       <thead>
         <tr>
           <th>名称 / 标签</th>
@@ -456,48 +136,47 @@
       </thead>
       <tbody>
         <tr>
-          <td><strong>production-default</strong><br><span style="font-size:0.75em;color:var(--text-muted)">主生产密钥</span></td>
+          <td><strong>production-default</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">主生产密钥</span></td>
           <td><code>sk-cc-a1b2c3d4e5f6...</code></td>
           <td><span class="badge badge-success">活跃</span></td>
           <td><span class="mono">1.2M tokens</span></td>
           <td>2026-03-15</td>
-          <td style="color:var(--text-muted);font-size:0.82em;">编辑 · 吊销</td>
+          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
         </tr>
         <tr>
-          <td><strong>cursor-agent-team</strong><br><span style="font-size:0.75em;color:var(--text-muted)">Cursor IDE 团队</span></td>
+          <td><strong>cursor-agent-team</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">Cursor IDE 团队</span></td>
           <td><code>sk-cc-f7a8b9c0d1e2...</code></td>
           <td><span class="badge badge-success">活跃</span></td>
           <td><span class="mono">847K tokens</span></td>
           <td>2026-04-02</td>
-          <td style="color:var(--text-muted);font-size:0.82em;">编辑 · 吊销</td>
+          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
         </tr>
         <tr>
-          <td><strong>dev-testing</strong><br><span style="font-size:0.75em;color:var(--text-muted)">开发测试</span></td>
+          <td><strong>dev-testing</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">开发测试</span></td>
           <td><code>sk-cc-9a8b7c6d5e4f...</code></td>
           <td><span class="badge badge-warning">限额</span></td>
           <td><span class="mono">32K tokens</span></td>
           <td>2026-05-10</td>
-          <td style="color:var(--text-muted);font-size:0.82em;">编辑 · 吊销</td>
+          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
         </tr>
         <tr>
-          <td><strong>deprecated-v1</strong><br><span style="font-size:0.75em;color:var(--text-muted)">旧版密钥</span></td>
+          <td><strong>deprecated-v1</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">旧版密钥</span></td>
           <td><code>sk-cc-ffff00001111...</code></td>
           <td><span class="badge badge-error">已吊销</span></td>
           <td><span class="mono">0 tokens</span></td>
           <td>2026-02-20</td>
-          <td style="color:var(--text-muted);font-size:0.82em;">重新启用</td>
+          <td style="color:var(--cc-text-muted);font-size:0.82em;">重新启用</td>
         </tr>
       </tbody>
     </table>
   </div>
 
-  <!-- Request log -->
-  <div class="panel">
+  <div class="glass-card">
     <div class="panel-header">
-      📋 实时请求日志
-      <span class="meta">最近 25 条 · 自动刷新</span>
+      <span>📋 实时请求日志</span>
+      <span class="panel-header-meta">最近 25 条 · 自动刷新</span>
     </div>
-    <table>
+    <table class="table">
       <thead>
         <tr>
           <th>时间</th>

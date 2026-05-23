@@ -57,8 +57,8 @@ pub fn LivePage() -> impl IntoView {
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
 
-    /// Fetch consumers from live-metrics/consumers endpoint (lightweight).
-    /// Falls back to fetch_keys if consumers endpoint is not available.
+    // Fetch consumers from live-metrics/consumers endpoint (lightweight).
+    // Falls back to fetch_keys if consumers endpoint is not available.
     let load_consumers = move || {
         leptos::task::spawn_local(async move {
             // Try the lightweight consumers endpoint first.

@@ -342,11 +342,12 @@ fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     let by_model = prefix.by_model.clone();
 
     view! {
-        <div class="glass-card">
-            <h3 class="text-sm font-medium text-theme-secondary mb-1">
-                {t.overview_prefix_cache_title()}
-            </h3>
-            <p class="text-xs text-theme-muted mb-4">{t.overview_prefix_cache_desc()}</p>
+        <div class="glass-card glass-card-flush">
+            <crate::components::ui::PanelHeader
+                title=move || t.overview_prefix_cache_title().to_string()
+                meta=move || t.overview_prefix_cache_desc().to_string()
+            />
+            <div class="p-5 pt-0">
             <div class="flex flex-wrap items-end gap-6 mb-4">
                 <div>
                     <div class="text-3xl font-mono tabular-nums text-accent font-semibold">
@@ -391,6 +392,7 @@ fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
                     </div>
                 </div>
             })}
+            </div>
         </div>
     }
 }
