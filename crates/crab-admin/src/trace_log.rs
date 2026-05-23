@@ -7,6 +7,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 /// China Standard Time (UTC+8), no DST.
 fn beijing_offset() -> FixedOffset {
@@ -171,54 +173,257 @@ pub fn load_trace_bytes(path: &str, max_bytes: usize) -> (Vec<u8>, bool) {
     (buf, truncated)
 }
 
-/// TTL for shared live trace parse cache (mtime-invalidated).
-pub const LIVE_TRACE_CACHE_TTL: Duration = Duration::from_secs(1);
+/// Default TTL for the live trace parse cache.
+pub const LIVE_TRACE_CACHE_TTL: Duration = Duration::from_secs(3);
 
-/// Parsed tail of trace.jsonl shared across live-metrics requests.
-#[derive(Debug, Clone, Default)]
-pub struct LiveTraceCache {
-    parsed_at: Option<Instant>,
-    file_mtime: Option<SystemTime>,
-    window_secs: u32,
-    max_bytes: usize,
-    entries: Arc<Vec<TraceLogEntry>>,
+/// Configurable TTL via environment variable `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS`.
+pub fn live_trace_cache_ttl() -> Duration {
+    std::env::var("CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(LIVE_TRACE_CACHE_TTL)
 }
 
-/// Load entries for the window, reusing parse when mtime and params are unchanged within TTL.
+/// Parsed tail of trace.jsonl shared across live-metrics requests.
+///
+/// Supports incremental reads: instead of re-reading the full tail on every poll,
+/// it tracks file size and only reads new bytes since the last polled offset.
+/// Rotation is detected when file size shrinks or when metadata shows a new inode.
+pub struct LiveTraceCache {
+    /// When the cache was last refreshed.
+    pub parsed_at: Option<Instant>,
+    /// Tracked file size for incremental reads.
+    pub file_len: u64,
+    /// File mtime for rotate detection.
+    pub file_mtime: Option<SystemTime>,
+    #[cfg(unix)]
+    /// Inode for robust rotate detection (Linux only).
+    pub file_inode: Option<u64>,
+    /// The live time window (seconds) that entries are filtered to.
+    pub window_secs: u32,
+    /// Buffered partial line bytes from the previous read (no trailing \n).
+    pub partial_line: Vec<u8>,
+    /// Cached entries in timestamp order (ascending).
+    pub entries: Vec<TraceLogEntry>,
+    /// Inline consumer HashSet for fast `live_distinct_consumers`.
+    pub consumers: HashSet<String>,
+    /// Immutable Arc snapshot returned on cache hit.
+    pub cached_arc: Arc<Vec<TraceLogEntry>>,
+}
+
+impl Default for LiveTraceCache {
+    fn default() -> Self {
+        Self {
+            parsed_at: None,
+            file_len: 0,
+            file_mtime: None,
+            #[cfg(unix)]
+            file_inode: None,
+            window_secs: 300,
+            partial_line: Vec::new(),
+            entries: Vec::new(),
+            consumers: HashSet::new(),
+            cached_arc: Arc::new(Vec::new()),
+        }
+    }
+}
+
+impl std::fmt::Debug for LiveTraceCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveTraceCache")
+            .field("parsed_at", &self.parsed_at)
+            .field("file_len", &self.file_len)
+            .field("file_mtime", &self.file_mtime)
+            .field("window_secs", &self.window_secs)
+            .field("partial_line_len", &self.partial_line.len())
+            .field("entries", &self.entries.len())
+            .field("consumers", &self.consumers.len())
+            .finish()
+    }
+}
+
+/// Load entries for the window with incremental tail support.
+///
+/// - **Cache hit**: file unchanged within TTL → returns cached `Arc`.
+/// - **Full rebuild**: rotation detected, window changed, or cache empty → reads
+///   the tail via `load_trace_bytes` and parses all lines.
+/// - **Incremental**: file grew → reads only new bytes since `file_len`, appends
+///   parsed entries to the in-memory buffer, prunes entries older than window.
 pub fn load_live_trace_entries_cached(
     cache: &RwLock<LiveTraceCache>,
     path: &str,
     window_secs: u32,
     max_bytes: usize,
 ) -> Arc<Vec<TraceLogEntry>> {
-    let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    let now_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let meta = std::fs::metadata(path).ok();
+    let file_len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+    #[cfg(unix)]
+    let inode = meta.as_ref().map(|m| m.ino());
+
+    // Fast path: return cached entries if nothing changed and TTL is fresh.
     {
         let guard = cache.read();
         if let Some(at) = guard.parsed_at {
-            if at.elapsed() < LIVE_TRACE_CACHE_TTL
-                && guard.window_secs == window_secs
-                && guard.max_bytes == max_bytes
-                && guard.file_mtime == mtime
-            {
-                return Arc::clone(&guard.entries);
+            let fresh = at.elapsed() < live_trace_cache_ttl();
+            let same_window = guard.window_secs == window_secs;
+            #[cfg(unix)]
+            let same_file = guard.file_mtime == mtime && guard.file_len == file_len && guard.file_inode == inode;
+            #[cfg(not(unix))]
+            let same_file = guard.file_mtime == mtime && guard.file_len == file_len;
+            if fresh && same_window && same_file {
+                return Arc::clone(&guard.cached_arc);
             }
         }
     }
 
-    let entries = if trace_log_available(path) {
-        load_trace_tail_for_window(path, window_secs, max_bytes)
+    let mut guard = cache.write();
+
+    // Detect rotation: file shrunk, disappeared, inode changed, or mtime changed unexpectedly.
+    let rotated = file_len < guard.file_len
+        || (guard.file_len > 0 && file_len == 0)
+        || (guard.file_len == 0 && file_len > 0 && guard.parsed_at.is_some());
+    #[cfg(unix)]
+    let rotated = rotated
+        || (guard.parsed_at.is_some()
+            && guard.file_inode.is_some()
+            && guard.file_inode != inode
+            && file_len > 0);
+
+    if rotated || guard.window_secs != window_secs || (guard.entries.is_empty() && file_len > 0) {
+        // ── Full rebuild ──────────────────────────────────────────────
+        let (bytes, truncated) = load_trace_bytes(path, max_bytes);
+        let mut entries = parse_trace_lines(&bytes, truncated);
+        let cutoff = now_ms.saturating_sub(u64::from(window_secs) * 1000);
+        entries.retain(|e| e.timestamp_ms >= cutoff);
+        entries.sort_by_key(|e| e.timestamp_ms);
+
+        let consumers: HashSet<String> = entries
+            .iter()
+            .filter_map(|e| e.consumer.as_ref().filter(|s| !s.is_empty()).cloned())
+            .collect();
+
+        let arc = Arc::new(entries.clone());
+        *guard = LiveTraceCache {
+            parsed_at: Some(Instant::now()),
+            file_len,
+            file_mtime: mtime,
+            #[cfg(unix)]
+            file_inode: inode,
+            window_secs,
+            partial_line: Vec::new(),
+            entries,
+            consumers,
+            cached_arc: arc.clone(),
+        };
+        return arc;
+    }
+
+    // ── Incremental: read new bytes since last poll ───────────────────
+    let mut entries_changed = false;
+    if file_len > guard.file_len {
+        entries_changed = true;
+        let read_size = (file_len - guard.file_len) as usize;
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return Arc::clone(&guard.cached_arc),
+        };
+        if file.seek(SeekFrom::Start(guard.file_len)).is_err() {
+            return Arc::clone(&guard.cached_arc);
+        }
+        let mut buf = vec![0u8; read_size];
+        if file.read_exact(&mut buf).is_err() {
+            return Arc::clone(&guard.cached_arc);
+        }
+
+        // Combine leftover partial line with new bytes, then split on \n.
+        let mut combined = Vec::new();
+        std::mem::swap(&mut combined, &mut guard.partial_line);
+        combined.extend_from_slice(&buf);
+
+        // Process the text. We use the fact that JSONL is valid UTF-8.
+        let text = match std::str::from_utf8(&combined) {
+            Ok(t) => t,
+            Err(_) => return Arc::clone(&guard.cached_arc),
+        };
+        let has_trailing_newline = text.ends_with('\n');
+
+        // Split into lines; the last "line" without \n is partial.
+        let mut lines: Vec<&str> = text.lines().collect();
+        if !has_trailing_newline && !lines.is_empty() {
+            if let Some(partial) = lines.pop() {
+                guard.partial_line = partial.as_bytes().to_vec();
+            }
+        }
+
+        let cutoff = now_ms.saturating_sub(u64::from(window_secs) * 1000);
+        for line in lines {
+            if !line.is_empty() {
+                if let Ok(entry) = serde_json::from_str::<TraceLogEntry>(line) {
+                    if entry.timestamp_ms >= cutoff {
+                        if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty()) {
+                            guard.consumers.insert(c.clone());
+                        }
+                        guard.entries.push(entry);
+                    }
+                }
+            }
+        }
+
+        guard.file_len = file_len;
+    }
+
+    guard.file_mtime = mtime;
+    guard.parsed_at = Some(Instant::now());
+
+    // Prune entries older than the window.
+    let cutoff = now_ms.saturating_sub(u64::from(window_secs) * 1000);
+    let before_retain = guard.entries.len();
+    guard.entries.retain(|e| e.timestamp_ms >= cutoff);
+    if guard.entries.len() != before_retain {
+        entries_changed = true;
+    }
+
+    // Cap memory: keep at most 50_000 entries.
+    const MAX_LIVE_ENTRIES: usize = 50_000;
+    let len = guard.entries.len();
+    if len > MAX_LIVE_ENTRIES {
+        guard.entries.drain(0..len - MAX_LIVE_ENTRIES);
+        entries_changed = true;
+    }
+
+    // Rebuild consumer set after pruning.
+    if entries_changed {
+        let new_consumers: HashSet<String> = guard
+            .entries
+            .iter()
+            .filter_map(|e| e.consumer.as_ref().filter(|s| !s.is_empty()).cloned())
+            .collect();
+        guard.consumers = new_consumers;
+    }
+
+    if entries_changed {
+        let arc = Arc::new(guard.entries.clone());
+        guard.cached_arc = Arc::clone(&arc);
+        arc
     } else {
-        Vec::new()
-    };
-    let arc = Arc::new(entries);
-    *cache.write() = LiveTraceCache {
-        parsed_at: Some(Instant::now()),
-        file_mtime: mtime,
-        window_secs,
-        max_bytes,
-        entries: Arc::clone(&arc),
-    };
-    arc
+        Arc::clone(&guard.cached_arc)
+    }
+}
+
+/// Fast consumer list from the live trace cache (avoids sorting).
+pub fn live_distinct_consumers(cache: &RwLock<LiveTraceCache>) -> Vec<String> {
+    let guard = cache.read();
+    let mut out: Vec<String> = guard.consumers.iter().cloned().collect();
+    out.sort_by(|a, b| b.cmp(a));
+    out
 }
 
 /// Recent distinct consumer names from trace entries (newest first).
@@ -568,6 +773,194 @@ mod tests {
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
+    }
+
+    // ── Incremental tail tests ─────────────────────────────────────
+
+    fn make_jsonl_line(ts: u64, consumer: &str) -> String {
+        format!(
+            r#"{{"timestamp_ms":{},"request_hash":"h{}","content_length":1,"semantic_cluster":0,"consumer":"{}","model":"m","prompt_tokens":1,"latency_ms":100.0,"upstream_latency_ms":null,"ttft_ms":null,"input_tokens":10,"output_tokens":5,"cache_hit":false,"cache_tier":null}}{}"#,
+            ts, ts, consumer, "\n"
+        )
+    }
+
+    #[test]
+    fn incremental_tail_appends_new_lines() {
+        let dir = std::env::temp_dir().join(format!("crab_inc_tail_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("trace.jsonl");
+
+        let cache: RwLock<LiveTraceCache> = RwLock::new(LiveTraceCache::default());
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Write initial 3 lines.
+        let initial = format!(
+            "{}{}{}",
+            make_jsonl_line(now_ms - 4000, "alpha"),
+            make_jsonl_line(now_ms - 3000, "beta"),
+            make_jsonl_line(now_ms - 2000, "alpha"),
+        );
+        std::fs::write(&path, &initial).unwrap();
+
+        // First call: full rebuild.
+        let entries1 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries1.len(), 3, "all three initial entries loaded");
+
+        let consumers1 = live_distinct_consumers(&cache);
+        assert!(consumers1.contains(&"alpha".to_string()));
+        assert!(consumers1.contains(&"beta".to_string()));
+
+        // Append 2 more lines.
+        let append = format!(
+            "{}{}",
+            make_jsonl_line(now_ms - 1000, "gamma"),
+            make_jsonl_line(now_ms - 500, "alpha"),
+        );
+        std::fs::write(&path, format!("{initial}{append}")).unwrap();
+
+        // Second call: should be incremental, only parse new lines.
+        let entries2 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries2.len(), 5, "all five entries after incremental append");
+
+        let consumers2 = live_distinct_consumers(&cache);
+        assert!(consumers2.contains(&"alpha".to_string()));
+        assert!(consumers2.contains(&"beta".to_string()));
+        assert!(consumers2.contains(&"gamma".to_string()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incremental_tail_detects_rotation() {
+        let dir = std::env::temp_dir().join(format!("crab_inc_rot_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("trace.jsonl");
+
+        let cache: RwLock<LiveTraceCache> = RwLock::new(LiveTraceCache::default());
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Write 2 lines.
+        let content = format!(
+            "{}{}",
+            make_jsonl_line(now_ms - 3000, "alpha"),
+            make_jsonl_line(now_ms - 2000, "beta"),
+        );
+        std::fs::write(&path, &content).unwrap();
+        let _ = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+
+        // Rotate: write a shorter file (simulates rotation/truncation).
+        let rotated = make_jsonl_line(now_ms - 1000, "gamma");
+        std::fs::write(&path, &rotated).unwrap();
+
+        let entries = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries.len(), 1, "rotation should cause full rebuild (shorter file)");
+        assert_eq!(entries[0].timestamp_ms, now_ms - 1000, "gamma's timestamp");
+        assert_eq!(entries[0].consumer.as_deref(), Some("gamma"), "consumer is gamma");
+
+        let consumers = live_distinct_consumers(&cache);
+        assert!(consumers.contains(&"gamma".to_string()));
+        assert_eq!(consumers.len(), 1, "only gamma in rotated file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incremental_tail_handles_partial_line() {
+        let dir = std::env::temp_dir().join(format!("crab_inc_part_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("trace.jsonl");
+
+        let cache: RwLock<LiveTraceCache> = RwLock::new(LiveTraceCache::default());
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Stage 1: one complete line.
+        let line_a = make_jsonl_line(now_ms - 3000, "alpha");
+        std::fs::write(&path, &line_a).unwrap();
+
+        // First read: parses 1 entry, no partial line.
+        let entries1 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries1.len(), 1, "one complete line parsed on first read");
+        let f1 = cache.read().file_len;
+
+        // Stage 2: append a partial line whose last field has no closing brace.
+        // The partial ends in the middle: after `"input_tokens":10` (no trailing comma or field).
+        let partial = format!(
+            r#"{{"timestamp_ms":{},"request_hash":"h_part","content_length":1,"semantic_cluster":0,"consumer":"beta","model":"m","prompt_tokens":1,"latency_ms":200.0,"upstream_latency_ms":null,"ttft_ms":null,"input_tokens":10"#,
+            now_ms - 2000,
+        );
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(partial.as_bytes()).unwrap();
+        }
+        assert!(path.metadata().unwrap().len() > f1, "file grew with partial line");
+
+        // Second read: incremental, partial line stored but not parsed.
+        let entries2 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries2.len(), 1, "only original entry — partial line buffered");
+        assert!(!cache.read().partial_line.is_empty(), "partial_line should be non-empty");
+
+        // Stage 3: complete the partial line + append another complete line.
+        // The completion continues from after `"input_tokens":10` and closes the JSON object,
+        // then puts gamma_line on its own line (must be separate from the completed beta JSON).
+        let completion = format!(
+            r#","output_tokens":5,"cache_hit":false,"cache_tier":null}}"#,
+        );
+        let gamma_line = make_jsonl_line(now_ms - 1000, "gamma");
+        let stage3_bytes = [completion.as_bytes(), b"\n", gamma_line.as_bytes()].concat();
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&stage3_bytes).unwrap();
+        }
+
+        // Third read: combines partial_line + new bytes → parses beta and gamma.
+        let entries3 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+        assert_eq!(entries3.len(), 3, "all three entries after partial resolved");
+
+        let consumers = live_distinct_consumers(&cache);
+        assert!(consumers.contains(&"alpha".to_string()));
+        assert!(consumers.contains(&"beta".to_string()));
+        assert!(consumers.contains(&"gamma".to_string()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incremental_cache_hit_returns_fast_path() {
+        let dir = std::env::temp_dir().join(format!("crab_inc_hit_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("trace.jsonl");
+
+        let cache: RwLock<LiveTraceCache> = RwLock::new(LiveTraceCache::default());
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let line = make_jsonl_line(now_ms - 2000, "alpha");
+        std::fs::write(&path, &line).unwrap();
+
+        // First call populates cache.
+        let entries1 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+
+        // Second call without changes: should return the same Arc.
+        let entries2 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
+
+        // Both should contain the same data and Arc should be shared.
+        assert_eq!(entries1.len(), entries2.len());
+        assert_eq!(entries1.as_ptr(), entries2.as_ptr(), "cache hit should return same Arc");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

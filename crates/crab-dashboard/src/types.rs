@@ -661,6 +661,10 @@ pub struct LiveMetricsBucket {
     pub upstream_latency_ms: Option<f64>,
     #[serde(default)]
     pub ttft_ms: Option<f64>,
+    #[serde(default)]
+    pub upstream_sample_count: u32,
+    #[serde(default)]
+    pub ttft_sample_count: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
 }

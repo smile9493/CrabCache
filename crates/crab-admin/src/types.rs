@@ -385,7 +385,7 @@ pub struct LiveMetricsQuery {
     pub bucket_secs: u32,
 }
 
-fn default_live_window_secs() -> u32 {
+pub fn default_live_window_secs() -> u32 {
     300
 }
 
@@ -416,8 +416,18 @@ pub struct LiveMetricsBucket {
     pub upstream_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
+    /// Number of requests in this bucket that had upstream_latency_ms recorded.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub upstream_sample_count: u32,
+    /// Number of requests in this bucket that had ttft_ms recorded.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub ttft_sample_count: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

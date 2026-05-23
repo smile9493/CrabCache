@@ -177,14 +177,20 @@ impl Translations {
     }
     pub fn live_avg_e2e(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "平均端到端延迟",
-            Locale::EnUS => "Avg e2e latency",
+            Locale::ZhCN => "平均端到端延迟（含完整响应）",
+            Locale::EnUS => "Avg e2e latency (full stream)",
         }
     }
     pub fn live_avg_upstream(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "平均上游延迟",
-            Locale::EnUS => "Avg upstream latency",
+            Locale::ZhCN => "上游流式总时长（至 EOS）",
+            Locale::EnUS => "Upstream stream duration (to EOS)",
+        }
+    }
+    pub fn live_avg_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均首字 (TTFT)",
+            Locale::EnUS => "Avg TTFT",
         }
     }
     pub fn live_tokens_total(self) -> &'static str {
@@ -207,8 +213,8 @@ impl Translations {
     }
     pub fn live_upstream_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "上游延迟仅统计缓存未命中且已记录上游耗时的请求；缓存命中仅显示端到端延迟。",
-            Locale::EnUS => "Upstream latency applies to cache misses with upstream timing; hits show e2e only.",
+            Locale::ZhCN => "上游延迟仅统计缓存未命中且已记录上游耗时的请求；缓存命中仅显示端到端延迟。流式 miss 下 E2E ≈ 上游属预期；可查看 TTFT 判断首字响应速度。",
+            Locale::EnUS => "Upstream latency applies to cache misses with upstream timing; hits show e2e only. When streaming, e2e ≈ upstream is expected. Use TTFT to judge first-token responsiveness.",
         }
     }
     pub fn live_token_chart(self) -> &'static str {
@@ -219,14 +225,14 @@ impl Translations {
     }
     pub fn live_series_e2e(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "端到端",
-            Locale::EnUS => "E2E",
+            Locale::ZhCN => "端到端（完整流）",
+            Locale::EnUS => "E2E (full stream)",
         }
     }
     pub fn live_series_upstream(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "上游",
-            Locale::EnUS => "Upstream",
+            Locale::ZhCN => "上游流式",
+            Locale::EnUS => "Upstream (full stream)",
         }
     }
     pub fn live_series_ttft(self) -> &'static str {

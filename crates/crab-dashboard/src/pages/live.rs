@@ -51,14 +51,43 @@ pub fn LivePage() -> impl IntoView {
     let selected_consumer: RwSignal<Option<String>> = RwSignal::new(None);
     let window_secs: RwSignal<u32> = RwSignal::new(300);
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
-    let keys_loaded = RwSignal::new(false);
-    let keys_error = RwSignal::new(None::<String>);
+    let consumers_loaded = RwSignal::new(false);
+    let consumers_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
 
-    let load_keys = move || {
+    /// Fetch consumers from live-metrics/consumers endpoint (lightweight).
+    /// Falls back to fetch_keys if consumers endpoint is not available.
+    let load_consumers = move || {
         leptos::task::spawn_local(async move {
+            // Try the lightweight consumers endpoint first.
+            match api::fetch_live_consumers(300).await {
+                Ok(val) => {
+                    let names: Vec<String> = val
+                        .get("available_consumers")
+                        .and_then(|c| c.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !names.is_empty() {
+                        if selected_consumer.get_untracked().is_none() {
+                            if let Some(first) = names.first() {
+                                selected_consumer.set(Some(first.clone()));
+                            }
+                        }
+                        consumers.set(names);
+                        consumers_loaded.set(true);
+                        return;
+                    }
+                }
+                Err(_) => { /* fall through to keys fallback */ }
+            }
+
+            // Fallback: fetch keys and extract consumer names.
             match api::fetch_keys().await {
                 Ok(keys) => {
                     let names: Vec<String> = keys
@@ -75,9 +104,9 @@ pub fn LivePage() -> impl IntoView {
                         consumers.set(names);
                     }
                 }
-                Err(e) => keys_error.set(Some(e)),
+                Err(e) => consumers_error.set(Some(e)),
             }
-            keys_loaded.set(true);
+            consumers_loaded.set(true);
         });
     };
 
@@ -118,7 +147,7 @@ pub fn LivePage() -> impl IntoView {
         }
     };
 
-    load_keys();
+    load_consumers();
 
     Effect::new({
         let load_live = load_live;
@@ -212,14 +241,14 @@ pub fn LivePage() -> impl IntoView {
             </div>
 
             {move || {
-                if !keys_loaded.get() {
+                if !consumers_loaded.get() {
                     return view! {
                         <div class="glass-card p-8 flex justify-center">
                             <Spinner />
                         </div>
                     }.into_any();
                 }
-                if let Some(err) = keys_error.get() {
+                if let Some(err) = consumers_error.get() {
                     return view! {
                         <div class="glass-card p-6 text-error text-sm space-y-1">
                             <p>{t.live_keys_load_error()}</p>
@@ -286,8 +315,13 @@ fn LiveSummaryCards(data: LiveMetricsResponse) -> impl IntoView {
     } else {
         t.live_upstream_na().to_string()
     };
+    let ttft_display = if s.avg_ttft_ms > 0.0 {
+        format!("{:.0} ms", s.avg_ttft_ms)
+    } else {
+        t.live_upstream_na().to_string()
+    };
     view! {
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
             <div class="metric-card">
                 <div class="metric-card-label">{t.live_requests()}</div>
                 <div class="metric-card-value">{s.request_count.to_string()}</div>
@@ -303,6 +337,10 @@ fn LiveSummaryCards(data: LiveMetricsResponse) -> impl IntoView {
             <div class="metric-card">
                 <div class="metric-card-label">{t.live_avg_upstream()}</div>
                 <div class="metric-card-value">{upstream_display}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-card-label">{t.live_avg_ttft()}</div>
+                <div class="metric-card-value">{ttft_display}</div>
             </div>
             <div class="metric-card">
                 <div class="metric-card-label">{t.live_tokens_total()}</div>
@@ -453,6 +491,14 @@ fn LiveLatestCard(data: LiveMetricsResponse) -> impl IntoView {
                         <dt class="text-theme-muted">{t.live_series_upstream()}</dt>
                         <dd class="font-mono text-theme">
                             {latest.upstream_latency_ms
+                                .map(|v| format!("{v:.0} ms"))
+                                .unwrap_or_else(|| t.live_upstream_na().to_string())}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt class="text-theme-muted">{t.live_series_ttft()}</dt>
+                        <dd class="font-mono text-theme">
+                            {latest.ttft_ms
                                 .map(|v| format!("{v:.0} ms"))
                                 .unwrap_or_else(|| t.live_upstream_na().to_string())}
                         </dd>

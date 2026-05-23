@@ -232,6 +232,18 @@ pub async fn fetch_live_metrics(
     fetch_json(&url).await
 }
 
+/// Fetch available consumers from the lightweight live-metrics/consumers endpoint.
+pub async fn fetch_live_consumers(
+    window_secs: u32,
+) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/live-metrics/consumers?window_secs={}",
+        API_BASE,
+        window_secs
+    );
+    fetch_json(&url).await
+}
+
 pub async fn create_key(req: &CreateKeyRequest) -> Result<ApiKey, String> {
     post_json(&format!("{}/keys", API_BASE), req).await
 }

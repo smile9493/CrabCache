@@ -139,6 +139,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs/{id}", get(get_log_detail))
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .route("/api/admin/live-metrics", get(get_live_metrics))
+        .route("/api/admin/live-metrics/consumers", get(get_live_consumers))
         .route("/api/admin/system/admin-key", put(put_admin_key))
         .route("/api/admin/system/version", get(get_system_version))
         .route("/api/admin/system/check-update", post(post_check_update))
@@ -254,7 +255,7 @@ async fn post_check_update(
 /// Trigger a full system update: download latest binaries from GitHub,
 /// replace gateway and admin, and restart both services.
 async fn post_system_update(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // Step 1: Get the latest release from GitHub
     let release = match crate::update::check_latest_release().await {
@@ -2229,6 +2230,42 @@ fn empty_trace_analysis() -> TraceAnalysis {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ConsumersQuery {
+    #[serde(default = "default_live_window_secs")]
+    pub window_secs: u32,
+}
+
+/// GET /api/admin/live-metrics/consumers?window_secs=300
+async fn get_live_consumers(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ConsumersQuery>,
+) -> Json<serde_json::Value> {
+    let path = crate::trace_log::trace_log_path();
+    let trace_available = crate::trace_log::trace_log_available(&path);
+    let window_secs = query.window_secs.clamp(60, 900);
+    let path_for_blocking = path.clone();
+    let state_for_blocking = Arc::clone(&state);
+
+    // Prime the cache with the given window (blocking).
+    tokio::task::spawn_blocking(move || {
+        crate::trace_log::load_live_trace_entries_cached(
+            &state_for_blocking.live_trace_cache,
+            &path_for_blocking,
+            window_secs,
+            crate::trace_log::LIVE_TRACE_TAIL_BYTES,
+        )
+    })
+    .await
+    .ok();
+
+    let consumer_names = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
+    Json(serde_json::json!({
+        "trace_available": trace_available,
+        "available_consumers": consumer_names,
+    }))
+}
+
 async fn get_live_metrics(
     State(state): State<Arc<AppState>>,
     Query(query): Query<LiveMetricsQuery>,
@@ -2245,10 +2282,10 @@ async fn get_live_metrics(
 
     let consumer = consumer.to_string();
     let path_for_blocking = path.clone();
-    let state = Arc::clone(&state);
+    let state_for_blocking = Arc::clone(&state);
     let entries = tokio::task::spawn_blocking(move || {
         crate::trace_log::load_live_trace_entries_cached(
-            &state.live_trace_cache,
+            &state_for_blocking.live_trace_cache,
             &path_for_blocking,
             window_secs,
             crate::trace_log::LIVE_TRACE_TAIL_BYTES,
@@ -2256,7 +2293,8 @@ async fn get_live_metrics(
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let available_consumers = crate::trace_log::distinct_consumers(entries.as_ref(), 50);
+    // Use the cache's consumer HashSet instead of scanning the full entries list.
+    let available_consumers = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
     let resp = crate::live_metrics::aggregate_live_metrics(
         entries.as_ref(),
         &consumer,

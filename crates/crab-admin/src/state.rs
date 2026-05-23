@@ -79,7 +79,7 @@ pub struct AppState {
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
     pub gateway_probe_cache: RwLock<Option<(Instant, GatewayProbe)>>,
     pub gateway_metrics_cache: GatewayMetricsCache,
-    /// Shared parsed trace tail for live-metrics (1s TTL, mtime-invalidated).
+    /// Shared parsed trace tail for live-metrics (incremental tail, configurable TTL via CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
     /// Timestamp (ms) of the last trace entry synced for key usage accumulation.
     pub key_usage_last_synced: parking_lot::Mutex<u64>,
