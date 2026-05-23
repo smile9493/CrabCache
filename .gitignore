@@ -19,6 +19,10 @@ dist/
 build/
 pkg/
 
+# --- Agent skills (installed via `npx skills add`, not committed) ---
+.agents/
+skills-lock.json
+
 # --- IDE / editor (not project source) ---
 .idea/
 .vscode/

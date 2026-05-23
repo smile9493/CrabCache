@@ -48,6 +48,7 @@
 | `CRABCACHE_GATEWAY_METRICS_STALE_SECS` | `30` | 抓取失败时，在此时长内返回上次成功数据而非 HTTP 503 |
 | `CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS` | `60` | 历史环采样间隔 |
 | `CRABCACHE_TRACE_LOG_PATH` | `/app/logs/trace.jsonl` | Trace/日志页面的影子日志 |
+| `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` | `3` | Live 监控页 trace 缓存 TTL（秒）；增量 tail + 文件轮转检测 |
 | `CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS` | `30` | `GET /upstream/config` 网关协调的最小间隔 |
 | `CRABCACHE_GATEWAY_PROBE_TTL_SECS` | `3` | 概览中 `/v1/ready` + `/v1/status` 捆绑探针的缓存 TTL |
 | `CRABCACHE_ADMIN_METRICS_DB_PATH` | `data/metrics.sqlite` | Admin 指标采样 SQLite 数据库路径 |
@@ -62,24 +63,24 @@ Dashboard **实时监控 / Live** 页面每 **2 秒**轮询 **`GET /api/admin/li
 
 | 查询参数 | 默认值 | 说明 |
 |---------|--------|------|
-| `consumer` |（必填）| API Key `name` / trace `consumer` |
+| `consumer` |（必填）| API Key `name` / trace `consumer`；另可通过 `GET /api/admin/live-metrics/consumers?window_secs=300` 获取可选 consumer 列表 |
 | `window_secs` | `300` | 最近 5 分钟（限制 60–900） |
 | `bucket_secs` | `5` | 聚合桶宽度 |
 
-响应：`buckets[]`（每个桶的平均 e2e / 上游 / TTFT 延迟、Token 总和）、`summary`、可选的 `latest` 点。
+响应：`buckets[]`（每个桶的平均 e2e / 上游 / TTFT 延迟、Token 总和，`upstream_sample_count` / `ttft_sample_count` 为桶中实际样本数）、`summary`（加权平均，上游/TTFT 按实际样本数而非桶数加权）、可选的 `latest` 点、`available_consumers`。
 
 | UI 时序 | Trace 字段 | 备注 |
 |---------|-----------|------|
-| E2E 延迟 | `latency_ms` | 客户端 → 网关端到端时间 |
-| 上游延迟 | `upstream_latency_ms` | 网关 → 上游 body EOS；**仅未命中** |
-| TTFT | `ttft_ms` | 流式首字延迟 |
+| E2E 延迟 | `latency_ms` | 客户端 → 网关端到端时间（含完整流式响应） |
+| 上游延迟 | `upstream_latency_ms` | 网关 → 上游 body EOS 总时长；**仅未命中**且仅含上游样本的加权平 |
+| TTFT | `ttft_ms` | 流式首字延迟（加权平均） |
 | Token | `input_tokens` / `output_tokens` | 来自上游 `usage`；缓存命中使用缓存条目的用量 |
 
-需要 `[trace_logging] enabled = true` 且 API Key 具有 **name**（consumer 标签）。Admin 通过 **seek** 读取 `trace.jsonl` 尾部最近 **2MB**（非全文件读取）。
+需要 `[trace_logging] enabled = true` 且 API Key 具有 **name**（consumer 标签）。Admin 使用**增量 tail 读取** `trace.jsonl`，支持文件轮转检测（inode/mtime），避免全文件重解析。
 
-**性能：** 解析的尾部在 `crab-admin` 中缓存 **1 秒**（文件 mtime 或窗口变化时失效）。Dashboard 每 **2 秒**（5m 窗口）或 **3 秒**（15m 窗口）轮询，浏览器标签页隐藏时暂停。
+**性能：** `LiveTraceCache` 在 `crab-admin` 中缓存 **3 秒**（可通过 `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` 配置，默认 3），文件追加时仅读取新字节（增量 tail）。文件轮转时自动全量重建。Dashboard 每 **2 秒**（5m 窗口）或 **3 秒**（15m 窗口）轮询，浏览器标签页隐藏时暂停。
 
-**响应字段：** `available_consumers`（最多 50 个来自 trace 的名称）、`buckets[].upstream_latency_ms` / `ttft_ms` 在桶中没有上游/TTFT 样本时（缓存命中）为 `null`。
+**响应字段：** `available_consumers`（最多 50 个来自 trace 的名称，Dashboard 优先从此端点获取以移除 keys 硬依赖）、`buckets[].upstream_latency_ms` / `ttft_ms` 在桶中没有上游/TTFT 样本时（缓存命中）为 `null`，桶中还包含 `upstream_sample_count` / `ttft_sample_count` 以支持加权聚合。
 
 ## 影子日志
 

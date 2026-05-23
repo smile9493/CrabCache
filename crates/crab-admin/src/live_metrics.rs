@@ -75,6 +75,8 @@ pub fn aggregate_live_metrics(
                 e2e_latency_ms: 0.0,
                 upstream_latency_ms: None,
                 ttft_ms: None,
+                upstream_sample_count: 0,
+                ttft_sample_count: 0,
                 input_tokens: 0,
                 output_tokens: 0,
             });
@@ -137,6 +139,8 @@ impl BucketAcc {
             } else {
                 None
             },
+            upstream_sample_count: self.upstream_count,
+            ttft_sample_count: self.ttft_count,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
         }
@@ -159,10 +163,10 @@ fn live_point_from_entry(entry: &TraceLogEntry) -> LiveRequestPoint {
 fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsSummary {
     let mut request_count = 0u32;
     let mut e2e_sum = 0.0f64;
-    let mut upstream_sum = 0.0f64;
-    let mut upstream_count = 0u32;
-    let mut ttft_sum = 0.0f64;
-    let mut ttft_count = 0u32;
+    let mut upstream_weighted_sum = 0.0f64;
+    let mut upstream_total_count = 0u32;
+    let mut ttft_weighted_sum = 0.0f64;
+    let mut ttft_total_count = 0u32;
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
 
@@ -172,12 +176,13 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
             e2e_sum += b.e2e_latency_ms * f64::from(b.request_count);
         }
         if let Some(up) = b.upstream_latency_ms {
-            upstream_sum += up;
-            upstream_count += 1;
+            // Weight by the number of samples in this bucket
+            upstream_weighted_sum += up * f64::from(b.upstream_sample_count);
+            upstream_total_count += b.upstream_sample_count;
         }
         if let Some(ttft) = b.ttft_ms {
-            ttft_sum += ttft;
-            ttft_count += 1;
+            ttft_weighted_sum += ttft * f64::from(b.ttft_sample_count);
+            ttft_total_count += b.ttft_sample_count;
         }
         input_tokens += b.input_tokens;
         output_tokens += b.output_tokens;
@@ -190,13 +195,13 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
         } else {
             0.0
         },
-        avg_upstream_latency_ms: if upstream_count > 0 {
-            upstream_sum / f64::from(upstream_count)
+        avg_upstream_latency_ms: if upstream_total_count > 0 {
+            upstream_weighted_sum / f64::from(upstream_total_count)
         } else {
             0.0
         },
-        avg_ttft_ms: if ttft_count > 0 {
-            ttft_sum / f64::from(ttft_count)
+        avg_ttft_ms: if ttft_total_count > 0 {
+            ttft_weighted_sum / f64::from(ttft_total_count)
         } else {
             0.0
         },
@@ -286,10 +291,54 @@ mod tests {
             e2e_latency_ms: 0.0,
             upstream_latency_ms: None,
             ttft_ms: None,
+            upstream_sample_count: 0,
+            ttft_sample_count: 0,
             input_tokens: 0,
             output_tokens: 0,
         };
         assert!(b.upstream_latency_ms.is_none());
         assert!(b.ttft_ms.is_none());
+    }
+
+    #[test]
+    fn weighted_summary_uneven_buckets() {
+        // Two buckets with very different request counts.
+        // Bucket A: high upstream (100ms) with 1000 requests.
+        // Bucket B: low upstream (10ms) with 1 request.
+        // The weighted avg should be ~99.9ms, not 55ms (unweighted average).
+        let buckets = vec![
+            LiveMetricsBucket {
+                timestamp_ms: 1000,
+                request_count: 1000,
+                e2e_latency_ms: 500.0,
+                upstream_latency_ms: Some(100.0),
+                ttft_ms: Some(50.0),
+                upstream_sample_count: 1000,
+                ttft_sample_count: 1000,
+                input_tokens: 10000,
+                output_tokens: 5000,
+            },
+            LiveMetricsBucket {
+                timestamp_ms: 2000,
+                request_count: 1,
+                e2e_latency_ms: 200.0,
+                upstream_latency_ms: Some(10.0),
+                ttft_ms: Some(5.0),
+                upstream_sample_count: 1,
+                ttft_sample_count: 1,
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        ];
+        let s = summarize_window(&buckets);
+        // E2E: (500*1000 + 200*1) / 1001 ≈ 499.7
+        assert!((s.avg_e2e_latency_ms - 499.7).abs() < 0.1);
+        // Upstream: (100*1000 + 10*1) / 1001 ≈ 99.9 (NOT (100+10)/2 = 55)
+        assert!((s.avg_upstream_latency_ms - 99.9).abs() < 0.1, "upstream={}", s.avg_upstream_latency_ms);
+        // TTFT: (50*1000 + 5*1) / 1001 ≈ 49.95
+        assert!((s.avg_ttft_ms - 49.95).abs() < 0.1, "ttft={}", s.avg_ttft_ms);
+        assert_eq!(s.request_count, 1001);
+        assert_eq!(s.input_tokens, 10010);
+        assert_eq!(s.output_tokens, 5005);
     }
 }
