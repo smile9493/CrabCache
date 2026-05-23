@@ -54,6 +54,7 @@ plugins:
 
 nav:
   - 首页: index.md
+  - UI 设计规范: DESIGN.md
   - 入门指南:
       - Cursor + DeepSeek 接入: CURSOR_SETUP.md
       - 从 new-api 迁移: NEW_API_MIGRATION.md

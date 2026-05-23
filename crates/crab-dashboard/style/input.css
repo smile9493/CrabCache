@@ -1,111 +1,21 @@
 @import "tailwindcss";
+@import "./design-tokens.css";
 
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
 }
 
-/* ==============================================================
-   CrabCache Design System v2
-   Register: Product (admin dashboard / observability tool)
-   Scene: "SRE glancing at incident severity on a 27-inch
-          monitor at 2am in a dim room" → dark default
-   Color strategy: Restrained (tinted neutrals + one accent ≤10%)
-   Typography: System fonts, fixed rem scale
-   Motion: ease-out 150-200ms, state-conveying only
-   Elevation: Lightness stepping in dark mode, shadow in light
-   ============================================================== */
-
-/* ── THEME: DARK (default) ──────────────────────────────────
-   Warm charcoal (hue 85), gold accent (hue 75).
-   Surfaces step lighter for elevation (no shadows in dark). */
-:root,
-.theme-dark {
-  --bg-primary:               oklch(0.12 0.006 85);
-  --bg-secondary:             oklch(0.16 0.007 85);
-  --bg-tertiary:              oklch(0.20 0.009 85);
-  --bg-elevated:              oklch(0.23 0.010 85);
-  --bg-glass:                 oklch(0.16 0.007 85);
-  --bg-glass-hover:           oklch(0.19 0.009 85);
-  --bg-glass-raised:          oklch(0.23 0.010 85);
-  --text-primary:             oklch(0.93 0.003 85);
-  --text-secondary:           oklch(0.68 0.006 85);
-  --text-muted:               oklch(0.46 0.008 85);
-  --border-color:             oklch(0.28 0.008 85);
-  --border-light:             oklch(0.22 0.006 85);
-  --accent-primary:           oklch(0.68 0.14 75);
-  --accent-secondary:         oklch(0.62 0.12 75);
-  --accent-muted:             oklch(0.55 0.10 75 / 0.22);
-  --success:                  oklch(0.62 0.14 155);
-  --warning:                  oklch(0.70 0.15 75);
-  --error:                    oklch(0.62 0.16 15);
-  --info:                     oklch(0.60 0.14 250);
-  --shadow-color:             oklch(0 0 0 / 0.12);
-  --sidebar-width:            240px;
-  --transition-speed:         180ms;
-  --transition-curve:         cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* ── THEME: LIGHT ───────────────────────────────────────────
-   Warm cream (hue 85), deep teal accent (hue 195).
-   Shadows carry elevation; surfaces step darker for depth. */
-.theme-light {
-  --bg-primary:               oklch(0.98 0.003 85);
-  --bg-secondary:             oklch(0.94 0.004 85);
-  --bg-tertiary:              oklch(0.88 0.006 85);
-  --bg-elevated:              oklch(0.99 0 0);
-  --bg-glass:                 oklch(0.96 0.002 85);
-  --bg-glass-hover:           oklch(0.92 0.003 85);
-  --bg-glass-raised:          oklch(0.99 0 0);
-  --text-primary:             oklch(0.15 0.010 85);
-  --text-secondary:           oklch(0.38 0.010 85);
-  --text-muted:               oklch(0.52 0.008 85);
-  --border-color:             oklch(0.78 0.006 85);
-  --border-light:             oklch(0.85 0.004 85);
-  --accent-primary:           oklch(0.42 0.14 195);
-  --accent-secondary:         oklch(0.50 0.12 195);
-  --accent-muted:             oklch(0.58 0.08 195 / 0.20);
-  --success:                  oklch(0.52 0.14 155);
-  --warning:                  oklch(0.60 0.16 75);
-  --error:                    oklch(0.56 0.18 15);
-  --info:                     oklch(0.50 0.16 250);
-  --shadow-color:             oklch(0 0 0 / 0.06);
-}
-
-/* ── THEME: MIDNIGHT ────────────────────────────────────────
-   Deep purple (hue 290), violet accent (hue 280).
-   Most distinct alternative for personal preference. */
-.theme-midnight {
-  --bg-primary:               oklch(0.09 0.020 290);
-  --bg-secondary:             oklch(0.13 0.024 290);
-  --bg-tertiary:              oklch(0.18 0.028 290);
-  --bg-elevated:              oklch(0.21 0.030 290);
-  --bg-glass:                 oklch(0.13 0.024 290);
-  --bg-glass-hover:           oklch(0.16 0.026 290);
-  --bg-glass-raised:          oklch(0.21 0.030 290);
-  --text-primary:             oklch(0.95 0.003 290);
-  --text-secondary:           oklch(0.70 0.006 290);
-  --text-muted:               oklch(0.48 0.008 290);
-  --border-color:             oklch(0.32 0.020 290);
-  --border-light:             oklch(0.26 0.016 290);
-  --accent-primary:           oklch(0.66 0.16 280);
-  --accent-secondary:         oklch(0.60 0.14 280);
-  --accent-muted:             oklch(0.52 0.14 280 / 0.22);
-  --success:                  oklch(0.58 0.14 155);
-  --warning:                  oklch(0.68 0.14 80);
-  --error:                    oklch(0.60 0.16 15);
-  --info:                     oklch(0.62 0.16 250);
-  --shadow-color:             oklch(0 0 0 / 0.12);
-}
+/* CrabCache Design System v3 — tokens in design-tokens.css (see docs/DESIGN.md) */
 
 /* ==============================================================
    SURFACE CARDS (formerly glass – now solid elevated surfaces)
    ============================================================== */
 
 .glass-card {
-  background: var(--bg-glass);
-  border: 1px solid var(--border-light);
-  border-radius: 0.75rem;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
   padding: 1.25rem;
   transition: border-color var(--transition-speed) var(--transition-curve),
               box-shadow var(--transition-speed) var(--transition-curve);
@@ -116,18 +26,39 @@
   box-shadow: 0 2px 8px var(--shadow-color);
 }
 
+.panel-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--cc-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--cc-text);
+}
+.panel-header-meta {
+  font-size: 0.8rem;
+  color: var(--cc-text-muted);
+  font-weight: 400;
+}
+
 .glass-card-raised {
-  background: var(--bg-glass-raised);
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
+  background: var(--cc-bg-elevated);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
   padding: 1.25rem;
   box-shadow: 0 2px 12px var(--shadow-color);
 }
 
 .glass-card-flat {
-  background: var(--bg-glass);
-  border: 1px solid var(--border-light);
-  border-radius: 0.75rem;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
+}
+
+.glass-card-flush {
+  padding: 0;
+  overflow: hidden;
 }
 
 /* ==============================================================
@@ -161,9 +92,9 @@
    ============================================================== */
 
 .metric-card {
-  background: var(--bg-glass);
-  border: 1px solid var(--border-light);
-  border-radius: 0.75rem;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
   padding: 1.25rem 1.5rem;
   display: flex; flex-direction: column; justify-content: space-between;
   transition: border-color var(--transition-speed) var(--transition-curve),
@@ -198,6 +129,23 @@
   font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;
 }
 
+.metric-card-trend {
+  font-size: 0.78rem;
+  margin-top: 0.25rem;
+  color: var(--cc-text-muted);
+}
+.metric-card-trend.trend-up,
+.trend.up { color: var(--cc-success); }
+.metric-card-trend.trend-down,
+.trend.down { color: var(--cc-error); }
+
+.brand-gradient-text {
+  background: var(--cc-brand-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 /* ==============================================================
    BUTTONS
    ============================================================== */
@@ -213,8 +161,8 @@
 }
 
 .btn-primary {
-  background: var(--accent-primary);
-  color: oklch(0.98 0 0);
+  background: var(--cc-accent);
+  color: #0d1117;
   box-shadow: 0 1px 2px var(--shadow-color);
 }
 .btn-primary:hover {
@@ -292,7 +240,7 @@
    PROGRESS BAR · SPINNER · SECTION HEADER · EMPTY STATE
    ============================================================== */
 
-.progress-bar      { height: 0.375rem; background: var(--bg-tertiary); border-radius: 9999px; overflow: hidden; }
+.progress-bar      { height: 6px; background: var(--cc-bg-elevated); border-radius: 3px; overflow: hidden; }
 .progress-bar-fill { height: 100%; background: var(--accent-primary); border-radius: 9999px; transition: width .5s var(--transition-curve); }
 
 .spinner {
@@ -319,8 +267,8 @@
 
 .sidebar {
   width: var(--sidebar-width);
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-light);
+  background: var(--cc-bg-sidebar);
+  border-right: 1px solid var(--cc-border);
   height: 100vh; position: fixed; left: 0; top: 0;
   display: flex; flex-direction: column; z-index: 40;
 }
@@ -341,8 +289,8 @@
 
 /* Accent reserved for selection only — tinted background, no full accent fill */
 .nav-item.active {
-  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
-  color: var(--accent-primary);
+  background: var(--cc-nav-active-bg);
+  color: var(--cc-accent-bright);
   font-weight: 600;
 }
 
@@ -408,7 +356,7 @@
    PAGE LAYOUT
    ============================================================== */
 
-.page-content { padding: 1.5rem 2rem 3rem; max-width: 1400px; margin: 0 auto; }
+.page-content { padding: 28px 32px 48px; max-width: 1400px; margin: 0 auto; }
 
 .app-shell { min-height: 100vh; position: relative; }
 

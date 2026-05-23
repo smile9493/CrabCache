@@ -7,6 +7,8 @@
     <a href="https://smile9493.github.io/CrabCache/"><strong>📖 文档网站</strong></a>
     &nbsp;·&nbsp;
     <a href="https://smile9493.github.io/CrabCache/demo"><strong>🎮 在线演示</strong></a>
+    &nbsp;·&nbsp;
+    <a href="docs/DESIGN.md"><strong>UI 规范</strong></a>
   </p>
 
   <!-- Badges -->
@@ -33,35 +35,46 @@
 
 ## 概述
 
-CrabCache 是一个生产级的 Rust API 网关，通过**三级缓存架构**（L0 Moka 内存、L1 Redis 分布式、L2 Qdrant 语义向量）、**Ketama 一致性哈希路由**和**请求合并（Coalescing）**，为 DeepSeek V4 大语言模型 API 提供极致的成本优化和低延迟响应。
+**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为网络与代理核心**：在 Pingora 的 `ProxyHttp` 生命周期（`request_filter` → `upstream_peer` → 流式 `body_filter` → `logging`）上实现 OpenAI 兼容的 DeepSeek V4 网关，而非在通用 HTTP 框架上叠一层反向代理。
 
-基于 Cloudflare 开源的 [Pingora](https://github.com/cloudflare/pingora) 框架构建，具备亚毫秒级缓存延迟和高性能无锁连接池，单实例可支撑万级 QPS。
+Pingora 提供的能力是本项目的基础：
 
-### 核心目标
+- **无锁连接池** — 多线程共享上游连接，适合长连接 SSE 流式响应
+- **Rust 原生、内存安全** — 热路径零拷贝（`bytes::Bytes`），生产环境使用 jemalloc
+- **可编程代理管线** — 在过滤器链中完成认证、路由、SSE 改写、指标与 Trace，无需外挂 Lua/Nginx 脚本
 
-- **降低成本** — 多级缓存减少 95%+ 的上游 API 调用
-- **低延迟** — 缓存命中 P99 < 1ms，TTFT 增量 < 5ms
-- **高可用** — 多密钥管理、请求合并、优雅降级
-- **可观测** — Prometheus 指标、结构化日志、影子日志分析
-- **推理管理** — DeepSeek 推理内容缓存、恢复与 Cursor 兼容
+在此之上，CrabCache 针对 **DeepSeek V4 / Cursor** 做了业务扩展：Ketama 粘滞路由（配合上游 **L3 前缀缓存**）、Reasoning SSE 处理、可选 L0–L2 响应缓存、请求合并、Management API 与 Admin Dashboard。
+
+> **关于网关 L0–L2**：Moka / Redis / Qdrant 缓存的是**完整响应体**，与 DeepSeek `prompt_cache_hit_tokens`（L3）不是同一指标；典型多轮聊天下 L0–L2 命中率通常很低，降本主要看 L3。详见 [上游前缀缓存 L3](docs/DEEPSEEK_PREFIX_CACHE.md)。
+
+### 核心能力（按架构分层）
+
+| 层级 | 内容 |
+|------|------|
+| **Pingora 核心** | `crab-proxy` 实现 `ProxyHttp`；连接复用、SSE 流式 flush、上游 TLS/SNI |
+| **路由** | `crab-route` Ketama 环；会话亲和，支撑 DeepSeek 多节点前缀缓存 |
+| **业务扩展** | Reasoning 恢复、Cursor 模型别名、多租户、Coalescing、可选 L0–L2 |
+| **控制面** | `crab-gateway` Management API；`crab-admin` + Leptos Dashboard |
 
 ---
 
 ## 特性
 
-### 🚀 高性能代理
+### 🚀 Pingora 代理核心
 
-- **基于 Pingora** — Cloudflare 生产验证的高性能网络框架，无锁连接池
-- **零拷贝管道** — `bytes::Bytes` O(1) 克隆，最小化内存分配
-- **jemalloc** — 生产级内存分配器，优化高并发场景
+- **Cloudflare Pingora 0.8** — 代理主循环与连接池由 Pingora 驱动；`crab-proxy::GatewayProxy` 实现完整请求生命周期
+- **SSE 流式** — 在 `upstream_response_body_filter` 中逐 chunk 处理；生产需 Linux（macOS 存在 Pingora flush 问题，见 [Issue #841](https://github.com/cloudflare/pingora/issues/841)）
+- **零拷贝** — 响应体以 `Bytes` 传递，减少热路径分配
+- **jemalloc** — 非 MSVC 目标默认启用，适配高并发长连接
 
-### 🗄️ 三级缓存
+### 🗄️ 缓存分层（勿混谈命中率）
 
-| 层级 | 技术 | P99 延迟 | 命中率 |
-|------|------|----------|--------|
-| **L0** | Moka 内存缓存（TinyLFU） | < 100ns | ~60-70% |
-| **L1** | Redis 分布式缓存 | < 5ms | ~20-30% |
-| **L2** | Qdrant 语义向量缓存（相似度 ≥0.95） | < 20ms | ~5-10% |
+| 层级 | 位置 | 作用 | 典型场景 |
+|------|------|------|----------|
+| **L0–L2** | 网关 | 缓存**完整响应**（精确 SHA256 / 语义向量） | 完全相同 body 重放、合并后的回填；日常多轮对话命中少 |
+| **L3** | DeepSeek 上游 | 服务端 **KV/前缀缓存**（按 Token 计费折扣） | 多轮对话共享稳定 system+历史前缀；**主要降本路径** |
+
+L0–L2 技术栈：Moka（内存）、Redis（分布式）、Qdrant + ONNX 嵌入（语义，阈值可配）。指标上请分别看 `gateway_cache_requests_total` 与 `gateway_upstream_prompt_cache_tokens_total`。
 
 ### 🔄 智能路由
 
@@ -303,24 +316,16 @@ CrabCache 使用三套独立密钥：
 
 ---
 
-## 性能
+## 性能与指标
 
-### 综合测试结果
+### 设计取向（非营销口径）
 
-| 指标 | 实测值 | 目标 | 状态 |
-|------|--------|------|------|
-| 请求级命中率 | 99.68% | > 95% | ✅ |
-| Token 级命中率 | 99.68% | > 90% | ✅ |
-| P99 延迟 | 19.20ms | < 50ms | ✅ |
-| P95 延迟 | 13.02ms | < 30ms | ✅ |
-| 延迟改善 | 98.04% | > 90% | ✅ |
-
-### 缓存层级分布
-
-- **L0 (Moka 内存)**: 93.0%
-- **L1 (Redis)**: 0.0%
-- **L2 (Qdrant 语义)**: 6.7%
-- **未命中**: 0.32%
+| 维度 | 说明 |
+|------|------|
+| **代理延迟** | Pingora + 连接池；网关 L0 命中时响应极快，未命中则主要为上游 RTT |
+| **降本** | 依赖 **L3 前缀命中**（Dashboard / `prompt_cache_hit_tokens`），而非 L0–L2 响应缓存占比 |
+| **L0–L2** | 工程上保留，用于可观测、重复流量与 Coalescing；勿用 Trace 里「网关命中率」推断 DeepSeek 账单 |
+| **吞吐** | 受上游限速与流式 SSE 影响；以 Prometheus QPS/延迟为准 |
 
 ### 核心 Prometheus 指标
 

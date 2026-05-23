@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      - 'crates/crab-dashboard/style/design-tokens.css'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
@@ -39,6 +40,12 @@ jobs:
 
       - name: Override homepage with showcase page
         run: cp docs/index.html site/index.html
+
+      - name: Copy design assets for demo page
+        run: |
+          mkdir -p site/assets
+          cp crates/crab-dashboard/style/design-tokens.css site/assets/design-tokens.css
+          cp docs/demo-layout.css site/assets/demo-layout.css
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

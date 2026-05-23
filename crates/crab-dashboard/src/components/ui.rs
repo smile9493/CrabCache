@@ -9,10 +9,24 @@ pub fn MetricCard(
     view! {
         <div class="metric-card">
             <div class="metric-card-label">{title}</div>
-            <div>
-                <div class="metric-card-value">{move || value.get()}</div>
-                <div class="metric-card-sub">{subtitle}</div>
-            </div>
+            <div class="metric-card-value">{move || value.get()}</div>
+            <div class="metric-card-sub">{subtitle}</div>
+        </div>
+    }
+}
+
+/// Panel section title row (title + optional right meta).
+#[component]
+pub fn PanelHeader(
+    title: impl Fn() -> String + Send + Sync + 'static,
+    #[prop(optional)] meta: Option<impl Fn() -> String + Send + Sync + 'static>,
+) -> impl IntoView {
+    view! {
+        <div class="panel-header">
+            <span>{move || title()}</span>
+            {meta.map(|m| view! {
+                <span class="panel-header-meta">{m}</span>
+            })}
         </div>
     }
 }
@@ -40,10 +54,11 @@ pub fn ProgressBar(label: &'static str, value: Signal<f64>, max: f64) -> impl In
 #[component]
 pub fn Badge(text: String, color: &'static str) -> impl IntoView {
     let color_class = match color {
-        "teal" => "badge badge-info",
-        "amber" => "badge badge-warning",
-        "rose" => "badge badge-error",
-        "violet" => "badge badge-accent",
+        "teal" | "info" => "badge badge-info",
+        "amber" | "warning" => "badge badge-warning",
+        "rose" | "error" => "badge badge-error",
+        "green" | "success" => "badge badge-success",
+        "violet" | "accent" => "badge badge-accent",
         "stone" => "badge",
         _ => "badge",
     };

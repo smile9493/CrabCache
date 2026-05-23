@@ -72,8 +72,8 @@ pub fn Sidebar() -> impl IntoView {
             <div class="sidebar-header">
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-2.5 min-w-0">
-                        <img src="/style/favicon.svg" alt="" class="brand-logo" width="28" height="28" />
-                        <span class="sidebar-brand truncate">{Translations::sidebar_brand}</span>
+                        <span class="text-2xl leading-none" aria-hidden="true">"🦀"</span>
+                        <span class="sidebar-brand brand-gradient-text truncate">{Translations::sidebar_brand}</span>
                     </div>
                     <div class="hidden md:block">
                         <ThemeSwitcher />
