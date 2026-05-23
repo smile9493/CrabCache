@@ -34,6 +34,7 @@ impl RequestCoalescer {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(key = %key))]
     pub async fn acquire(&self, key: &str) -> Result<CoalesceGuard, CoalesceError> {
         loop {
             if let Some(entry) = self.inflight.get(key) {

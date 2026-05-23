@@ -1,5 +1,4 @@
 use crate::{CacheEntry, L0Config, TtlConfig};
-use anyhow::Result;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use crab_metrics::{CacheTier, global_metrics};
@@ -9,6 +8,19 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Error type for cache operations.
+#[derive(Debug, thiserror::Error)]
+pub enum CacheError {
+    #[error("cache operation failed: {0}")]
+    Operation(String),
+}
+
+impl From<serde_json::Error> for CacheError {
+    fn from(e: serde_json::Error) -> Self {
+        CacheError::Operation(e.to_string())
+    }
+}
 
 /// Options for Redis SCAN during cache invalidation.
 #[derive(Clone, Debug, Default)]
@@ -37,7 +49,7 @@ impl TieredCache {
         l1_pool: Pool<RedisConnectionManager>,
         l0_config: L0Config,
         ttl_config: Arc<RwLock<TtlConfig>>,
-    ) -> Result<Self> {
+    ) -> Result<Self, CacheError> {
         let l0 = Cache::builder()
             .max_capacity(l0_config.max_capacity)
             .time_to_live(Duration::from_secs(l0_config.ttl_secs))
@@ -51,6 +63,7 @@ impl TieredCache {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(key = %key, consumer = consumer.map(|c| c.as_ref()).unwrap_or("none")))]
     pub async fn get(
         &self,
         key: &str,
@@ -121,17 +134,18 @@ impl TieredCache {
         None
     }
 
+    #[tracing::instrument(skip(self, entry), fields(key = %key, model = %model, consumer = consumer.map(|c| c.as_ref()).unwrap_or("none")))]
     pub async fn put(
         &self,
         key: &str,
         entry: CacheEntry,
         model: &str,
         consumer: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<(), CacheError> {
         let ttl = self
             .ttl_config
             .read()
-            .map_err(|e| anyhow::anyhow!("TTL config lock poisoned: {e}"))?
+            .map_err(|e| CacheError::Operation(format!("TTL config lock poisoned: {e}")))?
             .resolve(model, consumer);
 
         self.l0.insert(key.to_string(), entry.clone()).await;
@@ -140,7 +154,7 @@ impl TieredCache {
             Ok(c) => c,
             Err(e) => {
                 warn!(error = %e, key = key, "Failed to get Redis connection for cache put");
-                return Err(e.into());
+                return Err(CacheError::Operation(e.to_string()));
             }
         };
 
@@ -149,7 +163,7 @@ impl TieredCache {
 
         if let Err(e) = conn.set_ex::<&str, &str, ()>(&cache_key, &json, ttl).await {
             warn!(error = %e, key = key, "Redis SETEX failed for cache put");
-            return Err(e.into());
+            return Err(CacheError::Operation(e.to_string()));
         }
 
         debug!(key = key, ttl_secs = ttl, "Cache entry stored in L0 and L1");
@@ -181,21 +195,22 @@ impl TieredCache {
         self.ttl_config.clone()
     }
 
-    pub async fn invalidate(&self, key: &str) -> Result<()> {
+    #[tracing::instrument(skip(self), fields(key = %key))]
+    pub async fn invalidate(&self, key: &str) -> Result<(), CacheError> {
         self.l0.invalidate(key).await;
 
         let mut conn = match self.l1_pool.get().await {
             Ok(c) => c,
             Err(e) => {
                 warn!(error = %e, key = key, "Failed to get Redis connection for cache invalidate");
-                return Err(e.into());
+                return Err(CacheError::Operation(e.to_string()));
             }
         };
 
         let cache_key = format!("cache:{key}");
         if let Err(e) = conn.del::<&str, ()>(&cache_key).await {
             warn!(error = %e, key = key, "Redis DEL failed for cache invalidate");
-            return Err(e.into());
+            return Err(CacheError::Operation(e.to_string()));
         }
 
         debug!(key = key, "Cache entry invalidated");
@@ -203,13 +218,15 @@ impl TieredCache {
     }
 
     /// Invalidate all cache entries (L0 + L1 scan and delete).
-    pub async fn invalidate_all(&self, scan: InvalidateScanOptions) -> Result<()> {
+    #[tracing::instrument(skip(self, scan), fields(scope = "all"))]
+    pub async fn invalidate_all(&self, scan: InvalidateScanOptions) -> Result<(), CacheError> {
         self.l0.invalidate_all();
         self.scan_delete_l1("cache:*", "all", scan).await
     }
 
     /// Invalidate cache entries matching a prefix pattern in the cache key.
-    pub async fn invalidate_prefix(&self, prefix: &str, scan: InvalidateScanOptions) -> Result<()> {
+    #[tracing::instrument(skip(self, scan), fields(prefix = %prefix))]
+    pub async fn invalidate_prefix(&self, prefix: &str, scan: InvalidateScanOptions) -> Result<(), CacheError> {
         let prefix_owned = prefix.to_string();
         if let Err(e) = self
             .l0
@@ -227,7 +244,7 @@ impl TieredCache {
         pattern: &str,
         scope_label: &str,
         scan: InvalidateScanOptions,
-    ) -> Result<()> {
+    ) -> Result<(), CacheError> {
         let mut conn = match self.l1_pool.get().await {
             Ok(c) => c,
             Err(e) => {
@@ -236,7 +253,7 @@ impl TieredCache {
                     scope = scope_label,
                     "Failed to get Redis connection for cache invalidation scan"
                 );
-                return Err(e.into());
+                return Err(CacheError::Operation(e.to_string()));
             }
         };
 
@@ -275,7 +292,7 @@ impl TieredCache {
                         scope = scope_label,
                         "Redis SCAN failed during cache invalidation"
                     );
-                    anyhow::anyhow!("Redis SCAN failed: {e}")
+                    CacheError::Operation(format!("Redis SCAN failed: {e}"))
                 })?;
 
             cursor = result.0;

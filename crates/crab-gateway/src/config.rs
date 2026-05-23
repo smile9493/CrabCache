@@ -384,6 +384,9 @@ pub struct SemanticConfig {
     pub enabled: bool,
     pub model_path: String,
     pub tokenizer_path: String,
+    /// Expected SHA-256 hex digest of the ONNX model file.
+    /// When set, the model is verified before loading (production safety).
+    pub model_sha256: Option<String>,
     pub qdrant_url: String,
     pub collection_name: String,
     pub vector_size: Option<u64>,

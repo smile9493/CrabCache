@@ -1,8 +1,14 @@
-use anyhow::Result;
 use pingora_ketama::{Bucket, Continuum};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::debug;
+
+/// Error type for affinity routing operations.
+#[derive(Debug, thiserror::Error)]
+pub enum RouteError {
+    #[error("backends list cannot be empty")]
+    EmptyBackends,
+}
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -54,9 +60,9 @@ pub struct AffinityRouter {
 }
 
 impl AffinityRouter {
-    pub fn new(backends: &[Backend]) -> Result<Self> {
+    pub fn new(backends: &[Backend]) -> Result<Self, RouteError> {
         if backends.is_empty() {
-            anyhow::bail!("Backends list cannot be empty");
+            return Err(RouteError::EmptyBackends);
         }
 
         let buckets: Vec<Bucket> = backends
@@ -127,9 +133,9 @@ impl AffinityRouter {
             .map(|b| b.as_ref())
     }
 
-    pub fn update(&mut self, backends: &[Backend]) -> Result<()> {
+    pub fn update(&mut self, backends: &[Backend]) -> Result<(), RouteError> {
         if backends.is_empty() {
-            anyhow::bail!("Backends list cannot be empty");
+            return Err(RouteError::EmptyBackends);
         }
 
         let buckets: Vec<Bucket> = backends

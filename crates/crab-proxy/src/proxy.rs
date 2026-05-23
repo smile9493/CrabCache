@@ -168,6 +168,24 @@ impl GatewayProxy {
             .unwrap_or_else(|| self.state.runtime.default_profile())
     }
 
+    fn create_upstream_peer(
+        &self,
+        backend: &crab_route::Backend,
+        ctx: &mut GatewayContext,
+    ) -> HttpPeer {
+        ctx.upstream_host = Some(backend.tls_sni.clone());
+        let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
+        let conn_config = self
+            .state
+            .runtime
+            .conn_config
+            .read()
+            .map(|c| c.clone())
+            .unwrap_or_default();
+        apply_connection_options(&conn_config, &mut peer.options);
+        peer
+    }
+
     fn try_acquire_upstream_key(&self, ctx: &mut GatewayContext) -> bool {
         if ctx.upstream_key_guard.is_some() {
             return true;
@@ -184,6 +202,131 @@ impl GatewayProxy {
                 false
             }
         }
+    }
+
+    /// Attempt L2 semantic cache lookup. Returns `true` if the response was served
+    /// from the semantic cache (including error responses), `false` if no hit.
+    async fn try_l2_semantic_cache(
+        &self,
+        session: &mut Session,
+        ctx: &mut GatewayContext,
+        cache_key_body: &[u8],
+    ) -> bool {
+        let Some(semantic_cache) = &self.state.semantic_cache else {
+            return false;
+        };
+        let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(cache_key_body) else {
+            return false;
+        };
+        let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) else {
+            return false;
+        };
+        let Some(query_text) = build_semantic_query_text(messages) else {
+            return false;
+        };
+
+        // Apply semantic gate before L2 search
+        let gate_decision = evaluate_semantic_gate(
+            &self.state.semantic_gate,
+            &query_text,
+            ctx.cache_hit.is_some(),
+        );
+        match gate_decision {
+            GateDecision::Pass => {}
+            ref reason => {
+                let reason_str = match reason {
+                    GateDecision::TooShort => "too_short",
+                    GateDecision::TooLong => "too_long",
+                    GateDecision::NotExactMiss => "not_exact_miss",
+                    _ => "unknown",
+                };
+                global_metrics().record_semantic_skipped(reason_str);
+                debug!(
+                    request_id = %ctx.request_id,
+                    reason = reason_str,
+                    query_len = query_text.len(),
+                    "Semantic gate blocked L2 search",
+                );
+            }
+        }
+        if gate_decision != GateDecision::Pass {
+            return false;
+        }
+
+        let Some(entry) = semantic_cache.search(&query_text, ctx.project_id.as_deref()).await else {
+            return false;
+        };
+
+        // Model guard: verify the cached entry's model matches
+        if entry.model != ctx.model {
+            global_metrics().record_semantic_cache_rejected();
+            debug!(
+                request_id = %ctx.request_id,
+                cached_model = %entry.model,
+                request_model = %ctx.model,
+                "Semantic cache candidate rejected by model guard",
+            );
+            return false;
+        }
+        if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+            debug!(
+                request_id = %ctx.request_id,
+                entry_is_stream = entry.is_stream,
+                request_is_streaming = ctx.is_streaming,
+                "Semantic cache hit ignored: stream mode mismatch"
+            );
+            return false;
+        }
+
+        info!(
+            request_id = %ctx.request_id,
+            query_len = query_text.len(),
+            "Semantic cache hit, returning cached response"
+        );
+
+        ctx.cache_tier = Some(CacheTier::L2Semantic);
+        ctx.cache_hit = Some(entry.clone());
+        ctx.last_input_tokens = entry.usage.prompt_tokens;
+        ctx.last_output_tokens = entry.usage.completion_tokens;
+        global_metrics().record_cache_hit(
+            CacheTier::L2Semantic,
+            &ctx.model,
+            ctx.consumer.as_deref(),
+            ctx.domain.as_deref(),
+        );
+        global_metrics().record_latency(
+            crab_metrics::LatencyKind::CacheFetch,
+            ctx.request_start.elapsed(),
+            &ctx.model,
+            Some(CacheTier::L2Semantic),
+        );
+
+        let cost = self.state.pricing.cost_saved_usd(
+            &ctx.model,
+            entry.usage.prompt_tokens,
+            entry.usage.completion_tokens,
+        );
+        global_metrics().record_cost_saved(
+            &ctx.model,
+            ctx.consumer.as_deref(),
+            ctx.domain.as_deref(),
+            CacheTier::L2Semantic,
+            cost,
+        );
+
+        if !send_cached_response(
+            session,
+            &entry,
+            &ctx.model,
+            ctx.is_streaming,
+            CacheTier::L2Semantic,
+        )
+        .await
+        {
+            let _ = session.respond_error(500).await;
+        }
+
+        true
     }
 }
 
@@ -876,113 +1019,9 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
-                if let Some(semantic_cache) = &self.state.semantic_cache {
-                if let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(cache_key_body) {
-                    if let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array())
-                    {
-                        if let Some(query_text) = build_semantic_query_text(messages) {
-                            // Apply semantic gate before L2 search
-                            let gate_decision = evaluate_semantic_gate(
-                                &self.state.semantic_gate,
-                                &query_text,
-                                ctx.cache_hit.is_some(),
-                            );
-                            match gate_decision {
-                                GateDecision::Pass => {}
-                                ref reason => {
-                                    let reason_str = match reason {
-                                        GateDecision::TooShort => "too_short",
-                                        GateDecision::TooLong => "too_long",
-                                        GateDecision::NotExactMiss => "not_exact_miss",
-                                        _ => "unknown",
-                                    };
-                                    global_metrics().record_semantic_skipped(reason_str);
-                                    debug!(
-                                        request_id = %ctx.request_id,
-                                        reason = reason_str,
-                                        query_len = query_text.len(),
-                                        "Semantic gate blocked L2 search",
-                                    );
-                                }
-                            }
-
-                            if gate_decision == GateDecision::Pass {
-                                if let Some(entry) =
-                                    semantic_cache.search(&query_text, ctx.project_id.as_deref()).await
-                                {
-                                    // Model guard: verify the cached entry's model matches
-                                    if entry.model != ctx.model {
-                                        global_metrics().record_semantic_cache_rejected();
-                                        debug!(
-                                            request_id = %ctx.request_id,
-                                            cached_model = %entry.model,
-                                            request_model = %ctx.model,
-                                            "Semantic cache candidate rejected by model guard",
-                                        );
-                                    } else if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming)
-                                    {
-                                        debug!(
-                                            request_id = %ctx.request_id,
-                                            entry_is_stream = entry.is_stream,
-                                            request_is_streaming = ctx.is_streaming,
-                                            "Semantic cache hit ignored: stream mode mismatch"
-                                        );
-                                    } else {
-                                        info!(
-                                            request_id = %ctx.request_id,
-                                            query_len = query_text.len(),
-                                            "Semantic cache hit, returning cached response"
-                                        );
-
-                                        ctx.cache_tier = Some(CacheTier::L2Semantic);
-                                        ctx.cache_hit = Some(entry.clone());
-                                        ctx.last_input_tokens = entry.usage.prompt_tokens;
-                                        ctx.last_output_tokens = entry.usage.completion_tokens;
-                                        global_metrics().record_cache_hit(
-                                            CacheTier::L2Semantic,
-                                            &ctx.model,
-                                            ctx.consumer.as_deref(),
-                                            ctx.domain.as_deref(),
-                                        );
-                                        global_metrics().record_latency(
-                                            crab_metrics::LatencyKind::CacheFetch,
-                                            ctx.request_start.elapsed(),
-                                            &ctx.model,
-                                            Some(CacheTier::L2Semantic),
-                                        );
-
-                                        let cost = self.state.pricing.cost_saved_usd(
-                                            &ctx.model,
-                                            entry.usage.prompt_tokens,
-                                            entry.usage.completion_tokens,
-                                        );
-                                        global_metrics().record_cost_saved(
-                                            &ctx.model,
-                                            ctx.consumer.as_deref(),
-                                            ctx.domain.as_deref(),
-                                            CacheTier::L2Semantic,
-                                            cost,
-                                        );
-
-                                        if !send_cached_response(
-                                            session,
-                                            &entry,
-                                            &ctx.model,
-                                            ctx.is_streaming,
-                                            CacheTier::L2Semantic,
-                                        )
-                                        .await
-                                        {
-                                            let _ = session.respond_error(500).await;
-                                        }
-
-                                        return Ok(true);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let cache_key_body_owned = cache_key_body.to_vec();
+                if self.try_l2_semantic_cache(session, ctx, &cache_key_body_owned).await {
+                    return Ok(true);
                 }
             }
 
@@ -1152,15 +1191,14 @@ impl ProxyHttp for GatewayProxy {
                 .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
 
             ctx.upstream_host = Some(backend.tls_sni.clone());
-            let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
+            let peer = self.create_upstream_peer(backend, ctx);
             let conn_config = self
                 .state
                 .runtime
                 .conn_config
                 .read()
-                .map_err(|_| Error::new(ErrorType::InternalError))?
-                .clone();
-            apply_connection_options(&conn_config, &mut peer.options);
+                .map(|c| c.clone())
+                .unwrap_or_default();
             // #region agent log
             debug_agent_log(
                 "H1",
@@ -1223,15 +1261,14 @@ impl ProxyHttp for GatewayProxy {
         );
 
         ctx.upstream_host = Some(backend.tls_sni.clone());
-        let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
+        let peer = self.create_upstream_peer(&backend, ctx);
         let conn_config = self
             .state
             .runtime
             .conn_config
             .read()
-            .map_err(|_| Error::new(ErrorType::InternalError))?
-            .clone();
-        apply_connection_options(&conn_config, &mut peer.options);
+            .map(|c| c.clone())
+            .unwrap_or_default();
         // #region agent log
         debug_agent_log(
             "H1",
@@ -1290,14 +1327,14 @@ impl ProxyHttp for GatewayProxy {
             let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
         }
 
-        let conn_cfg = self
+        let conn_config = self
             .state
             .runtime
             .conn_config
             .read()
             .map_err(|_| Error::new(ErrorType::InternalError))?
             .clone();
-        if conn_cfg.upstream_disable_keepalive {
+        if conn_config.upstream_disable_keepalive {
             ctx.upstream_connection_close = true;
             let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
         }

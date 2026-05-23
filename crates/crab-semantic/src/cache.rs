@@ -31,6 +31,7 @@ impl SemanticCache {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(query_len = query_text.len(), tenant = tenant_id.unwrap_or("default")))]
     pub async fn search(&self, query_text: &str, tenant_id: Option<&str>) -> Option<CacheEntry> {
         let start = Instant::now();
         let vector = self.pool.embed(query_text).await.ok()?;
@@ -61,6 +62,7 @@ impl SemanticCache {
         result
     }
 
+    #[tracing::instrument(skip(self), fields(query_len = query_text.len(), tenant = tenant_id.unwrap_or("default")))]
     pub async fn insert(
         &self,
         query_text: &str,
