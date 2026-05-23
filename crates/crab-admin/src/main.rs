@@ -84,6 +84,30 @@ impl ServerConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Register a global panic hook that logs and aborts to prevent
+    // inconsistent shared state from a panicked thread.
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info
+            .location()
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        tracing::error!(
+            location = %location,
+            message = %message,
+            "Panic occurred in Admin Dashboard — aborting"
+        );
+        std::process::abort();
+    }));
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

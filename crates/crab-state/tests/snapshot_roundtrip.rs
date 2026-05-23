@@ -135,9 +135,7 @@ fn connection_config_roundtrip() {
     let runtime = test_runtime();
     let mut conn = ConnectionConfig::default();
     conn.tcp_keepalive_idle_secs = Some(120);
-    if let Ok(mut guard) = runtime.conn_config.write() {
-        *guard = conn.clone();
-    }
+    *runtime.conn_config.write().expect("conn lock") = Arc::new(conn);
 
     let snap = build_snapshot_from_runtime(&runtime);
     let rt = snap.runtime.as_ref().expect("runtime snapshot");

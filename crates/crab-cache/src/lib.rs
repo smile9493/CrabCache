@@ -22,7 +22,7 @@ pub use key::{
 pub use sanitized_trace::{
     FittedParameters, SanitizedLogEntry, load_sanitized_log, save_sanitized_log,
 };
-pub use tiered::{InvalidateScanOptions, TieredCache};
+pub use tiered::{CacheError, InvalidateScanOptions, TieredCache};
 pub use trace_analyzer::{
     ComparisonResult, TraceRecord, TraceStats, load_trace_from_file, save_trace_to_file,
 };

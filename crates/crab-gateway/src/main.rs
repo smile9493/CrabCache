@@ -18,6 +18,7 @@ use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -101,8 +102,11 @@ fn main() -> Result<()> {
         tracing::error!(
             location = %location,
             message = %message,
-            "Panic occurred"
+            "Panic occurred — aborting process to prevent inconsistent state"
         );
+        // Abort the process to prevent panicked threads from leaving
+        // shared state (DashMap, RwLock) in an inconsistent state.
+        std::process::abort();
     }));
 
     std::fs::create_dir_all("./logs").ok();
@@ -204,6 +208,8 @@ fn main() -> Result<()> {
     let l1_pool = rt.block_on(async {
         bb8::Pool::builder()
             .max_size(config.cache.l1_pool_size.unwrap_or(16))
+            .connection_timeout(Duration::from_secs(3))
+            .idle_timeout(Some(Duration::from_secs(60)))
             .build(bb8_redis::RedisConnectionManager::new(
                 config.cache.l1_redis_url.clone(),
             )?)
@@ -234,6 +240,7 @@ fn main() -> Result<()> {
             &config.semantic.model_path,
             &config.semantic.tokenizer_path,
             config.semantic.max_concurrent_embeds,
+            config.semantic.model_sha256.as_deref(),
         )?;
 
         let store = VectorStore::new(

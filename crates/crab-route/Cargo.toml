@@ -7,6 +7,7 @@ edition.workspace = true
 pingora-ketama.workspace = true
 pingora-core.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 anyhow.workspace = true
 sha2.workspace = true
 hex.workspace = true

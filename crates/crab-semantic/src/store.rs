@@ -61,6 +61,7 @@ impl VectorStore {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(vector_dim = vector.len(), threshold = %threshold))]
     pub async fn search(
         &self,
         vector: &[f32],
@@ -100,6 +101,7 @@ impl VectorStore {
         serde_json::from_str(entry_json).ok()
     }
 
+    #[tracing::instrument(skip(self, entry), fields(tenant = tenant_id.unwrap_or("default"), ttl_secs = %ttl_secs))]
     pub async fn upsert(
         &self,
         id: &str,

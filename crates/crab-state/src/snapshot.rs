@@ -6,6 +6,7 @@ use crab_proxy::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoredKeySnapshot {
@@ -150,7 +151,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
     let connection = runtime
         .conn_config
         .read()
-        .map(|c| c.clone())
+        .map(|c| (**c).clone())
         .unwrap_or_default();
 
     let upstream_keys: Vec<UpstreamKeySnapshot> = runtime
@@ -230,7 +231,7 @@ pub fn apply_snapshot_to_runtime(
             *model = rt.fallback_model.clone();
         }
         if let Ok(mut conn) = runtime.conn_config.write() {
-            *conn = rt.connection.clone();
+            *conn = Arc::new(rt.connection.clone());
         }
 
         if !rt.backends.is_empty() {
