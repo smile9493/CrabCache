@@ -12,31 +12,18 @@ fn arr_from_str(s: &str) -> js_sys::Array {
 pub enum Theme {
     Dark,
     Light,
-    Ocean,
-    Forest,
-    Sunset,
     Midnight,
 }
 
 impl Theme {
-    pub fn all() -> [Theme; 6] {
-        [
-            Theme::Dark,
-            Theme::Light,
-            Theme::Ocean,
-            Theme::Forest,
-            Theme::Sunset,
-            Theme::Midnight,
-        ]
+    pub fn all() -> [Theme; 3] {
+        [Theme::Dark, Theme::Light, Theme::Midnight]
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Theme::Dark => "深夜炭金",
             Theme::Light => "晨光青瓷",
-            Theme::Ocean => "深海冰蓝",
-            Theme::Forest => "松林翠影",
-            Theme::Sunset => "日暮暖橙",
             Theme::Midnight => "极夜星紫",
         }
     }
@@ -45,9 +32,6 @@ impl Theme {
         match self {
             Theme::Dark => "🌑",
             Theme::Light => "🌕",
-            Theme::Ocean => "🌊",
-            Theme::Forest => "🌲",
-            Theme::Sunset => "🌅",
             Theme::Midnight => "✨",
         }
     }
@@ -56,9 +40,6 @@ impl Theme {
         match self {
             Theme::Dark => "theme-dark",
             Theme::Light => "theme-light",
-            Theme::Ocean => "theme-ocean",
-            Theme::Forest => "theme-forest",
-            Theme::Sunset => "theme-sunset",
             Theme::Midnight => "theme-midnight",
         }
     }
@@ -67,9 +48,6 @@ impl Theme {
         match self {
             Theme::Dark => "dark",
             Theme::Light => "light",
-            Theme::Ocean => "ocean",
-            Theme::Forest => "forest",
-            Theme::Sunset => "sunset",
             Theme::Midnight => "midnight",
         }
     }
@@ -82,9 +60,6 @@ impl FromStr for Theme {
         match s {
             "dark" => Ok(Theme::Dark),
             "light" => Ok(Theme::Light),
-            "ocean" => Ok(Theme::Ocean),
-            "forest" => Ok(Theme::Forest),
-            "sunset" => Ok(Theme::Sunset),
             "midnight" => Ok(Theme::Midnight),
             _ => Err(format!("Unknown theme: {}", s)),
         }
