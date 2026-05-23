@@ -1,6 +1,7 @@
 use crate::TraceLogger;
 use crate::runtime::RuntimeConfig;
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
+use crate::client_key_rate_limiter::ClientKeyRateLimiter;
 use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_composition::RequestComposition;
@@ -30,6 +31,8 @@ pub struct StoredKey {
     pub upstream_profile: Option<String>,
     /// Max simultaneous in-flight requests (0 = unlimited).
     pub max_concurrent: u32,
+    /// Max requests per minute (0 = unlimited).
+    pub rpm_limit: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -384,4 +387,5 @@ pub struct GatewayState {
     pub max_request_body_bytes: usize,
     pub request_semaphore: Arc<Semaphore>,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
+    pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
 }

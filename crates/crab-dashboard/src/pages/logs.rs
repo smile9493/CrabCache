@@ -15,7 +15,8 @@ pub fn LogsPage() -> impl IntoView {
     let detail: RwSignal<Option<Result<RequestDetail, String>>> = RwSignal::new(None);
     let detail_loading = RwSignal::new(false);
     let next_cursor: RwSignal<Option<String>> = RwSignal::new(None);
-    let prev_cursors: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
+    let prev_cursors: RwSignal<Vec<Option<String>>> = RwSignal::new(Vec::new());
+    let page_cursor: RwSignal<Option<String>> = RwSignal::new(None);
     let loading_more: RwSignal<bool> = RwSignal::new(false);
     let total_in_window: RwSignal<u64> = RwSignal::new(0);
     let has_next: RwSignal<bool> = RwSignal::new(false);
@@ -42,6 +43,7 @@ pub fn LogsPage() -> impl IntoView {
     let load_logs = move || {
         next_cursor.set(None);
         prev_cursors.set(Vec::new());
+        page_cursor.set(None);
         has_next.set(false);
         has_prev.set(false);
         leptos::task::spawn_local(async move {
@@ -80,13 +82,13 @@ pub fn LogsPage() -> impl IntoView {
         }
         loading_more.set(true);
         let cursor_for_fetch = current_cursor.clone();
+        // Save the cursor used to load the current page, so we can return to it.
+        let prev_page = page_cursor.get();
         leptos::task::spawn_local(async move {
             match api::fetch_logs(Some(100), cursor_for_fetch.as_deref()).await {
                 Ok(resp) => {
-                    // Save the cursor we used as a "back" cursor.
-                    if let Some(c) = cursor_for_fetch {
-                        prev_cursors.update(|cursors| cursors.push(c));
-                    }
+                    prev_cursors.update(|cursors| cursors.push(prev_page));
+                    page_cursor.set(cursor_for_fetch);
                     logs.set(Some(Ok(resp.items)));
                     next_cursor.set(resp.next_cursor);
                     total_in_window.set(resp.total_in_window);
@@ -111,7 +113,8 @@ pub fn LogsPage() -> impl IntoView {
         }
         prev_cursors.set(cursors);
         loading_more.set(true);
-        let cursor_for_fetch = prev.clone();
+        let cursor_for_fetch = prev.flatten();
+        page_cursor.set(cursor_for_fetch.clone());
         leptos::task::spawn_local(async move {
             match api::fetch_logs(Some(100), cursor_for_fetch.as_deref()).await {
                 Ok(resp) => {

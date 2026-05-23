@@ -1,4 +1,5 @@
 mod client_key_limiter;
+mod client_key_rate_limiter;
 mod context;
 mod debug_log;
 mod error;
@@ -22,6 +23,7 @@ mod sse_rewrite;
 mod connection_helpers;
 
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimiter, ClientKeyLimitError};
+pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
     StoredKey,

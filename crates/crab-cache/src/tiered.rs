@@ -3,11 +3,65 @@ use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use crab_metrics::{CacheTier, global_metrics};
 use moka::future::Cache;
+use moka::policy::Expiry;
 use redis::{AsyncCommands, cmd};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Custom Moka expiry that resolves per-entry TTL from the shared `TtlConfig`,
+/// picking up hot-reloaded TTL changes on every cache read.
+struct DynamicTtlExpiry {
+    ttl_config: Arc<RwLock<TtlConfig>>,
+}
+
+impl Expiry<String, CacheEntry> for DynamicTtlExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &String,
+        value: &CacheEntry,
+        _created_at: Instant,
+    ) -> Option<Duration> {
+        let ttl = self
+            .ttl_config
+            .read()
+            .ok()?
+            .resolve(&value.model, None);
+        Some(Duration::from_secs(ttl))
+    }
+
+    fn expire_after_read(
+        &self,
+        _key: &String,
+        value: &CacheEntry,
+        _read_at: Instant,
+        _duration_until_expiry: Option<Duration>,
+        _last_modified_at: Instant,
+    ) -> Option<Duration> {
+        let ttl = self
+            .ttl_config
+            .read()
+            .ok()?
+            .resolve(&value.model, None);
+        Some(Duration::from_secs(ttl))
+    }
+
+    fn expire_after_update(
+        &self,
+        _key: &String,
+        value: &CacheEntry,
+        _updated_at: Instant,
+        _duration_until_expiry: Option<Duration>,
+    ) -> Option<Duration> {
+        let ttl = self
+            .ttl_config
+            .read()
+            .ok()?
+            .resolve(&value.model, None);
+        Some(Duration::from_secs(ttl))
+    }
+}
 
 /// Error type for cache operations.
 #[derive(Debug, thiserror::Error)]
@@ -52,7 +106,9 @@ impl TieredCache {
     ) -> Result<Self, CacheError> {
         let l0 = Cache::builder()
             .max_capacity(l0_config.max_capacity)
-            .time_to_live(Duration::from_secs(l0_config.ttl_secs))
+            .expire_after(DynamicTtlExpiry {
+                ttl_config: ttl_config.clone(),
+            })
             .support_invalidation_closures()
             .build();
 
