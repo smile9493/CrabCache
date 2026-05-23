@@ -82,9 +82,9 @@ pub fn provide_theme() -> RwSignal<Theme> {
         let current = theme_for_effect.get();
         if let Some(window) = web_sys::window() {
             if let Some(document) = window.document()
-                && let Some(body) = document.body()
+                && let Some(root) = document.document_element()
             {
-                let class_list = body.class_list();
+                let class_list = root.class_list();
                 for t in Theme::all() {
                     let _ = class_list.remove(&arr_from_str(t.css_class()));
                 }

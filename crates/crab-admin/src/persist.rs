@@ -59,6 +59,8 @@ pub struct PersistedKeyMetadata {
     #[serde(default)]
     pub tokens_this_month: u64,
     #[serde(default)]
+    pub max_concurrent: u32,
+    #[serde(default)]
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
@@ -170,6 +172,7 @@ impl From<&KeyMetadata> for PersistedKeyMetadata {
             model_limits: m.model_limits.clone(),
             remain_quota: m.remain_quota,
             unlimited_quota: m.unlimited_quota,
+            max_concurrent: m.max_concurrent,
             usage_month: m.usage_month.clone(),
             tokens_this_month: m.tokens_this_month,
             input_tokens: m.input_tokens,
@@ -194,6 +197,7 @@ impl From<PersistedKeyMetadata> for KeyMetadata {
             model_limits: p.model_limits,
             remain_quota: p.remain_quota,
             unlimited_quota: p.unlimited_quota,
+            max_concurrent: p.max_concurrent,
             usage_month: p.usage_month,
         }
     }

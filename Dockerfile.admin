@@ -20,6 +20,11 @@ registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' > /usr/local/c
 RUN rustup target add wasm32-unknown-unknown && \
     cargo install trunk --locked
 
+# TODO(Phase 3): Replace `trunk build --release` with:
+#   cargo install cargo-leptos --locked
+#   cargo leptos build --split --release
+# when cargo-leptos --split is ready.
+
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./

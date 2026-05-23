@@ -4,6 +4,7 @@ pub mod auth;
 pub mod clipboard;
 pub mod components;
 pub mod locale;
+pub mod page_visible;
 pub mod pages;
 pub mod theme;
 pub mod types;

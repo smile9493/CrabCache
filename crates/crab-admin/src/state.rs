@@ -24,6 +24,7 @@ pub struct KeyMetadata {
     pub model_limits: Vec<String>,
     pub remain_quota: i64,
     pub unlimited_quota: bool,
+    pub max_concurrent: u32,
     /// Month key (YYYY-MM) for the accumulated tokens_this_month/input_tokens/output_tokens.
     /// When the current month differs from this value on load, counters are reset.
     pub usage_month: String,

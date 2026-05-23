@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::components::*;
 
 use crate::auth::{logout, use_admin_key};
+use crate::components::brand_logo::BrandLogo;
 use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{Translations, use_locale, use_translations};
@@ -72,7 +73,7 @@ pub fn Sidebar() -> impl IntoView {
             <div class="sidebar-header">
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-2.5 min-w-0">
-                        <span class="text-2xl leading-none" aria-hidden="true">"🦀"</span>
+                        <BrandLogo />
                         <span class="sidebar-brand brand-gradient-text truncate">{Translations::sidebar_brand}</span>
                     </div>
                     <div class="hidden md:block">
@@ -87,6 +88,7 @@ pub fn Sidebar() -> impl IntoView {
                 <NavItem href="/" label=move || use_translations().sidebar_overview() icon="◉" on_navigate=close_on_nav />
                 <NavItem href="/live" label=move || use_translations().sidebar_live() icon="◔" on_navigate=close_on_nav />
                 <NavItem href="/domains" label=move || use_translations().sidebar_domains() icon="◫" on_navigate=close_on_nav />
+                <NavItem href="/composition" label=move || use_translations().sidebar_composition() icon="⊞" on_navigate=close_on_nav />
                 <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" on_navigate=close_on_nav />
 
                 <div class="nav-group-label">{move || use_translations().sidebar_group_config()}</div>

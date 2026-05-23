@@ -3,6 +3,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::locale::use_translations;
+use crate::page_visible::page_visible;
 use crate::types::GatewayHealth;
 
 const POLL_INTERVAL_MS: u32 = 15_000;
@@ -58,7 +59,9 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
                 if !alive.get_value() {
                     break;
                 }
-                fetch_health();
+                if page_visible() {
+                    fetch_health();
+                }
             }
         });
 

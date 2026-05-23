@@ -1,6 +1,6 @@
 # CrabCache 文档
 
-欢迎查阅 CrabCache 项目文档。CrabCache 是一个基于 Cloudflare Pingora 框架的高性能 Rust API 网关，专为 DeepSeek V4 大语言模型设计，通过三级缓存架构、会话亲和性路由和智能推理内容管理，实现极致的成本优化和低延迟响应。
+欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现 DeepSeek V4 / Cursor 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。多轮对话降本主要看 DeepSeek **L3 前缀缓存**，与网关 L0–L2 响应缓存是两套指标，详见 [DeepSeek 上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md)。
 
 ## 快速导航
 

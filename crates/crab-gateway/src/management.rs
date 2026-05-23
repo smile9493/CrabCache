@@ -22,7 +22,8 @@ use crab_pipeline::{
     validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
 };
 use crab_proxy::{
-    DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    ClientKeyLimiter, DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool,
+    UpstreamKeySpec,
 };
 use std::collections::HashMap;
 use crab_reasoning::ReasoningBackend;
@@ -48,6 +49,7 @@ pub struct ManagementState {
     pub invalidate_job: Arc<Mutex<Option<InvalidateJobSnapshot>>>,
     pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
     pub invalidate_scan_timeout_secs: u64,
+    pub client_key_limiter: Arc<ClientKeyLimiter>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -782,7 +784,12 @@ fn key_preview(token: &str) -> String {
     }
 }
 
-fn stored_to_spec(token: &str, key: &StoredKey, include_full: bool) -> ApiKeySpec {
+fn stored_to_spec(
+    token: &str,
+    key: &StoredKey,
+    include_full: bool,
+    limiter: &ClientKeyLimiter,
+) -> ApiKeySpec {
     ApiKeySpec {
         id: key.id.clone(),
         name: key.name.clone(),
@@ -797,6 +804,8 @@ fn stored_to_spec(token: &str, key: &StoredKey, include_full: bool) -> ApiKeySpe
         project_id: key.project_id.clone(),
         pipeline: key.pipeline.clone(),
         upstream_profile: key.upstream_profile.clone(),
+        max_concurrent: key.max_concurrent,
+        inflight: limiter.inflight(token),
     }
 }
 
@@ -809,7 +818,7 @@ async fn list_keys(
         .runtime
         .keys
         .iter()
-        .map(|entry| stored_to_spec(entry.key(), entry.value(), false))
+        .map(|entry| stored_to_spec(entry.key(), entry.value(), false, &state.client_key_limiter))
         .collect();
     Ok(Json(keys))
 }
@@ -839,6 +848,7 @@ async fn create_key(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
+    let max_concurrent = req.max_concurrent.unwrap_or(0);
     let stored = StoredKey {
         id: id.clone(),
         name: req.name.clone(),
@@ -848,8 +858,10 @@ async fn create_key(
         project_id: req.project_id.clone(),
         pipeline: req.pipeline.clone(),
         upstream_profile: req.upstream_profile.clone(),
+        max_concurrent,
     };
-    state.runtime.keys.insert(token.clone(), stored);
+    state.runtime.keys.insert(token.clone(), stored.clone());
+    state.client_key_limiter.sync_key(&token, &stored);
 
     schedule_persist_state(&state);
     Ok(Json(CreateGatewayKeyResponse {
@@ -862,6 +874,7 @@ async fn create_key(
         project_id: req.project_id,
         pipeline: req.pipeline,
         upstream_profile: req.upstream_profile,
+        max_concurrent,
     }))
 }
 
@@ -872,6 +885,7 @@ async fn revoke_key(
 ) -> Result<StatusCode, Response> {
     authorize(&headers, &state.admin_key)?;
     if state.runtime.keys.remove(&token).is_some() {
+        state.client_key_limiter.remove_key(&token);
         schedule_persist_state(&state);
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -988,9 +1002,14 @@ async fn patch_key(
     if let Some(upstream_profile) = req.upstream_profile {
         entry.upstream_profile = Some(upstream_profile);
     }
+    if let Some(max_concurrent) = req.max_concurrent {
+        entry.max_concurrent = max_concurrent;
+    }
 
-    let spec = stored_to_spec(&token, &entry, false);
+    let synced = entry.clone();
     drop(entry);
+    let spec = stored_to_spec(&token, &synced, false, &state.client_key_limiter);
+    state.client_key_limiter.sync_key(&token, &synced);
     schedule_persist_state(&state);
     Ok(Json(spec))
 }

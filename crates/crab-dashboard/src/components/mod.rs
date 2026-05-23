@@ -1,4 +1,5 @@
 pub mod auth_gate;
+pub mod brand_logo;
 pub mod confirm;
 pub mod gateway_health;
 pub mod line_chart;

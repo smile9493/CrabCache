@@ -81,6 +81,16 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # endpoints = ["api.openai.com:443"]
 # model = "gpt-4o"
 # keys = ["sk-openai-1"]
+#
+# [[upstream.profiles]]
+# id = "mimo"
+# provider = "mimo"
+# base_url = "https://api.xiaomimimo.com"
+# endpoints = ["api.xiaomimimo.com:443"]
+# model = "xiaomi/mimo-v2.5-pro"
+# keys = ["your-xiaomi-mimo-api-key"]
+# # OpenAI-compatible path: /v1/chat/completions
+# # Model ids are normalized to xiaomi/{name} (e.g. mimo-v2.5-pro → xiaomi/mimo-v2.5-pro)
 
 # Optional: TLS SNI override (defaults to hostname from base_url)
 # tls_sni = "api.deepseek.com"
@@ -140,6 +150,8 @@ fingerprint_normalize_content = true
 [cache.model_ttl_overrides]
 "deepseek-v4-pro" = 7200
 "deepseek-v4-flash" = 3600
+# "xiaomi/mimo-v2.5-pro" = 7200
+# "xiaomi/mimo-v2-flash" = 3600
 
 # Per-consumer TTL overrides (seconds)
 [cache.consumer_ttl_overrides]
@@ -154,6 +166,8 @@ default_output_price_per_million = 2.19
 # Per-model pricing overrides (optional)
 [cache.pricing.model_overrides]
 # "deepseek-v4-pro" = { input_price_per_million = 0.27, output_price_per_million = 1.10 }
+# "xiaomi/mimo-v2.5-pro" = { input_price_per_million = 1.00, output_price_per_million = 3.00 }
+# "xiaomi/mimo-v2.5" = { input_price_per_million = 0.40, output_price_per_million = 2.00 }
 
 [semantic]
 enabled = false
@@ -208,6 +222,11 @@ upstream_connection_timeout_secs = 60
 
 [trace_logging]
 enabled = true
+# Trace log file path. Each line is a JSON-serialized SanitizedLogEntry.
+# When the crab-composition crate is enabled, each entry automatically includes
+# a `composition` field with a structural fingerprint of the request (model,
+# tool usage, message counts, Cursor component detection, etc.).
+# See docs/OBSERVABILITY.md → "请求组成分析（Request Composition）".
 path = "/var/log/crabcache/trace.jsonl"
 # Production: raise max_lines (e.g. 50000) and max_files (e.g. 10) under sustained Cursor traffic.
 # max_lines = 50000

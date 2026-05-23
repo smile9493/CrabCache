@@ -9,8 +9,8 @@ use crate::suggestions::build_overview_suggestions;
 use crate::trace_log;
 use crate::trace_summary;
 use crate::types::{
-    GatewayHealthView, MetricsHistoryMeta, MetricsSnapshot, OverviewBundle, SemanticConfig,
-    TraceSummary,
+    GatewayHealthView, MetricsHistoryMeta, MetricsSnapshot, MetricsSnapshotCore, OverviewBundle,
+    OverviewCore, OverviewTimeseriesResponse, SemanticConfig, TimeSeriesPoint, TraceSummary,
 };
 use crab_control::GatewayStatus;
 use std::sync::Arc;
@@ -59,6 +59,95 @@ pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
     probe
 }
 
+async fn refresh_metrics_history_sample(state: &Arc<AppState>, body: &str, now: u64) {
+    let counters = scrape_gateway_counters(body, now);
+    let mut history = state.metrics_history.write();
+    if history.sample_count() == 0 {
+        history.append(counters);
+    }
+}
+
+pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, String> {
+    let body = state.fetch_gateway_metrics().await?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    refresh_metrics_history_sample(state, &body, now).await;
+
+    let probe = fetch_gateway_probe_cached(state).await;
+    let metrics = build_metrics_snapshot_core(&body, state, now, probe.status.as_ref()).await?;
+    let health = build_gateway_health_from_probe(&probe);
+    let prefix_cache = build_prefix_cache_snapshot(&body);
+
+    let semantic_cfg = state.semantic_config.read().clone();
+    let semantic = SemanticConfig {
+        enabled: semantic_cfg.enabled,
+        similarity_threshold: semantic_cfg.similarity_threshold as f64,
+    };
+
+    let mut ops = scrape_ops_metrics(&body, &state.metrics_history.read(), now);
+    if let Some(ref status) = probe.status {
+        ops.upstream_key_count = status.upstream_key_count as u32;
+        ops.upstream_keys_available = status.upstream_keys_available as u32;
+    }
+
+    let bundle_for_suggestions = OverviewBundle {
+        metrics: metrics_snapshot_from_core(&metrics, &[]),
+        health: health.clone(),
+        prefix_cache: prefix_cache.clone(),
+        semantic: semantic.clone(),
+        trace_summary: TraceSummary {
+            hours: 24,
+            total_requests: 0,
+            cache_hit_ratio: 0.0,
+        },
+        ops: ops.clone(),
+        suggestions: vec![],
+    };
+    let suggestions = build_overview_suggestions(&bundle_for_suggestions);
+
+    Ok(OverviewCore {
+        metrics,
+        health,
+        prefix_cache,
+        semantic,
+        ops,
+        suggestions,
+    })
+}
+
+pub async fn build_overview_timeseries(
+    state: &Arc<AppState>,
+    window: &str,
+) -> Result<OverviewTimeseriesResponse, String> {
+    let body = state.fetch_gateway_metrics().await?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    refresh_metrics_history_sample(state, &body, now).await;
+
+    let points = {
+        let history = state.metrics_history.read();
+        match window {
+            "7d" => history.build_daily_stats(now),
+            "24h" => history.build_hourly_stats(now),
+            _ => history.build_hourly_stats(now),
+        }
+    };
+
+    Ok(OverviewTimeseriesResponse {
+        window: window.to_string(),
+        points,
+    })
+}
+
+pub async fn build_overview_trace(state: &Arc<AppState>) -> TraceSummary {
+    cached_trace_summary(state, 24).await
+}
+
 pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, String> {
     let body = state.fetch_gateway_metrics().await?;
     let now = SystemTime::now()
@@ -66,13 +155,7 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
         .unwrap_or_default()
         .as_secs();
 
-    let counters = scrape_gateway_counters(&body, now);
-    {
-        let mut history = state.metrics_history.write();
-        if history.sample_count() == 0 {
-            history.append(counters);
-        }
-    }
+    refresh_metrics_history_sample(state, &body, now).await;
 
     let probe = fetch_gateway_probe_cached(state).await;
     let metrics = build_metrics_snapshot(&body, state, now, probe.status.as_ref()).await?;
@@ -106,12 +189,58 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
     Ok(bundle)
 }
 
-pub async fn build_metrics_snapshot(
+fn metrics_snapshot_from_core(
+    core: &MetricsSnapshotCore,
+    points: &[TimeSeriesPoint],
+) -> MetricsSnapshot {
+    MetricsSnapshot {
+        qps: core.qps,
+        tps: core.tps,
+        l0_hits: core.l0_hits,
+        l1_hits: core.l1_hits,
+        l2_hits: core.l2_hits,
+        cache_misses: core.cache_misses,
+        cache_hit_tokens: core.cache_hit_tokens,
+        cache_miss_tokens: core.cache_miss_tokens,
+        total_input_tokens: core.total_input_tokens,
+        total_output_tokens: core.total_output_tokens,
+        total_tokens: core.total_tokens,
+        latency_l0_ms: core.latency_l0_ms,
+        latency_l1_ms: core.latency_l1_ms,
+        latency_l2_ms: core.latency_l2_ms,
+        latency_upstream_ms: core.latency_upstream_ms,
+        active_keys: core.active_keys,
+        uptime_hours: core.uptime_hours,
+        uptime_secs: core.uptime_secs,
+        hourly_stats: points.to_vec(),
+        daily_stats: vec![],
+        weekly_stats: vec![],
+        monthly_stats: vec![],
+        semantic_hits: core.semantic_hits,
+        semantic_rejected: core.semantic_rejected,
+        semantic_skipped: core.semantic_skipped,
+        prefix_cache_hit_tokens: core.prefix_cache_hit_tokens,
+        prefix_cache_miss_tokens: core.prefix_cache_miss_tokens,
+        prefix_cache_hit_ratio: core.prefix_cache_hit_ratio,
+        hit_rate_cumulative: core.hit_rate_cumulative,
+        hit_rate_5m: core.hit_rate_5m,
+        token_hit_rate_5m: core.token_hit_rate_5m,
+        qps_5m: core.qps_5m,
+        coalesced_total: core.coalesced_total,
+        consumer_buckets: core.consumer_buckets.clone(),
+        domain_buckets: core.domain_buckets.clone(),
+        metrics_sample_insufficient: core.metrics_sample_insufficient,
+        history_meta: core.history_meta.clone(),
+        tier_deltas_5m: core.tier_deltas_5m,
+    }
+}
+
+pub async fn build_metrics_snapshot_core(
     body: &str,
     state: &Arc<AppState>,
     now: u64,
     gateway_status: Option<&GatewayStatus>,
-) -> Result<MetricsSnapshot, String> {
+) -> Result<MetricsSnapshotCore, String> {
     let counters = scrape_gateway_counters(body, now);
 
     let prefix_cache_hit_tokens = metrics_history::sum_prometheus_counter_public(
@@ -177,11 +306,6 @@ pub async fn build_metrics_snapshot(
         },
     };
 
-    let hourly_stats = history.build_hourly_stats(now);
-    let daily_stats = history.build_daily_stats(now);
-    let weekly_stats = history.build_weekly_stats(now);
-    let monthly_stats = history.build_monthly_stats(now);
-
     let consumer_buckets = consumer_token_buckets(body, 10);
     let mut domain_buckets = domain_token_buckets(body, 20);
     for bucket in &mut domain_buckets {
@@ -206,7 +330,7 @@ pub async fn build_metrics_snapshot(
     }
     drop(history);
 
-    Ok(MetricsSnapshot {
+    Ok(MetricsSnapshotCore {
         qps,
         tps,
         l0_hits: counters.l0_hits,
@@ -243,10 +367,6 @@ pub async fn build_metrics_snapshot(
         active_keys,
         uptime_hours: uptime_secs / 3600,
         uptime_secs,
-        hourly_stats,
-        daily_stats,
-        weekly_stats,
-        monthly_stats,
         semantic_hits: counters.semantic_hits,
         semantic_rejected: counters.semantic_rejected,
         semantic_skipped: counters.semantic_skipped,
@@ -263,6 +383,62 @@ pub async fn build_metrics_snapshot(
         metrics_sample_insufficient,
         history_meta,
         tier_deltas_5m,
+    })
+}
+
+pub async fn build_metrics_snapshot(
+    body: &str,
+    state: &Arc<AppState>,
+    now: u64,
+    gateway_status: Option<&GatewayStatus>,
+) -> Result<MetricsSnapshot, String> {
+    let core = build_metrics_snapshot_core(body, state, now, gateway_status).await?;
+    let history = state.metrics_history.read();
+    let hourly_stats = history.build_hourly_stats(now);
+    let daily_stats = history.build_daily_stats(now);
+    let weekly_stats = history.build_weekly_stats(now);
+    let monthly_stats = history.build_monthly_stats(now);
+    drop(history);
+
+    Ok(MetricsSnapshot {
+        qps: core.qps,
+        tps: core.tps,
+        l0_hits: core.l0_hits,
+        l1_hits: core.l1_hits,
+        l2_hits: core.l2_hits,
+        cache_misses: core.cache_misses,
+        cache_hit_tokens: core.cache_hit_tokens,
+        cache_miss_tokens: core.cache_miss_tokens,
+        total_input_tokens: core.total_input_tokens,
+        total_output_tokens: core.total_output_tokens,
+        total_tokens: core.total_tokens,
+        latency_l0_ms: core.latency_l0_ms,
+        latency_l1_ms: core.latency_l1_ms,
+        latency_l2_ms: core.latency_l2_ms,
+        latency_upstream_ms: core.latency_upstream_ms,
+        active_keys: core.active_keys,
+        uptime_hours: core.uptime_hours,
+        uptime_secs: core.uptime_secs,
+        hourly_stats,
+        daily_stats,
+        weekly_stats,
+        monthly_stats,
+        semantic_hits: core.semantic_hits,
+        semantic_rejected: core.semantic_rejected,
+        semantic_skipped: core.semantic_skipped,
+        prefix_cache_hit_tokens: core.prefix_cache_hit_tokens,
+        prefix_cache_miss_tokens: core.prefix_cache_miss_tokens,
+        prefix_cache_hit_ratio: core.prefix_cache_hit_ratio,
+        hit_rate_cumulative: core.hit_rate_cumulative,
+        hit_rate_5m: core.hit_rate_5m,
+        token_hit_rate_5m: core.token_hit_rate_5m,
+        qps_5m: core.qps_5m,
+        coalesced_total: core.coalesced_total,
+        consumer_buckets: core.consumer_buckets,
+        domain_buckets: core.domain_buckets,
+        metrics_sample_insufficient: core.metrics_sample_insufficient,
+        history_meta: core.history_meta,
+        tier_deltas_5m: core.tier_deltas_5m,
     })
 }
 
@@ -333,4 +509,66 @@ async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary
     let summary = trace_summary::compute_trace_summary(&entries, hours);
     *state.trace_summary_cache.write() = Some((Instant::now(), summary.clone()));
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{MetricsHistoryMeta, MetricsSnapshotCore, TimeSeriesPoint, TierDeltas5m};
+
+    fn empty_core() -> MetricsSnapshotCore {
+        MetricsSnapshotCore {
+            qps: 0.0,
+            tps: 0.0,
+            l0_hits: 0,
+            l1_hits: 0,
+            l2_hits: 0,
+            cache_misses: 0,
+            cache_hit_tokens: 0,
+            cache_miss_tokens: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_tokens: 0,
+            latency_l0_ms: 0.0,
+            latency_l1_ms: 0.0,
+            latency_l2_ms: 0.0,
+            latency_upstream_ms: 0.0,
+            active_keys: 0,
+            uptime_hours: 0,
+            uptime_secs: 0,
+            semantic_hits: 0,
+            semantic_rejected: 0,
+            semantic_skipped: 0,
+            prefix_cache_hit_tokens: 0,
+            prefix_cache_miss_tokens: 0,
+            prefix_cache_hit_ratio: 0.0,
+            hit_rate_cumulative: 0.0,
+            hit_rate_5m: 0.0,
+            token_hit_rate_5m: 0.0,
+            qps_5m: 0.0,
+            coalesced_total: 0,
+            consumer_buckets: vec![],
+            domain_buckets: vec![],
+            metrics_sample_insufficient: false,
+            history_meta: MetricsHistoryMeta::default(),
+            tier_deltas_5m: TierDeltas5m::default(),
+        }
+    }
+
+    #[test]
+    fn metrics_snapshot_from_core_maps_points_to_hourly() {
+        let core = empty_core();
+        let points = vec![TimeSeriesPoint {
+            timestamp: "12:00".into(),
+            requests: 1,
+            tokens: 2,
+            cache_hits: 0,
+            avg_latency_ms: 0.0,
+            hit_rate: 0.0,
+        }];
+        let snap = metrics_snapshot_from_core(&core, &points);
+        assert_eq!(snap.hourly_stats.len(), 1);
+        assert_eq!(snap.hourly_stats[0].tokens, 2);
+        assert!(snap.daily_stats.is_empty());
+    }
 }

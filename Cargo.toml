@@ -16,6 +16,7 @@ members = [
     "crates/crab-pipeline",
     "crates/crab-control",
     "crates/crab-state",
+    "crates/crab-composition",
 ]
 
 [workspace.package]
@@ -80,7 +81,13 @@ crab-reasoning = { path = "crates/crab-reasoning" }
 crab-pipeline   = { path = "crates/crab-pipeline" }
 crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
-crab-state     = { path = "crates/crab-state" }
+crab-state      = { path = "crates/crab-state" }
+crab-composition = { path = "crates/crab-composition" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
 unicode-normalization = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"

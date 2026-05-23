@@ -9,7 +9,8 @@ use crab_control::{
 use crab_gateway::management::{ManagementState, router};
 use crab_pipeline::{PipelineGlobals, PipelineMode, UpstreamProvider};
 use crab_proxy::{
-    ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime,
+    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool,
+    UpstreamProfileRuntime,
 };
 use crab_reasoning::ReasoningBackend;
 use std::collections::HashMap;
@@ -94,6 +95,7 @@ async fn test_management_state() -> Option<ManagementState> {
             crab_gateway::management::InvalidateRateState::default(),
         )),
         invalidate_scan_timeout_secs: 300,
+        client_key_limiter: ClientKeyLimiter::new(),
     })
 }
 

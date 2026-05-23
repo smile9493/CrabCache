@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub enum RequestPipeline {
     CursorDeepSeekV4,
     DeepSeekLight,
+    MimoRelay,
     GenericRelay,
 }
 
@@ -15,6 +16,7 @@ impl RequestPipeline {
         match self {
             RequestPipeline::CursorDeepSeekV4 => "cursor_deepseek_v4",
             RequestPipeline::DeepSeekLight => "deepseek_light",
+            RequestPipeline::MimoRelay => "mimo_relay",
             RequestPipeline::GenericRelay => "generic_relay",
         }
     }
@@ -24,6 +26,7 @@ impl RequestPipeline {
 #[serde(rename_all = "snake_case")]
 pub enum UpstreamProvider {
     Deepseek,
+    Mimo,
     Openai,
     Anthropic,
     Other,
@@ -33,6 +36,7 @@ impl UpstreamProvider {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "deepseek" => Self::Deepseek,
+            "mimo" | "xiaomi" => Self::Mimo,
             "openai" => Self::Openai,
             "anthropic" => Self::Anthropic,
             _ => Self::Other,
@@ -42,6 +46,7 @@ impl UpstreamProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             UpstreamProvider::Deepseek => "deepseek",
+            UpstreamProvider::Mimo => "mimo",
             UpstreamProvider::Openai => "openai",
             UpstreamProvider::Anthropic => "anthropic",
             UpstreamProvider::Other => "other",
@@ -56,6 +61,7 @@ pub enum PipelineOverride {
     Auto,
     CursorDeepSeekV4,
     DeepSeekLight,
+    MimoRelay,
     GenericRelay,
 }
 
@@ -64,6 +70,7 @@ impl PipelineOverride {
         match s.to_lowercase().as_str() {
             "cursor_deepseek_v4" => Self::CursorDeepSeekV4,
             "deepseek_light" => Self::DeepSeekLight,
+            "mimo_relay" => Self::MimoRelay,
             "generic_relay" => Self::GenericRelay,
             _ => Self::Auto,
         }
@@ -74,6 +81,7 @@ impl PipelineOverride {
             PipelineOverride::Auto => "auto",
             PipelineOverride::CursorDeepSeekV4 => "cursor_deepseek_v4",
             PipelineOverride::DeepSeekLight => "deepseek_light",
+            PipelineOverride::MimoRelay => "mimo_relay",
             PipelineOverride::GenericRelay => "generic_relay",
         }
     }
@@ -112,6 +120,7 @@ pub enum PipelineSelectionReason {
     ModelPrefixProfile,
     CursorSignals,
     DeepSeekNonV4,
+    MimoProvider,
     ModelAlias,
 }
 
@@ -125,6 +134,7 @@ impl PipelineSelectionReason {
             PipelineSelectionReason::ModelPrefixProfile => "model_prefix_profile",
             PipelineSelectionReason::CursorSignals => "cursor_signals",
             PipelineSelectionReason::DeepSeekNonV4 => "deepseek_non_v4",
+            PipelineSelectionReason::MimoProvider => "mimo_provider",
             PipelineSelectionReason::ModelAlias => "model_alias",
         }
     }

@@ -13,8 +13,8 @@ pub use keys::{
 };
 pub use normalize::{
     GenericPreparedRequest, LightPreparedRequest, PreparedRequest, normalize_messages,
-    normalize_tool_choice_for_deepseek, parse_deepseek_v4_thinking_suffix, prepare_generic_request,
-    prepare_light_request, prepare_upstream_request,
+    normalize_tool_choice_for_deepseek, normalize_mimo_model, parse_deepseek_v4_thinking_suffix,
+    prepare_generic_request, prepare_light_request, prepare_mimo_request, prepare_upstream_request,
 };
 pub use backend::ReasoningBackend;
 pub use store::ReasoningStore;

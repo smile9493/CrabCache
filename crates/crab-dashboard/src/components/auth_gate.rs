@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::brand_logo::BrandLogo;
 use crate::auth::{complete_login, use_admin_key};
 use crate::locale::{Translations, use_translations};
 
@@ -64,7 +65,7 @@ pub fn AuthGate() -> impl IntoView {
             <div class="auth-screen-glow" aria-hidden="true"></div>
             <div class="auth-card glass-card-raised">
                 <div class="auth-brand">
-                    <div class="brand-logo brand-logo-lg" aria-hidden="true">"🦀"</div>
+                    <BrandLogo large=true />
                     <div>
                         <h1 class="auth-title brand-gradient-text">{Translations::sidebar_brand}</h1>
                         <p class="auth-tagline">{t.auth_tagline()}</p>

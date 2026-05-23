@@ -5,7 +5,7 @@ dist = "dist"
 no_sri = true
 # Shrink WASM for faster download/compile on login.
 [wasm]
-wasm-opt = ["-Oz"]
+wasm-opt = ["-Oz", "-s", "-w"]
 
 [watch]
 ignore = ["dist", "target"]

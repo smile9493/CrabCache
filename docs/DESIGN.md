@@ -14,7 +14,7 @@ Admin Dashboard（Leptos WASM）与 [demo.html](demo.html) 共用同一套设计
 
 ## 2. 品牌
 
-- **Logo**：🦀（侧栏与登录页）
+- **Logo**：[`favicon.svg`](../crates/crab-dashboard/style/favicon.svg)（侧栏与登录页，组件 `BrandLogo`）
 - **标题渐变**：`linear-gradient(135deg, --cc-accent, --cc-yellow)`（类名 `.brand-gradient-text`）
 - **产品名**：CrabCache
 

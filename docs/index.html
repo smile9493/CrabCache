@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CrabCache — DeepSeek V4 高性能 Rust API 网关</title>
-  <meta name="description" content="基于 Cloudflare Pingora 的高性能 Rust API 网关，通过三级缓存架构为 DeepSeek V4 提供极致的成本优化和低延迟响应。">
+  <title>CrabCache — 基于 Cloudflare Pingora 的 DeepSeek API 网关</title>
+  <meta name="description" content="以 Cloudflare Pingora 为代理核心的 Rust API 网关，面向 DeepSeek V4 与 Cursor：无锁连接池、SSE 流式管线与可编程过滤器链。">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
   <style>
     :root {
@@ -287,61 +287,68 @@
     <div class="logo">🦀</div>
     <h1>CrabCache</h1>
     <p class="subtitle">
-      基于 Cloudflare Pingora 的高性能 Rust API 网关，通过三级缓存架构为 DeepSeek V4 大语言模型 API 提供极致的成本优化和低延迟响应。
+      以 <strong>Cloudflare Pingora</strong> 为网络与代理核心构建的 Rust API 网关；在 Pingora <code>ProxyHttp</code> 过滤器链上扩展 DeepSeek V4 / Cursor 能力。
     </p>
     <div class="badges">
       <span class="badge"><span class="dot rust"></span> Rust 2024</span>
-      <span class="badge"><span class="dot live"></span> Production Ready</span>
+      <span class="badge" style="border-color:#8B5CFE;color:#bc8cff">Pingora 0.8</span>
+      <span class="badge"><span class="dot live"></span> ProxyHttp</span>
       <span class="badge"><span class="dot mit"></span> MIT License</span>
-      <span class="badge">Pingora 0.8</span>
-      <span class="badge">Redis L1</span>
+      <span class="badge">DeepSeek V4</span>
     </div>
   </div>
 </header>
 
-<!-- 性能指标 -->
+<!-- Pingora 核心 -->
 <section>
   <div class="container">
-    <h2>实测性能</h2>
-    <p class="section-desc">真实生产环境基准测试结果</p>
+    <h2>为什么以 Pingora 为核心</h2>
+    <p class="section-desc">Cloudflare 开源、生产验证的 Rust 代理框架 — CrabCache 的全部流量经 Pingora 处理</p>
     <div class="stats">
       <div class="stat">
-        <div class="value">99.68%</div>
-        <div class="label">请求级命中率</div>
+        <div class="value accent">Pingora</div>
+        <div class="label">ProxyHttp 生命周期 · 无锁连接池</div>
       </div>
       <div class="stat">
-        <div class="value">19.20ms</div>
-        <div class="label">P99 延迟</div>
+        <div class="value blue">SSE</div>
+        <div class="label">流式 body_filter · 逐 chunk 改写</div>
       </div>
       <div class="stat">
-        <div class="value">98.04%</div>
-        <div class="label">延迟改善</div>
+        <div class="value green">Rust</div>
+        <div class="label">零拷贝 Bytes · jemalloc</div>
       </div>
       <div class="stat">
-        <div class="value">95%+</div>
-        <div class="label">成本节省</div>
-      </div>
-      <div class="stat">
-        <div class="value">10K+</div>
-        <div class="label">QPS / 实例</div>
+        <div class="value">DeepSeek</div>
+        <div class="label">业务层：路由 · Reasoning · 控制面</div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- 三级缓存 -->
+<!-- 缓存分层 -->
 <section class="alt">
   <div class="container">
-    <h2>三级缓存防御体系</h2>
-    <p class="section-desc">逐级拦截，最大化命中率，最小化上游调用</p>
+    <h2>缓存分层说明</h2>
+    <p class="section-desc">L0–L2 与 L3 是两套独立指标，请勿混谈「命中率」</p>
 
     <div class="cache-tier">
       <div class="tier-header">
-        <span class="tier-badge l0">L0</span>
-        <strong>Moka 内存缓存</strong>
+        <span class="tier-badge l0">L3</span>
+        <strong>DeepSeek 服务端前缀缓存</strong>
         <div class="tier-stats">
-          <span>延迟 <strong>&lt; 100ns</strong></span>
-          <span>命中率 <strong>~93%</strong></span>
+          <span>计费 Token 折扣</span>
+          <span>依赖 <strong>稳定 messages 前缀</strong> + 粘滞路由</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cache-tier">
+      <div class="tier-header">
+        <span class="tier-badge l1">L0</span>
+        <strong>Moka 内存 · 精确响应缓存</strong>
+        <div class="tier-stats">
+          <span>延迟 <strong>&lt; 100μs 级</strong></span>
+          <span>需 body 完全一致</span>
         </div>
       </div>
     </div>
@@ -349,10 +356,10 @@
     <div class="cache-tier">
       <div class="tier-header">
         <span class="tier-badge l1">L1</span>
-        <strong>Redis 分布式缓存</strong>
+        <strong>Redis · 跨实例共享</strong>
         <div class="tier-stats">
           <span>延迟 <strong>&lt; 5ms</strong></span>
-          <span>跨实例共享</span>
+          <span>同上，精确键</span>
         </div>
       </div>
     </div>
@@ -360,11 +367,10 @@
     <div class="cache-tier">
       <div class="tier-header">
         <span class="tier-badge l2">L2</span>
-        <strong>Qdrant 语义向量缓存</strong>
+        <strong>Qdrant 语义缓存（可选）</strong>
         <div class="tier-stats">
-          <span>延迟 <strong>&lt; 20ms</strong></span>
-          <span>相似度 ≥ 0.95</span>
-          <span>命中率 <strong>~6.7%</strong></span>
+          <span>相似度阈值可配</span>
+          <span>对聊天场景收益有限</span>
         </div>
       </div>
     </div>
@@ -379,8 +385,8 @@
     <div class="grid">
       <div class="card">
         <div class="icon">⚡</div>
-        <h3>高性能代理</h3>
-        <p>基于 Pingora 无锁连接池，零拷贝管道，jemalloc 内存分配器，亚毫秒级缓存延迟。</p>
+        <h3>Pingora 代理核心</h3>
+        <p>Cloudflare Pingora 驱动主循环与连接池；GatewayProxy 实现完整 ProxyHttp 过滤器链与 SSE 流式处理。</p>
       </div>
       <div class="card">
         <div class="icon">🧠</div>
@@ -390,7 +396,7 @@
       <div class="card">
         <div class="icon">🎯</div>
         <h3>智能路由</h3>
-        <p>Ketama 一致性哈希最大化 L3 前缀缓存命中率，支持 x-conversation-id 会话亲和性。</p>
+        <p>Ketama 粘滞路由提高 DeepSeek L3 前缀命中，支持 x-conversation-id / x-prompt-cache-key。</p>
       </div>
       <div class="card">
         <div class="icon">🛡️</div>
@@ -400,7 +406,7 @@
       <div class="card">
         <div class="icon">📊</div>
         <h3>完整可观测性</h3>
-        <p>Prometheus 指标、结构化 Tracing 日志、影子日志命中率分析、成本节省追踪。</p>
+        <p>Prometheus 区分 L0–L2 与 L3 指标；影子日志用于流量分析，勿与账单前缀命中混读。</p>
       </div>
       <div class="card">
         <div class="icon">🔧</div>
@@ -424,19 +430,13 @@
       <div class="arch-row">
         <div class="arch-box">认证 &amp; 缓存键生成</div>
         <div class="arch-arrow">→</div>
-        <div class="arch-box hit">L0 内存缓存</div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-box hit">L1 Redis</div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-box hit">L2 语义缓存</div>
+        <div class="arch-box">L0 / L1 / L2（可选，多数未命中）</div>
       </div>
-      <div class="arch-arrow">↓ 未命中</div>
+      <div class="arch-arrow">↓ 网关 L0–L2 通常未命中</div>
       <div class="arch-row">
-        <div class="arch-box miss">Request Coalescing<br>(Leader/Follower)</div>
+        <div class="arch-box miss">Request Coalescing</div>
         <div class="arch-arrow">→</div>
-        <div class="arch-box miss">Ketama 一致性哈希</div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-box miss">DeepSeek V4 上游</div>
+        <div class="arch-box hit">Ketama → DeepSeek（L3 前缀）</div>
       </div>
       <div class="arch-arrow">↓</div>
       <div class="arch-row">
@@ -544,7 +544,7 @@ cargo run --release -p crab-gateway -- config/gateway.toml</code>
 <section class="cta">
   <div class="container">
     <h2 style="margin-bottom:8px;">开始使用 CrabCache</h2>
-    <p style="color:var(--text-muted);margin-bottom:24px;">降低 95% 以上 API 调用成本，保持极致的响应速度</p>
+    <p style="color:var(--text-muted);margin-bottom:24px;">多轮对话降本看 L3 前缀命中；网关 L0–L2 为补充能力</p>
     <div class="btn-group">
       <a href="https://github.com/smile9493/CrabCache" class="btn btn-primary">⭐ GitHub 仓库</a>
       <a href="https://smile9493.github.io/CrabCache/" class="btn btn-secondary">📖 完整文档</a>

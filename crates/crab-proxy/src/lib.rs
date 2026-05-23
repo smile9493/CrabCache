@@ -1,3 +1,5 @@
+mod client_key_limiter;
+mod client_key_rate_limiter;
 mod context;
 mod debug_log;
 mod error;
@@ -11,12 +13,25 @@ mod upstream_headers;
 mod upstream_pool;
 mod upstream_profile;
 
+// Extracted helper modules from proxy.rs
+mod helper_fns;
+mod error_jsons;
+mod response_helpers;
+mod cache_helpers;
+mod metrics_helpers;
+mod sse_rewrite;
+mod connection_helpers;
+
+pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimiter, ClientKeyLimitError};
+pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
     StoredKey,
 };
 pub use error::ProxyError;
-pub use proxy::{GatewayProxy, flush_streaming_reasoning, should_store_sse_body};
+pub use proxy::GatewayProxy;
+pub use sse_rewrite::flush_streaming_reasoning;
+pub use cache_helpers::should_store_sse_body;
 pub use runtime::{DomainPolicy, RuntimeConfig};
 pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
 pub use debug_log::debug_agent_log;
