@@ -13,6 +13,7 @@ use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
+use crab_composition::{extract_composition, CompositionHints};
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::{
     PipelineOverride, PipelineRequestContext, RequestPipeline, select_request_pipeline,
@@ -453,6 +454,37 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        // Per-key RPM rate limiting
+        if let Some(stored_key) = self.state.runtime.keys.get(&provided_key) {
+            let key = stored_key.value();
+            if key.rpm_limit > 0
+                && !self.state.client_key_rate_limiter.check_and_consume(
+                    &provided_key,
+                    key.rpm_limit,
+                )
+            {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": "Rate limit exceeded for this API key. Please retry after the rate limit resets.",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit_exceeded"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::TOO_MANY_REQUESTS,
+                    body_str.as_bytes(),
+                    60,
+                )
+                .await
+                {
+                    let _ = session.respond_error(429).await;
+                }
+                return Ok(true);
+            }
+        }
+
         let project_id_header = session
             .req_header()
             .headers
@@ -830,6 +862,27 @@ impl ProxyHttp for GatewayProxy {
             }),
         );
         // #endregion
+
+        // ---- Extract request composition for trace analysis ----
+        if let Some(body) = &ctx.original_request_body {
+            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body) {
+                let hints = CompositionHints {
+                    consumer: ctx.consumer.clone().unwrap_or_default(),
+                    domain: ctx.domain.clone().unwrap_or_default(),
+                    project_id: ctx.project_id.clone(),
+                    pipeline: ctx
+                        .request_pipeline
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default(),
+                    user_agent: None,
+                    upstream_model: None,
+                };
+                ctx.request_composition = Some(extract_composition(&payload, &hints));
+                if let Some(ref comp) = ctx.request_composition {
+                    global_metrics().record_composition_metrics(comp);
+                }
+            }
+        }
 
         let new_body = ctx.new_request_body.clone().unwrap_or(full_body);
         ctx.upstream_outbound_body_len = new_body.len();
@@ -1254,6 +1307,20 @@ impl ProxyHttp for GatewayProxy {
         let profile = self.active_upstream_profile(ctx);
         let router = &profile.router;
 
+        // Transition timed-out open circuits to half-open before backend selection.
+        {
+            let mut health = self
+                .state
+                .runtime
+                .backend_health
+                .write()
+                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let circuit_cfg = &self.state.runtime.circuit_breaker_config;
+            for h in health.values_mut() {
+                h.check_open_circuit(circuit_cfg);
+            }
+        }
+
         // Check if we have health information to filter by
         let backend = {
             let health = self
@@ -1504,11 +1571,28 @@ impl ProxyHttp for GatewayProxy {
                     guard.mark_failed();
                 }
             }
+            if status >= 500 {
+                if let Some(ref backend_name) = ctx.upstream.backend_name {
+                    if let Ok(mut health) = self.state.runtime.backend_health.write() {
+                        if let Some(h) = health.get_mut(backend_name) {
+                            h.record_failure(&self.state.runtime.circuit_breaker_config);
+                        }
+                    }
+                }
+            }
             return Ok(());
         }
 
         let _ = upstream_response.insert_header("x-request-id", ctx.request_id.clone());
         let _ = upstream_response.insert_header("x-cache-status", "miss");
+
+        if let Some(ref backend_name) = ctx.upstream.backend_name {
+            if let Ok(mut health) = self.state.runtime.backend_health.write() {
+                if let Some(h) = health.get_mut(backend_name) {
+                    h.record_success(&self.state.runtime.circuit_breaker_config);
+                }
+            }
+        }
 
         ctx.upstream.start = Some(std::time::Instant::now());
 
@@ -2024,7 +2108,7 @@ impl ProxyHttp for GatewayProxy {
                         duration.as_secs_f64() * 1000.0,
                         ctx.cache_tier.is_some(),
                         ctx.cache_tier.map(|t| t.as_str().to_string()),
-                        None,
+                        ctx.request_composition.clone(),
                     );
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);

@@ -29,11 +29,39 @@ impl Backend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CircuitBreakerConfig {
+    pub failure_threshold: u32,
+    pub success_threshold: u32,
+    pub timeout_ms: u64,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 5,
+            success_threshold: 2,
+            timeout_ms: 30_000,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BackendHealth {
     pub healthy: bool,
     pub last_check_ms: u64,
     pub latency_ms: u64,
+    pub circuit_state: CircuitState,
+    pub consecutive_failures: u32,
+    pub half_open_successes: u32,
+    pub circuit_opened_at_ms: u64,
 }
 
 impl BackendHealth {
@@ -42,6 +70,10 @@ impl BackendHealth {
             healthy: true,
             last_check_ms: 0,
             latency_ms: 0,
+            circuit_state: CircuitState::Closed,
+            consecutive_failures: 0,
+            half_open_successes: 0,
+            circuit_opened_at_ms: 0,
         }
     }
 
@@ -50,6 +82,63 @@ impl BackendHealth {
             healthy: false,
             last_check_ms: 0,
             latency_ms: 0,
+            circuit_state: CircuitState::Closed,
+            consecutive_failures: 0,
+            half_open_successes: 0,
+            circuit_opened_at_ms: 0,
+        }
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    pub fn record_success(&mut self, config: &CircuitBreakerConfig) {
+        self.consecutive_failures = 0;
+        self.latency_ms = Self::now_ms();
+        match self.circuit_state {
+            CircuitState::HalfOpen => {
+                self.half_open_successes += 1;
+                if self.half_open_successes >= config.success_threshold {
+                    self.circuit_state = CircuitState::Closed;
+                    self.circuit_opened_at_ms = 0;
+                    self.half_open_successes = 0;
+                }
+            }
+            CircuitState::Closed | CircuitState::Open => {}
+        }
+    }
+
+    pub fn record_failure(&mut self, config: &CircuitBreakerConfig) {
+        self.consecutive_failures += 1;
+        match self.circuit_state {
+            CircuitState::Closed => {
+                if self.consecutive_failures >= config.failure_threshold {
+                    self.circuit_state = CircuitState::Open;
+                    self.healthy = false;
+                    self.circuit_opened_at_ms = Self::now_ms();
+                }
+            }
+            CircuitState::HalfOpen => {
+                self.circuit_state = CircuitState::Open;
+                self.healthy = false;
+                self.circuit_opened_at_ms = Self::now_ms();
+            }
+            CircuitState::Open => {}
+        }
+    }
+
+    pub fn check_open_circuit(&mut self, config: &CircuitBreakerConfig) {
+        if self.circuit_state == CircuitState::Open
+            && self.circuit_opened_at_ms > 0
+            && Self::now_ms().saturating_sub(self.circuit_opened_at_ms) >= config.timeout_ms
+        {
+            self.circuit_state = CircuitState::HalfOpen;
+            self.healthy = true;
+            self.half_open_successes = 0;
         }
     }
 }
@@ -99,20 +188,17 @@ impl AffinityRouter {
     where
         F: Fn(&str) -> bool,
     {
-        // Check all backends for health
         let healthy_count = self.backends.iter().filter(|b| is_healthy(&b.name)).count();
         let total = self.backends.len();
 
         let addr = self.continuum.node(key)?;
 
-        // Find the selected backend by addr
         if let Some(selected) = self.backends.iter().find(|b| b.addr == addr) {
             if is_healthy(&selected.name) {
                 return Some(selected.as_ref());
             }
         }
 
-        // Selected backend is unhealthy - try to find any healthy backend
         if healthy_count > 0 {
             for b in &self.backends {
                 if is_healthy(&b.name) {
@@ -121,7 +207,6 @@ impl AffinityRouter {
             }
         }
 
-        // All backends unhealthy - fall back to original selection with warning
         tracing::warn!(
             healthy = healthy_count,
             total = total,
@@ -263,5 +348,21 @@ mod tests {
 
         let drift_rate = changed as f64 / original_mapping.len() as f64;
         assert!(drift_rate < 0.4, "Drift rate {drift_rate} exceeds 40%");
+    }
+
+    #[test]
+    fn circuit_opens_after_failures() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 1,
+            timeout_ms: 30_000,
+        };
+        let mut health = BackendHealth::new_healthy();
+        health.record_failure(&config);
+        health.record_failure(&config);
+        assert!(health.healthy);
+        health.record_failure(&config);
+        assert!(!health.healthy);
+        assert_eq!(health.circuit_state, CircuitState::Open);
     }
 }

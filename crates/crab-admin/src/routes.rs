@@ -1223,6 +1223,7 @@ async fn create_key(
             pipeline: req.pipeline.clone(),
             upstream_profile: req.upstream_profile.clone(),
             max_concurrent: req.max_concurrent,
+            rpm_limit: Some(req.rpm_limit),
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -1318,6 +1319,7 @@ async fn patch_key(
                 pipeline: req.pipeline.clone(),
                 upstream_profile: req.upstream_profile.clone(),
                 max_concurrent: req.max_concurrent,
+                rpm_limit: None,
             },
         )
         .await

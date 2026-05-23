@@ -4,7 +4,7 @@ use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
-use crab_proxy::{ClientKeyLimiter, GatewayProxy, GatewayState, RuntimeConfig};
+use crab_proxy::{ClientKeyLimiter, ClientKeyRateLimiter, GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
@@ -382,6 +382,7 @@ fn main() -> Result<()> {
                             pipeline: None,
                             upstream_profile: None,
                             max_concurrent: 0,
+                            rpm_limit: 0,
                         },
                     );
                     info!(
@@ -428,6 +429,7 @@ fn main() -> Result<()> {
                         pipeline: None,
                         upstream_profile: None,
                         max_concurrent: 0,
+                        rpm_limit: 0,
                     },
                 );
                 info!(
@@ -480,24 +482,23 @@ fn main() -> Result<()> {
                         let elapsed_ms = start.elapsed().as_millis() as u64;
 
                         let health = match result {
-                            Ok(_) => crab_route::BackendHealth {
-                                healthy: true,
-                                last_check_ms: std::time::SystemTime::now()
+                            Ok(_) => {
+                                let mut h = crab_route::BackendHealth::new_healthy();
+                                h.last_check_ms = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
-                                    .as_millis() as u64,
-                                latency_ms: elapsed_ms,
-                            },
+                                    .as_millis() as u64;
+                                h.latency_ms = elapsed_ms;
+                                h
+                            }
                             Err(e) => {
                                 tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
-                                crab_route::BackendHealth {
-                                    healthy: false,
-                                    last_check_ms: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis() as u64,
-                                    latency_ms: 0,
-                                }
+                                let mut h = crab_route::BackendHealth::new_unhealthy();
+                                h.last_check_ms = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64;
+                                h
                             }
                         };
 
@@ -514,6 +515,7 @@ fn main() -> Result<()> {
 
     let client_key_limiter = ClientKeyLimiter::new();
     client_key_limiter.sync_all_keys(&runtime.keys);
+    let client_key_rate_limiter = ClientKeyRateLimiter::new();
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -569,6 +571,7 @@ fn main() -> Result<()> {
         max_request_body_bytes: config.limits.max_request_body_bytes,
         request_semaphore,
         client_key_limiter,
+        client_key_rate_limiter,
     });
 
     let proxy = GatewayProxy::new(state);

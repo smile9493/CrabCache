@@ -1,9 +1,10 @@
-use crate::context::{ConnectionConfig, StoredKey};
+use crate::context::ConnectionConfig;
+use crate::stored_key::StoredKey;
 use crate::upstream_pool::UpstreamKeyPool;
 use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_cache::{FingerprintConfig, TtlConfig};
 use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode};
-use crab_route::{AffinityRouter, BackendHealth};
+use crab_route::{AffinityRouter, BackendHealth, CircuitBreakerConfig};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +50,7 @@ pub struct RuntimeConfig {
     domain_usage: Mutex<HashMap<String, DomainUsage>>,
     pub started_at: Instant,
     pub backend_health: Arc<RwLock<std::collections::HashMap<String, BackendHealth>>>,
+    pub circuit_breaker_config: CircuitBreakerConfig,
 }
 
 impl RuntimeConfig {
@@ -92,6 +94,7 @@ impl RuntimeConfig {
             domain_usage: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
             backend_health: Arc::new(RwLock::new(backends)),
+            circuit_breaker_config: CircuitBreakerConfig::default(),
         })
     }
 

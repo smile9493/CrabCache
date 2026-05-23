@@ -87,6 +87,8 @@ Dashboard **实时监控 / Live** 页面每 **2 秒**轮询 **`GET /api/admin/li
 
 每个 `sk-cc-*` 客户端 Key 可配置 `max_concurrent`（0 = 不限制）。超限时网关返回 **429**，`code: client_concurrency_exceeded`，`gateway_rejected_requests_total{reason="client_concurrency_exceeded"}` 递增。
 
+**多副本部署：** 并发计数与 `max_concurrent`  enforcement 均在**单个网关进程内存**中完成，不跨实例共享。运行 N 个网关副本时，集群级有效并发上限约为 `N × max_concurrent`；Management API / Dashboard 返回的 `inflight` 也是**该实例**上的实时值。Prometheus 按实例抓取 `gateway_client_key_inflight` 后可在集群层求和观测。若需集群级硬限流，需另行引入 Redis 等共享计数（当前未实现）。
+
 | 能力 | 说明 |
 |------|------|
 | Prometheus | `gateway_client_key_inflight{key_id, consumer}` — 当前 in-flight 数 |

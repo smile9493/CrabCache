@@ -211,6 +211,7 @@ pub fn apply_snapshot_to_runtime(
                 pipeline: k.pipeline.clone(),
                 upstream_profile: k.upstream_profile.clone(),
                 max_concurrent: k.max_concurrent,
+                rpm_limit: 0, // restored from snapshot; rpm_limit is set via management API
             },
         );
     }

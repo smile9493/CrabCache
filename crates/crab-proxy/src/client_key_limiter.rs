@@ -1,6 +1,6 @@
 //! Per-client API key (sk-cc-*) in-flight concurrency tracking and limits.
 
-use crate::context::StoredKey;
+use crate::stored_key::StoredKey;
 use crab_metrics::global_metrics;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -169,6 +169,7 @@ mod tests {
             pipeline: None,
             upstream_profile: None,
             max_concurrent: max,
+            rpm_limit: 0,
         }
     }
 

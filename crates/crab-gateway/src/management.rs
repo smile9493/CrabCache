@@ -805,6 +805,7 @@ fn stored_to_spec(
         pipeline: key.pipeline.clone(),
         upstream_profile: key.upstream_profile.clone(),
         max_concurrent: key.max_concurrent,
+        rpm_limit: key.rpm_limit,
         inflight: limiter.inflight(token),
     }
 }
@@ -859,6 +860,7 @@ async fn create_key(
         pipeline: req.pipeline.clone(),
         upstream_profile: req.upstream_profile.clone(),
         max_concurrent,
+        rpm_limit: req.rpm_limit.unwrap_or(0),
     };
     state.runtime.keys.insert(token.clone(), stored.clone());
     state.client_key_limiter.sync_key(&token, &stored);
@@ -1004,6 +1006,9 @@ async fn patch_key(
     }
     if let Some(max_concurrent) = req.max_concurrent {
         entry.max_concurrent = max_concurrent;
+    }
+    if let Some(rpm_limit) = req.rpm_limit {
+        entry.rpm_limit = rpm_limit;
     }
 
     let synced = entry.clone();
