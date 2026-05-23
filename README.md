@@ -2,6 +2,13 @@
   <h1>CrabCache</h1>
   <p><strong>基于 Cloudflare Pingora 的高性能 Rust API 网关，专为 DeepSeek V4 大语言模型设计</strong></p>
 
+  <!-- Quick Links -->
+  <p>
+    <a href="https://smile9493.github.io/CrabCache/"><strong>📖 文档网站</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://smile9493.github.io/CrabCache/demo"><strong>🎮 在线演示</strong></a>
+  </p>
+
   <!-- Badges -->
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-2024%20edition-orange.svg?style=flat-square" alt="Rust"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License"></a>
