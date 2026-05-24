@@ -15,6 +15,7 @@ pub use normalize::{
     GenericPreparedRequest, LightPreparedRequest, PreparedRequest, normalize_messages,
     normalize_tool_choice_for_deepseek, normalize_mimo_model, parse_deepseek_v4_thinking_suffix,
     prepare_generic_request, prepare_light_request, prepare_mimo_request, prepare_upstream_request,
+    strip_cursor_thinking_blocks,
 };
 pub use backend::ReasoningBackend;
 pub use store::ReasoningStore;
@@ -23,4 +24,5 @@ pub use streaming::{
 };
 pub use transform::{
     RecoveryNoticeContent, record_response_reasoning, rewrite_response_body, rewrite_sse_chunk,
+    strip_reasoning_delta_for_client, strip_reasoning_from_completion_value,
 };

@@ -6,6 +6,29 @@ use serde_json::Value;
 
 pub struct RecoveryNoticeContent(pub String);
 
+/// Remove `reasoning_content` from SSE deltas without mirroring thinking into `content`.
+///
+/// Aligns with [dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy) response-side thinking
+/// strip: ReasoningStore keeps upstream text for the next request; Cursor context stays small.
+pub fn strip_reasoning_delta_for_client(chunk: &mut Value) {
+    let choices = match chunk.get_mut("choices").and_then(|c| c.as_array_mut()) {
+        Some(c) => c,
+        None => return,
+    };
+    for choice in choices {
+        let delta = match choice.get_mut("delta").and_then(|d| d.as_object_mut()) {
+            Some(d) => d,
+            None => continue,
+        };
+        delta.remove("reasoning_content");
+        if delta.get("role").is_some() && !delta.contains_key("content") {
+            delta.insert("content".into(), Value::String(String::new()));
+        } else if delta.get("content").map(|v| v.is_null()).unwrap_or(false) {
+            delta.insert("content".into(), Value::String(String::new()));
+        }
+    }
+}
+
 /// Map `delta.reasoning_content` → incremental `delta.content` for OpenAI-compatible clients.
 fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
     let choices = match chunk.get_mut("choices").and_then(|c| c.as_array_mut()) {
@@ -29,6 +52,17 @@ fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
         }
         // Strip stray null/absent reasoning field if upstream re-inserted it.
         delta.remove("reasoning_content");
+    }
+}
+
+pub fn strip_reasoning_from_completion_value(value: &mut Value) {
+    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for choice in choices {
+        if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
+            msg.remove("reasoning_content");
+        }
     }
 }
 
@@ -88,6 +122,8 @@ pub fn rewrite_response_body(
     );
     if display_reasoning {
         fold_reasoning_into_content(&mut response_payload, collapsible_reasoning);
+    } else {
+        strip_reasoning_from_completion_value(&mut response_payload);
     }
     if let Some(obj) = response_payload.as_object_mut() {
         if let Some(model) = obj.get_mut("model") {
@@ -204,6 +240,7 @@ pub fn rewrite_sse_chunk(
     accumulator: &mut StreamAccumulator,
     cache_namespace: &str,
     response_contexts: &[(String, Vec<Value>)],
+    display_reasoning: bool,
     display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
     pending_recovery_notice: Option<&str>,
     store: Option<&ReasoningBackend>,
@@ -302,13 +339,17 @@ pub fn rewrite_sse_chunk(
         notice = None;
     }
     let chunk_usage = chunk.get("usage").cloned();
-    if let Some(adapter) = display_adapter.as_mut() {
-        adapter.rewrite_chunk(&mut chunk);
-    } else {
-        mirror_reasoning_delta_incremental(&mut chunk);
-    }
-    // Ingest after client-shaped rewrite so stream cache JSON includes mirrored content.
+    // Ingest upstream shape first so ReasoningStore retains `reasoning_content`.
     accumulator.ingest_chunk(&chunk);
+    if display_reasoning {
+        if let Some(adapter) = display_adapter.as_mut() {
+            adapter.rewrite_chunk(&mut chunk);
+        } else {
+            mirror_reasoning_delta_incremental(&mut chunk);
+        }
+    } else {
+        strip_reasoning_delta_for_client(&mut chunk);
+    }
     if let Some(store) = store {
         let stored: usize = response_contexts
             .iter()
@@ -357,7 +398,7 @@ mod tests {
             "",
             None,
             &[],
-            false,
+            true,
             false,
         );
         assert!(result.is_some());
@@ -369,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_sse_strips_reasoning_content_without_display_adapter() {
+    fn rewrite_sse_silent_mode_drops_reasoning_without_content_mirror() {
         let payload = serde_json::json!({
             "choices": [{
                 "index": 0,
@@ -384,13 +425,76 @@ mod tests {
             &mut acc,
             "",
             &[],
+            false,
             &mut None,
             None,
             None,
         );
         let body = std::str::from_utf8(&result.rewritten_line).unwrap();
         assert!(!body.contains("reasoning_content"));
-        assert!(body.contains(r#""content":"think""#) || body.contains(r#""content": "think""#));
+        assert!(!body.contains("think"));
+        let msgs = acc.messages();
+        assert_eq!(
+            msgs[0].get("reasoning_content").and_then(|r| r.as_str()),
+            Some("think")
+        );
+    }
+
+    #[test]
+    fn rewrite_sse_display_mode_mirrors_reasoning_into_content() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"reasoning_content": "think", "role": "assistant"}
+            }]
+        });
+        let line = format!("data: {payload}\n\n");
+        let mut acc = StreamAccumulator::new();
+        let result = rewrite_sse_chunk(
+            line.as_bytes(),
+            "deepseek-v4-pro",
+            &mut acc,
+            "",
+            &[],
+            true,
+            &mut None,
+            None,
+            None,
+        );
+        let body = std::str::from_utf8(&result.rewritten_line).unwrap();
+        assert!(!body.contains("reasoning_content"));
+        assert!(body.contains("think"));
+    }
+
+    #[test]
+    fn rewrite_response_body_silent_strips_reasoning_field() {
+        let body = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "secret"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let out = rewrite_response_body(
+            &serde_json::to_vec(&body).unwrap(),
+            "deepseek-v4-pro",
+            None,
+            &[],
+            "",
+            None,
+            &[],
+            false,
+            false,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert!(msg.get("reasoning_content").is_none());
+        assert_eq!(msg["content"].as_str(), Some("answer"));
     }
 
     #[test]
@@ -402,6 +506,7 @@ mod tests {
             &mut acc,
             "",
             &[],
+            false,
             &mut None,
             None,
             None,

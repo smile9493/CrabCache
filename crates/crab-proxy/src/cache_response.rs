@@ -2,78 +2,11 @@ use bytes::Bytes;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use tracing::warn;
-use crate::debug_log::debug_agent_log;
 
 use crab_cache::CacheEntry;
 use crab_metrics::CacheTier;
 
-async fn send_json_error_inner(
-    session: &mut Session,
-    status: http::StatusCode,
-    body: &[u8],
-    retry_after_secs: Option<u64>,
-) -> bool {
-    let mut header = match ResponseHeader::build(status, Some(8)) {
-        Ok(h) => h,
-        Err(_) => return false,
-    };
-    let _ = header.insert_header("content-type", "application/json");
-    let _ = header.insert_header("content-length", body.len().to_string());
-    let _ = header.insert_header("connection", "close");
-    if let Some(secs) = retry_after_secs {
-        let _ = header.insert_header("retry-after", secs.to_string());
-    }
-    if session
-        .downstream_session
-        .write_response_header(Box::new(header))
-        .await
-        .is_err()
-    {
-        return false;
-    }
-    session
-        .downstream_session
-        .write_response_body(Bytes::copy_from_slice(body), true)
-        .await
-        .is_ok()
-}
-
-pub async fn send_json_error(session: &mut Session, status: http::StatusCode, body: &[u8]) -> bool {
-    send_json_error_inner(session, status, body, None).await
-}
-
-pub async fn send_json_error_with_retry_after(
-    session: &mut Session,
-    status: http::StatusCode,
-    body: &[u8],
-    retry_after_secs: u64,
-) -> bool {
-    send_json_error_inner(session, status, body, Some(retry_after_secs)).await
-}
-
-pub async fn send_json_ok(session: &mut Session, body: &[u8]) -> bool {
-    send_json_error_inner(session, http::StatusCode::OK, body, None).await
-}
-
-pub async fn send_cors_preflight(session: &mut Session) -> bool {
-    let mut header = match ResponseHeader::build(http::StatusCode::NO_CONTENT, Some(8)) {
-        Ok(h) => h,
-        Err(_) => return false,
-    };
-    let _ = header.insert_header("access-control-allow-origin", "*");
-    let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
-    let _ = header.insert_header(
-        "access-control-allow-headers",
-        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer, X-Project-Id",
-    );
-    let _ = header.insert_header("access-control-max-age", "86400");
-    let _ = header.insert_header("content-length", "0");
-    session
-        .downstream_session
-        .write_response_header(Box::new(header))
-        .await
-        .is_ok()
-}
+use crate::debug_log::debug_agent_log;
 
 fn cache_status_header(tier: CacheTier) -> &'static str {
     match tier {
@@ -85,17 +18,14 @@ fn cache_status_header(tier: CacheTier) -> &'static str {
 }
 
 fn insert_response_header(
-    header: &mut pingora_http::ResponseHeader,
+    header: &mut ResponseHeader,
     name: &'static str,
     value: impl ToString,
 ) -> Option<()> {
     header.insert_header(name, value.to_string()).ok()
 }
 
-pub(crate) fn build_json_response_header(
-    body_len: usize,
-    cache_tier: CacheTier,
-) -> Option<pingora_http::ResponseHeader> {
+fn build_json_response_header(body_len: usize, cache_tier: CacheTier) -> Option<ResponseHeader> {
     let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
     insert_response_header(&mut header, "content-type", "application/json")?;
     insert_response_header(&mut header, "content-length", body_len.to_string())?;
@@ -108,10 +38,7 @@ pub(crate) fn build_json_response_header(
     Some(header)
 }
 
-pub(crate) fn build_sse_response_header(
-    body_len: usize,
-    cache_tier: CacheTier,
-) -> Option<pingora_http::ResponseHeader> {
+fn build_sse_response_header(body_len: usize, cache_tier: CacheTier) -> Option<ResponseHeader> {
     let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
     insert_response_header(&mut header, "content-type", "text/event-stream")?;
     insert_response_header(&mut header, "content-length", body_len.to_string())?;
@@ -125,41 +52,44 @@ pub(crate) fn build_sse_response_header(
     Some(header)
 }
 
-/// Cache hit streaming: prefer stored `sse_body` (already client-shaped from a prior miss).
-/// Fallback `json_to_sse_stream` strips `reasoning_content` from message deltas for Cursor.
+/// Cache hit streaming: prefer stored client-shaped `sse_body` from a prior miss.
 pub async fn send_cached_response(
     session: &mut Session,
     entry: &CacheEntry,
     model: &str,
     is_streaming: bool,
     cache_tier: CacheTier,
+    display_reasoning: bool,
 ) -> bool {
     let response_body = &entry.response_body;
     if is_streaming {
-        let used_legacy_regen = entry
-            .sse_body
-            .as_ref()
-            .is_some_and(|s| s.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        let display_mismatch = entry.client_display_reasoning != display_reasoning;
+        let used_legacy_regen = entry.sse_body.as_ref().is_some_and(|s| {
+            s.windows(b"reasoning_content".len())
+                .any(|w| w == b"reasoning_content")
+        });
         let saved_empty_content = entry
             .sse_body
             .as_ref()
             .is_some_and(|s| !cached_sse_has_nonempty_content(s));
-        let sse_source = if entry.sse_body.is_none() {
-            "json_regen"
-        } else if used_legacy_regen || saved_empty_content {
-            "legacy_regen"
+        let force_regen = display_mismatch || used_legacy_regen || saved_empty_content;
+        let sse_source = if entry.sse_body.is_none() || force_regen {
+            if display_mismatch {
+                "display_mismatch_regen"
+            } else if used_legacy_regen {
+                "legacy_regen"
+            } else if saved_empty_content {
+                "empty_content_regen"
+            } else {
+                "json_regen"
+            }
         } else {
             "saved_sse"
         };
-        let sse_body = if let Some(ref saved) = entry.sse_body {
-            if used_legacy_regen || saved_empty_content {
-                // Legacy or empty-content SSE: rebuild from JSON with reasoning folded into content.
-                json_to_sse_stream(response_body, model)
-            } else {
-                saved.clone()
-            }
+        let sse_body = if entry.sse_body.is_some() && !force_regen {
+            entry.sse_body.clone().unwrap_or_default()
         } else {
-            json_to_sse_stream(response_body, model)
+            json_to_sse_stream(response_body, model, display_reasoning)
         };
         let json_choices = serde_json::from_slice::<serde_json::Value>(response_body)
             .ok()
@@ -169,18 +99,21 @@ pub async fn send_cached_response(
         let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
         debug_agent_log(
             "H1",
-            "proxy.rs:send_cached_response",
+            "cache_response.rs:send_cached_response",
             "streaming cache hit SSE synthesis",
             serde_json::json!({
                 "sse_source": sse_source,
                 "sse_len": sse_body.len(),
                 "response_body_len": response_body.len(),
+                "display_mismatch": display_mismatch,
                 "used_legacy_regen": used_legacy_regen,
                 "saved_empty_content": saved_empty_content,
                 "json_choices": json_choices,
                 "has_done": has_done,
                 "has_nonempty_content": has_nonempty,
                 "entry_is_stream": entry.is_stream,
+                "entry_client_display_reasoning": entry.client_display_reasoning,
+                "request_display_reasoning": display_reasoning,
                 "cache_tier": cache_tier.as_str(),
                 "model": model,
             }),
@@ -214,7 +147,7 @@ pub async fn send_cached_response(
     true
 }
 
-pub(crate) fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
+pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool) -> Vec<u8> {
     use serde_json::json;
 
     let value: serde_json::Value = match serde_json::from_slice(json_body) {
@@ -222,7 +155,7 @@ pub(crate) fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
         Err(_) => {
             debug_agent_log(
                 "H3",
-                "proxy.rs:json_to_sse_stream",
+                "cache_response.rs:json_to_sse_stream",
                 "json parse failed, returning raw bytes",
                 serde_json::json!({
                     "json_len": json_body.len(),
@@ -246,7 +179,7 @@ pub(crate) fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     for (idx, choice) in choices.iter().enumerate() {
         let delta = json!({
             "index": idx,
-            "delta": message_to_cursor_safe_delta(choice.get("message")),
+            "delta": message_to_cursor_safe_delta(choice.get("message"), display_reasoning),
             "finish_reason": choice.get("finish_reason").cloned().unwrap_or(serde_json::Value::Null)
         });
 
@@ -283,7 +216,7 @@ pub(crate) fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
 
     debug_agent_log(
         "H3",
-        "proxy.rs:json_to_sse_stream",
+        "cache_response.rs:json_to_sse_stream",
         "sse synthesized from json",
         serde_json::json!({
             "choices_count": choices.len(),
@@ -296,8 +229,10 @@ pub(crate) fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
     sse_output
 }
 
-/// OpenAI-style delta for cache-hit SSE synthesis: no `reasoning_content` (Cursor rejects it).
-pub(crate) fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) -> serde_json::Value {
+pub fn message_to_cursor_safe_delta(
+    message: Option<&serde_json::Value>,
+    display_reasoning: bool,
+) -> serde_json::Value {
     use serde_json::{Value, json};
     let Some(msg) = message else {
         return json!({});
@@ -317,7 +252,10 @@ pub(crate) fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) 
         .get("reasoning_content")
         .and_then(|r| r.as_str())
         .unwrap_or("");
-    let effective = if content_str.is_empty() && !reasoning_str.is_empty() {
+    let effective = if display_reasoning
+        && content_str.is_empty()
+        && !reasoning_str.is_empty()
+    {
         reasoning_str
     } else {
         content_str
@@ -332,8 +270,7 @@ pub(crate) fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) 
     Value::Object(delta)
 }
 
-/// True if any SSE `data:` line has a non-empty `choices[].delta.content`.
-pub(crate) fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
+pub fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
     for line in sse.split(|b| *b == b'\n') {
         let stripped = line.trim_ascii();
         if !stripped.starts_with(b"data:") {
@@ -362,4 +299,40 @@ pub(crate) fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crab_cache::{CacheEntry, UsageInfo};
+
+    fn sample_entry(client_display: bool, sse: Option<Vec<u8>>) -> CacheEntry {
+        CacheEntry {
+            response_body: br#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#.to_vec(),
+            model: "deepseek-v4-pro".into(),
+            usage: UsageInfo::default(),
+            created_at: 1,
+            ttl_secs: 3600,
+            sse_body: sse,
+            is_stream: true,
+            client_display_reasoning: client_display,
+        }
+    }
+
+    #[test]
+    fn display_mismatch_forces_regen_even_with_saved_sse() {
+        let saved = br#"data: {"choices":[{"delta":{"content":"old fold"}}]}
+
+data: [DONE]
+
+"#
+        .to_vec();
+        let entry = sample_entry(true, Some(saved));
+        let regen = if entry.client_display_reasoning != false {
+            json_to_sse_stream(&entry.response_body, "deepseek-v4-pro", false)
+        } else {
+            entry.sse_body.clone().unwrap()
+        };
+        assert!(String::from_utf8(regen).unwrap().contains("ok"));
+    }
 }

@@ -13,6 +13,13 @@ pub struct CacheEntry {
     /// Whether this entry was stored from a streaming (`stream: true`) request.
     #[serde(default)]
     pub is_stream: bool,
+    /// `display_reasoning` at write time; mismatch on hit forces JSON→SSE regen.
+    #[serde(default = "default_client_display_reasoning")]
+    pub client_display_reasoning: bool,
+}
+
+fn default_client_display_reasoning() -> bool {
+    true
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
@@ -72,6 +79,13 @@ impl TtlConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_entry_deserialize_without_client_display_reasoning_defaults_true() {
+        let json = r#"{"response_body":[],"model":"m","usage":{"prompt_tokens":0,"completion_tokens":0,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0},"created_at":1,"ttl_secs":60}"#;
+        let entry: CacheEntry = serde_json::from_str(json).expect("deserialize");
+        assert!(entry.client_display_reasoning);
+    }
 
     #[test]
     fn test_ttl_config_resolve_default() {

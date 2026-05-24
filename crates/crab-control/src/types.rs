@@ -301,6 +301,9 @@ pub struct ReasoningRuntimeConfigView {
     pub missing_reasoning_strategy: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
+    /// True when `display_reasoning` changed on this PUT; clear L0/L1 or bump fingerprint.
+    #[serde(default)]
+    pub cache_invalidate_recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
