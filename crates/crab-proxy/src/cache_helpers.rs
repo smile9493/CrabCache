@@ -1,21 +1,27 @@
 use crab_cache::{CacheEntry, UsageInfo};
+use crab_reasoning::{strip_cursor_thinking_blocks, strip_reasoning_from_completion_value};
 
-pub fn strip_reasoning_from_completion_value(value: &mut serde_json::Value) {
-    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
-        return;
-    };
-    for choice in choices {
-        if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
-            msg.remove("reasoning_content");
-        }
-    }
-}
-
-pub fn prepare_response_body_for_cache(body: Vec<u8>) -> Vec<u8> {
+pub fn prepare_response_body_for_cache(body: Vec<u8>, display_reasoning: bool) -> Vec<u8> {
     let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
         return body;
     };
     strip_reasoning_from_completion_value(&mut value);
+    if !display_reasoning {
+        let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+            return serde_json::to_vec(&value).unwrap_or(body);
+        };
+        for choice in choices {
+            let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) else {
+                continue;
+            };
+            if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                msg.insert(
+                    "content".into(),
+                    serde_json::Value::String(strip_cursor_thinking_blocks(content)),
+                );
+            }
+        }
+    }
     serde_json::to_vec(&value).unwrap_or(body)
 }
 
@@ -24,6 +30,7 @@ pub fn build_cache_entry(
     model: String,
     ttl_secs: u64,
     is_stream: bool,
+    client_display_reasoning: bool,
 ) -> CacheEntry {
     CacheEntry {
         response_body,
@@ -36,6 +43,7 @@ pub fn build_cache_entry(
         ttl_secs,
         sse_body: None,
         is_stream,
+        client_display_reasoning,
     }
 }
 
@@ -45,6 +53,7 @@ pub fn build_cache_entry_with_sse(
     model: String,
     ttl_secs: u64,
     is_stream: bool,
+    client_display_reasoning: bool,
 ) -> CacheEntry {
     CacheEntry {
         response_body,
@@ -57,6 +66,7 @@ pub fn build_cache_entry_with_sse(
             .as_secs(),
         ttl_secs,
         is_stream,
+        client_display_reasoning,
     }
 }
 
@@ -71,10 +81,6 @@ pub fn cache_entry_matches_stream_mode(entry: &CacheEntry, is_streaming: bool) -
 }
 
 /// Build a stable concatenated query text for semantic cache from request messages.
-///
-/// Extracts system message (if present) and all user/assistant message text content,
-/// joining them with newlines. If any content field is a non-string array, it is
-/// serialized as a JSON subset. Returns None if no usable text is found.
 pub fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
@@ -110,5 +116,29 @@ pub fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<Strin
         None
     } else {
         Some(parts.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_response_body_for_cache_strips_reasoning_field() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nthink\n</details>\n\nhi",
+                    "reasoning_content": "secret"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let out = prepare_response_body_for_cache(body.to_string().into_bytes(), false);
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert!(msg.get("reasoning_content").is_none());
+        assert_eq!(msg["content"].as_str(), Some("hi"));
     }
 }

@@ -201,7 +201,9 @@ missing_reasoning_strategy = "recover"
 # Append tail summary when message count exceeds threshold (0 = disabled, L3-safe append-only)
 # context_summary_message_threshold = 0
 # prefix_validate = false
-display_reasoning = true
+# true: mirror/fold thinking into assistant content for Cursor UI
+# false: silent mode (dsv4-cc-proxy style) — ReasoningStore keeps upstream text; client sees answer/tool_calls only
+display_reasoning = false
 collapsible_reasoning = true
 cache_db_path = "data/reasoning_content.sqlite3"
 cache_max_age_secs = 2592000

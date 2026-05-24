@@ -51,6 +51,7 @@ async fn tiered_cache_put_then_get_hit() {
         ttl_secs: 3600,
         sse_body: None,
         is_stream: false,
+        client_display_reasoning: true,
     };
 
     cache

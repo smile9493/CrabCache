@@ -251,6 +251,8 @@ pub struct StreamState {
     pub reasoning_finalized: bool,
     /// Incomplete SSE line bytes spanning upstream body chunks.
     pub sse_remainder: Vec<u8>,
+    /// Client-shaped SSE bytes accumulated for L0/L1 `sse_body` (not upstream raw).
+    pub client_sse_body: Vec<u8>,
     pub pending_recovery_notice: Option<String>,
 }
 
@@ -261,6 +263,7 @@ impl Default for StreamState {
             display_adapter: None,
             reasoning_finalized: false,
             sse_remainder: Vec::new(),
+            client_sse_body: Vec::new(),
             pending_recovery_notice: None,
         }
     }

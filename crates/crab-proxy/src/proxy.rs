@@ -13,7 +13,7 @@ use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crate::trace_logger::composition_debug_tx;
-use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
+use crab_cache::CoalesceError;
 use crab_composition::{
     extract_composition, extract_system_text, extract_tools_json, CompositionDebugEntry,
     CompositionHints,
@@ -24,10 +24,16 @@ use crab_pipeline::{
     validate_pipeline_override,
 };
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, fold_reasoning_into_content,
-    prepare_generic_request, prepare_light_request, prepare_upstream_request, rewrite_response_body,
-    rewrite_sse_chunk,
+    CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator,
+    fold_reasoning_into_content, prepare_generic_request, prepare_light_request,
+    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
+    strip_reasoning_from_completion_value,
 };
+use crate::cache_helpers::{
+    build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
+    cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
+};
+use crate::cache_response::send_cached_response;
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
@@ -327,6 +333,7 @@ impl GatewayProxy {
             &ctx.model,
             ctx.is_streaming,
             CacheTier::L2Semantic,
+            self.reasoning_config().display_reasoning,
         )
         .await
         {
@@ -749,11 +756,11 @@ impl ProxyHttp for GatewayProxy {
                 ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
                 ctx.prepared_request = Some(prepared.clone());
                 ctx.new_request_body = Some(serde_json::to_vec(&prepared.payload).unwrap_or_default());
-                if ctx.is_streaming && reasoning_cfg.display_reasoning {
+                if ctx.is_streaming {
                     ctx.stream.accumulator = Some(StreamAccumulator::new());
-                    ctx.stream.display_adapter = Some(CursorReasoningDisplayAdapter::new(
-                        reasoning_cfg.collapsible_reasoning,
-                    ));
+                    ctx.stream.display_adapter = reasoning_cfg.display_reasoning.then(|| {
+                        CursorReasoningDisplayAdapter::new(reasoning_cfg.collapsible_reasoning)
+                    });
                 }
             }
             RequestPipeline::DeepSeekLight => {
@@ -1073,6 +1080,7 @@ impl ProxyHttp for GatewayProxy {
                         &ctx.model,
                         ctx.is_streaming,
                         tier,
+                        self.reasoning_config().display_reasoning,
                     )
                     .await;
 
@@ -1218,6 +1226,7 @@ impl ProxyHttp for GatewayProxy {
                                 &ctx.model,
                                 ctx.is_streaming,
                                 tier,
+                                self.reasoning_config().display_reasoning,
                             )
                             .await
                             {
@@ -1691,7 +1700,9 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if let Some(data) = body.take() {
-            ctx.accumulated_body.extend_from_slice(&data);
+            if !ctx.is_streaming {
+                ctx.accumulated_body.extend_from_slice(&data);
+            }
 
             if ctx.is_streaming {
                 if ctx.ttft.is_none() {
@@ -1717,6 +1728,7 @@ impl ProxyHttp for GatewayProxy {
                         &mut ctx.stream.sse_remainder,
                         prepared,
                         accumulator,
+                        self.reasoning_config().display_reasoning,
                         &mut ctx.stream.display_adapter,
                         &mut ctx.stream.pending_recovery_notice,
                         &self.state.reasoning_store,
@@ -1725,12 +1737,17 @@ impl ProxyHttp for GatewayProxy {
                     if finalized {
                         ctx.stream.reasoning_finalized = true;
                     }
+                    if !rewritten.is_empty() {
+                        ctx.stream.client_sse_body.extend_from_slice(&rewritten);
+                    }
                     if rewritten.is_empty() {
                         None
                     } else {
                         Some(bytes::Bytes::from(rewritten))
                     }
                 } else {
+                    ctx.stream.client_sse_body.extend_from_slice(&data);
+                    ctx.accumulated_body.extend_from_slice(&data);
                     Some(data.clone())
                 };
 
@@ -1859,13 +1876,16 @@ impl ProxyHttp for GatewayProxy {
                         .state
                         .tiered_cache
                         .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+                    let display_reasoning = self.reasoning_config().display_reasoning;
 
-                    let cache_body = prepare_response_body_for_cache(client_body.clone());
+                    let cache_body =
+                        prepare_response_body_for_cache(client_body.clone(), display_reasoning);
                     let entry = build_cache_entry(
                         cache_body,
                         ctx.model.clone(),
                         ttl_secs,
                         ctx.is_streaming,
+                        display_reasoning,
                     );
 
                     let tiered_cache = self.state.tiered_cache.clone();
@@ -1892,10 +1912,14 @@ impl ProxyHttp for GatewayProxy {
                                     if let Some(query_text) = build_semantic_query_text(messages) {
                                         let semantic_cache = semantic_cache.clone();
                                         let entry_clone = build_cache_entry(
-                                            prepare_response_body_for_cache(client_body.clone()),
+                                            prepare_response_body_for_cache(
+                                                client_body.clone(),
+                                                display_reasoning,
+                                            ),
                                             ctx.model.clone(),
                                             ttl_secs,
                                             ctx.is_streaming,
+                                            display_reasoning,
                                         );
 
                                         let project_id = ctx.project_id.clone();
@@ -1930,6 +1954,7 @@ impl ProxyHttp for GatewayProxy {
                     &mut ctx.stream.sse_remainder,
                     prepared,
                     accumulator,
+                    self.reasoning_config().display_reasoning,
                     &mut ctx.stream.display_adapter,
                     &mut ctx.stream.pending_recovery_notice,
                     &self.state.reasoning_store,
@@ -1939,6 +1964,7 @@ impl ProxyHttp for GatewayProxy {
                     ctx.stream.reasoning_finalized = true;
                 }
                 if !rewritten.is_empty() {
+                    ctx.stream.client_sse_body.extend_from_slice(&rewritten);
                     *body = Some(bytes::Bytes::from(rewritten));
                 }
             }
@@ -1999,10 +2025,12 @@ impl ProxyHttp for GatewayProxy {
                             .tiered_cache
                             .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
-                        let sse_body = ctx.accumulated_body.clone();
+                        let sse_body = ctx.stream.client_sse_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
-                        let response_bytes =
-                            prepare_response_body_for_cache(response_json.clone().into_bytes());
+                        let response_bytes = prepare_response_body_for_cache(
+                            response_json.clone().into_bytes(),
+                            reasoning_cfg.display_reasoning,
+                        );
                         let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                             build_cache_entry_with_sse(
                                 response_bytes.clone(),
@@ -2010,6 +2038,7 @@ impl ProxyHttp for GatewayProxy {
                                 ctx.model.clone(),
                                 ttl_secs,
                                 true,
+                                reasoning_cfg.display_reasoning,
                             )
                         } else {
                             warn!(
@@ -2018,7 +2047,13 @@ impl ProxyHttp for GatewayProxy {
                                 "SSE body exceeds max_sse_cache_bytes; caching JSON only"
                             );
                             global_metrics().record_stream_cache_sse_omitted("over_limit");
-                            build_cache_entry(response_bytes, ctx.model.clone(), ttl_secs, true)
+                            build_cache_entry(
+                                response_bytes,
+                                ctx.model.clone(),
+                                ttl_secs,
+                                true,
+                                reasoning_cfg.display_reasoning,
+                            )
                         };
                         let tiered_cache = self.state.tiered_cache.clone();
                         let cache_key = cache_key.clone();
@@ -2048,10 +2083,12 @@ impl ProxyHttp for GatewayProxy {
                                             let entry_for_semantic = build_cache_entry(
                                                 prepare_response_body_for_cache(
                                                     response_json.into_bytes(),
+                                                    reasoning_cfg.display_reasoning,
                                                 ),
                                                 ctx.model.clone(),
                                                 ttl_secs,
                                                 true,
+                                                reasoning_cfg.display_reasoning,
                                             );
                                             let query_text = query_text.to_string();
                                             let project_id = ctx.project_id.clone();
@@ -2370,167 +2407,6 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         .is_ok()
 }
 
-/// Cache hit streaming: prefer stored `sse_body` (already client-shaped from a prior miss).
-/// Fallback `json_to_sse_stream` strips `reasoning_content` from message deltas for Cursor.
-async fn send_cached_response(
-    session: &mut Session,
-    entry: &CacheEntry,
-    model: &str,
-    is_streaming: bool,
-    cache_tier: CacheTier,
-) -> bool {
-    let response_body = &entry.response_body;
-    if is_streaming {
-        let used_legacy_regen = entry
-            .sse_body
-            .as_ref()
-            .is_some_and(|s| s.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
-        let saved_empty_content = entry
-            .sse_body
-            .as_ref()
-            .is_some_and(|s| !cached_sse_has_nonempty_content(s));
-        let sse_source = if entry.sse_body.is_none() {
-            "json_regen"
-        } else if used_legacy_regen || saved_empty_content {
-            "legacy_regen"
-        } else {
-            "saved_sse"
-        };
-        let sse_body = if let Some(ref saved) = entry.sse_body {
-            if used_legacy_regen || saved_empty_content {
-                // Legacy or empty-content SSE: rebuild from JSON with reasoning folded into content.
-                json_to_sse_stream(response_body, model)
-            } else {
-                saved.clone()
-            }
-        } else {
-            json_to_sse_stream(response_body, model)
-        };
-        let json_choices = serde_json::from_slice::<serde_json::Value>(response_body)
-            .ok()
-            .and_then(|v| v.get("choices").and_then(|c| c.as_array()).map(|a| a.len()))
-            .unwrap_or(0);
-        let has_done = sse_body.windows(6).any(|w| w == b"[DONE]");
-        let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
-        // #region agent log
-        debug_agent_log(
-            "H1",
-            "proxy.rs:send_cached_response",
-            "streaming cache hit SSE synthesis",
-            serde_json::json!({
-                "sse_source": sse_source,
-                "sse_len": sse_body.len(),
-                "response_body_len": response_body.len(),
-                "used_legacy_regen": used_legacy_regen,
-                "saved_empty_content": saved_empty_content,
-                "json_choices": json_choices,
-                "has_done": has_done,
-                "has_nonempty_content": has_nonempty,
-                "entry_is_stream": entry.is_stream,
-                "cache_tier": cache_tier.as_str(),
-                "model": model,
-            }),
-        );
-        // #endregion
-        let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
-            warn!("Failed to build SSE cache response header");
-            return false;
-        };
-        let _ = session
-            .downstream_session
-            .write_response_header(Box::new(header))
-            .await;
-        let _ = session
-            .downstream_session
-            .write_response_body(bytes::Bytes::from(sse_body), true)
-            .await;
-    } else {
-        let Some(header) = build_json_response_header(response_body.len(), cache_tier) else {
-            warn!("Failed to build JSON cache response header");
-            return false;
-        };
-        let _ = session
-            .downstream_session
-            .write_response_header(Box::new(header))
-            .await;
-        let _ = session
-            .downstream_session
-            .write_response_body(bytes::Bytes::from(response_body.clone()), true)
-            .await;
-    }
-    true
-}
-
-/// Whether to persist raw SSE bytes alongside the synthesized JSON completion.
-pub fn should_store_sse_body(sse_len: usize, max_sse_cache_bytes: usize) -> bool {
-    max_sse_cache_bytes > 0 && sse_len <= max_sse_cache_bytes
-}
-
-/// Legacy Redis entries default `is_stream = false`; mismatch forces a miss for streaming clients.
-pub fn cache_entry_matches_stream_mode(entry: &CacheEntry, is_streaming: bool) -> bool {
-    entry.is_stream == is_streaming
-}
-
-fn strip_reasoning_from_completion_value(value: &mut serde_json::Value) {
-    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
-        return;
-    };
-    for choice in choices {
-        if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
-            msg.remove("reasoning_content");
-        }
-    }
-}
-
-fn prepare_response_body_for_cache(body: Vec<u8>) -> Vec<u8> {
-    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
-        return body;
-    };
-    strip_reasoning_from_completion_value(&mut value);
-    serde_json::to_vec(&value).unwrap_or(body)
-}
-
-fn build_cache_entry(
-    response_body: Vec<u8>,
-    model: String,
-    ttl_secs: u64,
-    is_stream: bool,
-) -> CacheEntry {
-    CacheEntry {
-        response_body,
-        model,
-        usage: UsageInfo::default(),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        ttl_secs,
-        sse_body: None,
-        is_stream,
-    }
-}
-
-fn build_cache_entry_with_sse(
-    response_body: Vec<u8>,
-    sse_body: Vec<u8>,
-    model: String,
-    ttl_secs: u64,
-    is_stream: bool,
-) -> CacheEntry {
-    CacheEntry {
-        response_body,
-        sse_body: Some(sse_body),
-        model,
-        usage: UsageInfo::default(),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        ttl_secs,
-        is_stream,
-    }
-}
-
 fn record_usage_metrics(
     usage: &UsageData,
     model: &str,
@@ -2579,6 +2455,7 @@ fn rewrite_upstream_sse_bytes(
     remainder: &mut Vec<u8>,
     prepared: &crab_reasoning::PreparedRequest,
     accumulator: &mut StreamAccumulator,
+    display_reasoning: bool,
     display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
     pending_recovery_notice: &mut Option<String>,
     store: &ReasoningBackend,
@@ -2600,6 +2477,7 @@ fn rewrite_upstream_sse_bytes(
             accumulator,
             &prepared.cache_namespace,
             &prepared.record_response_contexts,
+            display_reasoning,
             display_adapter,
             pending_recovery_notice.as_deref(),
             Some(store),
@@ -2622,6 +2500,7 @@ fn rewrite_upstream_sse_bytes(
             accumulator,
             &prepared.cache_namespace,
             &prepared.record_response_contexts,
+            display_reasoning,
             display_adapter,
             pending_recovery_notice.as_deref(),
             Some(store),
@@ -2699,260 +2578,10 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
     }
 }
 
-fn cache_status_header(tier: CacheTier) -> &'static str {
-    match tier {
-        CacheTier::L0Moka => "HIT_L0",
-        CacheTier::L1Redis => "HIT_L1",
-        CacheTier::L2Semantic => "HIT_L2",
-        CacheTier::Miss => "miss",
-    }
-}
-
-fn insert_response_header(
-    header: &mut pingora_http::ResponseHeader,
-    name: &'static str,
-    value: impl ToString,
-) -> Option<()> {
-    header.insert_header(name, value.to_string()).ok()
-}
-
-fn build_json_response_header(
-    body_len: usize,
-    cache_tier: CacheTier,
-) -> Option<pingora_http::ResponseHeader> {
-    use pingora_http::ResponseHeader;
-    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
-    insert_response_header(&mut header, "content-type", "application/json")?;
-    insert_response_header(&mut header, "content-length", body_len.to_string())?;
-    insert_response_header(
-        &mut header,
-        "x-cache-status",
-        cache_status_header(cache_tier),
-    )?;
-    insert_response_header(&mut header, "connection", "close")?;
-    Some(header)
-}
-
-fn build_sse_response_header(
-    body_len: usize,
-    cache_tier: CacheTier,
-) -> Option<pingora_http::ResponseHeader> {
-    use pingora_http::ResponseHeader;
-    let mut header = ResponseHeader::build(http::StatusCode::OK, Some(5)).ok()?;
-    insert_response_header(&mut header, "content-type", "text/event-stream")?;
-    insert_response_header(&mut header, "content-length", body_len.to_string())?;
-    insert_response_header(&mut header, "cache-control", "no-cache")?;
-    insert_response_header(
-        &mut header,
-        "x-cache-status",
-        cache_status_header(cache_tier),
-    )?;
-    insert_response_header(&mut header, "connection", "close")?;
-    Some(header)
-}
-
-fn json_to_sse_stream(json_body: &[u8], model: &str) -> Vec<u8> {
-    use serde_json::json;
-
-    let value: serde_json::Value = match serde_json::from_slice(json_body) {
-        Ok(v) => v,
-        Err(_) => {
-            // #region agent log
-            debug_agent_log(
-                "H3",
-                "proxy.rs:json_to_sse_stream",
-                "json parse failed, returning raw bytes",
-                serde_json::json!({
-                    "json_len": json_body.len(),
-                    "model": model,
-                }),
-            );
-            // #endregion
-            return json_body.to_vec();
-        }
-    };
-
-    let choices = value
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let usage = value.get("usage").cloned();
-    let has_usage = usage.is_some();
-
-    let mut sse_output = Vec::new();
-
-    for (idx, choice) in choices.iter().enumerate() {
-        let delta = json!({
-            "index": idx,
-            "delta": message_to_cursor_safe_delta(choice.get("message")),
-            "finish_reason": choice.get("finish_reason").cloned().unwrap_or(serde_json::Value::Null)
-        });
-
-        let event_data = json!({
-            "id": format!("chatcmpl-cache-{}", uuid::Uuid::new_v4()),
-            "object": "chat.completion.chunk",
-            "created": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            "model": model,
-            "choices": [delta]
-        });
-
-        sse_output.extend_from_slice(format!("data: {event_data}\n\n").as_bytes());
-    }
-
-    if let Some(usage_data) = usage {
-        let usage_event = json!({
-            "id": format!("chatcmpl-cache-{}", uuid::Uuid::new_v4()),
-            "object": "chat.completion.chunk",
-            "created": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            "model": model,
-            "choices": [],
-            "usage": usage_data
-        });
-        sse_output.extend_from_slice(format!("data: {usage_event}\n\n").as_bytes());
-    }
-
-    sse_output.extend_from_slice(b"data: [DONE]\n\n");
-
-    // #region agent log
-    debug_agent_log(
-        "H3",
-        "proxy.rs:json_to_sse_stream",
-        "sse synthesized from json",
-        serde_json::json!({
-            "choices_count": choices.len(),
-            "sse_len": sse_output.len(),
-            "has_usage": has_usage,
-            "model": model,
-        }),
-    );
-    // #endregion
-
-    sse_output
-}
-
-/// OpenAI-style delta for cache-hit SSE synthesis: no `reasoning_content` (Cursor rejects it).
-fn message_to_cursor_safe_delta(message: Option<&serde_json::Value>) -> serde_json::Value {
-    use serde_json::{Value, json};
-    let Some(msg) = message else {
-        return json!({});
-    };
-    let Some(obj) = msg.as_object() else {
-        return msg.clone();
-    };
-    let mut delta = serde_json::Map::new();
-    if let Some(role) = obj.get("role") {
-        delta.insert("role".into(), role.clone());
-    }
-    let content_str = obj
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
-    let reasoning_str = obj
-        .get("reasoning_content")
-        .and_then(|r| r.as_str())
-        .unwrap_or("");
-    let effective = if content_str.is_empty() && !reasoning_str.is_empty() {
-        reasoning_str
-    } else {
-        content_str
-    };
-    if !effective.is_empty() || obj.contains_key("content") || obj.contains_key("reasoning_content")
-    {
-        delta.insert("content".into(), Value::String(effective.to_string()));
-    }
-    if let Some(tool_calls) = obj.get("tool_calls") {
-        delta.insert("tool_calls".into(), tool_calls.clone());
-    }
-    Value::Object(delta)
-}
-
-/// True if any SSE `data:` line has a non-empty `choices[].delta.content`.
-fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
-    for line in sse.split(|b| *b == b'\n') {
-        let stripped = line.trim_ascii();
-        if !stripped.starts_with(b"data:") {
-            continue;
-        }
-        let data = stripped[b"data:".len()..].trim_ascii();
-        if data == b"[DONE]" {
-            continue;
-        }
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) else {
-            continue;
-        };
-        let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
-            continue;
-        };
-        for choice in choices {
-            if let Some(content) = choice
-                .get("delta")
-                .and_then(|d| d.get("content"))
-                .and_then(|c| c.as_str())
-            {
-                if !content.is_empty() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Build a stable concatenated query text for semantic cache from request messages.
-///
-/// Extracts system message (if present) and all user/assistant message text content,
-/// joining them with newlines. If any content field is a non-string array, it is
-/// serialized as a JSON subset. Returns None if no usable text is found.
-fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-
-    for msg in messages {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        if role == "system" || role == "user" || role == "assistant" {
-            let content = msg.get("content");
-            let text = match content {
-                Some(serde_json::Value::String(s)) => s.clone(),
-                Some(serde_json::Value::Array(arr)) => {
-                    // Array content: extract text parts or serialize as JSON subset
-                    let sub: Vec<String> = arr
-                        .iter()
-                        .filter_map(|part| {
-                            part.get("text")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-                    if sub.is_empty() {
-                        // No text parts found, skip this message
-                        continue;
-                    }
-                    sub.join(" ")
-                }
-                _ => continue,
-            };
-            if !text.is_empty() {
-                parts.push(text);
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("\n"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache_response::{cached_sse_has_nonempty_content, json_to_sse_stream};
     use serde_json::json;
 
     #[test]
@@ -3043,7 +2672,7 @@ mod tests {
                 "finish_reason": "stop"
             }]
         });
-        let regen = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let regen = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
         let text = String::from_utf8(regen).unwrap();
         assert!(!text.contains("reasoning_content"));
     }
@@ -3060,7 +2689,7 @@ mod tests {
                 "finish_reason": "stop"
             }]
         });
-        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
         let text = String::from_utf8(sse).unwrap();
         assert!(!text.contains("reasoning_content"));
         assert!(text.contains("[DONE]"));
@@ -3079,7 +2708,7 @@ mod tests {
                 "finish_reason": "stop"
             }]
         });
-        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro");
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
         assert!(cached_sse_has_nonempty_content(&sse));
         let text = String::from_utf8(sse).unwrap();
         assert!(!text.contains("reasoning_content"));
@@ -3087,11 +2716,29 @@ mod tests {
     }
 
     #[test]
+    fn json_to_sse_stream_silent_mode_omits_reasoning_text() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "thought"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", false);
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(!text.contains("thought"));
+    }
+
+    #[test]
     fn cache_entry_stream_mode_guard() {
-        let entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, false);
+        let entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, false, true);
         assert!(cache_entry_matches_stream_mode(&entry, false));
         assert!(!cache_entry_matches_stream_mode(&entry, true));
-        let stream_entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, true);
+        let stream_entry = build_cache_entry(b"{}".to_vec(), "m".into(), 60, true, false);
         assert!(cache_entry_matches_stream_mode(&stream_entry, true));
     }
 
@@ -3101,17 +2748,61 @@ mod tests {
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": "<details>think</details>hi",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nthink\n</details>\n\nhi",
                     "reasoning_content": "secret"
                 },
                 "finish_reason": "stop"
             }]
         });
-        let out = prepare_response_body_for_cache(body.to_string().into_bytes());
+        let out = prepare_response_body_for_cache(body.to_string().into_bytes(), false);
         let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
         let msg = &parsed["choices"][0]["message"];
         assert!(msg.get("reasoning_content").is_none());
-        assert!(msg["content"].as_str().unwrap().contains("hi"));
+        assert_eq!(msg["content"].as_str(), Some("hi"));
+    }
+
+    #[test]
+    fn client_sse_rewrite_omits_reasoning_content_when_silent() {
+        use crab_reasoning::{PreparedRequest, ReasoningBackend, StreamAccumulator};
+
+        let store =
+            ReasoningBackend::open_sqlite(":memory:", Some(3600), Some(1000)).expect("memory");
+        let prepared = PreparedRequest {
+            payload: serde_json::json!({}),
+            original_model: "deepseek-v4-pro".into(),
+            upstream_model: "deepseek-v4-pro".into(),
+            cache_namespace: "ns".into(),
+            patched_reasoning_messages: 0,
+            missing_reasoning_messages: 0,
+            recovered_reasoning_messages: 0,
+            recovery_dropped_messages: 0,
+            retired_prefix_messages: 0,
+            recovery_notice: None,
+            record_response_scope: "scope".into(),
+            record_response_messages: vec![],
+            record_response_contexts: vec![("scope".into(), vec![])],
+        };
+        let line = br#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"secret think","role":"assistant"}}]}
+
+"#;
+        let mut remainder = Vec::new();
+        let mut acc = StreamAccumulator::new();
+        let mut adapter = None;
+        let mut notice = None;
+        let (out, _) = crate::sse_rewrite::rewrite_upstream_sse_bytes(
+            line,
+            &mut remainder,
+            &prepared,
+            &mut acc,
+            false,
+            &mut adapter,
+            &mut notice,
+            &store,
+            true,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(!text.contains("secret think"));
     }
 
     #[test]
@@ -3120,18 +2811,6 @@ mod tests {
         assert!(!should_store_sse_body(4_194_305, 4_194_304));
         assert!(!should_store_sse_body(100, 0));
         assert!(should_store_sse_body(0, 1024));
-    }
-
-    #[test]
-    fn test_build_json_response_header_ok() {
-        let header = build_json_response_header(42, CacheTier::L0Moka).expect("header");
-        assert_eq!(header.status.as_u16(), 200);
-    }
-
-    #[test]
-    fn test_build_sse_response_header_ok() {
-        let header = build_sse_response_header(100, CacheTier::L1Redis).expect("header");
-        assert_eq!(header.status.as_u16(), 200);
     }
 
     #[test]

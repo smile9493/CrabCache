@@ -69,6 +69,10 @@ coverage/
 tarpaulin-report.html
 lcov.info
 
+# --- Reference clones (not shipped) ---
+dsv4-cc-proxy/
+deepseek-cursor-proxy/
+
 # --- Misc local scratch ---
 site/
 .cache/

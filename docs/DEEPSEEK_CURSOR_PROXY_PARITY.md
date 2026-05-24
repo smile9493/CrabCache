@@ -35,6 +35,17 @@ CrabCache 流式路径：
 
 非流式仍可用 `fold_reasoning_into_content` + `<details>`（`display_reasoning=true`）。
 
+## 与 dsv4-cc-proxy 的对照（响应端静默）
+
+[dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)（Anthropic/Claude Code）在 `thinking.type=disabled` 时**过滤 SSE 中的 thinking 块**，避免客户端上下文膨胀。CrabCache 在 OpenAI/Cursor 通道上的等价开关为：
+
+| 配置 | 行为 |
+|------|------|
+| `display_reasoning = false` | 流式 `strip_reasoning_delta_for_client`：不下发思考文本；ReasoningStore 仍从上游 chunk **先 ingest 再剥离** |
+| `display_reasoning = true` | 将思考 mirror/fold 进 `content`（可选 `<details>` 非流式） |
+
+长会话、多轮 tool 推荐 `display_reasoning = false` + Redis ReasoningStore + `x-conversation-id`。详见 [DSV4_CC_PROXY_REFERENCE.md](./DSV4_CC_PROXY_REFERENCE.md)。
+
 ## 代码映射
 
 | Python | Rust |

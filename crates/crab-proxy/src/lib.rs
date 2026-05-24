@@ -17,8 +17,8 @@ mod upstream_profile;
 // Extracted helper modules from proxy.rs
 mod helper_fns;
 mod error_jsons;
-mod response_helpers;
 mod cache_helpers;
+mod cache_response;
 mod metrics_helpers;
 mod sse_rewrite;
 mod connection_helpers;
@@ -32,7 +32,13 @@ pub use stored_key::StoredKey;
 pub use error::ProxyError;
 pub use proxy::GatewayProxy;
 pub use sse_rewrite::flush_streaming_reasoning;
-pub use cache_helpers::should_store_sse_body;
+pub use cache_helpers::{
+    build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
+    cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
+};
+pub use cache_response::{
+    cached_sse_has_nonempty_content, json_to_sse_stream, send_cached_response,
+};
 pub use runtime::{DomainPolicy, RuntimeConfig};
 pub use trace_logger::{
     CompositionDebugConfig, SanitizedLogEntry, TraceConfig, TraceLogger,

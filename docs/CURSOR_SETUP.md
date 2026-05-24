@@ -70,7 +70,8 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 |------|------|
 | `missing_reasoning_strategy = "recover"` | **默认（与 deepseek-cursor-proxy 一致）**；`client_key`/`x-conversation-id` 下就地补 reasoning，不截断 tool 历史 |
 | `missing_reasoning_strategy = "reject"` | 无法恢复时 **HTTP 409**（与 proxy `--missing-reasoning-strategy reject` 一致） |
-| `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：仅增量 `delta.content`，不下发 `reasoning_content`（避免 Cursor 断连） |
+| `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：思考 mirror 到 `delta.content`，不下发 `reasoning_content` 字段 |
+| `display_reasoning = false` | **静默模式**（对齐 [dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy) 响应剥离）：思考仅存 ReasoningStore，Cursor 上下文仅见 answer / `tool_calls`；长会话推荐。切换后见 [DSV4_CC_PROXY_REFERENCE.md](DSV4_CC_PROXY_REFERENCE.md) 清 L0/L1 |
 | `stream_cache_enabled`（`[cache]`） | 流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning |
 
 公网域名+端口部署时 Base URL 须包含端口，例如 `https://v4.example.com:18000/v1`（不是无端口 URL）。
@@ -82,7 +83,7 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 thinking_mode = "enabled"
 reasoning_effort = "max"
 missing_reasoning_strategy = "recover"
-display_reasoning = true
+display_reasoning = false
 collapsible_reasoning = true
 
 [cache]

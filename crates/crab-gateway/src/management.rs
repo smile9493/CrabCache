@@ -1243,6 +1243,7 @@ fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigVie
         missing_reasoning_strategy: config.missing_reasoning_strategy.clone(),
         display_reasoning: config.display_reasoning,
         collapsible_reasoning: config.collapsible_reasoning,
+        cache_invalidate_recommended: false,
     }
 }
 
@@ -1289,11 +1290,20 @@ async fn put_reasoning_runtime(
         .reasoning_config
         .write()
         .map_err(|_| internal_error("reasoning config lock poisoned"))?;
+    let display_reasoning_changed = cfg.display_reasoning != req.display_reasoning;
     cfg.thinking_mode = req.thinking_mode;
     cfg.reasoning_effort = req.reasoning_effort;
     cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
     cfg.display_reasoning = req.display_reasoning;
     cfg.collapsible_reasoning = req.collapsible_reasoning;
+
+    if display_reasoning_changed {
+        tracing::warn!(
+            display_reasoning = cfg.display_reasoning,
+            "display_reasoning changed: invalidate L0/L1 cache (POST /v1/cache/invalidate scope=all) \
+             or bump fingerprint to avoid stale SSE/content"
+        );
+    }
 
     tracing::info!(
         thinking_mode = %cfg.thinking_mode,
@@ -1301,7 +1311,9 @@ async fn put_reasoning_runtime(
         "Reasoning runtime config updated"
     );
 
-    Ok(Json(reasoning_runtime_view(&cfg)))
+    let mut view = reasoning_runtime_view(&cfg);
+    view.cache_invalidate_recommended = display_reasoning_changed;
+    Ok(Json(view))
 }
 
 async fn clear_reasoning_cache(
