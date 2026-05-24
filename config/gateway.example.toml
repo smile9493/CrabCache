@@ -238,12 +238,12 @@ path = "/var/log/crabcache/trace.jsonl"
 max_lines = 10000
 max_files = 5
 
--# Max bytes to capture for request body snapshot in trace logs (`0` = disabled).
--# Enable cautiously: each line grows from ~200 B to KB-scale. Suggested production
--# values: request 512–2048, response 256–1024. Requires sufficient disk headroom
--# when combined with max_lines × max_files.
--# max_payload_bytes = 1024
--# max_response_preview_bytes = 512
+# Max bytes to capture for request body snapshot in trace logs (`0` = disabled).
+# Enable cautiously: each line grows from ~200 B to KB-scale. Suggested production
+# values: request 512–2048, response 256–1024. Requires sufficient disk headroom
+# when combined with max_lines × max_files.
+# max_payload_bytes = 1024
+# max_response_preview_bytes = 512
 
 # Optional: debug composition logging (full system/tools text for analysis)
 # When enabled, writes full (unhashed) system prompts and tool definitions

@@ -2386,6 +2386,90 @@ impl Translations {
             Locale::EnUS => "Refresh",
         }
     }
+    pub fn logs_filter_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn logs_filter_consumer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者",
+            Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn logs_filter_cache_tier(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存层",
+            Locale::EnUS => "Cache tier",
+        }
+    }
+    pub fn logs_filter_hash(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求哈希",
+            Locale::EnUS => "Request hash",
+        }
+    }
+    pub fn logs_filter_latency_min(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟 ≥ ms",
+            Locale::EnUS => "Latency ≥ ms",
+        }
+    }
+    pub fn logs_filter_latency_max(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟 ≤ ms",
+            Locale::EnUS => "Latency ≤ ms",
+        }
+    }
+    pub fn logs_filter_token_min(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token ≥",
+            Locale::EnUS => "Tokens ≥",
+        }
+    }
+    pub fn logs_filter_token_max(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Token ≤",
+            Locale::EnUS => "Tokens ≤",
+        }
+    }
+    pub fn logs_filter_apply(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "筛选",
+            Locale::EnUS => "Filter",
+        }
+    }
+    pub fn logs_filter_clear(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清除",
+            Locale::EnUS => "Clear",
+        }
+    }
+    pub fn logs_filter_hash_click(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击按此哈希筛选列表",
+            Locale::EnUS => "Click to filter list by this hash",
+        }
+    }
+    pub fn logs_filter_cache_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部",
+            Locale::EnUS => "All",
+        }
+    }
+    pub fn logs_no_results(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无匹配日志",
+            Locale::EnUS => "No matching logs.",
+        }
+    }
+    pub fn logs_detail_diagnostics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "诊断",
+            Locale::EnUS => "Diagnostics",
+        }
+    }
     pub fn logs_col_time(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "时间",

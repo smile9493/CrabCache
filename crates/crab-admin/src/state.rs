@@ -1,7 +1,7 @@
 use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
-use crate::types::{DomainPolicy, ReasoningConfig, TraceSummary};
+use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, TraceSummary};
 use std::collections::HashMap;
 use std::time::Instant;
 use crab_control::{GatewayAdminClient, GatewayStatus, UpstreamTestResult};
@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex as AsyncMutex;
 
 /// Extended metadata for an API key (quota/UI fields not stored on the gateway).
 #[derive(Debug, Clone)]
@@ -85,6 +86,9 @@ pub struct AppState {
     /// Last successful upstream reconcile from gateway Management API.
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
     pub gateway_probe_cache: RwLock<Option<(Instant, GatewayProbe)>>,
+    /// Cached `OverviewCore` + ETag for `/api/admin/overview/core` (background refresh).
+    pub overview_core_cache: RwLock<Option<(Instant, OverviewCore, String)>>,
+    pub overview_core_build_lock: AsyncMutex<()>,
     pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (incremental tail, configurable TTL via CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
@@ -406,6 +410,8 @@ impl AppState {
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
+            overview_core_cache: RwLock::new(None),
+            overview_core_build_lock: AsyncMutex::new(()),
             gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             key_usage_last_synced: parking_lot::Mutex::new(0),

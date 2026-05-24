@@ -13,11 +13,87 @@ use crate::types::{
     OverviewCore, OverviewTimeseriesResponse, SemanticConfig, TimeSeriesPoint, TraceSummary,
 };
 use crab_control::GatewayStatus;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TRACE_SUMMARY_TTL: Duration = Duration::from_secs(60);
 const GATEWAY_PROBE_TTL: Duration = Duration::from_secs(3);
+const DEFAULT_OVERVIEW_CORE_CACHE_TTL: Duration = Duration::from_secs(10);
+
+pub fn overview_core_cache_ttl() -> Duration {
+    std::env::var("CRABCACHE_OVERVIEW_CORE_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_OVERVIEW_CORE_CACHE_TTL)
+}
+
+/// Background refresh interval (defaults to cache TTL, aligned with dashboard 10s core poll).
+pub fn overview_core_background_interval() -> Duration {
+    std::env::var("CRABCACHE_OVERVIEW_CORE_REFRESH_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(overview_core_cache_ttl())
+}
+
+fn read_fresh_overview_core_cache(
+    state: &AppState,
+    ttl: Duration,
+) -> Option<(OverviewCore, String)> {
+    let guard = state.overview_core_cache.read();
+    let (at, core, etag) = guard.as_ref()?;
+    if at.elapsed() < ttl {
+        Some((core.clone(), etag.clone()))
+    } else {
+        None
+    }
+}
+
+fn store_overview_core_cache(state: &AppState, core: OverviewCore, etag: String) {
+    *state.overview_core_cache.write() = Some((Instant::now(), core, etag));
+}
+
+/// Stable ETag for serialized overview core (matches `get_overview_core` hashing).
+pub fn overview_core_etag(core: &OverviewCore) -> Result<String, String> {
+    let json_bytes =
+        serde_json::to_vec(core).map_err(|e| format!("overview core serialize: {e}"))?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    json_bytes.hash(&mut hasher);
+    Ok(format!("\"{:x}\"", hasher.finish()))
+}
+
+/// Serve overview core from TTL cache when fresh; rebuild with in-flight dedup on miss.
+pub async fn get_overview_core_cached(
+    state: &Arc<AppState>,
+) -> Result<(OverviewCore, String), String> {
+    let ttl = overview_core_cache_ttl();
+    if let Some(pair) = read_fresh_overview_core_cache(state, ttl) {
+        return Ok(pair);
+    }
+
+    let _guard = state.overview_core_build_lock.lock().await;
+    if let Some(pair) = read_fresh_overview_core_cache(state, ttl) {
+        return Ok(pair);
+    }
+
+    let core = build_overview_core(state).await?;
+    let etag = overview_core_etag(&core)?;
+    store_overview_core_cache(state, core.clone(), etag.clone());
+    Ok((core, etag))
+}
+
+/// Pre-warm overview core cache (background sampler and startup).
+pub async fn refresh_overview_core_cache(state: &Arc<AppState>) -> Result<(), String> {
+    let _guard = state.overview_core_build_lock.lock().await;
+    let core = build_overview_core(state).await?;
+    let etag = overview_core_etag(&core)?;
+    store_overview_core_cache(state, core, etag);
+    Ok(())
+}
 
 pub fn gateway_probe_ttl() -> Duration {
     std::env::var("CRABCACHE_GATEWAY_PROBE_TTL_SECS")
@@ -514,7 +590,12 @@ async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{MetricsHistoryMeta, MetricsSnapshotCore, TimeSeriesPoint, TierDeltas5m};
+    use crate::metrics_history::build_prefix_cache_snapshot;
+    use crate::state::GatewayProbe;
+    use crate::types::{
+        MetricsHistoryMeta, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics, SemanticConfig,
+        TimeSeriesPoint, TierDeltas5m,
+    };
 
     fn empty_core() -> MetricsSnapshotCore {
         MetricsSnapshotCore {
@@ -553,6 +634,30 @@ mod tests {
             history_meta: MetricsHistoryMeta::default(),
             tier_deltas_5m: TierDeltas5m::default(),
         }
+    }
+
+    #[test]
+    fn overview_core_etag_is_stable_for_same_payload() {
+        let core = OverviewCore {
+            metrics: empty_core(),
+            health: build_gateway_health_from_probe(&GatewayProbe {
+                ready_ok: true,
+                ready_error: None,
+                status: None,
+                status_error: None,
+            }),
+            prefix_cache: build_prefix_cache_snapshot(""),
+            semantic: SemanticConfig {
+                enabled: false,
+                similarity_threshold: 0.95,
+            },
+            ops: OverviewOpsMetrics::default(),
+            suggestions: vec![],
+        };
+        let a = overview_core_etag(&core).expect("etag");
+        let b = overview_core_etag(&core).expect("etag");
+        assert_eq!(a, b);
+        assert!(a.starts_with('"') && a.ends_with('"'));
     }
 
     #[test]

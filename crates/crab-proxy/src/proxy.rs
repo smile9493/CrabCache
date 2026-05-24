@@ -1702,6 +1702,7 @@ impl ProxyHttp for GatewayProxy {
         if let Some(data) = body.take() {
             if !ctx.is_streaming {
                 ctx.accumulated_body.extend_from_slice(&data);
+                ctx.response_body_preview.extend_from_slice(&data);
             }
 
             if ctx.is_streaming {
@@ -2018,6 +2019,8 @@ impl ProxyHttp for GatewayProxy {
                     }
                     strip_reasoning_from_completion_value(&mut response_value);
                     let response_json = serde_json::to_string(&response_value).unwrap_or_default();
+                    // Store synthesized completion JSON as response preview for trace logging.
+                    ctx.response_body_preview = response_json.clone().into_bytes();
 
                     if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self
@@ -2186,6 +2189,8 @@ impl ProxyHttp for GatewayProxy {
                 "Request completed"
             );
             if let Some(trace_logger) = &self.state.trace_logger {
+                let max_payload = trace_logger.max_payload_bytes();
+                let max_resp = trace_logger.max_response_preview_bytes();
                 if let Some(body) = &ctx.original_request_body {
                     let mut entry = SanitizedLogEntry::from_request(
                         body,
@@ -2199,6 +2204,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.cache_tier.is_some(),
                         ctx.cache_tier.map(|t| t.as_str().to_string()),
                         ctx.request_composition.clone(),
+                        max_payload,
                     );
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
@@ -2218,6 +2224,10 @@ impl ProxyHttp for GatewayProxy {
                         entry.prompt_tokens = ctx
                             .tokens.last_input
                             .saturating_add(ctx.tokens.last_output) as usize;
+                    }
+                    // Populate response_preview from best available source
+                    if max_resp > 0 {
+                        entry.response_preview = build_response_preview(ctx, max_resp);
                     }
                     trace_logger.log(entry);
                 }
@@ -2405,6 +2415,39 @@ async fn send_cors_preflight(session: &mut Session) -> bool {
         .write_response_header(Box::new(header))
         .await
         .is_ok()
+}
+
+/// Build a response preview string from the best available source in the context.
+///
+/// Priority:
+/// 1. Cache hit → `entry.response_body`
+/// 2. Non-streaming accumulated body → `ctx.response_body_preview`
+/// 3. Streaming SSE body → `ctx.stream.client_sse_body`
+///
+/// Returns `None` when no data is available or all sources are empty.
+fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> Option<String> {
+    let source: &[u8] = if let Some(ref cache_entry) = ctx.cache_hit {
+        &cache_entry.response_body
+    } else if !ctx.response_body_preview.is_empty() {
+        &ctx.response_body_preview
+    } else if ctx.is_streaming && !ctx.stream.client_sse_body.is_empty() {
+        &ctx.stream.client_sse_body
+    } else {
+        return None;
+    };
+
+    if source.is_empty() {
+        return None;
+    }
+
+    let raw = String::from_utf8_lossy(source);
+    let truncated = if raw.len() > max_bytes {
+        format!("{}...<truncated {}>", &raw[..max_bytes], raw.len() - max_bytes)
+    } else {
+        raw.to_string()
+    };
+
+    Some(truncated)
 }
 
 fn record_usage_metrics(

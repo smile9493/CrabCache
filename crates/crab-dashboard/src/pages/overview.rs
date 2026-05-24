@@ -126,13 +126,31 @@ pub fn OverviewPage() -> impl IntoView {
         });
     };
 
+    let deferred_loaded = RwSignal::new(false);
+
     load_core();
-    load_trace();
-    load_timeseries();
+
+    Effect::new({
+        let load_trace = load_trace;
+        let load_timeseries = load_timeseries;
+        move |_| {
+            if deferred_loaded.get() {
+                return;
+            }
+            if matches!(overview_core.get(), Some(Ok(_))) {
+                deferred_loaded.set(true);
+                load_trace();
+                load_timeseries();
+            }
+        }
+    });
 
     Effect::new({
         let load_timeseries = load_timeseries;
         move |_| {
+            if !deferred_loaded.get() {
+                return;
+            }
             let _ = ts_window.get();
             load_timeseries();
         }

@@ -21,7 +21,6 @@ use crate::metrics_history::{
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::hash::Hasher;
 
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
 async fn admin_auth(
@@ -518,18 +517,12 @@ async fn get_overview_core(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let core = crate::overview::build_overview_core(&state)
+    let (core, etag_val) = crate::overview::get_overview_core_cached(&state)
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "Failed to build overview core");
             StatusCode::SERVICE_UNAVAILABLE
         })?;
-
-    // Compute ETag from serialized body using DefaultHasher (fast, non-cryptographic).
-    let json_bytes = serde_json::to_vec(&core).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&json_bytes, &mut hasher);
-    let etag_val = format!("\"{:x}\"", hasher.finish());
 
     // If-None-Match → 304 when content unchanged.
     if let Some(if_none_match) = headers
@@ -1862,8 +1855,19 @@ async fn get_logs(
     let memory_logs = state.request_logs.read().clone();
     let trace_path = crate::trace_log::trace_log_path();
 
-    // If we have memory logs and no archive query, use memory.
-    if !memory_logs.is_empty() && query.cursor.is_none() && query.from_ms.is_none() && query.to_ms.is_none() && query.consumer.is_none() {
+    // If we have memory logs and no archive/filter query, use memory.
+    let uses_trace_archive = query.cursor.is_some()
+        || query.from_ms.is_some()
+        || query.to_ms.is_some()
+        || query.consumer.as_ref().is_some_and(|s| !s.is_empty())
+        || query.model.as_ref().is_some_and(|s| !s.is_empty())
+        || query.cache_tier.as_ref().is_some_and(|s| !s.is_empty())
+        || query.request_hash.as_ref().is_some_and(|s| !s.is_empty())
+        || query.latency_min.is_some()
+        || query.latency_max.is_some()
+        || query.token_min.is_some()
+        || query.token_max.is_some();
+    if !memory_logs.is_empty() && !uses_trace_archive {
         let items: Vec<RequestLog> = memory_logs
             .into_iter()
             .map(|log| {

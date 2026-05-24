@@ -467,17 +467,38 @@ pub async fn fetch_routing_status() -> Result<RoutingStatus, String> {
     fetch_json(&format!("{}/routing/status", API_BASE)).await
 }
 
-pub async fn fetch_logs(
-    limit: Option<usize>,
-    cursor: Option<&str>,
-) -> Result<LogsPageResponse, String> {
+pub async fn fetch_logs(query: &crate::types::LogsFilterQuery) -> Result<LogsPageResponse, String> {
     let mut path = format!("{}/logs", API_BASE);
     let mut params = Vec::new();
-    if let Some(l) = limit {
+    if let Some(l) = query.limit {
         params.push(format!("limit={}", l));
     }
-    if let Some(c) = cursor.filter(|s| !s.is_empty()) {
-        params.push(format!("cursor={}", c));
+    if let Some(c) = query.cursor.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("cursor={}", percent_encode_query(c)));
+    }
+    if let Some(m) = query.model.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("model={}", percent_encode_query(m)));
+    }
+    if let Some(c) = query.consumer.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("consumer={}", percent_encode_query(c)));
+    }
+    if let Some(t) = query.cache_tier.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("cache_tier={}", percent_encode_query(t)));
+    }
+    if let Some(h) = query.request_hash.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("request_hash={}", percent_encode_query(h)));
+    }
+    if let Some(v) = query.latency_min {
+        params.push(format!("latency_min={}", v));
+    }
+    if let Some(v) = query.latency_max {
+        params.push(format!("latency_max={}", v));
+    }
+    if let Some(v) = query.token_min {
+        params.push(format!("token_min={}", v));
+    }
+    if let Some(v) = query.token_max {
+        params.push(format!("token_max={}", v));
     }
     if !params.is_empty() {
         path.push('?');

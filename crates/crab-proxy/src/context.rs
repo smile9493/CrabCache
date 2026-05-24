@@ -312,6 +312,9 @@ pub struct GatewayContext {
     pub upstream: UpstreamState,
     /// Streaming response processing state.
     pub stream: StreamState,
+    /// Accumulated response body for trace logging (non-streaming / streaming).
+    /// Only populated when `trace_logging.max_response_preview_bytes > 0`.
+    pub response_body_preview: Vec<u8>,
 }
 
 impl GatewayContext {
@@ -351,6 +354,7 @@ impl GatewayContext {
             tokens: TokenStats::default(),
             upstream: UpstreamState::default(),
             stream: StreamState::default(),
+            response_body_preview: Vec::new(),
         }
     }
 }

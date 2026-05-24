@@ -59,6 +59,18 @@ pub struct TraceLogEntry {
     pub project_id: Option<String>,
     #[serde(default)]
     pub composition: Option<crab_composition::RequestComposition>,
+    /// Truncated request body snapshot (only present when `max_payload_bytes > 0`).
+    #[serde(default)]
+    pub request_messages_snapshot: Option<String>,
+    /// Truncated response body preview (only present when `max_response_preview_bytes > 0`).
+    #[serde(default)]
+    pub response_preview: Option<String>,
+    #[serde(default)]
+    pub retired_prefix_messages: Option<usize>,
+    #[serde(default)]
+    pub reasoning_strategy: Option<String>,
+    #[serde(default)]
+    pub prompt_cache_hit_ratio: Option<f64>,
 }
 
 impl TraceLogEntry {
@@ -541,6 +553,13 @@ pub struct TraceLoadOpts {
     pub from_ms: Option<u64>,
     pub to_ms: Option<u64>,
     pub consumer: Option<String>,
+    pub model: Option<String>,
+    pub cache_tier: Option<String>,
+    pub request_hash: Option<String>,
+    pub latency_min: Option<f64>,
+    pub latency_max: Option<f64>,
+    pub token_min: Option<u64>,
+    pub token_max: Option<u64>,
     pub limit: usize,
     pub cursor: Option<String>, // "timestamp_ms:request_hash"
 }
@@ -578,6 +597,45 @@ fn entry_matches_opts(e: &TraceLogEntry, opts: &TraceLoadOpts, cursor_ts: u64, c
             if entry_consumer != consumer.as_str() {
                 return false;
             }
+        }
+    }
+    if let Some(ref model) = opts.model {
+        if !model.is_empty() && e.model != model.as_str() {
+            return false;
+        }
+    }
+    if let Some(ref cache_tier) = opts.cache_tier {
+        if !cache_tier.is_empty() {
+            let tier = e.cache_tier.as_deref().unwrap_or("");
+            if tier != cache_tier.as_str() {
+                return false;
+            }
+        }
+    }
+    if let Some(ref request_hash) = opts.request_hash {
+        if !request_hash.is_empty() && e.request_hash != request_hash.as_str() {
+            return false;
+        }
+    }
+    if let Some(lat_min) = opts.latency_min {
+        if e.latency_ms < lat_min {
+            return false;
+        }
+    }
+    if let Some(lat_max) = opts.latency_max {
+        if e.latency_ms > lat_max {
+            return false;
+        }
+    }
+    let total_tokens = e.resolved_input_tokens() + e.resolved_output_tokens();
+    if let Some(tok_min) = opts.token_min {
+        if total_tokens < tok_min {
+            return false;
+        }
+    }
+    if let Some(tok_max) = opts.token_max {
+        if total_tokens > tok_max {
+            return false;
         }
     }
     if cursor_ts < u64::MAX {
@@ -688,6 +746,11 @@ mod tests {
             domain: None,
             project_id: None,
             composition: None,
+            request_messages_snapshot: None,
+            response_preview: None,
+            retired_prefix_messages: None,
+            reasoning_strategy: None,
+            prompt_cache_hit_ratio: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -708,6 +771,11 @@ mod tests {
             domain: None,
             project_id: None,
             composition: None,
+            request_messages_snapshot: None,
+            response_preview: None,
+            retired_prefix_messages: None,
+            reasoning_strategy: None,
+            prompt_cache_hit_ratio: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -768,6 +836,11 @@ mod tests {
                 domain: None,
                 project_id: None,
                 composition: None,
+                request_messages_snapshot: None,
+                response_preview: None,
+                retired_prefix_messages: None,
+                reasoning_strategy: None,
+                prompt_cache_hit_ratio: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -788,6 +861,11 @@ mod tests {
                 domain: None,
                 project_id: None,
                 composition: None,
+                request_messages_snapshot: None,
+                response_preview: None,
+                retired_prefix_messages: None,
+                reasoning_strategy: None,
+                prompt_cache_hit_ratio: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
