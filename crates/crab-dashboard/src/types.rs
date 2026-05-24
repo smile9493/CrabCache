@@ -892,3 +892,34 @@ pub struct HourlyPoint {
     pub timestamp_ms: u64,
     pub request_count: u32,
 }
+
+// ── Chart types ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BarItem {
+    pub label: String,
+    pub value: f64,
+}
+
+// ── Composition Debug types ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionDebugEntry {
+    pub timestamp_ms: u64,
+    pub request_hash: String,
+    pub consumer: String,
+    pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionDebugResponse {
+    pub entries: Vec<CompositionDebugEntry>,
+    pub total: usize,
+}

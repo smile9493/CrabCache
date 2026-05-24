@@ -79,3 +79,25 @@ pub struct RequestComposition {
     // --- Cursor agent constructs ---
     pub components: CursorComponents,
 }
+
+/// A debug entry storing full system/tools text for composition analysis.
+/// Written to a separate JSONL file when `composition_debug` is enabled.
+/// Unlike `RequestComposition`, this stores the actual (unhashed) text content,
+/// subject to truncation at a configurable limit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionDebugEntry {
+    pub timestamp_ms: u64,
+    /// Links to the main trace entry via request_hash.
+    pub request_hash: String,
+    pub consumer: String,
+    pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub model: String,
+    /// Full system message text (unhashed). May be truncated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_text: Option<String>,
+    /// Full tools definition JSON (unhashed). May be truncated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_json: Option<String>,
+}

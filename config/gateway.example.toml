@@ -233,3 +233,13 @@ path = "/var/log/crabcache/trace.jsonl"
 # max_files = 10
 max_lines = 10000
 max_files = 5
+
+# Optional: debug composition logging (full system/tools text for analysis)
+# When enabled, writes full (unhashed) system prompts and tool definitions
+# to a separate JSONL file. Use for offline composition analysis only —
+# this file may contain sensitive prompt content.
+# [trace_logging.composition_debug]
+# enabled = false
+# path = "/var/log/crabcache/trace-debug.jsonl"
+# max_lines = 5000
+# max_files = 3

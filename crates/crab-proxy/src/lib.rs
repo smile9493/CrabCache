@@ -6,6 +6,7 @@ mod error;
 mod proxy;
 mod runtime;
 mod sse;
+mod stored_key;
 mod tenant;
 mod trace_logger;
 mod upstream_body;
@@ -26,14 +27,17 @@ pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimiter, ClientKeyLimitErr
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
-    StoredKey,
 };
+pub use stored_key::StoredKey;
 pub use error::ProxyError;
 pub use proxy::GatewayProxy;
 pub use sse_rewrite::flush_streaming_reasoning;
 pub use cache_helpers::should_store_sse_body;
 pub use runtime::{DomainPolicy, RuntimeConfig};
-pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
+pub use trace_logger::{
+    CompositionDebugConfig, SanitizedLogEntry, TraceConfig, TraceLogger,
+    set_composition_debug_tx, composition_debug_tx,
+};
 pub use debug_log::debug_agent_log;
 pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,

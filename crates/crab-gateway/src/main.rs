@@ -4,7 +4,7 @@ use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
-use crab_proxy::{ClientKeyLimiter, GatewayProxy, GatewayState, RuntimeConfig};
+use crab_proxy::{ClientKeyLimiter, ClientKeyRateLimiter, GatewayProxy, GatewayState, RuntimeConfig};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
@@ -311,13 +311,25 @@ fn main() -> Result<()> {
                 path: trace_config.path.clone(),
                 max_lines: trace_config.max_lines,
                 max_files: trace_config.max_files,
+                composition_debug: trace_config.composition_debug.clone(),
             });
+            
             info!(
                 path = %trace_config.path,
                 max_lines = trace_config.max_lines,
                 max_files = trace_config.max_files,
                 "Trace logging enabled"
             );
+            if let Some(ref debug_cfg) = trace_config.composition_debug {
+                if debug_cfg.enabled {
+                    info!(
+                        debug_path = %debug_cfg.path,
+                        debug_max_lines = debug_cfg.max_lines,
+                        debug_max_files = debug_cfg.max_files,
+                        "Composition debug logging enabled"
+                    );
+                }
+            }
             Some(Arc::new(logger))
         } else {
             None
@@ -382,6 +394,7 @@ fn main() -> Result<()> {
                             pipeline: None,
                             upstream_profile: None,
                             max_concurrent: 0,
+                            rpm_limit: 0,
                         },
                     );
                     info!(
@@ -428,6 +441,7 @@ fn main() -> Result<()> {
                         pipeline: None,
                         upstream_profile: None,
                         max_concurrent: 0,
+                        rpm_limit: 0,
                     },
                 );
                 info!(
@@ -479,30 +493,27 @@ fn main() -> Result<()> {
                         let result = tokio::net::TcpStream::connect(addr).await;
                         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-                        let health = match result {
-                            Ok(_) => crab_route::BackendHealth {
-                                healthy: true,
-                                last_check_ms: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as u64,
-                                latency_ms: elapsed_ms,
-                            },
-                            Err(e) => {
-                                tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
-                                crab_route::BackendHealth {
-                                    healthy: false,
-                                    last_check_ms: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis() as u64,
-                                    latency_ms: 0,
+                        if let Ok(mut health_map) = runtime.backend_health.write() {
+                            let entry = health_map.entry(name.clone())
+                                .or_insert_with(crab_route::BackendHealth::new_healthy);
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            match result {
+                                Ok(_) => {
+                                    entry.healthy = true;
+                                    entry.last_check_ms = now_ms;
+                                    entry.latency_ms = elapsed_ms;
+                                    // Circuit breaker state is preserved
+                                }
+                                Err(e) => {
+                                    tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
+                                    entry.healthy = false;
+                                    entry.last_check_ms = now_ms;
+                                    // Circuit breaker state is preserved
                                 }
                             }
-                        };
-
-                        if let Ok(mut health_map) = runtime.backend_health.write() {
-                            health_map.insert(name.clone(), health);
                         }
                     }
                 }
@@ -514,6 +525,7 @@ fn main() -> Result<()> {
 
     let client_key_limiter = ClientKeyLimiter::new();
     client_key_limiter.sync_all_keys(&runtime.keys);
+    let client_key_rate_limiter = ClientKeyRateLimiter::new();
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -569,7 +581,23 @@ fn main() -> Result<()> {
         max_request_body_bytes: config.limits.max_request_body_bytes,
         request_semaphore,
         client_key_limiter,
+        client_key_rate_limiter,
     });
+
+    // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
+    {
+        let rl = state.client_key_rate_limiter.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("rate limiter pruner runtime");
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                loop {
+                    interval.tick().await;
+                    rl.prune_stale(std::time::Duration::from_secs(600));
+                }
+            });
+        });
+    }
 
     let proxy = GatewayProxy::new(state);
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);

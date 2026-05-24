@@ -1,10 +1,11 @@
-use crab_composition::RequestComposition;
+use crab_composition::{CompositionDebugEntry, RequestComposition};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -104,12 +105,35 @@ impl SanitizedLogEntry {
     }
 }
 
+/// Configuration for the debug composition JSONL log file.
+/// When enabled, stores full (unhashed) system message text and tools definitions
+/// for composition analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionDebugConfig {
+    pub enabled: bool,
+    pub path: String,
+    pub max_lines: usize,
+    pub max_files: usize,
+}
+
+impl Default for CompositionDebugConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "/var/log/crabcache/trace-debug.jsonl".to_string(),
+            max_lines: 5000,
+            max_files: 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TraceConfig {
     pub enabled: bool,
     pub path: String,
     pub max_lines: usize,
     pub max_files: usize,
+    pub composition_debug: Option<CompositionDebugConfig>,
 }
 
 impl Default for TraceConfig {
@@ -119,9 +143,12 @@ impl Default for TraceConfig {
             path: "/var/log/crabcache/trace.jsonl".to_string(),
             max_lines: 10000,
             max_files: 5,
+            composition_debug: None,
         }
     }
 }
+
+// ── LogWriter for SanitizedLogEntry ──────────────────────────────────
 
 struct LogWriter {
     file: File,
@@ -209,13 +236,155 @@ impl LogWriter {
     }
 }
 
+// ── DebugLogWriter for CompositionDebugEntry ─────────────────────────
+
+struct DebugLogWriter {
+    file: File,
+    path: PathBuf,
+    max_lines: usize,
+    line_count: usize,
+    max_files: usize,
+}
+
+impl DebugLogWriter {
+    fn new(config: &CompositionDebugConfig) -> std::io::Result<Self> {
+        let path = PathBuf::from(&config.path);
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+
+        Ok(Self {
+            file,
+            path,
+            max_lines: config.max_lines,
+            line_count: 0,
+            max_files: config.max_files,
+        })
+    }
+
+    fn write_entry(&mut self, entry: &CompositionDebugEntry) -> std::io::Result<()> {
+        let line = serde_json::to_string(entry)? + "\n";
+        self.file.write_all(line.as_bytes())?;
+        self.line_count += 1;
+
+        if self.line_count >= self.max_lines {
+            self.rotate()?;
+        }
+        Ok(())
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        self.file.sync_all()?;
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let rotated = self.path.with_file_name(format!(
+            "{}.{}",
+            self.path.file_name().unwrap().to_str().unwrap(),
+            timestamp
+        ));
+
+        std::fs::rename(&self.path, &rotated)?;
+
+        self.cleanup_old_files()?;
+
+        self.file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        self.line_count = 0;
+        Ok(())
+    }
+
+    fn cleanup_old_files(&mut self) -> std::io::Result<()> {
+        let parent = self.path.parent().unwrap();
+        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+
+        let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|name| name.starts_with(file_name) && name != file_name)
+                    .unwrap_or(false)
+            })
+            .map(|e| e.path())
+            .collect();
+
+        log_files.sort();
+
+        while log_files.len() >= self.max_files {
+            let oldest = log_files.remove(0);
+            std::fs::remove_file(oldest)?;
+        }
+
+        Ok(())
+    }
+}
+
+// ── Global debug sender OnceLock ─────────────────────────────────────
+
+static COMPOSITION_DEBUG_TX: OnceLock<Option<mpsc::Sender<CompositionDebugEntry>>> =
+    OnceLock::new();
+
+/// Set the composition debug sender (called once at startup).
+pub fn set_composition_debug_tx(tx: Option<mpsc::Sender<CompositionDebugEntry>>) {
+    let _ = COMPOSITION_DEBUG_TX.set(tx);
+}
+
+/// Get a clone of the composition debug sender, if one was set.
+pub fn composition_debug_tx() -> Option<mpsc::Sender<CompositionDebugEntry>> {
+    COMPOSITION_DEBUG_TX.get().cloned().unwrap_or(None)
+}
+
+// ── TraceLogger (main trace + optional debug) ────────────────────────
+
 pub struct TraceLogger {
     sender: mpsc::Sender<SanitizedLogEntry>,
+    debug_sender: Option<mpsc::Sender<CompositionDebugEntry>>,
 }
 
 impl TraceLogger {
     pub fn init(config: TraceConfig) -> Self {
         let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
+
+        let debug_sender = if let Some(ref debug_config) = config.composition_debug {
+            if debug_config.enabled {
+                let (debug_tx, debug_rx) = mpsc::channel::<CompositionDebugEntry>();
+                let debug_config_clone = debug_config.clone();
+
+                std::thread::Builder::new()
+                    .name("crab-debug-writer".into())
+                    .spawn(move || {
+                        let mut writer = match DebugLogWriter::new(&debug_config_clone) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                warn!("Failed to initialize composition debug logger: {}", e);
+                                return;
+                            }
+                        };
+
+                        while let Ok(entry) = debug_rx.recv() {
+                            if let Err(e) = writer.write_entry(&entry) {
+                                warn!("Composition debug log write failed: {}", e);
+                            }
+                        }
+                    })
+                    .expect("Failed to spawn debug logger thread");
+
+                // Set the global static for proxy.rs access
+                set_composition_debug_tx(Some(debug_tx.clone()));
+                Some(debug_tx)
+            } else {
+                set_composition_debug_tx(None);
+                None
+            }
+        } else {
+            set_composition_debug_tx(None);
+            None
+        };
 
         std::thread::Builder::new()
             .name("crab-trace-writer".into())
@@ -236,11 +405,19 @@ impl TraceLogger {
             })
             .expect("Failed to spawn trace logger thread");
 
-        Self { sender: tx }
+        Self {
+            sender: tx,
+            debug_sender,
+        }
     }
 
     pub fn log(&self, entry: SanitizedLogEntry) {
         let _ = self.sender.send(entry);
+    }
+
+    /// Returns a clone of the debug sender for use by proxy.rs via the global static.
+    pub fn debug_sender(&self) -> Option<mpsc::Sender<CompositionDebugEntry>> {
+        self.debug_sender.clone()
     }
 }
 
@@ -286,5 +463,14 @@ mod tests {
 
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert_eq!(entry1.semantic_cluster, entry2.semantic_cluster);
+    }
+
+    #[test]
+    fn test_composition_debug_config_default() {
+        let cfg = CompositionDebugConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.path, "/var/log/crabcache/trace-debug.jsonl");
+        assert_eq!(cfg.max_lines, 5000);
+        assert_eq!(cfg.max_files, 3);
     }
 }

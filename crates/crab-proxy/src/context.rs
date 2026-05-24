@@ -1,7 +1,7 @@
 use crate::TraceLogger;
-use crate::runtime::RuntimeConfig;
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
 use crate::client_key_rate_limiter::ClientKeyRateLimiter;
+use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::UpstreamKeyGuard;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_composition::RequestComposition;
@@ -16,24 +16,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-
-#[derive(Debug, Clone)]
-pub struct StoredKey {
-    pub id: String,
-    pub name: String,
-    pub key_hash: String,
-    pub enabled: bool,
-    pub domain: Option<String>,
-    /// DeepSeek `user_id` / tenant bucket; bound to this client key when set.
-    pub project_id: Option<String>,
-    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `mimo_relay` | `generic_relay`
-    pub pipeline: Option<String>,
-    pub upstream_profile: Option<String>,
-    /// Max simultaneous in-flight requests (0 = unlimited).
-    pub max_concurrent: u32,
-    /// Max requests per minute (0 = unlimited).
-    pub rpm_limit: u32,
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConnectionConfig {

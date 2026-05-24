@@ -263,6 +263,80 @@ async fn create_key_with_project_id_roundtrip() {
 }
 
 #[tokio::test]
+async fn create_key_max_concurrent_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"concurrency-key","enabled":true,"max_concurrent":2}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(created["max_concurrent"].as_u64(), Some(2));
+    let token = created["key_full"].as_str().expect("key_full");
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/v1/keys/{token}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"max_concurrent":5}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(patch.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(patched["max_concurrent"].as_u64(), Some(5));
+
+    let list = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let keys: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    let key = keys
+        .iter()
+        .find(|k| k["key_preview"].as_str() == created["key_preview"].as_str())
+        .expect("created key in list");
+    assert_eq!(key["max_concurrent"].as_u64(), Some(5));
+    assert_eq!(key["inflight"].as_u64(), Some(0));
+}
+
+#[tokio::test]
 async fn create_key_with_domain_roundtrip() {
     let Some(state) = require_management_state().await else {
         skip_or_panic_redis_unavailable();

@@ -156,6 +156,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/composition/trends",
             get(crate::composition::get_composition_trends),
         )
+        .route(
+            "/api/admin/composition/debug",
+            get(crate::composition::get_composition_debug),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
         .with_state(state)
 }
@@ -1223,6 +1227,7 @@ async fn create_key(
             pipeline: req.pipeline.clone(),
             upstream_profile: req.upstream_profile.clone(),
             max_concurrent: req.max_concurrent,
+            rpm_limit: Some(req.rpm_limit),
         })
         .await
         .map_err(|e| gateway_status_code(&e))?;
@@ -1318,6 +1323,7 @@ async fn patch_key(
                 pipeline: req.pipeline.clone(),
                 upstream_profile: req.upstream_profile.clone(),
                 max_concurrent: req.max_concurrent,
+                rpm_limit: None,
             },
         )
         .await
