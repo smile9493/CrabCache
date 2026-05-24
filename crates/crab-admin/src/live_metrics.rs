@@ -239,6 +239,9 @@ mod tests {
             output_tokens: Some(output),
             cache_hit: upstream.is_none(),
             cache_tier: None,
+            domain: None,
+            project_id: None,
+            composition: None,
         }
     }
 

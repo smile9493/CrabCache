@@ -157,6 +157,204 @@ impl Translations {
             Locale::EnUS => "No requests for this consumer in the selected window",
         }
     }
+    pub fn sidebar_infra(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "基础设施",
+            Locale::EnUS => "Infrastructure",
+        }
+    }
+    pub fn infra_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "基础设施监控",
+            Locale::EnUS => "Infrastructure",
+        }
+    }
+    pub fn infra_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Docker 容器与宿主机资源占用（CPU、内存、网络、磁盘）",
+            Locale::EnUS => "Docker container and host resource usage (CPU, memory, network, disk)",
+        }
+    }
+    pub fn infra_containers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "容器状态",
+            Locale::EnUS => "Containers",
+        }
+    }
+    pub fn infra_host_disk(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "宿主机磁盘",
+            Locale::EnUS => "Host Disk",
+        }
+    }
+    pub fn infra_container_name(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "名称",
+            Locale::EnUS => "Name",
+        }
+    }
+    pub fn infra_cpu(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "CPU",
+            Locale::EnUS => "CPU",
+        }
+    }
+    pub fn infra_memory(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "内存",
+            Locale::EnUS => "Memory",
+        }
+    }
+    pub fn infra_mem_usage(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "用量",
+            Locale::EnUS => "Usage",
+        }
+    }
+    pub fn infra_net_rx(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "下行",
+            Locale::EnUS => "Down",
+        }
+    }
+    pub fn infra_net_tx(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上行",
+            Locale::EnUS => "Up",
+        }
+    }
+    pub fn infra_status(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态",
+            Locale::EnUS => "Status",
+        }
+    }
+    pub fn infra_bps(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "B/s",
+            Locale::EnUS => "B/s",
+        }
+    }
+    pub fn infra_disk_usage(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "磁盘使用率",
+            Locale::EnUS => "Disk Usage",
+        }
+    }
+    pub fn infra_available(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "可用",
+            Locale::EnUS => "Available",
+        }
+    }
+    pub fn infra_docker_unavailable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Docker 不可用。请在 docker-compose.yml 中将 /var/run/docker.sock 挂载到 admin 容器，并设置 CRABCACHE_COMPOSE_PROJECT 环境变量。",
+            Locale::EnUS => "Docker unavailable. Mount /var/run/docker.sock into the admin container and set CRABCACHE_COMPOSE_PROJECT.",
+        }
+    }
+    pub fn infra_volumes(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数据卷占用",
+            Locale::EnUS => "Volumes",
+        }
+    }
+    pub fn infra_volume_name(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "卷名",
+            Locale::EnUS => "Volume",
+        }
+    }
+    pub fn infra_history(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "历史趋势",
+            Locale::EnUS => "History",
+        }
+    }
+    pub fn infra_history_collecting(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "历史数据采集中（约 1 分钟后可见）",
+            Locale::EnUS => "Collecting history (visible after ~1 min)",
+        }
+    }
+    pub fn infra_speed_test(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "带宽测速",
+            Locale::EnUS => "Speed test",
+        }
+    }
+    pub fn infra_speed_test_run(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "开始测速（下载）",
+            Locale::EnUS => "Run download test",
+        }
+    }
+    pub fn infra_speed_test_running(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测速进行中…",
+            Locale::EnUS => "Test running…",
+        }
+    }
+    pub fn infra_speed_test_result(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "下载",
+            Locale::EnUS => "Download",
+        }
+    }
+    pub fn infra_speed_test_upload(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上传测速",
+            Locale::EnUS => "Upload test",
+        }
+    }
+    pub fn infra_speed_test_both(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "双向测速",
+            Locale::EnUS => "Download + upload",
+        }
+    }
+    pub fn infra_speed_test_timeout(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测速超时",
+            Locale::EnUS => "Speed test timed out",
+        }
+    }
+    pub fn infra_cpu_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "多核容器 CPU 可超过 100%",
+            Locale::EnUS => "CPU may exceed 100% on multi-core containers",
+        }
+    }
+    pub fn infra_compose_project(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Compose 项目",
+            Locale::EnUS => "Compose project",
+        }
+    }
+    pub fn infra_last_collected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最近采集",
+            Locale::EnUS => "Last collected",
+        }
+    }
+    pub fn infra_history_samples(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "历史采样点",
+            Locale::EnUS => "History samples",
+        }
+    }
+    pub fn infra_select_container(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "图表容器",
+            Locale::EnUS => "Chart container",
+        }
+    }
+    pub fn infra_upload_result(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上传",
+            Locale::EnUS => "Upload",
+        }
+    }
     pub fn live_requests(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "请求数",

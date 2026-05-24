@@ -11,6 +11,7 @@ use crate::pages::cache_ops::CacheOpsPage;
 use crate::pages::composition::CompositionPage;
 use crate::pages::cursor_models::CursorModelsPage;
 use crate::pages::domains::{DomainDetailPage, DomainsListPage};
+use crate::pages::infra::InfraPage;
 use crate::pages::keys::KeysPage;
 use crate::pages::live::LivePage;
 use crate::pages::logs::LogsPage;
@@ -54,6 +55,7 @@ fn AuthenticatedShell() -> impl IntoView {
                     <Routes fallback=|| view! { <NotFound /> }>
                         <Route path=path!("/") view=OverviewPage />
                         <Route path=path!("/live") view=LivePage />
+                        <Route path=path!("/infra") view=InfraPage />
                         <Route path=path!("/keys") view=KeysPage />
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/cursor-models") view=CursorModelsPage />

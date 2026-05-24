@@ -1,6 +1,7 @@
 mod metrics_history;
 mod metrics_store;
 mod key_usage_sync;
+mod infra;
 mod overview;
 mod suggestions;
 mod trace_summary;
@@ -158,6 +159,15 @@ async fn main() -> anyhow::Result<()> {
         info!(
             interval_secs,
             "Metrics history sampler started"
+        );
+    }
+
+    {
+        crate::infra::collector::spawn_background_collector(Arc::clone(&state));
+        info!(
+            collect_secs = crate::infra::collector::collect_interval_secs(),
+            history_secs = crate::infra::history::sample_interval_secs(),
+            "Infra background collector started"
         );
     }
 
