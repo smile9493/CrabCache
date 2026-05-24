@@ -358,8 +358,8 @@ pub fn CompositionPage() -> impl IntoView {
     // Fetch debug entries.
     let fetch_debug = move || {
         let h = hours.get();
-        let hash = debug_state.get().search_hash.clone();
-        let consumer = debug_state.get().search_consumer.clone();
+        let hash = debug_state.get_untracked().search_hash.clone();
+        let consumer = debug_state.get_untracked().search_consumer.clone();
         spawn_local({
             let debug_state = debug_state;
             async move {
@@ -393,8 +393,7 @@ pub fn CompositionPage() -> impl IntoView {
         });
     };
 
-    // Initial fetch on mount.
-    Effect::new(move |_| fetch_debug());
+    fetch_debug();
 
     view! {
         <div class="page-content">
