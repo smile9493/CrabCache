@@ -66,6 +66,8 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 
 # Optional multi-vendor upstream profiles (each has its own key pool and router).
 # When omitted, a single `deepseek` profile is built from [upstream] above.
+# Profiles can also be created/updated at runtime via Management API or Admin Dashboard
+# (Upstream page); changes are persisted to the control-plane Redis snapshot.
 # [[upstream.profiles]]
 # id = "deepseek"
 # provider = "deepseek"
@@ -235,6 +237,13 @@ path = "/var/log/crabcache/trace.jsonl"
 # max_files = 10
 max_lines = 10000
 max_files = 5
+
+-# Max bytes to capture for request body snapshot in trace logs (`0` = disabled).
+-# Enable cautiously: each line grows from ~200 B to KB-scale. Suggested production
+-# values: request 512–2048, response 256–1024. Requires sufficient disk headroom
+-# when combined with max_lines × max_files.
+-# max_payload_bytes = 1024
+-# max_response_preview_bytes = 512
 
 # Optional: debug composition logging (full system/tools text for analysis)
 # When enabled, writes full (unhashed) system prompts and tool definitions

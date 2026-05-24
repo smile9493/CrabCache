@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const STATE_VERSION: u32 = 1;
+const STATE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminStateFile {
@@ -25,6 +25,27 @@ pub struct AdminStateFile {
     pub keys_meta: Vec<PersistedKeyMetadata>,
     #[serde(default)]
     pub domain_policies: Vec<PersistedDomainPolicy>,
+    /// Per-profile upstream API keys for model sync (v3).
+    #[serde(default)]
+    pub upstream_profile_secrets: PersistedProfileSecrets,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PersistedProfileSecrets {
+    #[serde(default)]
+    pub by_profile: std::collections::HashMap<String, Vec<PersistedUpstreamPoolSecret>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedUpstreamPoolSecret {
+    pub id: String,
+    pub secret: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,17 +90,27 @@ pub struct PersistedKeyMetadata {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersistedModels {
     pub models: Vec<PersistedModel>,
+    #[serde(default)]
+    pub synced_at_by_profile: std::collections::HashMap<String, String>,
+    /// Legacy single sync timestamp (migrated into map).
+    #[serde(default)]
     pub synced_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedModel {
+    #[serde(default = "default_profile_id_persist")]
+    pub profile_id: String,
     pub id: String,
     pub owned_by: String,
     pub context_length: Option<u64>,
     pub input_price_per_mtok: Option<f64>,
     pub output_price_per_mtok: Option<f64>,
     pub available: bool,
+}
+
+fn default_profile_id_persist() -> String {
+    "deepseek".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +142,12 @@ impl PersistHandle {
 
     pub fn load(&self) -> AdminStateFile {
         match std::fs::read_to_string(&self.path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Ok(content) => {
+                let mut file: AdminStateFile =
+                    serde_json::from_str(&content).unwrap_or_default();
+                file.migrate_v3();
+                file
+            }
             Err(_) => AdminStateFile::default(),
         }
     }
@@ -146,6 +182,34 @@ impl PersistHandle {
     }
 }
 
+impl AdminStateFile {
+    fn migrate_v2(&mut self) {
+        if self.version >= 2 {
+            return;
+        }
+        if let Some(ts) = self.models.synced_at.take() {
+            self.models
+                .synced_at_by_profile
+                .entry("deepseek".to_string())
+                .or_insert(ts);
+        }
+        for m in &mut self.models.models {
+            if m.profile_id.is_empty() {
+                m.profile_id = "deepseek".to_string();
+            }
+        }
+        self.version = 2;
+    }
+
+    fn migrate_v3(&mut self) {
+        self.migrate_v2();
+        if self.version >= 3 {
+            return;
+        }
+        self.version = 3;
+    }
+}
+
 impl Default for AdminStateFile {
     fn default() -> Self {
         Self {
@@ -156,6 +220,7 @@ impl Default for AdminStateFile {
             upstream_snapshot: None,
             keys_meta: Vec::new(),
             domain_policies: Vec::new(),
+            upstream_profile_secrets: PersistedProfileSecrets::default(),
         }
     }
 }
@@ -210,6 +275,7 @@ impl From<&StoredModelList> for PersistedModels {
                 .models
                 .iter()
                 .map(|m| PersistedModel {
+                    profile_id: m.profile_id.clone(),
                     id: m.id.clone(),
                     owned_by: m.owned_by.clone(),
                     context_length: m.context_length,
@@ -218,18 +284,29 @@ impl From<&StoredModelList> for PersistedModels {
                     available: m.available,
                 })
                 .collect(),
-            synced_at: list.synced_at.clone(),
+            synced_at_by_profile: list.synced_at_by_profile.clone(),
+            synced_at: None,
         }
     }
 }
 
 impl From<PersistedModels> for StoredModelList {
-    fn from(p: PersistedModels) -> Self {
+    fn from(mut p: PersistedModels) -> Self {
+        if let Some(ts) = p.synced_at.take() {
+            p.synced_at_by_profile
+                .entry("deepseek".to_string())
+                .or_insert(ts);
+        }
         StoredModelList {
             models: p
                 .models
                 .into_iter()
                 .map(|m| StoredModel {
+                    profile_id: if m.profile_id.is_empty() {
+                        "deepseek".to_string()
+                    } else {
+                        m.profile_id
+                    },
                     id: m.id,
                     owned_by: m.owned_by,
                     context_length: m.context_length,
@@ -238,7 +315,7 @@ impl From<PersistedModels> for StoredModelList {
                     available: m.available,
                 })
                 .collect(),
-            synced_at: p.synced_at,
+            synced_at_by_profile: p.synced_at_by_profile,
         }
     }
 }
@@ -250,6 +327,7 @@ pub fn build_state_file(
     notes: Option<String>,
     keys_meta: &[PersistedKeyMetadata],
     domain_policies: &[PersistedDomainPolicy],
+    profile_secrets: &PersistedProfileSecrets,
 ) -> AdminStateFile {
     AdminStateFile {
         version: STATE_VERSION,
@@ -263,5 +341,54 @@ pub fn build_state_file(
         }),
         keys_meta: keys_meta.to_vec(),
         domain_policies: domain_policies.to_vec(),
+        upstream_profile_secrets: profile_secrets.clone(),
+    }
+}
+
+impl From<&std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>>
+    for PersistedProfileSecrets
+{
+    fn from(map: &std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>) -> Self {
+        PersistedProfileSecrets {
+            by_profile: map
+                .iter()
+                .map(|(profile_id, secrets)| {
+                    (
+                        profile_id.clone(),
+                        secrets
+                            .iter()
+                            .map(|s| PersistedUpstreamPoolSecret {
+                                id: s.id.clone(),
+                                secret: s.secret.clone(),
+                                enabled: s.enabled,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<PersistedProfileSecrets>
+    for std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>
+{
+    fn from(p: PersistedProfileSecrets) -> Self {
+        p.by_profile
+            .into_iter()
+            .map(|(profile_id, secrets)| {
+                (
+                    profile_id,
+                    secrets
+                        .into_iter()
+                        .map(|s| crate::state::UpstreamPoolSecret {
+                            id: s.id,
+                            secret: s.secret,
+                            enabled: s.enabled,
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 }

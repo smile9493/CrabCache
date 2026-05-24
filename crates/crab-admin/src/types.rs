@@ -382,6 +382,65 @@ pub struct CreateKeyRequest {
 pub struct PipelineProfileView {
     pub id: String,
     pub provider: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub fallback_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileAdminView {
+    pub id: String,
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    pub endpoints: Vec<String>,
+    pub tls_sni: String,
+    pub key_pool_count: usize,
+    pub keys_available: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfilesAdminResponse {
+    pub profiles: Vec<UpstreamProfileAdminView>,
+    pub default_profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamProfileAdminRequest {
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_sni: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyPoolEntry {
+    pub id: String,
+    pub preview: String,
+    pub enabled: bool,
+    pub inflight: usize,
+    pub cooldown_remaining_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileKeysAdminView {
+    pub profile_id: String,
+    pub keys: Vec<UpstreamKeyPoolEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelsQuery {
+    #[serde(default)]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelSyncQuery {
+    pub profile_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,6 +602,21 @@ pub struct RequestLog {
     pub cache_status: String,
     pub request_payload: String,
     pub response_preview: String,
+    /// Input token count (from trace entry detail).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Output token count (from trace entry detail).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Time to first token in ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    /// Content length in bytes of the original request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_length: Option<usize>,
+    /// Request fingerprint hash for dedup / similarity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,6 +640,24 @@ pub struct RequestDetail {
     pub request_payload: String,
     pub response_body: String,
     pub route_backend: String,
+    /// Upstream latency in ms (only for trace-path entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
+    /// Time to first token in ms (only for streaming trace entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    /// Input tokens (only for trace entries with token breakdown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Output tokens (only for trace entries with token breakdown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Request fingerprint hash for dedup / similarity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<String>,
+    /// Semantic cluster id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_cluster: Option<u32>,
 }
 
 /// Paginated logs response returned by `GET /api/admin/logs`.
@@ -589,6 +681,13 @@ pub struct LogsQuery {
     pub from_ms: Option<u64>,
     pub to_ms: Option<u64>,
     pub consumer: Option<String>,
+    pub model: Option<String>,
+    pub cache_tier: Option<String>,
+    pub request_hash: Option<String>,
+    pub latency_min: Option<f64>,
+    pub latency_max: Option<f64>,
+    pub token_min: Option<u64>,
+    pub token_max: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -723,16 +822,9 @@ pub struct ModelDetectResponse {
     pub upstream_total: usize,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ModelApplyBody {
-    #[serde(default)]
-    pub add: Vec<String>,
-    #[serde(default)]
-    pub remove: Vec<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
+    pub profile_id: String,
     pub id: String,
     pub owned_by: String,
     pub context_length: Option<u64>,
@@ -745,7 +837,17 @@ pub struct ModelInfo {
 pub struct ModelListResponse {
     pub models: Vec<ModelInfo>,
     pub total: usize,
+    pub profile_id: Option<String>,
     pub synced_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelApplyBody {
+    pub profile_id: String,
+    #[serde(default)]
+    pub add: Vec<String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

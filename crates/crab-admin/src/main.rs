@@ -17,6 +17,7 @@ mod static_cache;
 mod types;
 mod update;
 mod upstream;
+mod upstream_profiles;
 
 use axum::{middleware, Router};
 use state::AppState;
@@ -185,7 +186,8 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or(3600);
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
-                match crate::upstream::detect_models_internal(&bg).await {
+                let profile_id = bg.default_profile_id();
+                match crate::upstream::detect_models_internal(&bg, &profile_id).await {
                     Ok(diff) if !diff.to_add.is_empty() || !diff.to_remove.is_empty() => {
                         tracing::info!(
                             add = diff.to_add.len(),

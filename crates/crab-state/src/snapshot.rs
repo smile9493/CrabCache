@@ -2,7 +2,8 @@ use anyhow::Result;
 use crab_cache::TtlConfig;
 use crab_control::parse_backend_endpoints;
 use crab_proxy::{
-    ConnectionConfig, DomainPolicy, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    build_profile_runtime, ConnectionConfig, DomainPolicy, ProfileBuildInput, RuntimeConfig,
+    StoredKey, UpstreamKeyPool, UpstreamKeySpec,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -72,6 +73,17 @@ pub struct UpstreamKeySnapshot {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileSnapshot {
+    pub id: String,
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    pub tls_sni: String,
+    pub endpoints: Vec<BackendSnapshot>,
+    pub keys: Vec<UpstreamKeySnapshot>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ControlPlaneSnapshot {
     pub keys: HashMap<String, StoredKeySnapshot>,
@@ -79,6 +91,9 @@ pub struct ControlPlaneSnapshot {
     /// `None` when the Redis key was never written (legacy); `Some` applies even if empty.
     #[serde(default)]
     pub upstream_keys: Option<Vec<UpstreamKeySnapshot>>,
+    /// Full multi-vendor upstream profiles (preferred over `upstream_keys` alone).
+    #[serde(default)]
+    pub upstream_profiles: Option<Vec<UpstreamProfileSnapshot>>,
     #[serde(default)]
     pub domain_policies: HashMap<String, DomainPolicy>,
 }
@@ -176,6 +191,50 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         .into_iter()
         .collect();
 
+    let upstream_profiles: Vec<UpstreamProfileSnapshot> = runtime
+        .upstream_profiles
+        .read()
+        .map(|map| {
+            let mut ids: Vec<String> = map.keys().cloned().collect();
+            ids.sort();
+            ids.into_iter()
+                .filter_map(|id| {
+                    let profile = map.get(&id)?;
+                    let endpoints: Vec<BackendSnapshot> = profile
+                        .router
+                        .backends()
+                        .iter()
+                        .map(|b| BackendSnapshot {
+                            name: b.name.clone(),
+                            addr: b.addr.to_string(),
+                            weight: b.weight,
+                            tls_sni: b.tls_sni.clone(),
+                        })
+                        .collect();
+                    let keys: Vec<UpstreamKeySnapshot> = profile
+                        .resolve_upstream_pool()
+                        .to_specs()
+                        .into_iter()
+                        .map(|s| UpstreamKeySnapshot {
+                            id: s.id,
+                            secret: s.secret,
+                            enabled: s.enabled,
+                        })
+                        .collect();
+                    Some(UpstreamProfileSnapshot {
+                        id: profile.id.clone(),
+                        provider: profile.provider.as_str().to_string(),
+                        base_url: profile.base_url.clone(),
+                        fallback_model: profile.fallback_model.clone(),
+                        tls_sni: profile.tls_sni.clone(),
+                        endpoints,
+                        keys,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let pipeline_globals = runtime.pipeline_globals();
     ControlPlaneSnapshot {
         keys,
@@ -191,6 +250,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
             default_upstream_profile: runtime.default_upstream_profile_id(),
         }),
         upstream_keys: Some(upstream_keys),
+        upstream_profiles: Some(upstream_profiles),
         domain_policies,
     }
 }
@@ -260,7 +320,70 @@ pub fn apply_snapshot_to_runtime(
         }
     }
 
-    if let Some(keys) = &snap.upstream_keys {
+    if let Some(profiles) = &snap.upstream_profiles {
+        let snapshot_ids: std::collections::HashSet<String> =
+            profiles.iter().map(|p| p.id.clone()).collect();
+
+        for p in profiles {
+            let endpoints: Vec<String> = p.endpoints.iter().map(|b| b.addr.clone()).collect();
+            let specs: Vec<UpstreamKeySpec> = p
+                .keys
+                .iter()
+                .map(|k| UpstreamKeySpec {
+                    id: k.id.clone(),
+                    secret: k.secret.clone(),
+                    enabled: k.enabled,
+                })
+                .collect();
+            let input = ProfileBuildInput {
+                id: p.id.clone(),
+                provider: p.provider.clone(),
+                base_url: p.base_url.clone(),
+                fallback_model: p.fallback_model.clone(),
+                endpoints,
+                tls_sni: Some(p.tls_sni.clone()),
+                default_weight: 1,
+            };
+            let profile = build_profile_runtime(
+                input,
+                specs,
+                upstream_cooldown_secs,
+                None,
+            )
+            .map_err(|e| anyhow::anyhow!(e))?;
+            runtime
+                .upsert_profile(profile)
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
+
+        if !snapshot_ids.is_empty() {
+            let default_id = runtime.default_upstream_profile_id();
+            let stale_ids: Vec<String> = runtime
+                .upstream_profiles
+                .read()
+                .map_err(|_| anyhow::anyhow!("upstream profiles lock poisoned"))?
+                .keys()
+                .filter(|id| !snapshot_ids.contains(*id))
+                .cloned()
+                .collect();
+            for id in stale_ids {
+                if id == default_id {
+                    tracing::warn!(
+                        profile_id = %id,
+                        "snapshot omitted default upstream profile; keeping runtime copy"
+                    );
+                    continue;
+                }
+                match runtime.remove_profile(&id) {
+                    Ok(()) => tracing::info!(profile_id = %id, "Removed upstream profile not in control-plane snapshot"),
+                    Err(e) => tracing::warn!(profile_id = %id, error = %e, "Could not remove stale upstream profile"),
+                }
+            }
+        }
+
+        let default_id = runtime.default_upstream_profile_id();
+        let _ = runtime.sync_legacy_from_profile_id(&default_id);
+    } else if let Some(keys) = &snap.upstream_keys {
         let specs: Vec<UpstreamKeySpec> = keys
             .iter()
             .map(|k| UpstreamKeySpec {
@@ -270,7 +393,10 @@ pub fn apply_snapshot_to_runtime(
             })
             .collect();
         let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs);
-        runtime.replace_upstream_pool(pool);
+        let default_id = runtime.default_upstream_profile_id();
+        runtime
+            .replace_profile_pool(&default_id, pool)
+            .map_err(|e| anyhow::anyhow!(e))?;
     }
 
     runtime.replace_domain_policies(snap.domain_policies.clone());

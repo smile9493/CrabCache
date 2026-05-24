@@ -33,6 +33,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "management_profiles.rs"]
+mod management_profiles;
+
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
 const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
@@ -50,6 +53,7 @@ pub struct ManagementState {
     pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
     pub invalidate_scan_timeout_secs: u64,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
+    pub upstream_key_cooldown_secs: u64,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -143,6 +147,24 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/upstream/relay",
             get(get_upstream_relay).put(put_upstream_relay),
+        )
+        .route(
+            "/v1/upstream/profiles",
+            get(management_profiles::list_upstream_profiles),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}",
+            axum::routing::put(management_profiles::put_upstream_profile)
+                .delete(management_profiles::delete_upstream_profile),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys",
+            get(management_profiles::get_profile_keys)
+                .put(management_profiles::put_profile_keys),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/test",
+            post(management_profiles::test_upstream_profile),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
@@ -467,7 +489,7 @@ async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyR
     }
 }
 
-fn schedule_persist_state(state: &ManagementState) {
+pub(crate) fn schedule_persist_state(state: &ManagementState) {
     let Some(store) = state.state_store.clone() else {
         return;
     };
@@ -479,7 +501,7 @@ fn schedule_persist_state(state: &ManagementState) {
     });
 }
 
-fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
+pub(crate) fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
     let provided = headers
         .get(GATEWAY_ADMIN_KEY_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -636,6 +658,33 @@ async fn put_upstream_relay(
     }
     drop(router);
 
+    let default_id = state.runtime.default_upstream_profile_id();
+    if let Some(existing) = state.runtime.profile(&default_id) {
+        let model = state
+            .runtime
+            .fallback_model
+            .read()
+            .map(|m| m.clone())
+            .unwrap_or_else(|_| existing.fallback_model.clone());
+        let input = crab_proxy::ProfileBuildInput {
+            id: default_id.clone(),
+            provider: existing.provider.as_str().to_string(),
+            base_url: parsed.normalized.clone(),
+            fallback_model: model,
+            endpoints: endpoints.clone(),
+            tls_sni: Some(tls_sni.clone()),
+            default_weight: 1,
+        };
+        if let Ok(profile) = crab_proxy::build_profile_runtime(
+            input,
+            Vec::new(),
+            state.upstream_key_cooldown_secs,
+            Some(Arc::clone(&existing.upstream_pool)),
+        ) {
+            let _ = state.runtime.upsert_profile(profile);
+        }
+    }
+
     tracing::info!(
         base_url = %parsed.normalized,
         endpoints = ?endpoints,
@@ -695,7 +744,19 @@ async fn put_upstream_keys(
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
         UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
     };
-    state.runtime.replace_upstream_pool(new_pool);
+    let default_id = state.runtime.default_upstream_profile_id();
+    state
+        .runtime
+        .replace_profile_pool(&default_id, new_pool)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        })?;
     schedule_persist_state(&state);
     Ok(Json(upstream_keys_view(&state.runtime)))
 }
@@ -1091,9 +1152,20 @@ fn pipeline_runtime_view(runtime: &RuntimeConfig) -> PipelineRuntimeConfigView {
     let profiles = runtime
         .profile_descriptors()
         .into_iter()
-        .map(|d| PipelineProfileView {
-            id: d.id,
-            provider: d.provider.as_str().to_string(),
+        .map(|d| {
+            let detail = runtime.profile(&d.id);
+            PipelineProfileView {
+                id: d.id,
+                provider: d.provider.as_str().to_string(),
+                base_url: detail
+                    .as_ref()
+                    .map(|p| p.base_url.clone())
+                    .unwrap_or_default(),
+                fallback_model: detail
+                    .as_ref()
+                    .map(|p| p.fallback_model.clone())
+                    .unwrap_or_default(),
+            }
         })
         .collect();
     PipelineRuntimeConfigView {
@@ -1442,7 +1514,7 @@ async fn restart_gateway_handler(
     Ok(Json(serde_json::json!({"status": "restarting"})))
 }
 
-fn internal_error(msg: &str) -> Response {
+pub(crate) fn internal_error(msg: &str) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {

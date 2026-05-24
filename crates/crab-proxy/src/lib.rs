@@ -12,6 +12,7 @@ mod trace_logger;
 mod upstream_body;
 mod upstream_headers;
 mod upstream_pool;
+mod profile_build;
 mod upstream_profile;
 
 // Extracted helper modules from proxy.rs
@@ -50,4 +51,5 @@ pub use upstream_pool::{
     UpstreamKeyStatus, key_preview,
 };
 pub use tenant::{effective_cache_namespace, resolve_project_id, sanitize_user_id, ProjectResolveError};
+pub use profile_build::{build_profile_runtime, parse_profile_backends, ProfileBuildInput};
 pub use upstream_profile::UpstreamProfileRuntime;

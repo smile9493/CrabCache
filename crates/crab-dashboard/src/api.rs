@@ -364,10 +364,18 @@ pub async fn test_upstream_connection(
     post_json(&format!("{}/upstream/test", API_BASE), body).await
 }
 
-pub async fn detect_models() -> Result<ModelDetectResponse, String> {
+pub async fn detect_models(profile_id: &str) -> Result<ModelDetectResponse, String> {
     #[derive(serde::Serialize)]
     struct EmptyBody {}
-    post_json(&format!("{}/models/detect", API_BASE), &EmptyBody {}).await
+    post_json(
+        &format!(
+            "{}/models/detect?profile_id={}",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        &EmptyBody {},
+    )
+    .await
 }
 
 pub async fn apply_models(body: &ModelApplyBody) -> Result<SyncResult, String> {
@@ -389,12 +397,58 @@ pub async fn patch_upstream_key(
     patch_json(&format!("{}/upstream/keys/{id}", API_BASE), req).await
 }
 
-pub async fn fetch_models() -> Result<ModelListResponse, String> {
-    fetch_json(&format!("{}/models", API_BASE)).await
+pub async fn fetch_models(profile_id: Option<&str>) -> Result<ModelListResponse, String> {
+    let url = match profile_id {
+        Some(id) => format!(
+            "{}/models?profile_id={}",
+            API_BASE,
+            urlencoding::encode(id)
+        ),
+        None => format!("{}/models", API_BASE),
+    };
+    fetch_json(&url).await
 }
 
-pub async fn sync_models() -> Result<SyncResult, String> {
-    let (builder, epoch) = apply_admin_auth(Request::post(&format!("{}/models", API_BASE)));
+pub async fn fetch_upstream_profiles() -> Result<crate::types::UpstreamProfilesAdminResponse, String> {
+    fetch_json(&format!("{}/upstream/profiles", API_BASE)).await
+}
+
+pub async fn put_upstream_profile(
+    id: &str,
+    req: &crate::types::PutUpstreamProfileAdminRequest,
+) -> Result<crate::types::UpstreamProfileAdminView, String> {
+    put_json(&format!("{}/upstream/profiles/{id}", API_BASE), req).await
+}
+
+pub async fn test_upstream_profile(id: &str) -> Result<UpstreamTestResult, String> {
+    #[derive(serde::Serialize)]
+    struct EmptyBody {}
+    post_json(
+        &format!("{}/upstream/profiles/{id}/test", API_BASE),
+        &EmptyBody {},
+    )
+    .await
+}
+
+pub async fn fetch_upstream_profile_keys(
+    id: &str,
+) -> Result<crate::types::UpstreamProfileKeysAdminView, String> {
+    fetch_json(&format!("{}/upstream/profiles/{id}/keys", API_BASE)).await
+}
+
+pub async fn put_upstream_profile_keys(
+    id: &str,
+    req: &PutUpstreamKeysRequest,
+) -> Result<crate::types::UpstreamProfileKeysAdminView, String> {
+    put_json(&format!("{}/upstream/profiles/{id}/keys", API_BASE), req).await
+}
+
+pub async fn sync_models(profile_id: &str) -> Result<SyncResult, String> {
+    let (builder, epoch) = apply_admin_auth(Request::post(&format!(
+        "{}/models?profile_id={}",
+        API_BASE,
+        urlencoding::encode(profile_id)
+    )));
     let resp = builder
         .send()
         .await

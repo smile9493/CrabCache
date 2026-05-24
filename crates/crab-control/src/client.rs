@@ -1,5 +1,6 @@
 use crate::error::ControlError;
 use crate::types::*;
+use crate::UpstreamTestResult;
 use reqwest::Client;
 
 #[derive(Clone)]
@@ -397,6 +398,87 @@ impl GatewayAdminClient {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/runtime/pipeline")
             .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn list_upstream_profiles(
+        &self,
+    ) -> Result<UpstreamProfilesResponse, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/upstream/profiles")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_upstream_profile(
+        &self,
+        id: &str,
+        req: &PutUpstreamProfileRequest,
+    ) -> Result<UpstreamProfileView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, &format!("/v1/upstream/profiles/{id}"))
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn delete_upstream_profile(&self, id: &str) -> Result<(), ControlError> {
+        let resp = self
+            .authed(reqwest::Method::DELETE, &format!("/v1/upstream/profiles/{id}"))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn get_upstream_profile_keys(
+        &self,
+        id: &str,
+    ) -> Result<UpstreamProfileKeysView, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::GET,
+                &format!("/v1/upstream/profiles/{id}/keys"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_upstream_profile_keys(
+        &self,
+        id: &str,
+        req: &PutUpstreamProfileKeysRequest,
+    ) -> Result<UpstreamProfileKeysView, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::PUT,
+                &format!("/v1/upstream/profiles/{id}/keys"),
+            )
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn test_upstream_profile(
+        &self,
+        id: &str,
+    ) -> Result<UpstreamTestResult, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::POST,
+                &format!("/v1/upstream/profiles/{id}/test"),
+            )
             .send()
             .await?;
         let resp = Self::check(resp).await?;

@@ -400,6 +400,45 @@ pub struct PatchKeyRequest {
 pub struct PipelineProfileView {
     pub id: String,
     pub provider: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub fallback_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileAdminView {
+    pub id: String,
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    pub endpoints: Vec<String>,
+    pub tls_sni: String,
+    pub key_pool_count: usize,
+    pub keys_available: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfilesAdminResponse {
+    pub profiles: Vec<UpstreamProfileAdminView>,
+    pub default_profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamProfileAdminRequest {
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_sni: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileKeysAdminView {
+    pub profile_id: String,
+    pub keys: Vec<UpstreamKeyView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,6 +538,16 @@ pub struct RequestLog {
     pub cache_status: String,
     pub request_payload: String,
     pub response_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_length: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -507,6 +556,18 @@ pub struct RequestDetail {
     pub request_payload: String,
     pub response_body: String,
     pub route_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_cluster: Option<u32>,
 }
 
 /// Paginated logs response from `GET /api/admin/logs`.
@@ -652,6 +713,7 @@ pub struct ModelDetectResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelApplyBody {
+    pub profile_id: String,
     #[serde(default)]
     pub add: Vec<String>,
     #[serde(default)]
@@ -660,6 +722,8 @@ pub struct ModelApplyBody {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
+    #[serde(default)]
+    pub profile_id: String,
     pub id: String,
     pub owned_by: String,
     pub context_length: Option<u64>,
@@ -672,6 +736,8 @@ pub struct ModelInfo {
 pub struct ModelListResponse {
     pub models: Vec<ModelInfo>,
     pub total: usize,
+    #[serde(default)]
+    pub profile_id: Option<String>,
     pub synced_at: Option<String>,
 }
 

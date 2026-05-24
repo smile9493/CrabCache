@@ -12,5 +12,5 @@ pub use types::*;
 pub use upstream_url::{UpstreamBaseUrl, parse_upstream_base_url};
 pub use validate::{
     ModelApplyRequest, ModelDetectResult, UpstreamTestRequest, UpstreamTestResult,
-    validate_deepseek_key,
+    validate_deepseek_key, validate_upstream_key,
 };

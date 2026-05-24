@@ -251,6 +251,12 @@ pub struct TraceConfig {
     pub max_files: usize,
     #[serde(default)]
     pub composition_debug: Option<crab_proxy::CompositionDebugConfig>,
+    /// Max bytes to capture for request body snapshot. `0` = disabled.
+    #[serde(default)]
+    pub max_payload_bytes: usize,
+    /// Max bytes to capture for response body preview. `0` = disabled.
+    #[serde(default)]
+    pub max_response_preview_bytes: usize,
 }
 
 fn default_max_lines() -> usize {
@@ -269,6 +275,8 @@ impl Default for TraceConfig {
             max_lines: 10000,
             max_files: 5,
             composition_debug: None,
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
         }
     }
 }

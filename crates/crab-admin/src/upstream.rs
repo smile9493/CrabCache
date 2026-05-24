@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::types::{SyncResult, UpstreamModelsResponse};
-use crab_control::{UpstreamTestResult, parse_upstream_base_url, validate_deepseek_key};
+use crab_control::{UpstreamTestResult, parse_upstream_base_url, validate_upstream_key};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,7 +16,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
             error: Some(e),
         };
     }
-    if let Err(e) = validate_deepseek_key(api_key) {
+    if let Err(e) = validate_upstream_key(api_key) {
         return UpstreamTestResult {
             ok: false,
             status_code: 0,
@@ -105,16 +105,8 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
     }
 }
 
-pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, String> {
-    let upstream_config = state.upstream_config.read().clone();
-    let upstream_url = format!(
-        "{}/v1/models",
-        upstream_config.base_url.trim_end_matches('/')
-    );
-    let api_key = state
-        .pick_sync_api_key()
-        .ok_or_else(|| "Configure upstream key pool or set a sync API key.".to_string())?;
-
+async fn fetch_upstream_models(base_url: &str, api_key: &str) -> Result<UpstreamModelsResponse, String> {
+    let upstream_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -122,7 +114,7 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
 
     let resp = client
         .get(&upstream_url)
-        .header("Authorization", format!("Bearer {}", &api_key))
+        .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await
         .map_err(|e| format!("Cannot reach upstream: {e}"))?;
@@ -137,15 +129,67 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
         ));
     }
 
-    let upstream: UpstreamModelsResponse = resp
-        .json()
+    resp.json()
         .await
-        .map_err(|e| format!("Failed to parse upstream response: {e}"))?;
+        .map_err(|e| format!("Failed to parse upstream response: {e}"))
+}
 
+pub async fn profile_base_url_async(
+    state: &Arc<AppState>,
+    profile_id: &str,
+) -> Result<String, String> {
+    if profile_id == "deepseek" {
+        let cfg = state.upstream_config.read();
+        return Ok(cfg.base_url.clone());
+    }
+    let list = state
+        .gateway
+        .list_upstream_profiles()
+        .await
+        .map_err(|e| e.to_string())?;
+    list.profiles
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .map(|p| p.base_url)
+        .ok_or_else(|| format!("unknown upstream profile '{profile_id}'"))
+}
+
+pub async fn sync_models_internal(
+    state: &Arc<AppState>,
+    profile_id: &str,
+) -> Result<SyncResult, String> {
+    let base_url = profile_base_url_async(state, profile_id).await?;
+    let api_key = state
+        .pick_sync_api_key(profile_id)
+        .ok_or_else(|| {
+            format!(
+                "Configure API keys for profile '{profile_id}' before syncing models."
+            )
+        })?;
+
+    let upstream = fetch_upstream_models(&base_url, &api_key).await?;
     let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
+    let owned_by_default = state
+        .gateway
+        .list_upstream_profiles()
+        .await
+        .ok()
+        .and_then(|r| {
+            r.profiles
+                .into_iter()
+                .find(|p| p.id == profile_id)
+                .map(|p| p.provider)
+        })
+        .unwrap_or_else(|| profile_id.to_string());
 
     let mut stored = state.models.write();
-    let existing_ids: Vec<String> = stored.models.iter().map(|m| m.id.clone()).collect();
+    let existing_for_profile: Vec<crate::state::StoredModel> = stored
+        .models
+        .iter()
+        .filter(|m| m.profile_id == profile_id)
+        .cloned()
+        .collect();
+    let existing_ids: Vec<String> = existing_for_profile.iter().map(|m| m.id.clone()).collect();
 
     let added: Vec<String> = upstream_ids
         .iter()
@@ -164,29 +208,36 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
         .filter(|id| existing_ids.contains(id))
         .count();
 
-    let upstream_models: Vec<crate::state::StoredModel> = upstream
-        .data
-        .into_iter()
-        .map(|m| {
-            let existing = stored.models.iter().find(|e| e.id == m.id);
-            crate::state::StoredModel {
-                id: m.id,
-                owned_by: m.owned_by,
-                context_length: existing.and_then(|e| e.context_length),
-                input_price_per_mtok: existing.and_then(|e| e.input_price_per_mtok),
-                output_price_per_mtok: existing.and_then(|e| e.output_price_per_mtok),
-                available: true,
-            }
-        })
-        .collect();
+    stored
+        .models
+        .retain(|m| m.profile_id != profile_id);
 
-    let total = upstream_models.len();
-    stored.models = upstream_models;
-    stored.synced_at = Some(
-        chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M:%S UTC")
-            .to_string(),
-    );
+    for m in upstream.data {
+        let existing = existing_for_profile.iter().find(|e| e.id == m.id);
+        stored.models.push(crate::state::StoredModel {
+            profile_id: profile_id.to_string(),
+            id: m.id,
+            owned_by: if m.owned_by.is_empty() {
+                owned_by_default.clone()
+            } else {
+                m.owned_by
+            },
+            context_length: existing.and_then(|e| e.context_length),
+            input_price_per_mtok: existing.and_then(|e| e.input_price_per_mtok),
+            output_price_per_mtok: existing.and_then(|e| e.output_price_per_mtok),
+            available: true,
+        });
+    }
+
+    let profile_total = stored
+        .models
+        .iter()
+        .filter(|m| m.profile_id == profile_id)
+        .count();
+    let synced_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    stored
+        .synced_at_by_profile
+        .insert(profile_id.to_string(), synced_at);
 
     drop(stored);
     state.flush_persist();
@@ -195,52 +246,28 @@ pub async fn sync_models_internal(state: &Arc<AppState>) -> Result<SyncResult, S
         added,
         removed,
         unchanged,
-        total,
+        total: profile_total,
     })
 }
 
 pub async fn detect_models_internal(
     state: &Arc<AppState>,
+    profile_id: &str,
 ) -> Result<crate::types::ModelDetectResponse, String> {
-    let upstream_config = state.upstream_config.read().clone();
-    let upstream_url = format!(
-        "{}/v1/models",
-        upstream_config.base_url.trim_end_matches('/')
-    );
+    let base_url = profile_base_url_async(state, profile_id).await?;
     let api_key = state
-        .pick_sync_api_key()
-        .ok_or_else(|| "Configure upstream key pool before detecting models.".to_string())?;
+        .pick_sync_api_key(profile_id)
+        .ok_or_else(|| format!("Configure API keys for profile '{profile_id}' first."))?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    let resp = client
-        .get(&upstream_url)
-        .header("Authorization", format!("Bearer {}", &api_key))
-        .send()
-        .await
-        .map_err(|e| format!("Cannot reach upstream: {e}"))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "Upstream returned {}: {}",
-            status.as_u16(),
-            body.chars().take(200).collect::<String>()
-        ));
-    }
-
-    let upstream: UpstreamModelsResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse upstream response: {e}"))?;
-
+    let upstream = fetch_upstream_models(&base_url, &api_key).await?;
     let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
     let stored = state.models.read();
-    let existing_ids: Vec<String> = stored.models.iter().map(|m| m.id.clone()).collect();
+    let existing_ids: Vec<String> = stored
+        .models
+        .iter()
+        .filter(|m| m.profile_id == profile_id)
+        .map(|m| m.id.clone())
+        .collect();
 
     let to_add: Vec<String> = upstream_ids
         .iter()
@@ -267,14 +294,23 @@ pub async fn detect_models_internal(
 
 pub fn apply_models_internal(
     state: &Arc<AppState>,
+    profile_id: &str,
     add: Vec<String>,
     remove: Vec<String>,
 ) -> SyncResult {
+    let owned_by = state.profile_provider(profile_id);
     let mut stored = state.models.write();
-    let mut existing_ids: Vec<String> = stored.models.iter().map(|m| m.id.clone()).collect();
+    let mut existing_ids: Vec<String> = stored
+        .models
+        .iter()
+        .filter(|m| m.profile_id == profile_id)
+        .map(|m| m.id.clone())
+        .collect();
 
     for id in &remove {
-        stored.models.retain(|m| &m.id != id);
+        stored
+            .models
+            .retain(|m| !(m.profile_id == profile_id && &m.id == id));
         existing_ids.retain(|e| e != id);
     }
 
@@ -282,8 +318,9 @@ pub fn apply_models_internal(
     for id in add {
         if !existing_ids.contains(&id) {
             stored.models.push(crate::state::StoredModel {
+                profile_id: profile_id.to_string(),
                 id: id.clone(),
-                owned_by: "deepseek".to_string(),
+                owned_by: owned_by.clone(),
                 context_length: None,
                 input_price_per_mtok: None,
                 output_price_per_mtok: None,
@@ -294,7 +331,11 @@ pub fn apply_models_internal(
         }
     }
 
-    let total = stored.models.len();
+    let total = stored
+        .models
+        .iter()
+        .filter(|m| m.profile_id == profile_id)
+        .count();
     let unchanged = total.saturating_sub(added.len());
     drop(stored);
     state.flush_persist();

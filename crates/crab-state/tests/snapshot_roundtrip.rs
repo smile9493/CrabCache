@@ -93,6 +93,7 @@ fn empty_upstream_keys_replaces_pool() {
         keys: HashMap::new(),
         runtime: None,
         upstream_keys: Some(vec![]),
+        upstream_profiles: None,
         domain_policies: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
@@ -124,10 +125,130 @@ fn missing_upstream_keys_preserves_pool() {
         keys: HashMap::new(),
         runtime: None,
         upstream_keys: None,
+        upstream_profiles: None,
         domain_policies: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_some());
+}
+
+#[test]
+fn upstream_profiles_snapshot_roundtrip() {
+    use crab_state::{BackendSnapshot, UpstreamKeySnapshot, UpstreamProfileSnapshot};
+
+    let runtime = test_runtime();
+    let snap = ControlPlaneSnapshot {
+        keys: HashMap::new(),
+        runtime: Some(crab_state::RuntimeSnapshot {
+            ttl: TtlConfig::new(3600),
+            fingerprint: crab_state::FingerprintSnapshot {
+                version: 1,
+                normalize_content: true,
+            },
+            stream_cache_enabled: true,
+            upstream_base_url: "https://api.deepseek.com".to_string(),
+            fallback_model: "deepseek-v4-pro".to_string(),
+            backends: vec![BackendSnapshot {
+                name: "deepseek-backend-1".to_string(),
+                addr: "127.0.0.1:443".to_string(),
+                weight: 1,
+                tls_sni: "api.deepseek.com".to_string(),
+            }],
+            connection: ConnectionConfig::default(),
+            pipeline_mode: "auto".to_string(),
+            default_upstream_profile: "deepseek".to_string(),
+        }),
+        upstream_keys: None,
+        upstream_profiles: Some(vec![UpstreamProfileSnapshot {
+            id: "mimo".to_string(),
+            provider: "mimo".to_string(),
+            base_url: "https://api.xiaomimimo.com".to_string(),
+            fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+            tls_sni: "api.xiaomimimo.com".to_string(),
+            endpoints: vec![BackendSnapshot {
+                name: "mimo-backend-1".to_string(),
+                addr: "127.0.0.1:443".to_string(),
+                weight: 1,
+                tls_sni: "api.xiaomimimo.com".to_string(),
+            }],
+            keys: vec![UpstreamKeySnapshot {
+                id: "m1".to_string(),
+                secret: "sk-mimo-snapshot-key-12345678".to_string(),
+                enabled: true,
+            }],
+        }]),
+        domain_policies: HashMap::new(),
+    };
+    apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
+    assert!(runtime.profile("mimo").is_some());
+    let mimo = runtime.profile("mimo").unwrap();
+    assert_eq!(mimo.base_url, "https://api.xiaomimimo.com");
+}
+
+#[test]
+fn upstream_profiles_snapshot_removes_stale_profile() {
+    use crab_state::{BackendSnapshot, UpstreamKeySnapshot, UpstreamProfileSnapshot};
+
+    let runtime = test_runtime();
+    let mimo_snap = UpstreamProfileSnapshot {
+        id: "mimo".to_string(),
+        provider: "mimo".to_string(),
+        base_url: "https://api.xiaomimimo.com".to_string(),
+        fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+        tls_sni: "api.xiaomimimo.com".to_string(),
+        endpoints: vec![BackendSnapshot {
+            name: "mimo-backend-1".to_string(),
+            addr: "127.0.0.1:443".to_string(),
+            weight: 1,
+            tls_sni: "api.xiaomimimo.com".to_string(),
+        }],
+        keys: vec![UpstreamKeySnapshot {
+            id: "m1".to_string(),
+            secret: "sk-mimo-snapshot-key-12345678".to_string(),
+            enabled: true,
+        }],
+    };
+
+    let with_mimo = ControlPlaneSnapshot {
+        keys: HashMap::new(),
+        runtime: None,
+        upstream_keys: None,
+        upstream_profiles: Some(vec![mimo_snap.clone()]),
+        domain_policies: HashMap::new(),
+    };
+    apply_snapshot_to_runtime(&runtime, &with_mimo, 60).expect("apply mimo");
+    assert!(runtime.profile("mimo").is_some());
+
+    let deepseek_only = ControlPlaneSnapshot {
+        keys: HashMap::new(),
+        runtime: None,
+        upstream_keys: None,
+        upstream_profiles: Some(vec![UpstreamProfileSnapshot {
+            id: "deepseek".to_string(),
+            provider: "deepseek".to_string(),
+            base_url: "https://api.deepseek.com".to_string(),
+            fallback_model: "deepseek-v4-pro".to_string(),
+            tls_sni: "api.deepseek.com".to_string(),
+            endpoints: vec![BackendSnapshot {
+                name: "deepseek-backend-1".to_string(),
+                addr: "127.0.0.1:443".to_string(),
+                weight: 1,
+                tls_sni: "api.deepseek.com".to_string(),
+            }],
+            keys: vec![UpstreamKeySnapshot {
+                id: "d1".to_string(),
+                secret: "sk-deepseek-snapshot-key-12345678".to_string(),
+                enabled: true,
+            }],
+        }]),
+        domain_policies: HashMap::new(),
+    };
+    apply_snapshot_to_runtime(&runtime, &deepseek_only, 60).expect("apply deepseek only");
+    assert!(runtime.profile("deepseek").is_some());
+    assert!(
+        runtime.profile("mimo").is_none(),
+        "mimo should be removed when absent from snapshot"
+    );
 }
 
 #[test]

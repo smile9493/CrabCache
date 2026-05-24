@@ -9,25 +9,49 @@ use crate::types::{ModelApplyBody, ModelDetectResponse, ModelListResponse, SyncR
 #[component]
 pub fn ModelsPage() -> impl IntoView {
     let t = use_translations();
+    let profile_id = RwSignal::new("deepseek".to_string());
     let models: RwSignal<Option<Result<ModelListResponse, String>>> = RwSignal::new(None);
+    let profiles: RwSignal<Vec<String>> = RwSignal::new(vec!["deepseek".to_string()]);
     let sync_result: RwSignal<Option<SyncResult>> = RwSignal::new(None);
     let detect_result: RwSignal<Option<Result<ModelDetectResponse, String>>> = RwSignal::new(None);
     let syncing: RwSignal<bool> = RwSignal::new(false);
     let detecting: RwSignal<bool> = RwSignal::new(false);
     let applying: RwSignal<bool> = RwSignal::new(false);
 
+    let reload_models = move |pid: String| {
+        leptos::task::spawn_local(async move {
+            match api::fetch_models(Some(&pid)).await {
+                Ok(m) => models.set(Some(Ok(m))),
+                Err(e) => models.set(Some(Err(e))),
+            }
+        });
+    };
+
     leptos::task::spawn_local(async move {
-        match api::fetch_models().await {
-            Ok(m) => models.set(Some(Ok(m))),
-            Err(e) => models.set(Some(Err(e))),
+        if let Ok(list) = api::fetch_upstream_profiles().await {
+            let ids: Vec<String> = list.profiles.into_iter().map(|p| p.id).collect();
+            if !ids.is_empty() {
+                profiles.set(ids.clone());
+                if !ids.contains(&profile_id.get_untracked()) {
+                    profile_id.set(ids[0].clone());
+                }
+            }
         }
+        reload_models(profile_id.get_untracked());
     });
 
+    let on_profile_change = move |ev| {
+        let pid = event_target_value(&ev);
+        profile_id.set(pid.clone());
+        reload_models(pid);
+    };
+
     let on_detect = move |_| {
+        let pid = profile_id.get();
         detecting.set(true);
         detect_result.set(None);
         leptos::task::spawn_local(async move {
-            match api::detect_models().await {
+            match api::detect_models(&pid).await {
                 Ok(d) => detect_result.set(Some(Ok(d))),
                 Err(e) => detect_result.set(Some(Err(e))),
             }
@@ -39,8 +63,10 @@ pub fn ModelsPage() -> impl IntoView {
         let Some(Ok(diff)) = detect_result.get() else {
             return;
         };
+        let pid = profile_id.get();
         applying.set(true);
         let body = ModelApplyBody {
+            profile_id: pid.clone(),
             add: diff.to_add.clone(),
             remove: diff.to_remove.clone(),
         };
@@ -49,9 +75,7 @@ pub fn ModelsPage() -> impl IntoView {
                 Ok(result) => {
                     sync_result.set(Some(result));
                     detect_result.set(None);
-                    if let Ok(m) = api::fetch_models().await {
-                        models.set(Some(Ok(m)));
-                    }
+                    reload_models(pid);
                 }
                 Err(e) => detect_result.set(Some(Err(e))),
             }
@@ -60,16 +84,14 @@ pub fn ModelsPage() -> impl IntoView {
     };
 
     let on_sync = move |_| {
+        let pid = profile_id.get();
         syncing.set(true);
         sync_result.set(None);
         leptos::task::spawn_local(async move {
-            match api::sync_models().await {
+            match api::sync_models(&pid).await {
                 Ok(result) => {
                     sync_result.set(Some(result));
-                    match api::fetch_models().await {
-                        Ok(m) => models.set(Some(Ok(m))),
-                        Err(e) => models.set(Some(Err(e))),
-                    }
+                    reload_models(pid);
                 }
                 Err(e) => models.set(Some(Err(e))),
             }
@@ -79,12 +101,24 @@ pub fn ModelsPage() -> impl IntoView {
 
     view! {
             <div class="page-content space-y-6">
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between flex-wrap gap-3">
                     <SectionHeader
                         title=t.models_title()
                         description=t.models_desc()
                     />
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <label class="text-xs text-theme-muted">{t.upstream_profile_label()}</label>
+                        <select
+                            class="config-input text-sm"
+                            prop:value=move || profile_id.get()
+                            on:change=on_profile_change
+                        >
+                            {move || profiles.get().into_iter().map(|id| {
+                                let opt_val = id.clone();
+                                let label = id;
+                                view! { <option value=opt_val>{label}</option> }
+                            }).collect_view()}
+                        </select>
                         {move || match models.get() {
                             Some(Ok(m)) => view! {
                                 <span class="text-xs text-theme-muted">

@@ -261,6 +261,56 @@ pub struct StreamCacheConfig {
 pub struct PipelineProfileView {
     pub id: String,
     pub provider: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fallback_model: String,
+}
+
+/// Read-only upstream profile summary (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileView {
+    pub id: String,
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    pub tls_sni: String,
+    pub key_pool_count: usize,
+    pub keys_available: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfilesResponse {
+    pub profiles: Vec<UpstreamProfileView>,
+    pub default_profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamProfileRequest {
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_sni: Option<String>,
+    #[serde(default = "default_weight")]
+    pub default_weight: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileKeysView {
+    pub profile_id: String,
+    pub keys: Vec<UpstreamKeyView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutUpstreamProfileKeysRequest {
+    pub keys: Vec<UpstreamKeyInput>,
+    #[serde(default)]
+    pub mode: UpstreamKeysPutMode,
 }
 
 /// Hot-reloadable global pipeline selection (Management API).

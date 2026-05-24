@@ -5,12 +5,15 @@ use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
-    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, SyncResult, UpdateUpstreamConfigRequest,
-    UpstreamConfig, UpstreamKeyInput, UpstreamKeysPutMode, UpstreamKeysView, UpstreamTestBody,
+    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest, SyncResult,
+    UpdateUpstreamConfigRequest, UpstreamConfig, UpstreamKeyInput, UpstreamKeysPutMode,
+    UpstreamKeysView, UpstreamTestBody,
 };
 
 const OFFICIAL_BASE: &str = "https://api.deepseek.com";
 const DEFAULT_MODEL: &str = "deepseek-v4-pro";
+const MIMO_BASE: &str = "https://api.xiaomimimo.com";
+const MIMO_MODEL: &str = "xiaomi/mimo-v2.5-pro";
 
 fn validate_base_url(url: &str) -> Option<String> {
     let t = url.trim();
@@ -59,6 +62,22 @@ pub fn UpstreamPage() -> impl IntoView {
     let pool_saved = RwSignal::new(false);
     let pool_error = RwSignal::new(String::new());
 
+    let active_profile = RwSignal::new("deepseek".to_string());
+    let provider = RwSignal::new("deepseek".to_string());
+    let profile_ids: RwSignal<Vec<String>> = RwSignal::new(vec!["deepseek".to_string()]);
+    let new_profile_id = RwSignal::new(String::new());
+
+    let load_profiles = move || {
+        leptos::task::spawn_local(async move {
+            if let Ok(resp) = api::fetch_upstream_profiles().await {
+                let list: Vec<String> = resp.profiles.iter().map(|p| p.id.clone()).collect();
+                if !list.is_empty() {
+                    profile_ids.set(list);
+                }
+            }
+        });
+    };
+
     let load_key_pool = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_upstream_keys().await {
@@ -92,6 +111,7 @@ pub fn UpstreamPage() -> impl IntoView {
 
     load_data();
     load_key_pool();
+    load_profiles();
 
     let on_test = move |_| {
         testing.set(true);
@@ -217,28 +237,84 @@ pub fn UpstreamPage() -> impl IntoView {
             .map(str::to_string)
             .collect();
 
-        let req = UpdateUpstreamConfigRequest {
-            base_url: url,
-            model: model_val,
-            api_key: None,
-            endpoints,
-            keys_to_append,
-        };
+        let pid = active_profile.get();
+        let prov = provider.get();
+        let keys_to_append_clone = keys_to_append.clone();
 
         leptos::task::spawn_local(async move {
-            match api::update_upstream_config(&req).await {
-                Ok(resp) => {
+            let result = if pid == "deepseek" {
+                let req = UpdateUpstreamConfigRequest {
+                    base_url: url.clone(),
+                    model: model_val.clone(),
+                    api_key: None,
+                    endpoints: endpoints.clone(),
+                    keys_to_append: keys_to_append_clone.clone(),
+                };
+                api::update_upstream_config(&req).await.map(|resp| {
                     base_url.set(resp.config.base_url.clone());
                     model.set(resp.config.model.clone());
                     endpoints_text.set(resp.config.endpoints.join("\n"));
-                    pool_secrets_text.set(String::new());
                     if let Some(s) = resp.sync {
                         sync_result.set(Some(s));
                     }
+                })
+            } else {
+                let req = PutUpstreamProfileAdminRequest {
+                    provider: prov,
+                    base_url: url.clone(),
+                    fallback_model: model_val.clone(),
+                    endpoints: endpoints.clone(),
+                    tls_sni: None,
+                };
+                api::put_upstream_profile(&pid, &req).await.map(|_| ())
+            };
+
+            match result {
+                Ok(_) => {
+                    if !keys_to_append_clone.is_empty() {
+                        let keys: Vec<UpstreamKeyInput> = keys_to_append_clone
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, secret)| UpstreamKeyInput {
+                                id: format!("key-{}", i + 1),
+                                secret,
+                                enabled: true,
+                            })
+                            .collect();
+                        let key_req = PutUpstreamKeysRequest {
+                            keys,
+                            mode: UpstreamKeysPutMode::Append,
+                        };
+                        let key_err = if pid == "deepseek" {
+                            api::put_upstream_keys(&key_req).await.err()
+                        } else {
+                            api::put_upstream_profile_keys(&pid, &key_req)
+                                .await
+                                .err()
+                        };
+                        if let Some(e) = key_err {
+                            save_error.set(format!("Profile saved but keys failed: {e}"));
+                        } else {
+                            pool_secrets_text.set(String::new());
+                        }
+                    } else {
+                        pool_secrets_text.set(String::new());
+                    }
                     saved.set(true);
-                    match api::fetch_upstream_keys().await {
-                        Ok(v) => key_pool.set(Some(Ok(v))),
-                        Err(e) => key_pool.set(Some(Err(e))),
+                    if pid == "deepseek" {
+                        match api::fetch_upstream_keys().await {
+                            Ok(v) => key_pool.set(Some(Ok(v))),
+                            Err(e) => key_pool.set(Some(Err(e))),
+                        }
+                    } else {
+                        match api::fetch_upstream_profile_keys(&pid).await {
+                            Ok(v) => {
+                                key_pool.set(Some(Ok(UpstreamKeysView {
+                                    keys: v.keys,
+                                })));
+                            }
+                            Err(e) => key_pool.set(Some(Err(e))),
+                        }
                     }
                 }
                 Err(e) => save_error.set(e),
@@ -275,6 +351,61 @@ pub fn UpstreamPage() -> impl IntoView {
                         })}
 
                         <div class="glass-card space-y-4">
+                            <div class="flex flex-wrap items-end gap-3">
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">
+                                        {use_translations().upstream_profile_label()}
+                                    </label>
+                                    <select
+                                        class="config-input text-sm"
+                                        prop:value=move || active_profile.get()
+                                        on:change=move |ev| {
+                                            let id = event_target_value(&ev);
+                                            active_profile.set(id.clone());
+                                            leptos::task::spawn_local(async move {
+                                                if let Ok(resp) = api::fetch_upstream_profiles().await {
+                                                    if let Some(p) = resp.profiles.into_iter().find(|p| p.id == id) {
+                                                        provider.set(p.provider);
+                                                        base_url.set(p.base_url);
+                                                        model.set(p.fallback_model);
+                                                        endpoints_text.set(p.endpoints.join("\n"));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    >
+                                        {move || profile_ids.get().into_iter().map(|id| {
+                                            view! { <option value=id.clone()>{id.clone()}</option> }
+                                        }).collect_view()}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">
+                                        {use_translations().upstream_new_profile_id()}
+                                    </label>
+                                    <input
+                                        class="config-input text-sm font-mono"
+                                        prop:value=move || new_profile_id.get()
+                                        on:input=move |ev| new_profile_id.set(event_target_value(&ev))
+                                        placeholder="mimo"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary text-xs"
+                                    on:click=move |_| {
+                                        let id = new_profile_id.get().trim().to_string();
+                                        if id.is_empty() { return; }
+                                        active_profile.set(id.clone());
+                                        profile_ids.update(|v| {
+                                            if !v.contains(&id) { v.push(id); }
+                                        });
+                                    }
+                                >
+                                    "+"
+                                </button>
+                            </div>
+
                             <div class="flex flex-wrap gap-2">
                                 <button
                                     type="button"
@@ -282,9 +413,21 @@ pub fn UpstreamPage() -> impl IntoView {
                                     on:click=move |_| {
                                         base_url.set(OFFICIAL_BASE.into());
                                         model.set(DEFAULT_MODEL.into());
+                                        provider.set("deepseek".into());
                                     }
                                 >
                                     {use_translations().upstream_preset_official()}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary text-xs"
+                                    on:click=move |_| {
+                                        base_url.set(MIMO_BASE.into());
+                                        model.set(MIMO_MODEL.into());
+                                        provider.set("mimo".into());
+                                    }
+                                >
+                                    {use_translations().upstream_preset_mimo()}
                                 </button>
                                 <button
                                     type="button"
@@ -298,6 +441,18 @@ pub fn UpstreamPage() -> impl IntoView {
                             </div>
 
                             <div class="grid grid-cols-1 gap-5">
+                                <div>
+                                    <label class="block text-sm font-medium text-theme mb-1.5">
+                                        {use_translations().upstream_provider_label()}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        prop:value=move || provider.get()
+                                        on:input=move |ev| provider.set(event_target_value(&ev))
+                                        class="input font-mono text-sm"
+                                        placeholder="deepseek"
+                                    />
+                                </div>
                                 <div>
                                     <label class="block text-sm font-medium text-theme mb-1.5">
                                         {use_translations().upstream_base_url_label()}

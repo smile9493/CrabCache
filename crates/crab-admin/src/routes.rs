@@ -140,6 +140,23 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/upstream/keys/{id}",
             patch(patch_upstream_key_pool),
         )
+        .route(
+            "/api/admin/upstream/profiles",
+            get(crate::upstream_profiles::list_profiles_json),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}",
+            axum::routing::put(put_upstream_profile)
+                .delete(delete_upstream_profile),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/keys",
+            get(get_upstream_profile_keys).put(put_upstream_profile_keys),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/test",
+            post(post_upstream_profile_test),
+        )
         .route("/api/admin/models", get(get_models).post(sync_models))
         .route("/api/admin/models/detect", post(post_models_detect))
         .route("/api/admin/models/apply", post(post_models_apply))
@@ -1578,6 +1595,8 @@ async fn get_pipeline_runtime(
             .map(|p| PipelineProfileView {
                 id: p.id,
                 provider: p.provider,
+                base_url: p.base_url,
+                fallback_model: p.fallback_model,
             })
             .collect(),
     }))
@@ -1598,6 +1617,8 @@ async fn put_pipeline_runtime(
                 .map(|p| crab_control::PipelineProfileView {
                     id: p.id,
                     provider: p.provider,
+                    base_url: p.base_url,
+                    fallback_model: p.fallback_model,
                 })
                 .collect(),
         })
@@ -1612,6 +1633,8 @@ async fn put_pipeline_runtime(
             .map(|p| PipelineProfileView {
                 id: p.id,
                 provider: p.provider,
+                base_url: p.base_url,
+                fallback_model: p.fallback_model,
             })
             .collect(),
     }))
@@ -1855,6 +1878,11 @@ async fn get_logs(
                     request_payload: serde_json::to_string_pretty(&log.request_payload)
                         .unwrap_or_default(),
                     response_preview: log.response_body.chars().take(200).collect(),
+                    input_tokens: Some(log.input_tokens as u64),
+                    output_tokens: Some(log.output_tokens as u64),
+                    ttft_ms: None,
+                    content_length: None,
+                    request_hash: None,
                 }
             })
             .collect();
@@ -1871,6 +1899,13 @@ async fn get_logs(
         from_ms: query.from_ms,
         to_ms: query.to_ms,
         consumer: query.consumer,
+        model: query.model,
+        cache_tier: query.cache_tier,
+        request_hash: query.request_hash,
+        latency_min: query.latency_min,
+        latency_max: query.latency_max,
+        token_min: query.token_min,
+        token_max: query.token_max,
         limit: limit + 1, // fetch +1 to determine has_more
         cursor: query.cursor,
     };
@@ -1887,44 +1922,59 @@ async fn get_logs(
         None
     };
 
-    let items: Vec<RequestLog> = entries
-        .into_iter()
-        .take(limit)
-        .map(|e| {
-            let datetime =
-                crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
-            let consumer = e
-                .consumer
-                .clone()
-                .filter(|s| !s.is_empty())
-                .or_else(|| {
-                    e.conversation_id
-                        .clone()
-                        .filter(|s| !s.is_empty())
-                })
-                .unwrap_or_else(|| "—".to_string());
-            let summary = serde_json::json!({
-                "request_hash": e.request_hash,
-                "content_length": e.content_length,
-                "semantic_cluster": e.semantic_cluster,
-                "input_tokens": e.resolved_input_tokens(),
-                "output_tokens": e.resolved_output_tokens(),
-                "cache_hit": e.cache_hit,
-                "cache_tier": e.cache_tier,
-            });
-            RequestLog {
-                id: e.id(),
-                timestamp: datetime,
-                model: e.model.clone(),
-                consumer,
-                latency_ms: e.latency_ms.round() as u64,
-                total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
-                cache_status: e.cache_status_label(),
-                request_payload: serde_json::to_string_pretty(&summary).unwrap_or_default(),
-                response_preview: String::new(),
-            }
-        })
-        .collect();
+        let items: Vec<RequestLog> = entries
+            .into_iter()
+            .take(limit)
+            .map(|e| {
+                let datetime =
+                    crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
+                let consumer = e
+                    .consumer
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        e.conversation_id
+                            .clone()
+                            .filter(|s| !s.is_empty())
+                    })
+                    .unwrap_or_else(|| "—".to_string());
+                let request_payload = e
+                    .request_messages_snapshot
+                    .clone()
+                    .unwrap_or_else(|| {
+                        let summary = serde_json::json!({
+                            "request_hash": e.request_hash,
+                            "content_length": e.content_length,
+                            "semantic_cluster": e.semantic_cluster,
+                            "input_tokens": e.resolved_input_tokens(),
+                            "output_tokens": e.resolved_output_tokens(),
+                            "cache_hit": e.cache_hit,
+                            "cache_tier": e.cache_tier,
+                        });
+                        serde_json::to_string_pretty(&summary).unwrap_or_default()
+                    });
+                let response_preview = e
+                    .response_preview
+                    .clone()
+                    .unwrap_or_else(String::new);
+                RequestLog {
+                    id: e.id(),
+                    timestamp: datetime,
+                    model: e.model.clone(),
+                    consumer,
+                    latency_ms: e.latency_ms.round() as u64,
+                    total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
+                    cache_status: e.cache_status_label(),
+                    request_payload,
+                    response_preview,
+                    input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
+                    output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
+                    ttft_ms: e.ttft_ms,
+                    content_length: Some(e.content_length),
+                    request_hash: Some(e.request_hash.clone()),
+                }
+            })
+            .collect();
 
     Json(crate::types::LogsPageResponse {
         items,
@@ -1945,6 +1995,12 @@ async fn get_log_detail(
             request_payload: serde_json::to_string_pretty(&log.request_payload).unwrap_or_default(),
             response_body: log.response_body.clone(),
             route_backend: log.route_backend.clone(),
+            upstream_latency_ms: None,
+            ttft_ms: None,
+            input_tokens: None,
+            output_tokens: None,
+            request_hash: None,
+            semantic_cluster: None,
         }));
     }
 
@@ -1958,22 +2014,38 @@ async fn get_log_detail(
         } else {
             "upstream".to_string()
         };
-        let payload = serde_json::json!({
-            "request_hash": entry.request_hash,
-            "content_length": entry.content_length,
-            "semantic_cluster": entry.semantic_cluster,
-            "conversation_id": entry.conversation_id,
-            "model": entry.model,
-            "prompt_tokens": entry.prompt_tokens,
-            "latency_ms": entry.latency_ms,
-            "cache_hit": entry.cache_hit,
-            "cache_tier": entry.cache_tier,
-        });
+        let request_payload = entry
+            .request_messages_snapshot
+            .clone()
+            .unwrap_or_else(|| {
+                let payload = serde_json::json!({
+                    "request_hash": entry.request_hash,
+                    "content_length": entry.content_length,
+                    "semantic_cluster": entry.semantic_cluster,
+                    "conversation_id": entry.conversation_id,
+                    "model": entry.model,
+                    "prompt_tokens": entry.prompt_tokens,
+                    "latency_ms": entry.latency_ms,
+                    "cache_hit": entry.cache_hit,
+                    "cache_tier": entry.cache_tier,
+                });
+                serde_json::to_string_pretty(&payload).unwrap_or_default()
+            });
+        let response_body = entry
+            .response_preview
+            .clone()
+            .unwrap_or_else(|| "(未启用 body 采集)".to_string());
         return Ok(Json(RequestDetail {
             cache_path,
-            request_payload: serde_json::to_string_pretty(&payload).unwrap_or_default(),
-            response_body: "(影子日志不含响应正文；仅记录脱敏元数据)".to_string(),
+            request_payload,
+            response_body,
             route_backend: "—".to_string(),
+            upstream_latency_ms: entry.upstream_latency_ms,
+            ttft_ms: entry.ttft_ms,
+            input_tokens: entry.input_tokens,
+            output_tokens: entry.output_tokens,
+            request_hash: Some(entry.request_hash.clone()),
+            semantic_cluster: Some(entry.semantic_cluster),
         }));
     }
 
@@ -1991,12 +2063,18 @@ async fn get_connection_config(State(state): State<Arc<AppState>>) -> Json<Conne
     })
 }
 
-async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListResponse> {
+async fn get_models(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelsQuery>,
+) -> Json<ModelListResponse> {
     let stored = state.models.read();
+    let profile_filter = query.profile_id.as_deref();
     let models: Vec<ModelInfo> = stored
         .models
         .iter()
+        .filter(|m| profile_filter.is_none_or(|p| m.profile_id == p))
         .map(|m| ModelInfo {
+            profile_id: m.profile_id.clone(),
             id: m.id.clone(),
             owned_by: m.owned_by.clone(),
             context_length: m.context_length,
@@ -2006,17 +2084,28 @@ async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListRespons
         })
         .collect();
     let total = models.len();
+    let synced_at = profile_filter
+        .and_then(|p| stored.synced_at_by_profile.get(p).cloned())
+        .or_else(|| {
+            if profile_filter.is_none() {
+                stored.synced_at_by_profile.values().next().cloned()
+            } else {
+                None
+            }
+        });
     Json(ModelListResponse {
         models,
         total,
-        synced_at: stored.synced_at.clone(),
+        profile_id: query.profile_id,
+        synced_at,
     })
 }
 
 async fn sync_models(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelSyncQuery>,
 ) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    crate::upstream::sync_models_internal(&state)
+    crate::upstream::sync_models_internal(&state, &query.profile_id)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
@@ -2024,8 +2113,9 @@ async fn sync_models(
 
 async fn post_models_detect(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelSyncQuery>,
 ) -> Result<Json<crate::types::ModelDetectResponse>, (StatusCode, String)> {
-    crate::upstream::detect_models_internal(&state)
+    crate::upstream::detect_models_internal(&state, &query.profile_id)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
@@ -2035,7 +2125,67 @@ async fn post_models_apply(
     State(state): State<Arc<AppState>>,
     Json(body): Json<crate::types::ModelApplyBody>,
 ) -> Result<Json<SyncResult>, StatusCode> {
-    let result = crate::upstream::apply_models_internal(&state, body.add, body.remove);
+    state.refresh_profile_providers().await;
+    let result = crate::upstream::apply_models_internal(
+        &state,
+        &body.profile_id,
+        body.add,
+        body.remove,
+    );
+    Ok(Json(result))
+}
+
+async fn put_upstream_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<crate::types::PutUpstreamProfileAdminRequest>,
+) -> Result<Json<crate::types::UpstreamProfileAdminView>, (StatusCode, String)> {
+    crate::upstream_profiles::put_profile(&state, &id, body)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn delete_upstream_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    crate::upstream_profiles::delete_profile(&state, &id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn get_upstream_profile_keys(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crate::types::UpstreamProfileKeysAdminView>, (StatusCode, String)> {
+    crate::upstream_profiles::get_profile_keys(&state, &id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn put_upstream_profile_keys(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<PutUpstreamKeysRequest>,
+) -> Result<Json<crate::types::UpstreamProfileKeysAdminView>, (StatusCode, String)> {
+    let keys = body.keys.clone();
+    let replace = matches!(body.mode, UpstreamKeysPutMode::Replace);
+    crate::upstream_profiles::put_profile_keys(&state, &id, keys, replace)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn post_upstream_profile_test(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crab_control::UpstreamTestResult>, (StatusCode, String)> {
+    let result = crate::upstream_profiles::test_profile(&state, &id)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(result))
 }
 
@@ -2309,8 +2459,9 @@ async fn update_upstream_config(
 
     *state.gateway_reachable.write() = true;
 
-    let sync = if state.pick_sync_api_key().is_some() {
-        match crate::upstream::sync_models_internal(&state).await {
+    let default_profile = state.default_profile_id();
+    let sync = if state.pick_sync_api_key(&default_profile).is_some() {
+        match crate::upstream::sync_models_internal(&state, &default_profile).await {
             Ok(s) => Some(s),
             Err(e) => {
                 tracing::warn!(error = %e, "Auto model sync after upstream save failed");

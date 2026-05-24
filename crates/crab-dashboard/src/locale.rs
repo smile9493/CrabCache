@@ -1153,8 +1153,32 @@ impl Translations {
     }
     pub fn pipeline_profiles_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "Profile 在 gateway.toml 的 [[upstream.profiles]] 中定义；修改后需重启网关",
-            Locale::EnUS => "Profiles are defined in gateway.toml [[upstream.profiles]]; restart gateway after file changes.",
+            Locale::ZhCN => "可在「上游」页管理 Profile；保存后立即生效",
+            Locale::EnUS => "Manage profiles on the Upstream page; changes apply immediately.",
+        }
+    }
+    pub fn upstream_profile_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 Profile",
+            Locale::EnUS => "Upstream profile",
+        }
+    }
+    pub fn upstream_provider_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "厂商 (provider)",
+            Locale::EnUS => "Provider",
+        }
+    }
+    pub fn upstream_preset_mimo(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "MiMo 预设",
+            Locale::EnUS => "MiMo preset",
+        }
+    }
+    pub fn upstream_new_profile_id(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "新建 Profile ID",
+            Locale::EnUS => "New profile ID",
         }
     }
     pub fn pipeline_save(self) -> &'static str {
@@ -2398,6 +2422,30 @@ impl Translations {
             Locale::EnUS => "Cache",
         }
     }
+    pub fn logs_col_input_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 T",
+            Locale::EnUS => "In Tok",
+        }
+    }
+    pub fn logs_col_output_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出 T",
+            Locale::EnUS => "Out Tok",
+        }
+    }
+    pub fn logs_col_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "首字",
+            Locale::EnUS => "TTFT",
+        }
+    }
+    pub fn logs_col_len(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "长度",
+            Locale::EnUS => "Len",
+        }
+    }
     pub fn logs_details(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "详情",
@@ -2468,6 +2516,42 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "缓存路径",
             Locale::EnUS => "Cache path",
+        }
+    }
+    pub fn logs_detail_upstream_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游延迟",
+            Locale::EnUS => "Upstream latency",
+        }
+    }
+    pub fn logs_detail_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "首字延迟",
+            Locale::EnUS => "TTFT",
+        }
+    }
+    pub fn logs_detail_input_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 Token",
+            Locale::EnUS => "Input tokens",
+        }
+    }
+    pub fn logs_detail_output_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出 Token",
+            Locale::EnUS => "Output tokens",
+        }
+    }
+    pub fn logs_detail_request_hash(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求哈希",
+            Locale::EnUS => "Request hash",
+        }
+    }
+    pub fn logs_detail_semantic_cluster(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义簇",
+            Locale::EnUS => "Semantic cluster",
         }
     }
     pub fn logs_select_hint(self) -> &'static str {

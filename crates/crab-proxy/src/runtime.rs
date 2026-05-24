@@ -282,4 +282,138 @@ impl RuntimeConfig {
             .cursor_models
             .clone()
     }
+
+    fn refresh_known_profile_ids(&self) -> Result<(), &'static str> {
+        let mut globals = self
+            .pipeline_globals
+            .write()
+            .map_err(|_| "pipeline globals lock poisoned")?;
+        let mut ids: Vec<String> = self
+            .upstream_profiles
+            .read()
+            .map_err(|_| "upstream profiles lock poisoned")?
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        globals.known_profile_ids = ids;
+        Ok(())
+    }
+
+    /// Insert or replace a profile and refresh pipeline globals.
+    pub fn upsert_profile(&self, profile: Arc<UpstreamProfileRuntime>) -> Result<(), String> {
+        let id = profile.id.clone();
+        {
+            let mut profiles = self
+                .upstream_profiles
+                .write()
+                .map_err(|_| "upstream profiles lock poisoned".to_string())?;
+            profiles.insert(id.clone(), profile);
+        }
+        self.refresh_known_profile_ids()
+            .map_err(|e| e.to_string())?;
+        if id == self.default_upstream_profile_id() {
+            self.sync_legacy_from_profile_id(&id)?;
+        }
+        Ok(())
+    }
+
+    /// Remove a profile. Fails if default or last profile.
+    pub fn remove_profile(&self, id: &str) -> Result<(), String> {
+        let default_id = self.default_upstream_profile_id();
+        if id == default_id {
+            return Err("cannot remove default upstream profile".to_string());
+        }
+        let mut profiles = self
+            .upstream_profiles
+            .write()
+            .map_err(|_| "upstream profiles lock poisoned".to_string())?;
+        if profiles.len() <= 1 {
+            return Err("cannot remove the only upstream profile".to_string());
+        }
+        if profiles.remove(id).is_none() {
+            return Err("unknown upstream profile".to_string());
+        }
+        drop(profiles);
+        self.refresh_known_profile_ids()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn replace_profile_pool(
+        &self,
+        profile_id: &str,
+        pool: Arc<UpstreamKeyPool>,
+    ) -> Result<(), String> {
+        let profiles = self
+            .upstream_profiles
+            .read()
+            .map_err(|_| "upstream profiles lock poisoned".to_string())?;
+        let profile = profiles
+            .get(profile_id)
+            .ok_or_else(|| "unknown upstream profile".to_string())?
+            .clone();
+        drop(profiles);
+        if let Ok(mut guard) = profile.upstream_pool.write() {
+            *guard = pool;
+        }
+        if profile_id == self.default_upstream_profile_id() {
+            self.replace_upstream_pool(
+                profile
+                    .upstream_pool
+                    .read()
+                    .map_err(|_| "upstream_pool lock poisoned".to_string())?
+                    .clone(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Copy default profile relay fields into legacy `RuntimeConfig` fields.
+    pub fn sync_legacy_from_profile_id(&self, profile_id: &str) -> Result<(), String> {
+        let profile = self
+            .profile(profile_id)
+            .ok_or_else(|| "unknown upstream profile".to_string())?;
+        if let Ok(mut base) = self.upstream_base_url.write() {
+            *base = profile.base_url.clone();
+        }
+        if let Ok(mut model) = self.fallback_model.write() {
+            *model = profile.fallback_model.clone();
+        }
+        let backends: Vec<crab_route::Backend> = profile
+            .router
+            .backends()
+            .iter()
+            .map(|b| (**b).clone())
+            .collect();
+        if let Ok(mut router) = self.router.write() {
+            router
+                .update(&backends)
+                .map_err(|e| e.to_string())?;
+        }
+        let pool = profile.resolve_upstream_pool();
+        self.replace_upstream_pool(pool);
+        if let Ok(mut health) = self.backend_health.write() {
+            let keep: std::collections::HashSet<String> =
+                backends.iter().map(|b| b.name.clone()).collect();
+            health.retain(|name, _| keep.contains(name));
+            for b in &backends {
+                health
+                    .entry(b.name.clone())
+                    .or_insert_with(crab_route::BackendHealth::new_healthy);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn profile_endpoints(&self, profile_id: &str) -> Vec<String> {
+        self.profile(profile_id)
+            .map(|p| {
+                p.router
+                    .backends()
+                    .iter()
+                    .map(|b| b.addr.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }

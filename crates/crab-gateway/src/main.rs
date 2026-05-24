@@ -312,6 +312,8 @@ fn main() -> Result<()> {
                 max_lines: trace_config.max_lines,
                 max_files: trace_config.max_files,
                 composition_debug: trace_config.composition_debug.clone(),
+                max_payload_bytes: trace_config.max_payload_bytes,
+                max_response_preview_bytes: trace_config.max_response_preview_bytes,
             });
             
             info!(
@@ -539,6 +541,7 @@ fn main() -> Result<()> {
         invalidate_rate: Arc::new(Mutex::new(InvalidateRateState::default())),
         invalidate_scan_timeout_secs: mgmt_cfg.invalidate_scan_timeout_secs,
         client_key_limiter: client_key_limiter.clone(),
+        upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();

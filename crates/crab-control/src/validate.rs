@@ -1,4 +1,9 @@
-//! Shared DeepSeek upstream validation helpers.
+//! Shared upstream API key validation helpers.
+
+/// Returns an error message if the API key looks invalid or placeholder.
+pub fn validate_upstream_key(secret: &str) -> Result<(), String> {
+    validate_deepseek_key(secret)
+}
 
 /// Returns an error message if the API key looks invalid or placeholder.
 pub fn validate_deepseek_key(secret: &str) -> Result<(), String> {

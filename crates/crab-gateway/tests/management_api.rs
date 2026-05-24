@@ -96,6 +96,7 @@ async fn test_management_state() -> Option<ManagementState> {
         )),
         invalidate_scan_timeout_secs: 300,
         client_key_limiter: ClientKeyLimiter::new(),
+        upstream_key_cooldown_secs: 60,
     })
 }
 
@@ -903,4 +904,66 @@ async fn cursor_models_http_roundtrip() {
     let view: crab_control::CursorModelsConfigView = serde_json::from_slice(&body).unwrap();
     assert!(view.aliases.contains_key("gpt-4o"));
     assert_eq!(view.aliases["gpt-4o"].upstream, "deepseek-v4-pro");
+}
+
+#[tokio::test]
+async fn upstream_profiles_list_and_upsert() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+
+    let put_body = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let keys_body = serde_json::json!({
+        "keys": [{ "id": "m1", "secret": "sk-mimo-test-key-12345678", "enabled": true }],
+        "mode": "replace"
+    });
+    let keys_resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(keys_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(keys_resp.status(), StatusCode::OK);
 }

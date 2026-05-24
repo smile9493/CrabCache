@@ -482,6 +482,7 @@ pub fn KeysPage() -> impl IntoView {
                                         <option value="auto">{t.keys_override_auto()}</option>
                                         <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
                                         <option value="deepseek_light">"deepseek_light"</option>
+                                        <option value="mimo_relay">"mimo_relay"</option>
                                         <option value="generic_relay">"generic_relay"</option>
                                     </select>
                                 </div>
@@ -738,7 +739,8 @@ pub fn KeysPage() -> impl IntoView {
                                                                                 <option value="auto">{t.keys_override_auto()}</option>
                                                                                 <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
                                                                                 <option value="deepseek_light">"deepseek_light"</option>
-                                                                                <option value="generic_relay">"generic_relay"</option>
+                                                                                <option value="mimo_relay">"mimo_relay"</option>
+                                        <option value="generic_relay">"generic_relay"</option>
                                                                             </select>
                                                                         </div>
                                                                         <div>
