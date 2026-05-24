@@ -12,8 +12,12 @@ use crate::upstream_pool::UpstreamKeyPool;
 use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
+use crate::trace_logger::composition_debug_tx;
 use crab_cache::{CacheEntry, CoalesceError, UsageInfo};
-use crab_composition::{extract_composition, CompositionHints};
+use crab_composition::{
+    extract_composition, extract_system_text, extract_tools_json, CompositionDebugEntry,
+    CompositionHints,
+};
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::{
     PipelineOverride, PipelineRequestContext, RequestPipeline, select_request_pipeline,
@@ -880,6 +884,34 @@ impl ProxyHttp for GatewayProxy {
                 ctx.request_composition = Some(extract_composition(&payload, &hints));
                 if let Some(ref comp) = ctx.request_composition {
                     global_metrics().record_composition_metrics(comp);
+                }
+
+                // ---- Write composition debug entry if debug logging is enabled ----
+                if let Some(debug_tx) = composition_debug_tx() {
+                    let request_hash = ctx.req_hash.clone().unwrap_or_else(|| {
+                        let mut hasher = sha2::Sha256::new();
+                        hasher.update(body);
+                        let h = hex::encode(hasher.finalize());
+                        h[..h.len().min(16)].to_string()
+                    });
+                    let system_text = extract_system_text(&payload, 100_000);
+                    let tools_json = extract_tools_json(&payload, 100_000);
+                    if system_text.is_some() || tools_json.is_some() {
+                        let debug_entry = CompositionDebugEntry {
+                            timestamp_ms: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64,
+                            request_hash,
+                            consumer: ctx.consumer.clone().unwrap_or_default(),
+                            domain: ctx.domain.clone().unwrap_or_default(),
+                            project_id: ctx.project_id.clone(),
+                            model: ctx.model.clone(),
+                            system_text,
+                            tools_json,
+                        };
+                        debug_tx.send(debug_entry).ok();
+                    }
                 }
             }
         }

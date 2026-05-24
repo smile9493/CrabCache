@@ -34,7 +34,10 @@ pub use proxy::GatewayProxy;
 pub use sse_rewrite::flush_streaming_reasoning;
 pub use cache_helpers::should_store_sse_body;
 pub use runtime::{DomainPolicy, RuntimeConfig};
-pub use trace_logger::{SanitizedLogEntry, TraceConfig, TraceLogger};
+pub use trace_logger::{
+    CompositionDebugConfig, SanitizedLogEntry, TraceConfig, TraceLogger,
+    set_composition_debug_tx, composition_debug_tx,
+};
 pub use debug_log::debug_agent_log;
 pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,

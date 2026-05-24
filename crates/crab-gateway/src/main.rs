@@ -311,13 +311,25 @@ fn main() -> Result<()> {
                 path: trace_config.path.clone(),
                 max_lines: trace_config.max_lines,
                 max_files: trace_config.max_files,
+                composition_debug: trace_config.composition_debug.clone(),
             });
+            
             info!(
                 path = %trace_config.path,
                 max_lines = trace_config.max_lines,
                 max_files = trace_config.max_files,
                 "Trace logging enabled"
             );
+            if let Some(ref debug_cfg) = trace_config.composition_debug {
+                if debug_cfg.enabled {
+                    info!(
+                        debug_path = %debug_cfg.path,
+                        debug_max_lines = debug_cfg.max_lines,
+                        debug_max_files = debug_cfg.max_files,
+                        "Composition debug logging enabled"
+                    );
+                }
+            }
             Some(Arc::new(logger))
         } else {
             None
@@ -481,29 +493,27 @@ fn main() -> Result<()> {
                         let result = tokio::net::TcpStream::connect(addr).await;
                         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-                        let health = match result {
-                            Ok(_) => {
-                                let mut h = crab_route::BackendHealth::new_healthy();
-                                h.last_check_ms = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as u64;
-                                h.latency_ms = elapsed_ms;
-                                h
-                            }
-                            Err(e) => {
-                                tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
-                                let mut h = crab_route::BackendHealth::new_unhealthy();
-                                h.last_check_ms = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as u64;
-                                h
-                            }
-                        };
-
                         if let Ok(mut health_map) = runtime.backend_health.write() {
-                            health_map.insert(name.clone(), health);
+                            let entry = health_map.entry(name.clone())
+                                .or_insert_with(crab_route::BackendHealth::new_healthy);
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            match result {
+                                Ok(_) => {
+                                    entry.healthy = true;
+                                    entry.last_check_ms = now_ms;
+                                    entry.latency_ms = elapsed_ms;
+                                    // Circuit breaker state is preserved
+                                }
+                                Err(e) => {
+                                    tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
+                                    entry.healthy = false;
+                                    entry.last_check_ms = now_ms;
+                                    // Circuit breaker state is preserved
+                                }
+                            }
                         }
                     }
                 }

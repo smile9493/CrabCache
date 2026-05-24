@@ -131,6 +131,48 @@ pub fn extract_composition(
     }
 }
 
+/// Extract concatenated system message text from the request payload,
+/// truncated to `max_chars`. Returns the raw text content (unhashed).
+pub fn extract_system_text(payload: &Value, max_chars: usize) -> Option<String> {
+    let messages = payload.get("messages")?.as_array()?;
+    let texts: Vec<&str> = messages
+        .iter()
+        .take_while(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        .filter_map(|m| m.get("content"))
+        .filter_map(|c| c.as_str())
+        .collect();
+    if texts.is_empty() {
+        return None;
+    }
+    let joined = texts.join("\n");
+    if joined.len() > max_chars {
+        let end = joined.floor_char_boundary(max_chars);
+        let mut truncated = joined[..end].to_string();
+        truncated.push_str("…<truncated>");
+        Some(truncated)
+    } else {
+        Some(joined)
+    }
+}
+
+/// Extract tools definition JSON string from the request payload,
+/// truncated to `max_chars`. Returns the raw JSON text (unhashed).
+pub fn extract_tools_json(payload: &Value, max_chars: usize) -> Option<String> {
+    let tools = payload.get("tools")?;
+    let json_str = serde_json::to_string(tools).ok()?;
+    if json_str == "null" {
+        return None;
+    }
+    if json_str.len() > max_chars {
+        let end = json_str.floor_char_boundary(max_chars);
+        let mut truncated = json_str[..end].to_string();
+        truncated.push_str("…<truncated>");
+        Some(truncated)
+    } else {
+        Some(json_str)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

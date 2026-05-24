@@ -646,6 +646,14 @@ pub use crab_control::{
 
 use crab_composition::CompositionSummary;
 
+// ── Composition Debug API types ──────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompositionDebugResponse {
+    pub entries: Vec<crab_composition::CompositionDebugEntry>,
+    pub total: usize,
+}
+
 // ── Composition API types ────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

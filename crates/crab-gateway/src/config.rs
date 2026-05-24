@@ -249,6 +249,8 @@ pub struct TraceConfig {
     pub max_lines: usize,
     #[serde(default = "default_max_files")]
     pub max_files: usize,
+    #[serde(default)]
+    pub composition_debug: Option<crab_proxy::CompositionDebugConfig>,
 }
 
 fn default_max_lines() -> usize {
@@ -266,6 +268,7 @@ impl Default for TraceConfig {
             path: "/var/log/crabcache/trace.jsonl".to_string(),
             max_lines: 10000,
             max_files: 5,
+            composition_debug: None,
         }
     }
 }

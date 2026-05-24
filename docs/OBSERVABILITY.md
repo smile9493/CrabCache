@@ -280,6 +280,52 @@ pub struct RoleCounts {
 
 页面每 **10 秒**轮询 summary 和 trends，浏览器标签页隐藏时自动暂停。
 
+## 组成调试日志（Composition Debug Logging）
+
+通过 `[trace_logging.composition_debug]` 配置项启用。启用后，网关会将**完整（未哈希的）system 消息文本和 tools 定义**写入独立的 JSONL 日志文件，用于离线组成分析。
+
+**⚠️ 安全警告：此文件包含原始提示内容，不应在生产中长期启用，或应配置严格的日志轮转。**
+
+### 配置
+
+```toml
+[trace_logging.composition_debug]
+enabled = false
+path = "/var/log/crabcache/trace-debug.jsonl"
+max_lines = 5000
+max_files = 3
+```
+
+环境变量：
+- `CRABCACHE_COMPOSITION_DEBUG_PATH`：覆盖调试日志路径（默认从 trace 路径自动派生）
+
+### CompositionDebugEntry 结构
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `timestamp_ms` | u64 | Unix 毫秒时间戳 |
+| `request_hash` | String | 与 trace 日志 `request_hash` 关联 |
+| `consumer` | String | API Key name / consumer 标签 |
+| `domain` | String | 业务域 |
+| `project_id` | Option<String> | 多租户项目 ID |
+| `model` | String | 请求模型 |
+| `system_text` | Option<String> | 完整系统消息文本（最大 100K 字符，超长截断） |
+| `tools_json` | Option<String> | 完整工具定义 JSON（最大 100K 字符，超长截断） |
+
+### Admin 调试 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/composition/debug?hours=24&limit=100&request_hash=&consumer=&project_id=` | 列出调试条目，支持按哈希/消费者/项目筛选 |
+
+### Dashboard 组成调试日志视图
+
+组成页面底部显示"Composition Debug Log"区域，支持：
+- 按 `request_hash` 搜索
+- 按 `consumer` 筛选
+- 点击条目打开侧边面板查看完整 system 文本和 tools 定义
+- 显示 system/tools 存在标记（蓝色/绿色徽标）
+
 ### Prometheus 组成指标
 
 | 指标 | 类型 | 标签 | 描述 |

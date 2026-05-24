@@ -533,3 +533,22 @@ pub async fn fetch_composition_summary(
 pub async fn fetch_composition_trends() -> Result<crate::types::CompositionTrendsResponse, String> {
     fetch_json(&format!("{}/composition/trends", API_BASE)).await
 }
+
+pub async fn fetch_composition_debug(
+    hours: u32,
+    limit: Option<usize>,
+    request_hash: Option<&str>,
+    consumer: Option<&str>,
+) -> Result<crate::types::CompositionDebugResponse, String> {
+    let mut path = format!("{}/composition/debug?hours={}", API_BASE, hours);
+    if let Some(rh) = request_hash.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&request_hash={}", percent_encode_query(rh)));
+    }
+    if let Some(c) = consumer.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&consumer={}", percent_encode_query(c)));
+    }
+    if let Some(l) = limit {
+        path.push_str(&format!("&limit={}", l));
+    }
+    fetch_json(&path).await
+}
