@@ -626,9 +626,12 @@ async fn put_upstream_relay(
     })?;
 
     if let Ok(mut health) = state.runtime.backend_health.write() {
-        health.clear();
+        let keep: std::collections::HashSet<String> =
+            router.backends().iter().map(|b| b.name.clone()).collect();
+        health.retain(|name, _| keep.contains(name));
         for b in router.backends() {
-            health.insert(b.name.clone(), crab_route::BackendHealth::new_healthy());
+            health.entry(b.name.clone())
+                .or_insert_with(crab_route::BackendHealth::new_healthy);
         }
     }
     drop(router);
@@ -1390,9 +1393,12 @@ async fn put_backends(
     })?;
 
     if let Ok(mut health) = state.runtime.backend_health.write() {
-        health.clear();
+        let keep: std::collections::HashSet<String> =
+            router.backends().iter().map(|b| b.name.clone()).collect();
+        health.retain(|name, _| keep.contains(name));
         for b in router.backends() {
-            health.insert(b.name.clone(), crab_route::BackendHealth::new_healthy());
+            health.entry(b.name.clone())
+                .or_insert_with(crab_route::BackendHealth::new_healthy);
         }
     }
 

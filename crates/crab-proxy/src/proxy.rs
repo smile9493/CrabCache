@@ -28,7 +28,7 @@ use crab_reasoning::{
     prepare_generic_request, prepare_light_request, prepare_upstream_request, rewrite_response_body,
     rewrite_sse_chunk,
 };
-use crab_route::extract_affinity_key;
+use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
@@ -1340,7 +1340,19 @@ impl ProxyHttp for GatewayProxy {
         let router = &profile.router;
 
         // Transition timed-out open circuits to half-open before backend selection.
-        {
+        // Read-first: only acquire write lock if there are open circuits.
+        let has_open = {
+            let health = self
+                .state
+                .runtime
+                .backend_health
+                .read()
+                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            health
+                .values()
+                .any(|h| matches!(h.circuit_state, CircuitState::Open))
+        };
+        if has_open {
             let mut health = self
                 .state
                 .runtime
@@ -1557,7 +1569,16 @@ impl ProxyHttp for GatewayProxy {
             if let Some(ref id) = key_id {
                 pool.report_rate_limited(id);
                 global_metrics().record_upstream_key_request(id, "rate_limited");
-                if !ctx.is_streaming && ctx.upstream.retry_budget > 0 {
+
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    key_preview = %id,
+                    status = 429,
+                    retry_budget = ctx.upstream.retry_budget,
+                    "upstream rate limited, attempting key rotation"
+                );
+
+                if ctx.upstream.retry_budget > 0 {
                     ctx.upstream.retry_budget -= 1;
                     if let Some(new_guard) =
                         UpstreamKeyPool::rotate_after_rate_limit(&pool, id)

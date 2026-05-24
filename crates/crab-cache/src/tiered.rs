@@ -5,15 +5,36 @@ use crab_metrics::{CacheTier, global_metrics};
 use moka::future::Cache;
 use moka::policy::Expiry;
 use redis::{AsyncCommands, cmd};
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 /// Custom Moka expiry that resolves per-entry TTL from the shared `TtlConfig`,
-/// picking up hot-reloaded TTL changes on every cache read.
+/// with internal caching to avoid `RwLock::read()` on every access.
+///
+/// The cached TTL copy is refreshed at most once per second. `expire_after_read`
+/// returns `None` so that cache reads do NOT extend the entry's lifetime (the TTL
+/// set at creation/update time is authoritative; Management API TTL decreases are
+/// picked up via `expire_after_update` and on the next write-through from L1).
 struct DynamicTtlExpiry {
     ttl_config: Arc<RwLock<TtlConfig>>,
+    cached: Mutex<(TtlConfig, Instant)>,
+}
+
+impl DynamicTtlExpiry {
+    fn resolve_ttl(&self, model: &str) -> Option<Duration> {
+        let mut cache = match self.cached.lock() {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+        if cache.1.elapsed() > Duration::from_secs(1) {
+            *cache = match self.ttl_config.read() {
+                Ok(cfg) => (cfg.clone(), Instant::now()),
+                Err(_) => return None,
+            };
+        }
+        Some(Duration::from_secs(cache.0.resolve(model, None)))
+    }
 }
 
 impl Expiry<String, CacheEntry> for DynamicTtlExpiry {
@@ -23,28 +44,19 @@ impl Expiry<String, CacheEntry> for DynamicTtlExpiry {
         value: &CacheEntry,
         _created_at: Instant,
     ) -> Option<Duration> {
-        let ttl = self
-            .ttl_config
-            .read()
-            .ok()?
-            .resolve(&value.model, None);
-        Some(Duration::from_secs(ttl))
+        self.resolve_ttl(&value.model)
     }
 
     fn expire_after_read(
         &self,
         _key: &String,
-        value: &CacheEntry,
+        _value: &CacheEntry,
         _read_at: Instant,
         _duration_until_expiry: Option<Duration>,
         _last_modified_at: Instant,
     ) -> Option<Duration> {
-        let ttl = self
-            .ttl_config
-            .read()
-            .ok()?
-            .resolve(&value.model, None);
-        Some(Duration::from_secs(ttl))
+        // Do NOT extend TTL on read — the entry expires at its originally-set time.
+        None
     }
 
     fn expire_after_update(
@@ -54,12 +66,7 @@ impl Expiry<String, CacheEntry> for DynamicTtlExpiry {
         _updated_at: Instant,
         _duration_until_expiry: Option<Duration>,
     ) -> Option<Duration> {
-        let ttl = self
-            .ttl_config
-            .read()
-            .ok()?
-            .resolve(&value.model, None);
-        Some(Duration::from_secs(ttl))
+        self.resolve_ttl(&value.model)
     }
 }
 
@@ -108,6 +115,12 @@ impl TieredCache {
             .max_capacity(l0_config.max_capacity)
             .expire_after(DynamicTtlExpiry {
                 ttl_config: ttl_config.clone(),
+                cached: Mutex::new(
+                    ttl_config
+                        .read()
+                        .map(|cfg| (cfg.clone(), Instant::now()))
+                        .unwrap_or((TtlConfig::new(3600), Instant::now())),
+                ),
             })
             .support_invalidation_closures()
             .build();

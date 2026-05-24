@@ -61,7 +61,7 @@ pub struct BackendHealth {
     pub circuit_state: CircuitState,
     pub consecutive_failures: u32,
     pub half_open_successes: u32,
-    pub circuit_opened_at_ms: u64,
+    pub circuit_opened_at: Option<std::time::Instant>,
 }
 
 impl BackendHealth {
@@ -73,7 +73,7 @@ impl BackendHealth {
             circuit_state: CircuitState::Closed,
             consecutive_failures: 0,
             half_open_successes: 0,
-            circuit_opened_at_ms: 0,
+            circuit_opened_at: None,
         }
     }
 
@@ -85,26 +85,18 @@ impl BackendHealth {
             circuit_state: CircuitState::Closed,
             consecutive_failures: 0,
             half_open_successes: 0,
-            circuit_opened_at_ms: 0,
+            circuit_opened_at: None,
         }
-    }
-
-    fn now_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
     }
 
     pub fn record_success(&mut self, config: &CircuitBreakerConfig) {
         self.consecutive_failures = 0;
-        self.latency_ms = Self::now_ms();
         match self.circuit_state {
             CircuitState::HalfOpen => {
                 self.half_open_successes += 1;
                 if self.half_open_successes >= config.success_threshold {
                     self.circuit_state = CircuitState::Closed;
-                    self.circuit_opened_at_ms = 0;
+                    self.circuit_opened_at = None;
                     self.half_open_successes = 0;
                 }
             }
@@ -119,26 +111,28 @@ impl BackendHealth {
                 if self.consecutive_failures >= config.failure_threshold {
                     self.circuit_state = CircuitState::Open;
                     self.healthy = false;
-                    self.circuit_opened_at_ms = Self::now_ms();
+                    self.circuit_opened_at = Some(std::time::Instant::now());
                 }
             }
             CircuitState::HalfOpen => {
                 self.circuit_state = CircuitState::Open;
                 self.healthy = false;
-                self.circuit_opened_at_ms = Self::now_ms();
+                self.circuit_opened_at = Some(std::time::Instant::now());
             }
             CircuitState::Open => {}
         }
     }
 
     pub fn check_open_circuit(&mut self, config: &CircuitBreakerConfig) {
-        if self.circuit_state == CircuitState::Open
-            && self.circuit_opened_at_ms > 0
-            && Self::now_ms().saturating_sub(self.circuit_opened_at_ms) >= config.timeout_ms
-        {
-            self.circuit_state = CircuitState::HalfOpen;
-            self.healthy = true;
-            self.half_open_successes = 0;
+        if self.circuit_state == CircuitState::Open {
+            if let Some(opened_at) = self.circuit_opened_at {
+                if opened_at.elapsed().as_millis() as u64 >= config.timeout_ms {
+                    self.circuit_state = CircuitState::HalfOpen;
+                    self.healthy = true;
+                    self.half_open_successes = 0;
+                    self.circuit_opened_at = None;
+                }
+            }
         }
     }
 }

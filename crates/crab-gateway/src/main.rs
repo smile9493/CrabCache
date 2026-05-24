@@ -584,6 +584,21 @@ fn main() -> Result<()> {
         client_key_rate_limiter,
     });
 
+    // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
+    {
+        let rl = state.client_key_rate_limiter.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("rate limiter pruner runtime");
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                loop {
+                    interval.tick().await;
+                    rl.prune_stale(std::time::Duration::from_secs(600));
+                }
+            });
+        });
+    }
+
     let proxy = GatewayProxy::new(state);
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
     proxy_service.add_tcp(&config.listen_addr);
