@@ -394,6 +394,60 @@ curl -sf -H "x-admin-key: $CRABCACHE_ADMIN_KEY" http://127.0.0.1:18001/api/admin
 curl -sf http://127.0.0.1:9090/metrics | head
 ```
 
+## 基础设施监控
+
+Admin Dashboard 的「基础设施」页面显示与网关同 `docker-compose` 项目的容器资源占用与宿主机磁盘使用情况。
+
+### 采集机制
+
+- Admin 容器通过 **只读 Docker Engine API** (`/var/run/docker.sock`) 采集所有同项目容器的 CPU、内存与网络速率。
+- 容器过滤依据 Compose 自动标签 `com.docker.compose.project=<project>`；项目名受环境变量 `CRABCACHE_COMPOSE_PROJECT`（或 `COMPOSE_PROJECT_NAME`）控制，默认 `crabcache`。
+- **单一后台采集协程**周期性调用 Docker API，写入内存快照缓存；HTTP `GET /snapshot` 只读缓存，不在请求路径上采集。
+- 采集间隔默认 `max(CRABCACHE_INFRA_CACHE_TTL_SECS, 5)`（可用 `CRABCACHE_INFRA_COLLECT_INTERVAL_SECS` 覆盖）；历史环采样间隔默认 60s（`CRABCACHE_INFRA_SAMPLE_INTERVAL_SECS`）。
+- 前端每 10 秒轮询 `/api/admin/infra/snapshot`。
+
+### 数据类型
+
+| 字段 | 来源 | 含义 |
+|------|------|------|
+| `cpu_percent` | Docker stats CPU delta / system delta | 按 CPU 核数归一化的百分比（首次采样为 `null`） |
+| `mem_usage_bytes` |`memory_stats.usage` | 当前 RSS 内存 |
+| `mem_limit_bytes` | `memory_stats.limit` | 容器内存上限（无限制时为宿主机内存） |
+| `net_rx_bps` / `net_tx_bps` | 网络接口累计值的差分速率 | 字节/秒（首次采样为 `null`） |
+| `host_disks[].usage_percent` | `statvfs(/)` | 宿主机根分区使用率；若 `/var/lib/docker` 为独立挂载点则额外展示 |
+
+### API
+
+| 方法 | 路径 | 行为 |
+|------|------|------|
+| `GET` | `/api/admin/infra/snapshot` | 容器表 + 宿主机磁盘 + `collected_at` Unix 秒 |
+| `GET` | `/api/admin/infra/status` | 轻量：`docker_connected`、`compose_project`、`history_sample_count`、`last_collected_at` |
+| `GET` | `/api/admin/infra/timeseries` | 历史曲线（`window=1h\|24h`，`container_id` 可选） |
+| `POST` | `/api/admin/infra/speed-test` | 异步带宽测试（`direction`: download/upload/both） |
+| `POST` | `/api/admin/infra/speed-test/upload` | 上传探针（`job_id` + `token`，无 Admin Key；有任务 TTL 与次数限制） |
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CRABCACHE_COMPOSE_PROJECT` | `crabcache` | 用于过滤容器的 Docker Compose 项目名 |
+| `CRABCACHE_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine API 地址 |
+| `CRABCACHE_DOCKER_ALLOW_TCP` | （未设置） | 设为 `1` 时 Unix 失败才回退 `127.0.0.1:2375` |
+| `CRABCACHE_INFRA_CACHE_TTL_SECS` | `5` | 采集间隔下限参考（秒） |
+| `CRABCACHE_INFRA_COLLECT_INTERVAL_SECS` | `max(TTL,5)` | Docker 采集周期（秒） |
+| `CRABCACHE_INFRA_SAMPLE_INTERVAL_SECS` | `60` | 写入历史环的采样周期（秒） |
+| `CRABCACHE_SPEED_TEST_*` | 见 `.env.example` | 测速 URL 白名单、字节数、任务 TTL、上传上限等 |
+
+### 部署要求
+
+- Admin 容器必须挂载 `docker.sock`（只读）：
+  ```yaml
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  ```
+- **安全**：`docker.sock` 等价宿主机 root 权限。仅 Admin 容器使用只读挂载，且 Admin API 已由 `X-Admin-Key` 保护。将 Admin 暴露到公网时必须使用强密钥。
+- **裸机开发**：无 Docker Socket 时页面显示「Docker 不可用」提示，不影响其他 Admin 功能。
+
 ## 限制
 
 - Admin 指标历史现由 SQLite `data/metrics.sqlite` 持久化；重启 `crab-admin` 后时序数据从数据库恢复（网关上的 Counter 不受影响）。

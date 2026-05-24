@@ -69,6 +69,8 @@ services:
     volumes:
       - gateway_logs:/app/logs:ro
       - admin_data:/app/data
+      # Docker socket (read-only) for infra container monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # 1Panel OpenResty site configs (read-only) for Keys page base URL auto-detect
       - /opt/1panel/www/conf.d:/host/openresty/conf.d:ro
     environment:
@@ -83,6 +85,9 @@ services:
       - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-admin}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
       - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:-}
+      # Infra container monitoring
+      - CRABCACHE_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME:-crabcache}
+      - CRABCACHE_INFRA_CACHE_TTL_SECS=5
     depends_on:
       gateway:
         condition: service_healthy

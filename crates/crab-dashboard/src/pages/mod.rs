@@ -2,6 +2,7 @@ pub mod cache_ops;
 pub mod composition;
 pub mod cursor_models;
 pub mod domains;
+pub mod infra;
 pub mod keys;
 pub mod live;
 pub mod logs;

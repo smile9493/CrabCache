@@ -1,6 +1,8 @@
+use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
 use crate::types::{DomainPolicy, ReasoningConfig, TraceSummary};
+use std::collections::HashMap;
 use std::time::Instant;
 use crab_control::{GatewayAdminClient, GatewayStatus, UpstreamTestResult};
 use dashmap::DashMap;
@@ -84,6 +86,16 @@ pub struct AppState {
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
     /// Timestamp (ms) of the last trace entry synced for key usage accumulation.
     pub key_usage_last_synced: parking_lot::Mutex<u64>,
+    /// Docker client for container monitoring (None if socket unavailable).
+    pub infra_docker: Option<bollard::Docker>,
+    /// Previous raw counters for infra rate calculation.
+    pub infra_prev: RwLock<HashMap<String, ContainerRawSample>>,
+    /// Cached infra snapshot for TTL-based dedup.
+    pub infra_cache: crate::infra::InfraCache,
+    /// In-memory ring of infra metric samples for charts.
+    pub infra_history: RwLock<crate::infra::history::InfraHistoryRing>,
+    /// Active bandwidth test jobs.
+    pub infra_speed_jobs: Arc<crate::infra::speed_test::SpeedTestJobs>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -405,6 +417,11 @@ impl AppState {
                     .collect(),
             ),
             last_invalidate: RwLock::new(None),
+            infra_docker: crate::infra::docker::try_connect(&crate::infra::resolve_docker_host()),
+            infra_prev: RwLock::new(HashMap::new()),
+            infra_cache: crate::infra::InfraCache::new(),
+            infra_history: RwLock::new(crate::infra::history::InfraHistoryRing::new()),
+            infra_speed_jobs: Arc::new(crate::infra::speed_test::SpeedTestJobs::new()),
         }
     }
 

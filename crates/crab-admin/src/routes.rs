@@ -69,7 +69,14 @@ fn gateway_error_message(err: &crab_control::ControlError) -> String {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let upload_probe = Router::new()
+        .route(
+            "/api/admin/infra/speed-test/upload",
+            post(post_infra_speed_test_upload),
+        )
+        .with_state(state.clone());
+
+    let protected = Router::new()
         .route("/api/admin/metrics", get(get_metrics))
         .route("/api/admin/overview", get(get_overview))
         .route("/api/admin/overview/core", get(get_overview_core))
@@ -160,8 +167,19 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/composition/debug",
             get(crate::composition::get_composition_debug),
         )
+        // ── Infra (container / host monitoring) ──
+        .route("/api/admin/infra/snapshot", get(get_infra_snapshot))
+        .route("/api/admin/infra/status", get(get_infra_status))
+        .route("/api/admin/infra/timeseries", get(get_infra_timeseries))
+        .route("/api/admin/infra/speed-test", post(post_infra_speed_test))
+        .route(
+            "/api/admin/infra/speed-test/{job_id}",
+            get(get_infra_speed_test_job),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
-        .with_state(state)
+        .with_state(state);
+
+    upload_probe.merge(protected)
 }
 
 /// Request body for changing the admin API key.
@@ -2554,6 +2572,188 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
 
     let alpha = (n as f64 * sum_xy - sum_x * sum_y) / denominator;
     -alpha
+}
+
+// ── Infra handlers ──────────────────────────────────────────────
+
+async fn get_infra_snapshot(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::infra::types::InfraSnapshot> {
+    if let Some(cached) = state.infra_cache.get_latest() {
+        return Json(cached);
+    }
+    Json(crate::infra::collector::empty_snapshot(
+        state.infra_docker.is_some(),
+        Some("collector initializing".into()),
+    ))
+}
+
+async fn get_infra_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::infra::types::InfraStatus> {
+    Json(crate::infra::types::InfraStatus {
+        docker_connected: state.infra_docker.is_some(),
+        compose_project: crate::infra::resolve_compose_project(),
+        poll_hint_secs: 10,
+        history_sample_count: state.infra_history.read().sample_count(),
+        last_collected_at: state.infra_cache.latest_collected_at(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct InfraTimeseriesQuery {
+    #[serde(default = "default_infra_timeseries_window")]
+    window: String,
+    #[serde(default)]
+    container_id: String,
+}
+
+fn default_infra_timeseries_window() -> String {
+    "1h".to_string()
+}
+
+fn infra_window_secs(window: &str) -> u64 {
+    match window {
+        "24h" => 24 * 3600,
+        _ => 3600,
+    }
+}
+
+async fn get_infra_timeseries(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<InfraTimeseriesQuery>,
+) -> Json<crate::infra::types::InfraTimeseriesResponse> {
+    let window_secs = infra_window_secs(&q.window);
+    let points: Vec<_> = state
+        .infra_history
+        .read()
+        .points_since(window_secs)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    let container_id = if q.container_id.is_empty() {
+        state
+            .infra_cache
+            .get_latest()
+            .and_then(|s| s.containers.first().map(|c| c.container_id.clone()))
+            .unwrap_or_default()
+    } else {
+        q.container_id.clone()
+    };
+
+    let (cpu, mem, rx, tx) =
+        crate::infra::history::to_timeseries(&points, &container_id);
+
+    let map_pts = |pts: Vec<crate::infra::history::ChartPoint>| {
+        pts.into_iter()
+            .map(|p| crate::infra::types::InfraChartPoint {
+                timestamp: p.timestamp,
+                value: p.value,
+            })
+            .collect()
+    };
+
+    Json(crate::infra::types::InfraTimeseriesResponse {
+        window: q.window,
+        container_id,
+        cpu: map_pts(cpu),
+        memory: map_pts(mem),
+        net_rx: map_pts(rx),
+        net_tx: map_pts(tx),
+        sample_count: points.len(),
+    })
+}
+
+async fn post_infra_speed_test(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<crate::infra::types::SpeedTestRequest>,
+) -> Result<(StatusCode, Json<crate::infra::types::SpeedTestAccepted>), StatusCode> {
+    let direction = match body.direction.to_lowercase().as_str() {
+        "download" => crate::infra::speed_test::SpeedTestDirection::Download,
+        "upload" => crate::infra::speed_test::SpeedTestDirection::Upload,
+        "both" => crate::infra::speed_test::SpeedTestDirection::Both,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let (job_id, upload_token) = state
+        .infra_speed_jobs
+        .try_start(direction)
+        .map_err(|_| StatusCode::CONFLICT)?;
+
+    let jobs = Arc::clone(&state.infra_speed_jobs);
+    match direction {
+        crate::infra::speed_test::SpeedTestDirection::Download => {
+            let jid = job_id.clone();
+            tokio::spawn(async move {
+                crate::infra::speed_test::run_download_test(jid, jobs).await;
+            });
+        }
+        crate::infra::speed_test::SpeedTestDirection::Both => {
+            let jid = job_id.clone();
+            tokio::spawn(async move {
+                crate::infra::speed_test::run_both_test(jid, jobs).await;
+            });
+        }
+        crate::infra::speed_test::SpeedTestDirection::Upload => {
+            state.infra_speed_jobs.set_running(&job_id);
+        }
+    }
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::infra::types::SpeedTestAccepted {
+            job_id,
+            upload_token,
+        }),
+    ))
+}
+
+async fn get_infra_speed_test_job(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> Result<Json<crate::infra::speed_test::SpeedTestJobView>, StatusCode> {
+    state
+        .infra_speed_jobs
+        .get(&job_id)
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+#[derive(Debug, Deserialize)]
+struct SpeedTestUploadQuery {
+    job_id: String,
+    token: String,
+}
+
+async fn post_infra_speed_test_upload(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<SpeedTestUploadQuery>,
+    request: Request,
+) -> Result<StatusCode, StatusCode> {
+    if !state
+        .infra_speed_jobs
+        .validate_upload_token(&q.job_id, &q.token)
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let max_bytes = crate::infra::speed_test::max_upload_bytes();
+    let start = std::time::Instant::now();
+    let body = request.into_body();
+    let bytes = axum::body::to_bytes(body, max_bytes)
+        .await
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+    let elapsed = start.elapsed().as_secs_f64();
+    state
+        .infra_speed_jobs
+        .try_record_upload(&q.job_id, bytes.len() as u64, elapsed)
+        .map_err(|code| match code {
+            "job_expired" => StatusCode::GONE,
+            "too_many_upload_attempts" => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::BAD_REQUEST,
+        })?;
+    Ok(StatusCode::OK)
 }
 
 #[cfg(test)]

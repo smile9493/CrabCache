@@ -552,3 +552,64 @@ pub async fn fetch_composition_debug(
     }
     fetch_json(&path).await
 }
+
+// ── Infra API ───────────────────────────────────────────────────
+
+pub async fn fetch_infra_snapshot() -> Result<crate::types::InfraSnapshot, String> {
+    fetch_json(&format!("{}/infra/snapshot", API_BASE)).await
+}
+
+pub async fn fetch_infra_status() -> Result<crate::types::InfraStatus, String> {
+    fetch_json(&format!("{}/infra/status", API_BASE)).await
+}
+
+pub async fn fetch_infra_timeseries(
+    window: &str,
+    container_id: Option<&str>,
+) -> Result<crate::types::InfraTimeseriesResponse, String> {
+    let mut url = format!("{}/infra/timeseries?window={}", API_BASE, window);
+    if let Some(id) = container_id.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&container_id={}", percent_encode_query(id)));
+    }
+    fetch_json(&url).await
+}
+
+pub async fn post_infra_speed_test(
+    direction: &str,
+) -> Result<crate::types::SpeedTestAccepted, String> {
+    post_json(
+        &format!("{}/infra/speed-test", API_BASE),
+        &serde_json::json!({ "direction": direction }),
+    )
+    .await
+}
+
+pub async fn fetch_infra_speed_test_job(
+    job_id: &str,
+) -> Result<crate::types::SpeedTestJobView, String> {
+    fetch_json(&format!("{}/infra/speed-test/{}", API_BASE, job_id)).await
+}
+
+pub async fn post_infra_speed_test_upload(
+    job_id: &str,
+    token: &str,
+    body: Vec<u8>,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/infra/speed-test/upload?job_id={}&token={}",
+        API_BASE,
+        percent_encode_query(job_id),
+        percent_encode_query(token),
+    );
+    let (builder, epoch) = apply_admin_auth(gloo_net::http::Request::post(&url));
+    let resp = builder
+        .body(body)
+        .map_err(|e| format!("Request error: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+    Ok(())
+}
