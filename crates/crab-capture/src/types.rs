@@ -94,7 +94,7 @@ pub struct RawCaptureEntry {
     pub stream: bool,
     pub client_body_bytes: u64,
     pub upstream_body_bytes: u64,
-    /// client_body_bytes - upstream_body_bytes (positive = upstream is larger).
+    /// upstream_body_bytes - client_body_bytes (positive = upstream is larger).
     pub delta_bytes: i64,
     pub structure: StructureDiff,
     #[serde(skip_serializing_if = "Option::is_none")]

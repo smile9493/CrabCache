@@ -91,10 +91,10 @@ impl Translations {
             Locale::EnUS => "Capture",
         }
     }
-    pub fn capture_loading_list(self) -> &'static str {
+    pub fn tab_log_manage(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "正在加载捕获记录…",
-            Locale::EnUS => "Loading captures...",
+            Locale::ZhCN => "日志管理",
+            Locale::EnUS => "Log Mgmt",
         }
     }
     pub fn capture_empty(self) -> &'static str {
@@ -327,12 +327,6 @@ impl Translations {
             Locale::EnUS => "Refresh",
         }
     }
-    pub fn capture_window_label(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "近 24 小时",
-            Locale::EnUS => "Last 24h",
-        }
-    }
     pub fn capture_list_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "捕获列表",
@@ -417,16 +411,16 @@ impl Translations {
             Locale::EnUS => "Thinking",
         }
     }
+    pub fn capture_badge_sse(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式",
+            Locale::EnUS => "SSE",
+        }
+    }
     pub fn capture_badge_large_delta(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "大包体",
             Locale::EnUS => "Large delta",
-        }
-    }
-    pub fn capture_stat_subtitle(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "24 小时窗口",
-            Locale::EnUS => "24h window",
         }
     }
     pub fn tab_config(self) -> &'static str {
