@@ -825,7 +825,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             }
                                                         }
                                                     >
-                                                        {move || if testing_all.get() { "Testing..." } else { "Test All Quotas" }}
+                                                        {move || if testing_all.get() { t.upstream_testing_all() } else { t.upstream_test_all_quotas() }}
                                                     </button>
                                                     <button
                                                         type="button"
@@ -834,7 +834,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             key_test_results.set(HashMap::new());
                                                         }
                                                     >
-                                                        "Clear Results"
+                                                        {t.upstream_clear_results()}
                                                     </button>
                                                 </div>
 
@@ -846,10 +846,10 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 <th>{t.upstream_pool_col_preview()}</th>
                                                                 <th>{t.upstream_pool_col_account()}</th>
                                                                 <th>{t.upstream_pool_col_enabled()}</th>
-                                                                <th>"Quota"</th>
+                                                                <th>{t.upstream_pool_col_quota()}</th>
                                                                 <th>{t.upstream_pool_col_inflight()}</th>
                                                                 <th>{t.upstream_pool_col_cooldown()}</th>
-                                                                <th>"Test"</th>
+                                                                <th>{t.upstream_pool_col_test()}</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -915,12 +915,12 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                         None => {
                                                                                             if result.ok {
                                                                                                 view! {
-                                                                                                    <span class="text-xs text-accent">"OK"</span>
+                                                                                                    <span class="text-xs text-accent">{t.upstream_quota_available()}</span>
                                                                                                 }.into_any()
                                                                                             } else {
                                                                                                 let err_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
                                                                                                 view! {
-                                                                                                    <span class="text-xs text-error" title={err_msg}>"Fail"</span>
+                                                                                                    <span class="text-xs text-error" title={err_msg}>{t.upstream_quota_exhausted()}</span>
                                                                                                 }.into_any()
                                                                                             }
                                                                                         }
@@ -978,7 +978,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                             }
                                                                                         }
                                                                                     >
-                                                                                        {if is_testing { "..." } else { "Test" }}
+                                                                                        {if is_testing { "..." } else { t.upstream_pool_col_test() }}
                                                                                     </button>
                                                                                 }
                                                                             }}
@@ -1055,7 +1055,7 @@ pub fn UpstreamPage() -> impl IntoView {
                 <div class="space-y-6">
                     <div class="glass-card space-y-4">
                         <h3 class="text-sm font-semibold text-theme">
-                            "Connection Test"
+                            {t.upstream_connection_test_title()}
                         </h3>
                         
                         <div class="test-result-panel">
@@ -1137,9 +1137,10 @@ pub fn UpstreamPage() -> impl IntoView {
     }
 }
 
-/// Displays a quota progress bar for an upstream key.
+/// Displays a quota progress bar for an upstream key (balance in CNY).
 #[component]
 fn QuotaProgressBar(quota: KeyQuotaInfo) -> impl IntoView {
+    let t = use_translations();
     let percentage = match (quota.balance, quota.total_granted) {
         (Some(b), Some(g)) if g > 0.0 => Some((b / g * 100.0).clamp(0.0, 100.0)),
         _ => None,
@@ -1153,8 +1154,8 @@ fn QuotaProgressBar(quota: KeyQuotaInfo) -> impl IntoView {
     };
 
     let available_icon = match quota.is_available {
-        Some(true) => view! { <span class="text-success text-xs mr-1">{"OK"}</span> }.into_any(),
-        Some(false) => view! { <span class="text-error text-xs mr-1">{"X"}</span> }.into_any(),
+        Some(true) => view! { <span class="text-success text-xs mr-1">{t.upstream_quota_available()}</span> }.into_any(),
+        Some(false) => view! { <span class="text-error text-xs mr-1">{t.upstream_quota_exhausted()}</span> }.into_any(),
         None => view! { <span></span> }.into_any(),
     };
 
@@ -1165,16 +1166,16 @@ fn QuotaProgressBar(quota: KeyQuotaInfo) -> impl IntoView {
                 {match (quota.balance, quota.total_granted) {
                     (Some(b), Some(g)) => view! {
                         <span class="text-xs font-mono">
-                            {format!("${:.2} / ${:.2}", b, g)}
+                            {format!("CNY {:.2} / {:.2}", b, g)}
                         </span>
                     }.into_any(),
                     (Some(b), _) => view! {
                         <span class="text-xs font-mono">
-                            {format!("${:.2}", b)}
+                            {format!("CNY {:.2}", b)}
                         </span>
                     }.into_any(),
                     _ => view! {
-                        <span class="text-xs text-theme-muted">"N/A"</span>
+                        <span class="text-xs text-theme-muted">{t.upstream_quota_na()}</span>
                     }.into_any(),
                 }}
             </div>

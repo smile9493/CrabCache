@@ -5,7 +5,7 @@ use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, TraceSummary};
 use std::collections::HashMap;
 use std::time::Instant;
 use crate::types::UpstreamTestResult;
-use crab_control::{GatewayAdminClient, GatewayStatus};
+use crab_control::{GatewayAdminClient, GatewayStatus, PutUpstreamKeysRequest, UpstreamKeyInput};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -325,6 +325,19 @@ impl AppState {
 
         let persist = Arc::new(PersistHandle::new());
         let loaded = persist.load();
+
+        // If no env-driven keys, load persisted upstream pool secrets (v4+).
+        if pool_secrets.is_empty() && !loaded.upstream_pool_secrets.is_empty() {
+            pool_secrets = loaded
+                .upstream_pool_secrets
+                .iter()
+                .map(|s| UpstreamPoolSecret {
+                    id: s.id.clone(),
+                    secret: s.secret.clone(),
+                    enabled: s.enabled,
+                })
+                .collect();
+        }
         let models = StoredModelList::from(loaded.models);
         let mut upstream_cfg = StoredUpstreamConfig::default();
         if let Some(snap) = loaded.upstream_snapshot {
@@ -514,6 +527,16 @@ impl AppState {
             .collect();
         let profile_secrets: persist::PersistedProfileSecrets =
             (&*self.upstream_profile_secrets.read()).into();
+        let pool_secrets: Vec<persist::PersistedUpstreamPoolSecret> = self
+            .upstream_pool_secrets
+            .read()
+            .iter()
+            .map(|s| persist::PersistedUpstreamPoolSecret {
+                id: s.id.clone(),
+                secret: s.secret.clone(),
+                enabled: s.enabled,
+            })
+            .collect();
         let file = persist::build_state_file(
             &self.models.read(),
             &self.upstream_config.read(),
@@ -522,6 +545,7 @@ impl AppState {
             &keys_meta,
             &domain_policies,
             &profile_secrets,
+            &pool_secrets,
         );
         self.persist.save_debounced(file);
     }
@@ -591,7 +615,36 @@ impl AppState {
         }
 
         if let Ok(keys) = self.gateway.get_upstream_keys().await {
-            self.replace_upstream_pool_from_views(&keys.keys);
+            if keys.keys.is_empty() {
+                // Gateway pool is empty — push persisted admin secrets if available.
+                let secrets = self.upstream_pool_secrets.read().clone();
+                if !secrets.is_empty() {
+                    let req = PutUpstreamKeysRequest {
+                        keys: secrets
+                            .iter()
+                            .map(|s| UpstreamKeyInput {
+                                id: s.id.clone(),
+                                secret: s.secret.clone(),
+                                enabled: s.enabled,
+                                account_id: String::new(),
+                            })
+                            .collect(),
+                        mode: crab_control::UpstreamKeysPutMode::Replace,
+                    };
+                    match self.gateway.put_upstream_keys(&req).await {
+                        Ok(_) => tracing::info!(
+                            count = secrets.len(),
+                            "Pushed persisted upstream secrets to Gateway (empty pool detected)"
+                        ),
+                        Err(e) => tracing::warn!(
+                            error = %e,
+                            "Failed to push persisted upstream secrets to Gateway"
+                        ),
+                    }
+                }
+            } else {
+                self.replace_upstream_pool_from_views(&keys.keys);
+            }
         }
 
         self.refresh_profile_providers().await;

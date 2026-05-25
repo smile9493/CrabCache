@@ -20,6 +20,57 @@ use std::sync::Arc;
 
 use crate::management::{ManagementState, authorize, internal_error, schedule_persist_state};
 
+/// Parse a balance API response into `KeyQuotaInfo`.
+///
+/// Supports two formats:
+/// - **DeepSeek** (`/user/balance`): `balance_infos[]` with per-currency entries.
+/// - **Generic / new-api** (`/v1/user/balance`): top-level flat fields.
+async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo> {
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let parse_f64 = |v: &serde_json::Value| -> Option<f64> {
+        v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+    };
+    let is_available = body.get("is_available").and_then(|v| v.as_bool());
+
+    // DeepSeek format: balance_infos[{currency, total_balance, granted_balance, ...}]
+    if let Some(infos) = body.get("balance_infos").and_then(|v| v.as_array()) {
+        let info = infos
+            .iter()
+            .find(|e| e.get("currency").and_then(|c| c.as_str()) == Some("CNY"))
+            .or_else(|| infos.first())?;
+        let balance = info.get("total_balance").and_then(parse_f64);
+        let total_granted = info.get("granted_balance").and_then(parse_f64);
+        return Some(KeyQuotaInfo {
+            is_available,
+            balance,
+            total_granted,
+            total_used: None,
+        });
+    }
+
+    // Generic / new-api format: flat fields at top level or inside "data".
+    let src = body
+        .get("data")
+        .filter(|d| d.is_object())
+        .unwrap_or(&body);
+    let get_field = |field: &str| -> Option<&serde_json::Value> {
+        src.get(field).or_else(|| body.get(field))
+    };
+    let balance = get_field("balance").and_then(parse_f64);
+    let total_granted = get_field("total_granted").and_then(parse_f64);
+    let total_used = get_field("total_used").and_then(parse_f64);
+    if balance.is_some() || total_granted.is_some() {
+        return Some(KeyQuotaInfo {
+            is_available,
+            balance,
+            total_granted,
+            total_used,
+        });
+    }
+
+    None
+}
+
 fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<UpstreamProfileView> {
     let profile = runtime.profile(id)?;
     let pool = profile.resolve_upstream_pool();
@@ -327,13 +378,34 @@ pub async fn test_upstream_profile(
             } else {
                 Some(format!("HTTP {}", status.as_u16()))
             };
+            // Try balance endpoint for quota info (all providers).
+            let mut quota = None;
+            if ok {
+                let base = profile.base_url.trim_end_matches('/');
+                let balance_url = match profile.provider {
+                    crab_pipeline::UpstreamProvider::Deepseek => format!("{}/user/balance", base),
+                    _ => format!("{}/v1/user/balance", base),
+                };
+                if let Ok(br) = client
+                    .get(&balance_url)
+                    .header("Authorization", format!("Bearer {api_key}"))
+                    .send()
+                    .await
+                {
+                    if br.status().is_success() {
+                        if let Some(q) = parse_balance_response(br).await {
+                            quota = Some(q);
+                        }
+                    }
+                }
+            }
             Ok(Json(UpstreamTestResult {
                 ok,
                 status_code: status.as_u16(),
                 latency_ms,
                 model_count,
                 error,
-                quota: None,
+                quota,
             }))
         }
         Err(e) => Ok(Json(UpstreamTestResult {
@@ -347,8 +419,8 @@ pub async fn test_upstream_profile(
     }
 }
 
-/// Test a specific upstream key by ID: first tries `/v1/user/balance` for quota info,
-/// then falls back to `/v1/models` for basic connectivity.
+/// Test a specific upstream key by ID: first tries balance endpoint for quota info
+/// (DeepSeek: `/user/balance`, others: `/v1/user/balance`), then falls back to `/v1/models`.
 pub async fn test_upstream_profile_key(
     State(state): State<ManagementState>,
     headers: HeaderMap,
@@ -378,48 +450,32 @@ pub async fn test_upstream_profile_key(
         .build()
         .map_err(|_| internal_error("http client"))?;
 
-    // Step 1: Try GET /v1/user/balance (DeepSeek-style quota endpoint)
-    let balance_url = format!("{}/v1/user/balance", base_url);
-    let start = std::time::Instant::now();
+    // Step 1: Try balance endpoint for quota info (all providers).
+    // DeepSeek: GET /user/balance; others: GET /v1/user/balance (new-api compatible).
+    let balance_url = match profile.provider {
+        crab_pipeline::UpstreamProvider::Deepseek => {
+            format!("{}/user/balance", base_url)
+        }
+        _ => format!("{}/v1/user/balance", base_url),
+    };
+    let balance_start = std::time::Instant::now();
     let balance_resp = client
         .get(&balance_url)
         .header("Authorization", format!("Bearer {api_key}"))
         .send()
         .await;
-    let latency_ms = start.elapsed().as_millis() as u64;
+    let balance_latency_ms = balance_start.elapsed().as_millis() as u64;
 
     if let Ok(r) = balance_resp {
         if r.status().is_success() {
-            if let Ok(body) = r.json::<serde_json::Value>().await {
-                // Parse balance fields: DeepSeek returns strings at top level,
-                // some providers wrap in "data" or return numbers directly.
-                let parse_f64 = |v: &serde_json::Value| -> Option<f64> {
-                    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
-                };
-                // Try top-level first, then fall back to body["data"] (if it's an object).
-                let src = body
-                    .get("data")
-                    .filter(|d| d.is_object())
-                    .unwrap_or(&body);
-                let get_field = |field: &str| -> Option<&serde_json::Value> {
-                    src.get(field).or_else(|| body.get(field))
-                };
-                let is_available = get_field("is_available").and_then(|v| v.as_bool());
-                let balance = get_field("balance").and_then(parse_f64);
-                let total_granted = get_field("total_granted").and_then(parse_f64);
-                let total_used = get_field("total_used").and_then(parse_f64);
+            if let Some(quota) = parse_balance_response(r).await {
                 return Ok(Json(UpstreamTestResult {
                     ok: true,
                     status_code: 200,
-                    latency_ms,
+                    latency_ms: balance_latency_ms,
                     model_count: None,
                     error: None,
-                    quota: Some(KeyQuotaInfo {
-                        is_available,
-                        balance,
-                        total_granted,
-                        total_used,
-                    }),
+                    quota: Some(quota),
                 }));
             }
         }
@@ -454,7 +510,7 @@ pub async fn test_upstream_profile_key(
             Ok(Json(UpstreamTestResult {
                 ok,
                 status_code: status.as_u16(),
-                latency_ms: latency_ms + latency_ms2,
+                latency_ms: balance_latency_ms + latency_ms2,
                 model_count,
                 error,
                 quota: None,
@@ -463,7 +519,7 @@ pub async fn test_upstream_profile_key(
         Err(e) => Ok(Json(UpstreamTestResult {
             ok: false,
             status_code: 0,
-            latency_ms: latency_ms + latency_ms2,
+            latency_ms: balance_latency_ms + latency_ms2,
             model_count: None,
             error: Some(e.to_string()),
             quota: None,

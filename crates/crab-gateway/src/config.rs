@@ -992,6 +992,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 max_coalesce_inflight: Some(10_000),
                 coalesce_timeout_secs: None,
                 profiles: vec![],
+                deepseek_user_concurrency: crab_proxy::DeepSeekUserConcurrencyConfig::default(),
             },
             gateway: GatewaySection::default(),
             cache: CacheConfig {
@@ -1027,6 +1028,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             connection: None,
             reasoning: None,
             trace_logging: None,
+            raw_capture: None,
             management: None,
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
@@ -1053,6 +1055,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 max_coalesce_inflight: None,
                 coalesce_timeout_secs: None,
                 profiles: vec![],
+                deepseek_user_concurrency: crab_proxy::DeepSeekUserConcurrencyConfig::default(),
             },
             gateway: GatewaySection::default(),
             cache: CacheConfig {
@@ -1088,6 +1091,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             connection: None,
             reasoning: None,
             trace_logging: None,
+            raw_capture: None,
             management: Some(ManagementConfig {
                 listen_addr: "127.0.0.1:9080".into(),
                 admin_key: SecretString::new("dev-only-gateway-admin-secret".into()),

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const STATE_VERSION: u32 = 3;
+const STATE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminStateFile {
@@ -28,6 +28,9 @@ pub struct AdminStateFile {
     /// Per-profile upstream API keys for model sync (v3).
     #[serde(default)]
     pub upstream_profile_secrets: PersistedProfileSecrets,
+    /// Default (deepseek) upstream key pool secrets (v4).
+    #[serde(default)]
+    pub upstream_pool_secrets: Vec<PersistedUpstreamPoolSecret>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -145,7 +148,7 @@ impl PersistHandle {
             Ok(content) => {
                 let mut file: AdminStateFile =
                     serde_json::from_str(&content).unwrap_or_default();
-                file.migrate_v3();
+                file.migrate_v4();
                 file
             }
             Err(_) => AdminStateFile::default(),
@@ -208,6 +211,15 @@ impl AdminStateFile {
         }
         self.version = 3;
     }
+
+    fn migrate_v4(&mut self) {
+        self.migrate_v3();
+        if self.version >= 4 {
+            return;
+        }
+        // v4 adds upstream_pool_secrets; serde(default) handles existing files.
+        self.version = 4;
+    }
 }
 
 impl Default for AdminStateFile {
@@ -221,6 +233,7 @@ impl Default for AdminStateFile {
             keys_meta: Vec::new(),
             domain_policies: Vec::new(),
             upstream_profile_secrets: PersistedProfileSecrets::default(),
+            upstream_pool_secrets: Vec::new(),
         }
     }
 }
@@ -328,6 +341,7 @@ pub fn build_state_file(
     keys_meta: &[PersistedKeyMetadata],
     domain_policies: &[PersistedDomainPolicy],
     profile_secrets: &PersistedProfileSecrets,
+    pool_secrets: &[PersistedUpstreamPoolSecret],
 ) -> AdminStateFile {
     AdminStateFile {
         version: STATE_VERSION,
@@ -342,6 +356,7 @@ pub fn build_state_file(
         keys_meta: keys_meta.to_vec(),
         domain_policies: domain_policies.to_vec(),
         upstream_profile_secrets: profile_secrets.clone(),
+        upstream_pool_secrets: pool_secrets.to_vec(),
     }
 }
 
@@ -389,6 +404,49 @@ impl From<PersistedProfileSecrets>
                         .collect(),
                 )
             })
-            .collect()
+                .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_v4_roundtrip_pool_secrets() {
+        let file = AdminStateFile {
+            version: 4,
+            upstream_pool_secrets: vec![
+                PersistedUpstreamPoolSecret {
+                    id: "key-1".to_string(),
+                    secret: "sk-ds-test123456".to_string(),
+                    enabled: true,
+                },
+                PersistedUpstreamPoolSecret {
+                    id: "key-2".to_string(),
+                    secret: "sk-ds-test789012".to_string(),
+                    enabled: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&file).unwrap();
+        let loaded: AdminStateFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.version, 4);
+        assert_eq!(loaded.upstream_pool_secrets.len(), 2);
+        assert_eq!(loaded.upstream_pool_secrets[0].id, "key-1");
+        assert_eq!(loaded.upstream_pool_secrets[0].secret, "sk-ds-test123456");
+        assert!(loaded.upstream_pool_secrets[0].enabled);
+        assert!(!loaded.upstream_pool_secrets[1].enabled);
+    }
+
+    #[test]
+    fn persist_v3_to_v4_migration() {
+        // Simulate a v3 file (no upstream_pool_secrets field).
+        let json = r#"{"version":3,"models":{"models":[]}}"#;
+        let mut file: AdminStateFile = serde_json::from_str(json).unwrap();
+        file.migrate_v4();
+        assert_eq!(file.version, 4);
+        assert!(file.upstream_pool_secrets.is_empty());
     }
 }

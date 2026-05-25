@@ -91,6 +91,344 @@ impl Translations {
             Locale::EnUS => "Capture",
         }
     }
+    pub fn capture_loading_list(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正在加载捕获记录…",
+            Locale::EnUS => "Loading captures...",
+        }
+    }
+    pub fn capture_empty(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无捕获记录",
+            Locale::EnUS => "No captures yet",
+        }
+    }
+    pub fn capture_empty_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "在网关配置启用 [raw_capture]（enabled = true），确认 Admin 的 CRABCACHE_RAW_CAPTURE_DIR 与网关 dir 一致后重启网关，再发送 chat 请求。"
+            }
+            Locale::EnUS => {
+                "Enable [raw_capture] (enabled = true) in gateway config, align CRABCACHE_RAW_CAPTURE_DIR with the gateway dir, restart, then send a chat request."
+            }
+        }
+    }
+    pub fn capture_error_prefix(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误：",
+            Locale::EnUS => "Error: ",
+        }
+    }
+    pub fn capture_col_time(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "时间",
+            Locale::EnUS => "Time",
+        }
+    }
+    pub fn capture_col_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn capture_col_consumer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者",
+            Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn capture_col_client(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端",
+            Locale::EnUS => "Client",
+        }
+    }
+    pub fn capture_col_upstream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游",
+            Locale::EnUS => "Upstream",
+        }
+    }
+    pub fn capture_col_delta(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "增量",
+            Locale::EnUS => "Delta",
+        }
+    }
+    pub fn capture_col_msgs(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消息数",
+            Locale::EnUS => "Msgs",
+        }
+    }
+    pub fn capture_stat_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获总数",
+            Locale::EnUS => "Total Captures",
+        }
+    }
+    pub fn capture_stat_avg_delta(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均增量",
+            Locale::EnUS => "Avg Delta",
+        }
+    }
+    pub fn capture_stat_reasoning_injected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理注入率",
+            Locale::EnUS => "Reasoning Injected",
+        }
+    }
+    pub fn capture_stat_msg_p99(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消息数 P99",
+            Locale::EnUS => "Msg Count P99",
+        }
+    }
+    pub fn capture_stat_thinking_markup(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "思考标签率",
+            Locale::EnUS => "Thinking Markup",
+        }
+    }
+    pub fn capture_detail_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获详情",
+            Locale::EnUS => "Capture Detail",
+        }
+    }
+    pub fn capture_no_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未捕获正文",
+            Locale::EnUS => "No body captured",
+        }
+    }
+    pub fn capture_client_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端请求体",
+            Locale::EnUS => "Client Body",
+        }
+    }
+    pub fn capture_upstream_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游请求体",
+            Locale::EnUS => "Upstream Body",
+        }
+    }
+    pub fn capture_structure_metric(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "指标",
+            Locale::EnUS => "Metric",
+        }
+    }
+    pub fn capture_structure_client(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端",
+            Locale::EnUS => "Client",
+        }
+    }
+    pub fn capture_structure_upstream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游",
+            Locale::EnUS => "Upstream",
+        }
+    }
+    pub fn capture_structure_delta(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "差值",
+            Locale::EnUS => "Delta",
+        }
+    }
+    pub fn capture_row_messages(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消息条数",
+            Locale::EnUS => "Messages",
+        }
+    }
+    pub fn capture_row_content_chars(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正文字符",
+            Locale::EnUS => "Content Chars",
+        }
+    }
+    pub fn capture_row_reasoning_chars(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理字符",
+            Locale::EnUS => "Reasoning Chars",
+        }
+    }
+    pub fn capture_row_system_chars(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "系统字符",
+            Locale::EnUS => "System Chars",
+        }
+    }
+    pub fn capture_row_tool_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "工具数",
+            Locale::EnUS => "Tool Count",
+        }
+    }
+    pub fn capture_row_thinking_markup(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "思考标签",
+            Locale::EnUS => "Thinking Markup",
+        }
+    }
+    pub fn capture_meta_stream(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式",
+            Locale::EnUS => "Stream",
+        }
+    }
+    pub fn capture_meta_reasoning_strategy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理策略",
+            Locale::EnUS => "Reasoning Strategy",
+        }
+    }
+    pub fn capture_meta_retired_prefix(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "退役前缀消息",
+            Locale::EnUS => "Retired Prefix Msgs",
+        }
+    }
+    pub fn capture_bool_yes(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "是",
+            Locale::EnUS => "Yes",
+        }
+    }
+    pub fn capture_bool_no(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "否",
+            Locale::EnUS => "No",
+        }
+    }
+    pub fn capture_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "包捕获",
+            Locale::EnUS => "Packet Capture",
+        }
+    }
+    pub fn capture_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => {
+                "对比客户端与网关改写后的上游请求体，定位推理注入、思考标签与上下文膨胀。"
+            }
+            Locale::EnUS => {
+                "Compare client vs gateway-rewritten upstream bodies to spot reasoning injection, thinking markup, and context growth."
+            }
+        }
+    }
+    pub fn capture_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刷新",
+            Locale::EnUS => "Refresh",
+        }
+    }
+    pub fn capture_window_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 24 小时",
+            Locale::EnUS => "Last 24h",
+        }
+    }
+    pub fn capture_list_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获列表",
+            Locale::EnUS => "Capture list",
+        }
+    }
+    pub fn capture_records_unit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "条",
+            Locale::EnUS => "records",
+        }
+    }
+    pub fn capture_filter_consumer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者",
+            Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn capture_filter_project(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "项目 ID",
+            Locale::EnUS => "Project ID",
+        }
+    }
+    pub fn capture_filter_hash(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求哈希",
+            Locale::EnUS => "Request hash",
+        }
+    }
+    pub fn capture_filter_apply(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "筛选",
+            Locale::EnUS => "Filter",
+        }
+    }
+    pub fn capture_filter_clear(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清除",
+            Locale::EnUS => "Clear",
+        }
+    }
+    pub fn capture_filter_active(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "（已筛选）",
+            Locale::EnUS => "(filtered)",
+        }
+    }
+    pub fn capture_select_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击左侧记录查看结构差异与请求体",
+            Locale::EnUS => "Select a row to inspect structure diff and bodies",
+        }
+    }
+    pub fn capture_section_structure(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "结构差异",
+            Locale::EnUS => "Structure diff",
+        }
+    }
+    pub fn capture_section_bodies(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求体",
+            Locale::EnUS => "Bodies",
+        }
+    }
+    pub fn capture_loading_detail(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正在加载详情…",
+            Locale::EnUS => "Loading detail...",
+        }
+    }
+    pub fn capture_badge_reasoning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理注入",
+            Locale::EnUS => "Reasoning",
+        }
+    }
+    pub fn capture_badge_thinking(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "思考标签",
+            Locale::EnUS => "Thinking",
+        }
+    }
+    pub fn capture_badge_large_delta(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "大包体",
+            Locale::EnUS => "Large delta",
+        }
+    }
+    pub fn capture_stat_subtitle(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "24 小时窗口",
+            Locale::EnUS => "24h window",
+        }
+    }
     pub fn tab_config(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "配置",
@@ -796,6 +1134,12 @@ impl Translations {
             Locale::EnUS => "RPM Limit",
         }
     }
+    pub fn keys_rpm_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "0 表示不限速（推荐）。非 0 时网关按 sk-cc-* 每分钟请求数限流。",
+            Locale::EnUS => "0 = unlimited (recommended). Non-zero enforces per-key RPM on the gateway.",
+        }
+    }
     pub fn keys_budget_label(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "月度 Token 预算",
@@ -832,7 +1176,7 @@ impl Translations {
             Locale::EnUS => "Key",
         }
     }
-    pub const fn keys_col_rpm() -> &'static str {
+    pub fn keys_col_rpm(self) -> &'static str {
         "RPM"
     }
     pub fn keys_col_tokens(self) -> &'static str {
@@ -909,8 +1253,8 @@ impl Translations {
     }
     pub fn keys_created_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "请立即复制此密钥，关闭后将无法再次查看完整密钥",
-            Locale::EnUS => "Copy this key now. You won't be able to see it again.",
+            Locale::ZhCN => "完整密钥已保存，可在下方或列表中随时复制",
+            Locale::EnUS => "Full key is saved; copy below or from the list anytime.",
         }
     }
     pub fn keys_created_done(self) -> &'static str {
@@ -933,8 +1277,8 @@ impl Translations {
     }
     pub fn keys_copy_unavailable(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "完整密钥仅在创建时可见",
-            Locale::EnUS => "Full key only visible at creation",
+            Locale::ZhCN => "Admin 未保存完整密钥（仅预览）",
+            Locale::EnUS => "Full secret not stored in admin (preview only)",
         }
     }
     pub fn keys_network_load_failed(self) -> &'static str {
@@ -3369,6 +3713,60 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "测试 Profile",
             Locale::EnUS => "Test Profile",
+        }
+    }
+    pub fn upstream_test_all_quotas(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "批量测试额度",
+            Locale::EnUS => "Test All Quotas",
+        }
+    }
+    pub fn upstream_testing_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试中...",
+            Locale::EnUS => "Testing...",
+        }
+    }
+    pub fn upstream_clear_results(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清除结果",
+            Locale::EnUS => "Clear Results",
+        }
+    }
+    pub fn upstream_pool_col_quota(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "额度",
+            Locale::EnUS => "Quota",
+        }
+    }
+    pub fn upstream_pool_col_test(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试",
+            Locale::EnUS => "Test",
+        }
+    }
+    pub fn upstream_quota_available(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "可用",
+            Locale::EnUS => "OK",
+        }
+    }
+    pub fn upstream_quota_exhausted(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "不足",
+            Locale::EnUS => "Low",
+        }
+    }
+    pub fn upstream_quota_na(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无数据",
+            Locale::EnUS => "N/A",
+        }
+    }
+    pub fn upstream_connection_test_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连接测试",
+            Locale::EnUS => "Connection Test",
         }
     }
     pub fn upstream_delete_profile_btn(self) -> &'static str {

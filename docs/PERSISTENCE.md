@@ -10,7 +10,7 @@
 | 响应缓存 L1 | 精确命中条目 | Redis `cache:{key}` | 共享 |
 | 响应缓存 L2 | 语义向量 | Qdrant | 共享 |
 | 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、连接参数、上游 relay、**域策略** | Redis `crab:state:*` | 共享（必选） |
-| 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` | 共享（`Some([])` 可清空池） |
+| 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` **+** `admin-state.json` v4 | 共享（`Some([])` 可清空池） |
 | 域用量计数 | `domain_usage`（当月 token/成本累计） | 进程内存 | **不**持久化 |
 | Reasoning | 思考链恢复 | SQLite 或 Redis `crab:reasoning:*` | 多实例需 `redis` |
 | 影子日志 | 脱敏 Trace | JSONL 文件 / 卷 | 每实例或集中采集 |
@@ -100,7 +100,9 @@ docker compose up -d --scale gateway=2
 docker compose --profile admin up -d
 ```
 
-`admin_data` 卷挂载 `/app/data`，保存 `admin-state.json`（含 `keys_meta` 配额字段）。
+`admin_data` 卷挂载 `/app/data`，保存 `admin-state.json`（含 `keys_meta` 配额字段和 `upstream_pool_secrets`）。
+
+**上游 Key 双副本**：Admin 的 `upstream_pool_secrets`（default deepseek profile）同时写入 `admin-state.json` v4 和 Gateway Redis `crab:state:upstream_keys`。**运行时权威**为 Redis；Admin 重启时若 Redis 池为空，会从 `admin-state.json` 回推到 Gateway。上游 Key 通过 Dashboard → Upstream → Save Key Pool 配置，**无需**在 `.env` 中设置真实 Key。
 
 **双源说明**：Admin 的 `domain_policies` 也写入 `admin-state.json`，并在启动时 `sync_domain_policies_to_gateway` 推到 Gateway。**运行时权威**为 Gateway Redis `crab:state:domain_policies`；多 Gateway 副本以 Redis 为准，Admin 重启后应从 Management `GET /v1/domains/policies` 对齐（勿只在 Admin 本地改策略而不同步网关）。
 

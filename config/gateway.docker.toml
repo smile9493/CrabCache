@@ -6,13 +6,15 @@
 # After upgrade: POST /v1/cache/invalidate with x-cache-invalidate-confirm: all
 # TLS: Let's Encrypt on OpenResty :18000 (strict curl /ready must return 200)
 #
-# Required: CRABCACHE_API_KEY or CRABCACHE_UPSTREAM_KEYS (upstream DeepSeek key pool).
-# Optional: CRABCACHE_GATEWAY_ADMIN_KEY, CRABCACHE_L1_REDIS_URL, CRABCACHE_MANAGEMENT_LISTEN
+# Upstream DeepSeek API key pool: configure via Dashboard (recommended) or env vars.
+# Real keys are stored in Redis (crab:state:upstream_keys) and hot-reloaded — no .env needed.
+# The bootstrap key below satisfies startup validation; replace via Dashboard → Save Key Pool.
+# Optional env overrides: CRABCACHE_API_KEY, CRABCACHE_UPSTREAM_KEYS, CRABCACHE_GATEWAY_ADMIN_KEY
 
 listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
-# Overridden by CRABCACHE_API_KEY at startup (required for production).
-api_key = "set-via-CRABCACHE_API_KEY-environment-variable"
+# Bootstrap placeholder — satisfies startup validation only. Configure real keys via Dashboard.
+api_key = "sk-bootstrap-not-used-00000000"
 
 [gateway]
 default_upstream_profile = "deepseek"
@@ -103,11 +105,11 @@ path = "/app/logs/trace.jsonl"
 max_lines = 10000
 max_files = 5
 
-# Raw capture (packet-level analysis). Default OFF. See config/gateway.example.toml for docs.
-# [raw_capture]
-# enabled = false
-# dir = "/app/logs/raw_capture"
-# max_index_lines = 5000
-# max_body_files = 5000
-# mask_api_keys = false
-# skip_paths = ["/health", "/healthz", "/ready"]
+# Raw capture (packet-level analysis). Admin reads same path via gateway_logs volume.
+[raw_capture]
+enabled = true
+dir = "/app/logs/raw_capture"
+max_index_lines = 5000
+max_body_files = 5000
+mask_api_keys = false
+skip_paths = ["/health", "/healthz", "/ready"]

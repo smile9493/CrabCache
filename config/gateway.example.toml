@@ -10,8 +10,10 @@
 
 listen_addr = "0.0.0.0:8080"
 metrics_addr = "0.0.0.0:9090"
-# Legacy single-key alias; used when [upstream].keys is empty. Prefer upstream.keys or CRABCACHE_UPSTREAM_KEYS.
-api_key = "sk-your-deepseek-api-key-here"
+# Upstream key: configure via Dashboard (Save Key Pool) — preferred workflow.
+# The bootstrap placeholder passes startup validation; real keys are loaded from Redis at runtime.
+# Only set api_key here if you don't use Redis state or Dashboard.
+api_key = "sk-bootstrap-not-used-00000000"
 
 # Client auth: when false (default), only sk-cc-* keys from Management API may call the gateway.
 # When true, api_key may still be used as a client Bearer (not recommended in production).
