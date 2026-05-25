@@ -48,6 +48,8 @@ pub struct PutUpstreamRelayConfigRequest {
 pub struct UpstreamKeyView {
     pub id: String,
     pub preview: String,
+    #[serde(default)]
+    pub account_id: String,
     pub enabled: bool,
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
@@ -65,6 +67,8 @@ pub struct UpstreamKeyInput {
     pub secret: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub account_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

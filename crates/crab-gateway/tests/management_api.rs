@@ -954,6 +954,7 @@ async fn upstream_profiles_list_and_upsert() {
         "mode": "replace"
     });
     let keys_resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PUT")
@@ -966,4 +967,42 @@ async fn upstream_profiles_list_and_upsert() {
         .await
         .unwrap();
     assert_eq!(keys_resp.status(), StatusCode::OK);
+
+    let patch_body = serde_json::json!({ "enabled": false });
+    let patch_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/v1/upstream/profiles/mimo/keys/m1")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(patch_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+    let patch_bytes = axum::body::to_bytes(patch_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patch_json: serde_json::Value = serde_json::from_slice(&patch_bytes).unwrap();
+    assert_eq!(patch_json["enabled"], false);
+
+    let get_keys_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles/mimo/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_keys_resp.status(), StatusCode::OK);
+    let get_bytes = axum::body::to_bytes(get_keys_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let get_json: serde_json::Value = serde_json::from_slice(&get_bytes).unwrap();
+    assert_eq!(get_json["keys"][0]["enabled"], false);
 }

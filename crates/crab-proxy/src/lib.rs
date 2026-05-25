@@ -9,9 +9,11 @@ mod sse;
 mod stored_key;
 mod tenant;
 mod trace_logger;
+mod user_id_audit;
 mod upstream_body;
 mod upstream_headers;
 mod upstream_pool;
+mod upstream_user_id_limiter;
 mod profile_build;
 mod upstream_profile;
 
@@ -38,7 +40,8 @@ pub use cache_helpers::{
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
 };
 pub use cache_response::{
-    cached_sse_has_nonempty_content, json_to_sse_stream, send_cached_response,
+    cached_sse_has_nonempty_content, completion_json_has_visible_client_content,
+    json_to_sse_stream, send_cached_response,
 };
 pub use runtime::{DomainPolicy, RuntimeConfig};
 pub use trace_logger::{
@@ -50,6 +53,14 @@ pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,
     UpstreamKeyStatus, key_preview,
 };
+pub use upstream_user_id_limiter::{
+    DeepSeekConcurrencyTier, DeepSeekUserConcurrencyConfig, DeepSeekUserIdLimitError,
+    UpstreamUserIdGuard, UpstreamUserIdLimiter, classify_deepseek_v4_tier,
+};
 pub use tenant::{effective_cache_namespace, resolve_project_id, sanitize_user_id, ProjectResolveError};
+pub use user_id_audit::{
+    UserIdAuditStatus, apply_user_id_audit_to_entry, compute_user_id_audit, is_deepseek_pipeline,
+    parse_user_id_from_json,
+};
 pub use profile_build::{build_profile_runtime, parse_profile_backends, ProfileBuildInput};
 pub use upstream_profile::UpstreamProfileRuntime;

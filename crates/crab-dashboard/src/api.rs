@@ -443,6 +443,18 @@ pub async fn put_upstream_profile_keys(
     put_json(&format!("{}/upstream/profiles/{id}/keys", API_BASE), req).await
 }
 
+pub async fn patch_upstream_profile_key(
+    profile_id: &str,
+    key_id: &str,
+    req: &PatchUpstreamKeyRequest,
+) -> Result<UpstreamKeyView, String> {
+    patch_json(
+        &format!("{}/upstream/profiles/{profile_id}/keys/{key_id}", API_BASE),
+        req,
+    )
+    .await
+}
+
 pub async fn sync_models(profile_id: &str) -> Result<SyncResult, String> {
     let (builder, epoch) = apply_admin_auth(Request::post(&format!(
         "{}/models?profile_id={}",

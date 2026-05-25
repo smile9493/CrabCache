@@ -321,6 +321,8 @@ pub struct UpstreamConfig {
     /// Multi-vendor upstream profiles. When empty, a single `deepseek` profile is synthesized from legacy fields.
     #[serde(default)]
     pub profiles: Vec<UpstreamProfileConfig>,
+    #[serde(default)]
+    pub deepseek_user_concurrency: crab_proxy::DeepSeekUserConcurrencyConfig,
 }
 
 fn default_upstream_key_cooldown_secs() -> u64 {

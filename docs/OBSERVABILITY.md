@@ -101,6 +101,16 @@ PromQL 按 consumer 聚合：
 sum by (consumer) (gateway_client_key_inflight)
 ```
 
+### DeepSeek per-`user_id` 并发软限（可选）
+
+在 `gateway.toml` 启用 `[upstream.deepseek_user_concurrency]` 后，带 `project_id` 的 DeepSeek v4 请求受进程内 in-flight 限制（`v4_pro_per_user_id` / `v4_flash_per_user_id`）。超限时网关返回 **429**，`code: deepseek_user_concurrency_exceeded`（非上游 429，也不会触发同账号 Key 轮换）。
+
+| 指标 | 说明 |
+|------|------|
+| `gateway_deepseek_user_id_concurrency_rejected_total{tier}` | 按 pro/flash 分桶的网关拒绝次数 |
+| `gateway_deepseek_user_id_inflight{tier}` | 各 tier 聚合 in-flight（低基数，不含 project_id） |
+| `gateway_rejected_requests_total{reason="deepseek_user_concurrency_exceeded"}` | 与其它拒绝原因统一计数 |
+
 单 Key 精确查询（`key_id` 为 Management API 返回的 `id` 字段）：
 
 ```promql
@@ -120,6 +130,20 @@ max_files = 5
 ```
 
 每行是一个 `SanitizedLogEntry`（不含原始 body）。包含 `consumer`（API Key name）、`cache_tier`、`prompt_cache_hit_ratio`，以及（当前网关构建版本）`upstream_latency_ms`、`ttft_ms`、`input_tokens`、`output_tokens`。
+
+### DeepSeek `user_id` 隔离审计字段
+
+无需开启 `max_payload_bytes` 即可验收 `project_id` → 上游 `user_id` 注入：
+
+| 字段 | 说明 |
+|------|------|
+| `project_id` | 网关解析的租户 ID（来自 `sk-cc-*` 绑定或匹配的 `X-Project-Id`） |
+| `client_body_user_id` | 客户端原始 body 中的 `user_id`（若有） |
+| `upstream_user_id` | **实际上游**请求体中的 `user_id`（权威） |
+| `user_id_audit` | `injected` / `absent` / `stripped_client` / `mismatch` / `not_applicable` |
+| `upstream_profile_id` / `pipeline` / `upstream_model` | 路由上下文 |
+
+Admin Dashboard **Trace 分析**（`GET /api/admin/trace/analysis`）返回 `deepseek_user_id` 汇总：注入率、缺失 `project_id` 计数、`top_project_ids` 等。`isolation_ok=true` 表示近期 DeepSeek 请求基本均已正确注入。
 
 当 `crab-composition` crate 启用时，每条日志条目还包含 `composition` 字段：
 

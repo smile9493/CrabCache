@@ -153,6 +153,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_upstream_profile_keys).put(put_upstream_profile_keys),
         )
         .route(
+            "/api/admin/upstream/profiles/{id}/keys/{key_id}",
+            patch(patch_upstream_profile_key),
+        )
+        .route(
             "/api/admin/upstream/profiles/{id}/test",
             post(post_upstream_profile_test),
         )
@@ -1240,10 +1244,26 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
     Ok(Json(keys))
 }
 
+fn normalize_optional_project_id(
+    project_id: &Option<String>,
+) -> Result<Option<String>, (StatusCode, String)> {
+    match project_id.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(raw) => crab_proxy::sanitize_user_id(raw)
+            .map(Some)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e)),
+    }
+}
+
 async fn create_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<Json<ApiKey>, StatusCode> {
+    let project_id = match normalize_optional_project_id(&req.project_id) {
+        Ok(v) => v,
+        Err((code, _)) => return Err(code),
+    };
+
     let created = state
         .gateway
         .create_key(&CreateGatewayKeyRequest {
@@ -1251,7 +1271,7 @@ async fn create_key(
             enabled: true,
             token: None,
             domain: req.domain.clone(),
-            project_id: req.project_id.clone(),
+            project_id: project_id.clone(),
             pipeline: req.pipeline.clone(),
             upstream_profile: req.upstream_profile.clone(),
             max_concurrent: req.max_concurrent,
@@ -1887,6 +1907,9 @@ async fn get_logs(
                     ttft_ms: None,
                     content_length: None,
                     request_hash: None,
+                    project_id: None,
+                    upstream_user_id: None,
+                    user_id_audit: None,
                 }
             })
             .collect();
@@ -1976,6 +1999,9 @@ async fn get_logs(
                     ttft_ms: e.ttft_ms,
                     content_length: Some(e.content_length),
                     request_hash: Some(e.request_hash.clone()),
+                    project_id: e.project_id.clone(),
+                    upstream_user_id: e.upstream_user_id.clone(),
+                    user_id_audit: e.user_id_audit.clone(),
                 }
             })
             .collect();
@@ -2183,6 +2209,17 @@ async fn put_upstream_profile_keys(
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
 }
 
+async fn patch_upstream_profile_key(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, key_id)): axum::extract::Path<(String, String)>,
+    Json(req): Json<PatchUpstreamKeyRequest>,
+) -> Result<Json<crate::types::UpstreamKeyPoolEntry>, (StatusCode, String)> {
+    crate::upstream_profiles::patch_profile_key(&state, &id, &key_id, req)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
 async fn post_upstream_profile_test(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -2287,6 +2324,7 @@ async fn put_upstream_keys_pool(
                 id: s.id.clone(),
                 secret: s.secret.clone(),
                 enabled: s.enabled,
+                account_id: String::new(),
             })
             .collect();
         state.replace_upstream_pool_secrets(&inputs);
@@ -2408,6 +2446,7 @@ async fn update_upstream_config(
                 id: format!("key-{}", i + 1),
                 secret,
                 enabled: true,
+                account_id: String::new(),
             })
             .collect();
         let put_req = PutUpstreamKeysRequest {
@@ -2438,6 +2477,7 @@ async fn update_upstream_config(
                 id: s.id.clone(),
                 secret: s.secret.clone(),
                 enabled: s.enabled,
+                account_id: String::new(),
             })
             .collect();
         state.replace_upstream_pool_secrets(&merged_inputs);
@@ -2507,6 +2547,7 @@ fn empty_trace_analysis() -> TraceAnalysis {
         cache_hit_ratio: 0.0,
         top_models: vec![],
         cluster_distribution: vec![],
+        deepseek_user_id: None,
     }
 }
 
@@ -2679,6 +2720,10 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
     cluster_distribution.sort_by(|a, b| b.count.cmp(&a.count));
     cluster_distribution.truncate(10);
 
+    let deepseek_user_id = Some(crate::trace_user_id_audit::compute_deepseek_user_id_audit(
+        &entries,
+    ));
+
     Json(TraceAnalysis {
         total_requests,
         unique_requests,
@@ -2691,6 +2736,7 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
         cache_hit_ratio,
         top_models,
         cluster_distribution,
+        deepseek_user_id,
     })
 }
 

@@ -56,6 +56,35 @@ fn build_sse_response_header(body_len: usize, cache_tier: CacheTier) -> Option<R
     Some(header)
 }
 
+/// True when a cached completion has text or tool calls Cursor can render.
+pub fn completion_json_has_visible_client_content(body: &[u8], display_reasoning: bool) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
+        return false;
+    };
+    for choice in choices {
+        let msg = choice.get("message");
+        let delta = message_to_cursor_safe_delta(msg, display_reasoning);
+        if delta
+            .get("content")
+            .and_then(|c| c.as_str())
+            .is_some_and(|s| !s.is_empty())
+        {
+            return true;
+        }
+        if delta
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .is_some_and(|a| !a.is_empty())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Cache hit streaming: prefer stored client-shaped `sse_body` from a prior miss.
 pub async fn send_cached_response(
     session: &mut Session,
@@ -114,6 +143,31 @@ pub async fn send_cached_response(
             .unwrap_or(0);
         let has_done = sse_body.windows(6).any(|w| w == b"[DONE]");
         let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
+        let json_visible = completion_json_has_visible_client_content(response_body, display_reasoning);
+        if !has_nonempty && !json_visible {
+            // #region agent log
+            debug_agent_log(
+                "H1",
+                "cache_response.rs:send_cached_response",
+                "refusing hollow cache hit (no client-visible content)",
+                serde_json::json!({
+                    "sse_source": sse_source,
+                    "sse_len": sse_body.len(),
+                    "response_body_len": response_body.len(),
+                    "force_regen": force_regen,
+                    "display_reasoning": display_reasoning,
+                    "has_done": has_done,
+                }),
+            );
+            // #endregion
+            warn!(
+                sse_source = sse_source,
+                sse_len = sse_body.len(),
+                response_body_len = response_body.len(),
+                "Refusing cache hit: synthesized SSE has no client-visible content"
+            );
+            return false;
+        }
         debug_agent_log(
             "H1",
             "cache_response.rs:send_cached_response",
@@ -151,6 +205,24 @@ pub async fn send_cached_response(
             .await;
     } else {
         let json_body = sanitize_cached_json_body(response_body, display_reasoning);
+        if !completion_json_has_visible_client_content(&json_body, display_reasoning) {
+            // #region agent log
+            debug_agent_log(
+                "H1",
+                "cache_response.rs:send_cached_response",
+                "refusing hollow non-stream cache hit",
+                serde_json::json!({
+                    "json_len": json_body.len(),
+                    "display_reasoning": display_reasoning,
+                }),
+            );
+            // #endregion
+            warn!(
+                json_len = json_body.len(),
+                "Refusing non-stream cache hit: no client-visible content"
+            );
+            return false;
+        }
         let Some(header) = build_json_response_header(json_body.len(), cache_tier) else {
             warn!("Failed to build JSON cache response header");
             return false;
@@ -455,6 +527,23 @@ data: [DONE]
         let text = String::from_utf8(sse).unwrap();
         assert!(!text.contains("Thinking"));
         assert!(text.contains("ok"));
+    }
+
+    #[test]
+    fn reasoning_only_cached_json_has_no_visible_client_content() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "internal chain only"
+                },
+                "finish_reason": "stop"
+            }]
+        })
+        .to_string()
+        .into_bytes();
+        assert!(!completion_json_has_visible_client_content(&body, false));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::TraceLogger;
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
+use crate::upstream_user_id_limiter::{UpstreamUserIdGuard, UpstreamUserIdLimiter};
 use crate::client_key_rate_limiter::ClientKeyRateLimiter;
 use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::UpstreamKeyGuard;
@@ -305,6 +306,7 @@ pub struct GatewayContext {
     pub prompt_cache_key: Option<String>,
     pub request_permit: Option<OwnedSemaphorePermit>,
     pub client_key_guard: Option<ClientKeyGuard>,
+    pub deepseek_user_id_guard: Option<UpstreamUserIdGuard>,
     /// Serialized upstream JSON body length after reasoning prepare (for diagnostics).
     pub upstream_outbound_body_len: usize,
     /// Set in `upstream_request_filter` before Pingora writes upstream headers.
@@ -354,6 +356,7 @@ impl GatewayContext {
             prompt_cache_key: None,
             request_permit: None,
             client_key_guard: None,
+            deepseek_user_id_guard: None,
             upstream_outbound_body_len: 0,
             upstream_headers_prepared_at: None,
             request_composition: None,
@@ -383,4 +386,5 @@ pub struct GatewayState {
     pub request_semaphore: Arc<Semaphore>,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
+    pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
 }

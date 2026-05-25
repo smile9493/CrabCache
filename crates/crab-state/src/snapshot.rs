@@ -71,6 +71,8 @@ pub struct UpstreamKeySnapshot {
     pub id: String,
     pub secret: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub account_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +185,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
             id: s.id,
             secret: s.secret,
             enabled: s.enabled,
+            account_id: s.account_id,
         })
         .collect();
 
@@ -219,6 +222,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                             id: s.id,
                             secret: s.secret,
                             enabled: s.enabled,
+                            account_id: s.account_id,
                         })
                         .collect();
                     Some(UpstreamProfileSnapshot {
@@ -333,6 +337,7 @@ pub fn apply_snapshot_to_runtime(
                     id: k.id.clone(),
                     secret: k.secret.clone(),
                     enabled: k.enabled,
+                    account_id: k.account_id.clone(),
                 })
                 .collect();
             let input = ProfileBuildInput {
@@ -390,6 +395,7 @@ pub fn apply_snapshot_to_runtime(
                 id: k.id.clone(),
                 secret: k.secret.clone(),
                 enabled: k.enabled,
+                account_id: k.account_id.clone(),
             })
             .collect();
         let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs);

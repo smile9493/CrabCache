@@ -17,7 +17,7 @@ Cursor → OpenResty :18000 → crab-gateway :8080 → api.deepseek.com
 
 | new-api / Python 代理 | CrabCache |
 |----------------------|-----------|
-| 渠道 `ApiKey` 多行 / MultiKey 轮询 | `CRABCACHE_UPSTREAM_KEYS=sk-1,sk-2` 或 `PUT /v1/upstream/keys` |
+| 渠道 `ApiKey` 多行 / MultiKey 轮询 | `CRABCACHE_UPSTREAM_KEYS=sk-1,sk-2` 或 `PUT /v1/upstream/keys`（**DeepSeek：仅多账号有意义**，同账号多 Key 不提高并发；见 [MULTI_TENANT.md](./MULTI_TENANT.md)） |
 | 用户令牌（计费） | Management `POST /v1/keys` → `sk-cc-*` |
 | `deepseek-v4-flash-max` 后缀 | 内置 `parse_deepseek_v4_thinking_suffix`（同 new-api `-max`/`-none`） |
 | Python `missing_reasoning_strategy=recover` | 默认 **`recover`**（与 proxy 一致）；`client_key` scope 下就地补 reasoning、不截断 tool 历史 |

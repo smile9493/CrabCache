@@ -28,7 +28,7 @@ pub fn debug_agent_log(
     };
     let run_id =
         std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
-    let line = serde_json::json!({
+    let mut line = serde_json::json!({
         "runId": run_id,
         "hypothesisId": hypothesis_id,
         "location": location,
@@ -36,6 +36,11 @@ pub fn debug_agent_log(
         "data": data,
         "timestamp": chrono::Utc::now().timestamp_millis(),
     });
+    if let Ok(session_id) = std::env::var("CRABCACHE_DEBUG_SESSION_ID") {
+        if !session_id.is_empty() {
+            line["sessionId"] = serde_json::Value::String(session_id);
+        }
+    }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{line}");
     }

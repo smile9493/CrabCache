@@ -4,7 +4,10 @@ use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
-use crab_proxy::{ClientKeyLimiter, ClientKeyRateLimiter, GatewayProxy, GatewayState, RuntimeConfig};
+use crab_proxy::{
+    ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy, GatewayState,
+    RuntimeConfig, UpstreamUserIdLimiter,
+};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
@@ -567,6 +570,11 @@ fn main() -> Result<()> {
         config.limits.max_concurrent_requests,
     ));
 
+    let deepseek_user_concurrency: DeepSeekUserConcurrencyConfig =
+        config.upstream.deepseek_user_concurrency.clone();
+    let deepseek_user_id_limiter =
+        UpstreamUserIdLimiter::new(deepseek_user_concurrency.clone());
+
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -588,6 +596,7 @@ fn main() -> Result<()> {
         request_semaphore,
         client_key_limiter,
         client_key_rate_limiter,
+        deepseek_user_id_limiter,
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)

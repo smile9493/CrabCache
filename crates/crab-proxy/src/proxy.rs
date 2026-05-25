@@ -1,6 +1,11 @@
 use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
-use crate::error_jsons::client_concurrency_exceeded_error_json;
+use crate::error_jsons::{
+    client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
+};
+use crate::upstream_user_id_limiter::{
+    DeepSeekUserIdLimitError, classify_deepseek_v4_tier,
+};
 use crate::tenant::{ProjectResolveError, effective_cache_namespace, resolve_project_id};
 use crate::runtime::RuntimeConfig;
 use crate::debug_agent_log;
@@ -13,6 +18,7 @@ use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crate::trace_logger::composition_debug_tx;
+use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_cache::CoalesceError;
 use crab_composition::{
     extract_composition, extract_system_text, extract_tools_json, CompositionDebugEntry,
@@ -20,8 +26,8 @@ use crab_composition::{
 };
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::{
-    PipelineOverride, PipelineRequestContext, RequestPipeline, select_request_pipeline,
-    validate_pipeline_override,
+    PipelineOverride, PipelineRequestContext, RequestPipeline, UpstreamProvider,
+    select_request_pipeline, validate_pipeline_override,
 };
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator,
@@ -32,7 +38,9 @@ use crate::cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
 };
-use crate::cache_response::send_cached_response;
+use crate::cache_response::{
+    completion_json_has_visible_client_content, send_cached_response,
+};
 use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -297,37 +305,7 @@ impl GatewayProxy {
             "Semantic cache hit, returning cached response"
         );
 
-        ctx.cache_tier = Some(CacheTier::L2Semantic);
-        ctx.cache_hit = Some(entry.clone());
-        ctx.tokens.last_input = entry.usage.prompt_tokens;
-        ctx.tokens.last_output = entry.usage.completion_tokens;
-        global_metrics().record_cache_hit(
-            CacheTier::L2Semantic,
-            &ctx.model,
-            ctx.consumer.as_deref(),
-            ctx.domain.as_deref(),
-        );
-        global_metrics().record_latency(
-            crab_metrics::LatencyKind::CacheFetch,
-            ctx.request_start.elapsed(),
-            &ctx.model,
-            Some(CacheTier::L2Semantic),
-        );
-
-        let cost = self.state.pricing.cost_saved_usd(
-            &ctx.model,
-            entry.usage.prompt_tokens,
-            entry.usage.completion_tokens,
-        );
-        global_metrics().record_cost_saved(
-            &ctx.model,
-            ctx.consumer.as_deref(),
-            ctx.domain.as_deref(),
-            CacheTier::L2Semantic,
-            cost,
-        );
-
-        if !send_cached_response(
+        if send_cached_response(
             session,
             &entry,
             &ctx.model,
@@ -337,10 +315,42 @@ impl GatewayProxy {
         )
         .await
         {
-            let _ = session.respond_error(500).await;
+            ctx.cache_tier = Some(CacheTier::L2Semantic);
+            ctx.cache_hit = Some(entry.clone());
+            ctx.tokens.last_input = entry.usage.prompt_tokens;
+            ctx.tokens.last_output = entry.usage.completion_tokens;
+            global_metrics().record_cache_hit(
+                CacheTier::L2Semantic,
+                &ctx.model,
+                ctx.consumer.as_deref(),
+                ctx.domain.as_deref(),
+            );
+            global_metrics().record_latency(
+                crab_metrics::LatencyKind::CacheFetch,
+                ctx.request_start.elapsed(),
+                &ctx.model,
+                Some(CacheTier::L2Semantic),
+            );
+            let cost = self.state.pricing.cost_saved_usd(
+                &ctx.model,
+                entry.usage.prompt_tokens,
+                entry.usage.completion_tokens,
+            );
+            global_metrics().record_cost_saved(
+                &ctx.model,
+                ctx.consumer.as_deref(),
+                ctx.domain.as_deref(),
+                CacheTier::L2Semantic,
+                cost,
+            );
+            return true;
         }
 
-        true
+        debug!(
+            request_id = %ctx.request_id,
+            "Semantic cache hit refused (hollow payload); continuing as miss"
+        );
+        false
     }
 }
 
@@ -781,6 +791,37 @@ impl ProxyHttp for GatewayProxy {
         }
         ctx.upstream_model = Some(upstream_model_log.clone());
 
+        if selection.provider == UpstreamProvider::Deepseek {
+            if let Some(user_id) = ctx.project_id.as_deref() {
+                if let Some(tier) = classify_deepseek_v4_tier(&upstream_model_log) {
+                    match self
+                        .state
+                        .deepseek_user_id_limiter
+                        .try_acquire(user_id, tier)
+                    {
+                        Ok(guard) => ctx.deepseek_user_id_guard = Some(guard),
+                        Err(DeepSeekUserIdLimitError::Exceeded) => {
+                            global_metrics()
+                                .record_deepseek_user_id_concurrency_rejected(tier.as_str());
+                            global_metrics()
+                                .record_rejected("deepseek_user_concurrency_exceeded");
+                            let body = deepseek_user_concurrency_exceeded_error_json();
+                            if !send_json_error(
+                                session,
+                                http::StatusCode::TOO_MANY_REQUESTS,
+                                body.as_slice(),
+                            )
+                            .await
+                            {
+                                let _ = session.respond_error(429).await;
+                            }
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
         info!(
             request_id = %ctx.request_id,
             pipeline = %selection.pipeline.as_str(),
@@ -1029,30 +1070,6 @@ impl ProxyHttp for GatewayProxy {
                         tier = ?tier,
                         "Cache hit, returning cached response"
                     );
-                    ctx.cache_tier = Some(tier);
-                    ctx.cache_hit = Some(entry.clone());
-                    ctx.tokens.last_input = entry.usage.prompt_tokens;
-                    ctx.tokens.last_output = entry.usage.completion_tokens;
-                    global_metrics().record_latency(
-                        crab_metrics::LatencyKind::CacheFetch,
-                        ctx.request_start.elapsed(),
-                        &ctx.model,
-                        Some(tier),
-                    );
-
-                    let cost = self.state.pricing.cost_saved_usd(
-                        &ctx.model,
-                        entry.usage.prompt_tokens,
-                        entry.usage.completion_tokens,
-                    );
-                    global_metrics().record_cost_saved(
-                        &ctx.model,
-                        ctx.consumer.as_deref(),
-                        ctx.domain.as_deref(),
-                        tier,
-                        cost,
-                    );
-
                     // #region agent log
                     let req_hash_short = ctx
                         .req_hash
@@ -1099,11 +1116,50 @@ impl ProxyHttp for GatewayProxy {
                     );
                     // #endregion
 
-                    if !sent_ok {
-                        let _ = session.respond_error(500).await;
+                    if sent_ok {
+                        ctx.cache_tier = Some(tier);
+                        ctx.cache_hit = Some(entry.clone());
+                        ctx.tokens.last_input = entry.usage.prompt_tokens;
+                        ctx.tokens.last_output = entry.usage.completion_tokens;
+                        global_metrics().record_latency(
+                            crab_metrics::LatencyKind::CacheFetch,
+                            ctx.request_start.elapsed(),
+                            &ctx.model,
+                            Some(tier),
+                        );
+                        let cost = self.state.pricing.cost_saved_usd(
+                            &ctx.model,
+                            entry.usage.prompt_tokens,
+                            entry.usage.completion_tokens,
+                        );
+                        global_metrics().record_cost_saved(
+                            &ctx.model,
+                            ctx.consumer.as_deref(),
+                            ctx.domain.as_deref(),
+                            tier,
+                            cost,
+                        );
+                        return Ok(true);
                     }
 
-                    return Ok(true);
+                    warn!(
+                        request_id = %ctx.request_id,
+                        cache_key = %cache_key,
+                        tier = ?tier,
+                        "Hollow cache entry (no client-visible content); treating as miss"
+                    );
+                    // #region agent log
+                    debug_agent_log(
+                        "H1",
+                        "proxy.rs:request_filter",
+                        "hollow cache fallthrough to upstream",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "req_hash": req_hash_short,
+                            "tier": tier.as_str(),
+                        }),
+                    );
+                    // #endregion
                 } else {
                     // #region agent log
                     debug_agent_log(
@@ -1196,32 +1252,7 @@ impl ProxyHttp for GatewayProxy {
                             );
                             // #endregion
 
-                            ctx.cache_tier = Some(tier);
-                            ctx.cache_hit = Some(entry.clone());
-                            ctx.tokens.last_input = entry.usage.prompt_tokens;
-                            ctx.tokens.last_output = entry.usage.completion_tokens;
-                            global_metrics().record_coalesced_request();
-                            global_metrics().record_latency(
-                                crab_metrics::LatencyKind::CacheFetch,
-                                ctx.request_start.elapsed(),
-                                &ctx.model,
-                                Some(tier),
-                            );
-
-                            let cost = self.state.pricing.cost_saved_usd(
-                                &ctx.model,
-                                entry.usage.prompt_tokens,
-                                entry.usage.completion_tokens,
-                            );
-                            global_metrics().record_cost_saved(
-                                &ctx.model,
-                                ctx.consumer.as_deref(),
-                                ctx.domain.as_deref(),
-                                tier,
-                                cost,
-                            );
-
-                            if !send_cached_response(
+                            let sent_ok = send_cached_response(
                                 session,
                                 &entry,
                                 &ctx.model,
@@ -1229,12 +1260,40 @@ impl ProxyHttp for GatewayProxy {
                                 tier,
                                 self.reasoning_config().display_reasoning,
                             )
-                            .await
-                            {
-                                let _ = session.respond_error(500).await;
+                            .await;
+
+                            if sent_ok {
+                                ctx.cache_tier = Some(tier);
+                                ctx.cache_hit = Some(entry.clone());
+                                ctx.tokens.last_input = entry.usage.prompt_tokens;
+                                ctx.tokens.last_output = entry.usage.completion_tokens;
+                                global_metrics().record_coalesced_request();
+                                global_metrics().record_latency(
+                                    crab_metrics::LatencyKind::CacheFetch,
+                                    ctx.request_start.elapsed(),
+                                    &ctx.model,
+                                    Some(tier),
+                                );
+                                let cost = self.state.pricing.cost_saved_usd(
+                                    &ctx.model,
+                                    entry.usage.prompt_tokens,
+                                    entry.usage.completion_tokens,
+                                );
+                                global_metrics().record_cost_saved(
+                                    &ctx.model,
+                                    ctx.consumer.as_deref(),
+                                    ctx.domain.as_deref(),
+                                    tier,
+                                    cost,
+                                );
+                                return Ok(true);
                             }
 
-                            return Ok(true);
+                            warn!(
+                                request_id = %ctx.request_id,
+                                cache_key = %cache_key,
+                                "Follower hollow cache entry; waiting for upstream path"
+                            );
                             }
                         } else if guard.leader_failed() {
                             warn!(
@@ -1569,7 +1628,7 @@ impl ProxyHttp for GatewayProxy {
             );
             // #endregion
         }
-        let pool = self.state.runtime.upstream_pool();
+        let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
         let key_id = ctx
             .upstream.key_guard
             .as_ref()
@@ -1577,6 +1636,7 @@ impl ProxyHttp for GatewayProxy {
 
         if status == 429 {
             if let Some(ref id) = key_id {
+                // Set cooldown for the 429'd key exactly once.
                 pool.report_rate_limited(id);
                 global_metrics().record_upstream_key_request(id, "rate_limited");
 
@@ -1590,8 +1650,20 @@ impl ProxyHttp for GatewayProxy {
 
                 if ctx.upstream.retry_budget > 0 {
                     ctx.upstream.retry_budget -= 1;
+                    // Try a key from a different account_id (cooldown already set above).
                     if let Some(new_guard) =
-                        UpstreamKeyPool::rotate_after_rate_limit(&pool, id)
+                        pool.acquire_excluding_account(
+                            ctx.upstream
+                                .key_guard
+                                .as_ref()
+                                .and_then(|g| {
+                                    pool.list_status()
+                                        .into_iter()
+                                        .find(|s| s.id == g.key_id())
+                                        .map(|s| s.account_id)
+                                })
+                                .as_deref(),
+                        )
                     {
                         ctx.upstream.key_guard = Some(new_guard);
                         global_metrics().record_upstream_key_retry("rate_limited_rotate");
@@ -2037,12 +2109,17 @@ impl ProxyHttp for GatewayProxy {
                     // Store synthesized completion JSON as response preview for trace logging.
                     ctx.response_body_preview = response_bytes.clone();
 
-                    if self.state.runtime.stream_cache_enabled() {
-                        let ttl_secs = self
-                            .state
-                            .tiered_cache
-                            .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+                    let ttl_secs = self
+                        .state
+                        .tiered_cache
+                        .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
+                    if self.state.runtime.stream_cache_enabled()
+                        && completion_json_has_visible_client_content(
+                            &response_bytes,
+                            reasoning_cfg.display_reasoning,
+                        )
+                    {
                         let sse_body = ctx.stream.client_sse_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
                         let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
@@ -2082,6 +2159,31 @@ impl ProxyHttp for GatewayProxy {
                             }
                         });
 
+                    } else if self.state.runtime.stream_cache_enabled() {
+                        warn!(
+                            request_id = %ctx.request_id,
+                            cache_key = ?ctx.cache_key,
+                            "Skipping stream cache write: no client-visible content after sanitize"
+                        );
+                        // #region agent log
+                        debug_agent_log(
+                            "H1",
+                            "proxy.rs:upstream_response_body_filter",
+                            "skipped hollow stream cache write",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "response_body_len": response_bytes.len(),
+                                "client_sse_len": ctx.stream.client_sse_body.len(),
+                                "display_reasoning": reasoning_cfg.display_reasoning,
+                            }),
+                        );
+                        // #endregion
+                    }
+
+                    if completion_json_has_visible_client_content(
+                        &response_bytes,
+                        reasoning_cfg.display_reasoning,
+                    ) {
                         if let Some(semantic_cache) = &self.state.semantic_cache {
                             if let Some(original_body) = &ctx.original_request_body {
                                 if let Ok(payload) =
@@ -2237,6 +2339,15 @@ impl ProxyHttp for GatewayProxy {
                     if max_resp > 0 {
                         entry.response_preview = build_response_preview(ctx, max_resp);
                     }
+                    apply_user_id_audit_to_entry(
+                        &mut entry,
+                        ctx.request_pipeline,
+                        ctx.upstream_profile_id.as_deref(),
+                        ctx.upstream_model.as_deref(),
+                        ctx.project_id.as_deref(),
+                        ctx.original_request_body.as_deref(),
+                        ctx.new_request_body.as_deref(),
+                    );
                     trace_logger.log(entry);
                 }
             }

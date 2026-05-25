@@ -53,6 +53,24 @@ pub struct SanitizedLogEntry {
     /// `max_response_preview_bytes > 0` in TraceConfig.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_preview: Option<String>,
+    /// Selected upstream profile for this request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_profile_id: Option<String>,
+    /// Request pipeline id (e.g. `cursor_deepseek_v4`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    /// Model name sent upstream after prepare.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+    /// `user_id` from the client request body before gateway overwrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_body_user_id: Option<String>,
+    /// `user_id` in the serialized upstream request body (authoritative).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_user_id: Option<String>,
+    /// DeepSeek isolation audit: `injected` | `absent` | `stripped_client` | `mismatch` | `not_applicable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id_audit: Option<String>,
 }
 
 impl SanitizedLogEntry {
@@ -130,6 +148,12 @@ impl SanitizedLogEntry {
             composition,
             request_messages_snapshot,
             response_preview: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            upstream_user_id: None,
+            user_id_audit: None,
         }
     }
 }

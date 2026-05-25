@@ -472,6 +472,15 @@ fn LogDetailPane(
                 <DetailField label=t.logs_detail_consumer() value=summary.consumer.clone() />
                 <DetailField label=t.logs_detail_latency() value=format!("{}ms", summary.latency_ms) />
                 <DetailField label=t.logs_detail_tokens() value=format!("{}", summary.total_tokens) />
+                {summary.project_id.clone().map(|v| view! {
+                    <DetailField label=t.logs_detail_project_id() value=v />
+                })}
+                {summary.upstream_user_id.clone().map(|v| view! {
+                    <DetailField label=t.logs_detail_upstream_user_id() value=v />
+                })}
+                {summary.user_id_audit.clone().map(|v| view! {
+                    <DetailField label=t.logs_detail_user_id_audit() value=v />
+                })}
             </div>
 
             {move || {

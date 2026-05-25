@@ -247,6 +247,12 @@ mod tests {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            upstream_user_id: None,
+            user_id_audit: None,
         }
     }
 

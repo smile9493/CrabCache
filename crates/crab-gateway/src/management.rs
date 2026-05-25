@@ -163,6 +163,10 @@ pub fn router(state: ManagementState) -> Router {
                 .put(management_profiles::put_profile_keys),
         )
         .route(
+            "/v1/upstream/profiles/{id}/keys/{key_id}",
+            patch(management_profiles::patch_profile_key),
+        )
+        .route(
             "/v1/upstream/profiles/{id}/test",
             post(management_profiles::test_upstream_profile),
         )
@@ -737,6 +741,7 @@ async fn put_upstream_keys(
             id: k.id,
             secret: k.secret,
             enabled: k.enabled,
+            account_id: k.account_id,
         })
         .collect();
     let current = state.runtime.upstream_pool();
@@ -806,6 +811,7 @@ async fn patch_upstream_key(
         .map(|k| UpstreamKeyView {
             id: k.id,
             preview: k.preview,
+            account_id: k.account_id,
             enabled: k.enabled,
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
@@ -832,6 +838,7 @@ fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
             .map(|k| UpstreamKeyView {
                 id: k.id,
                 preview: k.preview,
+                account_id: k.account_id,
                 enabled: k.enabled,
                 inflight: k.inflight,
                 cooldown_remaining_secs: k.cooldown_remaining_secs,
@@ -912,6 +919,24 @@ async fn create_key(
             .into_response());
     }
 
+    let project_id = match req
+        .project_id
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some(raw) => Some(
+            crab_proxy::sanitize_user_id(raw).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse { error: e }),
+                )
+                    .into_response()
+            })?,
+        ),
+    };
+
     let id = uuid::Uuid::new_v4().to_string();
     let max_concurrent = req.max_concurrent.unwrap_or(0);
     let stored = StoredKey {
@@ -920,7 +945,7 @@ async fn create_key(
         key_hash: token.clone(),
         enabled: req.enabled,
         domain: req.domain.clone(),
-        project_id: req.project_id.clone(),
+        project_id: project_id.clone(),
         pipeline: req.pipeline.clone(),
         upstream_profile: req.upstream_profile.clone(),
         max_concurrent,
@@ -937,7 +962,7 @@ async fn create_key(
         key_preview: key_preview(&token),
         enabled: req.enabled,
         domain: req.domain,
-        project_id: req.project_id,
+        project_id: project_id.clone(),
         pipeline: req.pipeline,
         upstream_profile: req.upstream_profile,
         max_concurrent,
@@ -1060,7 +1085,20 @@ async fn patch_key(
         entry.domain = Some(domain);
     }
     if let Some(project_id) = req.project_id {
-        entry.project_id = Some(project_id);
+        let pid = project_id.trim();
+        if pid.is_empty() {
+            entry.project_id = None;
+        } else {
+            entry.project_id = Some(
+                crab_proxy::sanitize_user_id(pid).map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse { error: e }),
+                    )
+                        .into_response()
+                })?,
+            );
+        }
     }
     if let Some(pipeline) = req.pipeline {
         entry.pipeline = Some(pipeline);

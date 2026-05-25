@@ -7,17 +7,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const REASONING_NAMESPACE_AUTH: &str = "gateway-upstream-pool";
 
+/// Keys without an explicit `account_id` share this bucket (no cross-key rotation on 429).
+pub const DEFAULT_UPSTREAM_ACCOUNT_ID: &str = "default";
+
 #[derive(Debug, Clone)]
 pub struct UpstreamKeySpec {
     pub id: String,
     pub secret: String,
     pub enabled: bool,
+    pub account_id: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct UpstreamKeyStatus {
     pub id: String,
     pub preview: String,
+    pub account_id: String,
     pub enabled: bool,
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
@@ -26,6 +31,7 @@ pub struct UpstreamKeyStatus {
 struct UpstreamKeySlot {
     id: String,
     secret: Arc<str>,
+    account_id: Arc<str>,
     enabled: AtomicBool,
     inflight: AtomicUsize,
     cooldown_until_ms: AtomicU64,
@@ -59,6 +65,15 @@ impl UpstreamKeyGuard {
     }
 }
 
+pub fn normalize_account_id(raw: &str) -> Arc<str> {
+    let t = raw.trim();
+    if t.is_empty() {
+        Arc::from(DEFAULT_UPSTREAM_ACCOUNT_ID)
+    } else {
+        Arc::from(t)
+    }
+}
+
 pub fn key_preview(secret: &str) -> String {
     if secret.len() <= 12 {
         "***".to_string()
@@ -88,6 +103,7 @@ impl UpstreamKeyPool {
                 UpstreamKeySlot {
                     id,
                     secret: Arc::from(spec.secret.as_str()),
+                    account_id: normalize_account_id(&spec.account_id),
                     enabled: AtomicBool::new(spec.enabled),
                     inflight: AtomicUsize::new(0),
                     cooldown_until_ms: AtomicU64::new(0),
@@ -110,6 +126,7 @@ impl UpstreamKeyPool {
                 id: format!("key-{}", i + 1),
                 secret,
                 enabled: true,
+                account_id: String::new(),
             })
             .collect();
         Self::new(specs, cooldown_secs)
@@ -144,6 +161,7 @@ impl UpstreamKeyPool {
                 UpstreamKeyStatus {
                     id: s.id.clone(),
                     preview: key_preview(&s.secret),
+                    account_id: s.account_id.to_string(),
                     enabled: s.enabled.load(Ordering::Relaxed),
                     inflight: s.inflight.load(Ordering::Relaxed),
                     cooldown_remaining_secs,
@@ -159,6 +177,11 @@ impl UpstreamKeyPool {
                 id: s.id.clone(),
                 secret: s.secret.to_string(),
                 enabled: s.enabled.load(Ordering::Relaxed),
+                account_id: if s.account_id.as_ref() == DEFAULT_UPSTREAM_ACCOUNT_ID {
+                    String::new()
+                } else {
+                    s.account_id.to_string()
+                },
             })
             .collect()
     }
@@ -216,6 +239,7 @@ impl UpstreamKeyPool {
                 UpstreamKeySlot {
                     id,
                     secret: Arc::from(spec.secret.as_str()),
+                    account_id: normalize_account_id(&spec.account_id),
                     enabled: AtomicBool::new(spec.enabled),
                     inflight: AtomicUsize::new(inflight),
                     cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
@@ -231,6 +255,14 @@ impl UpstreamKeyPool {
     }
 
     pub fn acquire(self: &Arc<Self>) -> Option<UpstreamKeyGuard> {
+        self.acquire_excluding_account(None)
+    }
+
+    /// Acquire a slot whose `account_id` differs from `excluded` (used after 429 on one account).
+    pub fn acquire_excluding_account(
+        self: &Arc<Self>,
+        excluded: Option<&str>,
+    ) -> Option<UpstreamKeyGuard> {
         if self.slots.is_empty() {
             return None;
         }
@@ -250,6 +282,11 @@ impl UpstreamKeyPool {
             }
             if slot.cooldown_until_ms.load(Ordering::Relaxed) > now {
                 continue;
+            }
+            if let Some(ex) = excluded {
+                if slot.account_id.as_ref() == ex {
+                    continue;
+                }
             }
             let inflight = slot.inflight.load(Ordering::Relaxed);
             if inflight < best_inflight {
@@ -275,11 +312,16 @@ impl UpstreamKeyPool {
         }
     }
 
-    /// Mark key rate-limited and try to acquire another (next request; same-request retry not supported by Pingora).
+    /// Mark key rate-limited and try to acquire another from a **different** `account_id`.
     pub fn rotate_after_rate_limit(pool: &Arc<Self>, key_id: &str) -> Option<UpstreamKeyGuard> {
         pool.report_rate_limited(key_id);
+        let excluded = pool
+            .slots
+            .iter()
+            .find(|s| s.id == key_id)
+            .map(|s| s.account_id.clone())?;
         global_metrics().record_upstream_key_retry("rate_limited_rotate");
-        pool.acquire()
+        pool.acquire_excluding_account(Some(excluded.as_ref()))
     }
 
     pub fn report_rate_limited(&self, key_id: &str) {
@@ -347,6 +389,7 @@ mod tests {
                 id: String::new(),
                 secret: "sk-bbbbbbbbbbbb".into(),
                 enabled: true,
+                account_id: String::new(),
             }],
         );
         assert_eq!(merged.len(), 2);
@@ -356,6 +399,7 @@ mod tests {
                 id: String::new(),
                 secret: "sk-bbbbbbbbbbbb".into(),
                 enabled: true,
+                account_id: String::new(),
             }],
         );
         assert_eq!(merged2.len(), 2);
@@ -367,5 +411,66 @@ mod tests {
         let guard = pool.acquire().expect("key");
         assert_eq!(guard.bearer_secret(), "sk-deepseek-upstream-secret");
         assert!(!guard.bearer_secret().starts_with("sk-cc-"));
+    }
+
+    #[test]
+    fn rotate_skips_same_account_id() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "key-a1".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: true,
+                    account_id: "acct-a".into(),
+                },
+                UpstreamKeySpec {
+                    id: "key-a2".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: "acct-a".into(),
+                },
+            ],
+            60,
+        );
+        let _g = pool.acquire().unwrap();
+        assert!(UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-a1").is_none());
+    }
+
+    #[test]
+    fn rotate_picks_different_account_id() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "key-a".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: true,
+                    account_id: "acct-a".into(),
+                },
+                UpstreamKeySpec {
+                    id: "key-b".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: "acct-b".into(),
+                },
+            ],
+            60,
+        );
+        let g1 = pool.acquire().unwrap();
+        assert_eq!(g1.key_id(), "key-a");
+        drop(g1);
+        let g2 = UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-a").unwrap();
+        assert_eq!(g2.key_id(), "key-b");
+    }
+
+    #[test]
+    fn rotate_none_when_all_default_account() {
+        let pool = UpstreamKeyPool::from_secrets(
+            vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
+            60,
+        );
+        let g1 = pool.acquire().unwrap();
+        assert_eq!(g1.key_id(), "key-1");
+        drop(g1);
+        assert!(UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-1").is_none());
     }
 }

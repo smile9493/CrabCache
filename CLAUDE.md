@@ -337,7 +337,8 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | GET | `/v1/upstream/profiles` | 列出多厂商上游 Profile（脱敏） |
 | PUT | `/v1/upstream/profiles/{id}` | 创建/更新 Profile（base_url、model、endpoints） |
 | DELETE | `/v1/upstream/profiles/{id}` | 删除 Profile（保护 default/唯一项） |
-| GET/PUT | `/v1/upstream/profiles/{id}/keys` | Profile 独立 API Key 池 |
+| GET/PUT | `/v1/upstream/profiles/{id}/keys` | Profile 独立 API Key 池（`account_id` 可选，429 仅跨账号轮换） |
+| PATCH | `/v1/upstream/profiles/{id}/keys/{key_id}` | 更新 Profile Key（仅 `enabled`） |
 | POST | `/v1/upstream/profiles/{id}/test` | 探测 `GET {base_url}/v1/models` |
 
 ### Admin Dashboard

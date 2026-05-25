@@ -548,6 +548,12 @@ pub struct RequestLog {
     pub content_length: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id_audit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -626,6 +632,8 @@ pub struct UpdateConnectionConfigRequest {
 pub struct UpstreamKeyView {
     pub id: String,
     pub preview: String,
+    #[serde(default)]
+    pub account_id: String,
     pub enabled: bool,
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
@@ -643,6 +651,8 @@ pub struct UpstreamKeyInput {
     pub secret: String,
     #[serde(default = "default_key_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub account_id: String,
 }
 
 fn default_key_enabled() -> bool {
@@ -770,6 +780,44 @@ pub struct GatewayInfo {
     pub listen_addr: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserIdAuditBreakdown {
+    pub injected: usize,
+    pub absent: usize,
+    pub stripped_client: usize,
+    pub mismatch: usize,
+    pub not_applicable: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdModelCount {
+    pub model: String,
+    pub count: usize,
+    pub percentage: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserIdProjectCount {
+    pub project_id: String,
+    pub count: usize,
+    pub percentage: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeepSeekUserIdAudit {
+    pub deepseek_requests: usize,
+    pub with_upstream_user_id: usize,
+    pub without_upstream_user_id: usize,
+    pub upstream_user_id_ratio: f64,
+    pub missing_project_id: usize,
+    pub client_user_id_leaks: usize,
+    pub audit_breakdown: UserIdAuditBreakdown,
+    pub by_upstream_model: Vec<UserIdModelCount>,
+    pub top_project_ids: Vec<UserIdProjectCount>,
+    pub isolation_ok: bool,
+    pub conclusion: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceAnalysis {
     pub total_requests: usize,
@@ -783,6 +831,8 @@ pub struct TraceAnalysis {
     pub cache_hit_ratio: f64,
     pub top_models: Vec<ModelUsage>,
     pub cluster_distribution: Vec<ClusterInfo>,
+    #[serde(default)]
+    pub deepseek_user_id: Option<DeepSeekUserIdAudit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

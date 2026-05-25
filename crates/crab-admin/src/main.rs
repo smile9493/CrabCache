@@ -5,6 +5,7 @@ mod infra;
 mod overview;
 mod suggestions;
 mod trace_summary;
+mod trace_user_id_audit;
 mod network;
 mod openresty;
 mod persist;

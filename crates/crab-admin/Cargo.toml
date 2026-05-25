@@ -34,6 +34,7 @@ axum-server = { version = "0.7", features = ["tls-rustls"] }
 ring = "0.17"
 crab-control.workspace = true
 crab-composition.workspace = true
+crab-proxy.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
 hex.workspace = true

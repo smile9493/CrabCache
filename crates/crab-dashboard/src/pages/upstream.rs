@@ -15,6 +15,35 @@ const DEFAULT_MODEL: &str = "deepseek-v4-pro";
 const MIMO_BASE: &str = "https://api.xiaomimimo.com";
 const MIMO_MODEL: &str = "xiaomi/mimo-v2.5-pro";
 
+/// Parse `account_id:sk-...` or bare secret line for upstream key pool textarea.
+fn parse_upstream_pool_line(line: &str) -> (String, String) {
+    let t = line.trim();
+    if let Some((account_id, secret)) = t.split_once(':') {
+        let account_id = account_id.trim();
+        let secret = secret.trim();
+        if !account_id.is_empty() && !secret.is_empty() {
+            return (account_id.to_string(), secret.to_string());
+        }
+    }
+    (String::new(), t.to_string())
+}
+
+fn pool_lines_to_key_inputs(lines: Vec<String>) -> Vec<UpstreamKeyInput> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let (account_id, secret) = parse_upstream_pool_line(&line);
+            UpstreamKeyInput {
+                id: format!("key-{}", i + 1),
+                secret,
+                enabled: true,
+                account_id,
+            }
+        })
+        .collect()
+}
+
 fn validate_base_url(url: &str) -> Option<String> {
     let t = url.trim();
     if t.is_empty() {
@@ -79,8 +108,17 @@ pub fn UpstreamPage() -> impl IntoView {
     };
 
     let load_key_pool = move || {
+        let pid = active_profile.get();
+        key_pool.set(None);
         leptos::task::spawn_local(async move {
-            match api::fetch_upstream_keys().await {
+            let result = if pid == "deepseek" {
+                api::fetch_upstream_keys().await
+            } else {
+                api::fetch_upstream_profile_keys(&pid)
+                    .await
+                    .map(|v| UpstreamKeysView { keys: v.keys })
+            };
+            match result {
                 Ok(v) => key_pool.set(Some(Ok(v))),
                 Err(e) => key_pool.set(Some(Err(e))),
             }
@@ -171,19 +209,12 @@ pub fn UpstreamPage() -> impl IntoView {
             .filter(|s| !s.is_empty())
             .collect();
         if secrets.is_empty() {
-            pool_error.set("Enter at least one DeepSeek API key (one per line)".to_string());
+            pool_error.set(use_translations().upstream_pool_empty_keys_error().to_string());
             pool_saving.set(false);
             return;
         }
-        let keys: Vec<UpstreamKeyInput> = secrets
-            .into_iter()
-            .enumerate()
-            .map(|(i, secret)| UpstreamKeyInput {
-                id: format!("key-{}", i + 1),
-                secret,
-                enabled: true,
-            })
-            .collect();
+        let pid = active_profile.get();
+        let keys = pool_lines_to_key_inputs(secrets);
         let mode = if pool_replace_mode.get() {
             UpstreamKeysPutMode::Replace
         } else {
@@ -191,7 +222,14 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let req = PutUpstreamKeysRequest { keys, mode };
         leptos::task::spawn_local(async move {
-            match api::put_upstream_keys(&req).await {
+            let result = if pid == "deepseek" {
+                api::put_upstream_keys(&req).await
+            } else {
+                api::put_upstream_profile_keys(&pid, &req)
+                    .await
+                    .map(|v| UpstreamKeysView { keys: v.keys })
+            };
+            match result {
                 Ok(v) => {
                     key_pool.set(Some(Ok(v)));
                     pool_secrets_text.set(String::new());
@@ -272,15 +310,7 @@ pub fn UpstreamPage() -> impl IntoView {
             match result {
                 Ok(_) => {
                     if !keys_to_append_clone.is_empty() {
-                        let keys: Vec<UpstreamKeyInput> = keys_to_append_clone
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, secret)| UpstreamKeyInput {
-                                id: format!("key-{}", i + 1),
-                                secret,
-                                enabled: true,
-                            })
-                            .collect();
+                        let keys = pool_lines_to_key_inputs(keys_to_append_clone);
                         let key_req = PutUpstreamKeysRequest {
                             keys,
                             mode: UpstreamKeysPutMode::Append,
@@ -362,6 +392,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                         on:change=move |ev| {
                                             let id = event_target_value(&ev);
                                             active_profile.set(id.clone());
+                                            load_key_pool();
                                             leptos::task::spawn_local(async move {
                                                 if let Ok(resp) = api::fetch_upstream_profiles().await {
                                                     if let Some(p) = resp.profiles.into_iter().find(|p| p.id == id) {
@@ -583,8 +614,20 @@ pub fn UpstreamPage() -> impl IntoView {
 
             <div class="glass-card space-y-4 mt-6">
                 <div>
-                    <h2 class="text-lg font-semibold text-theme">{move || t.upstream_pool_title()}</h2>
+                    <h2 class="text-lg font-semibold text-theme">
+                        {move || t.upstream_pool_title_for(&active_profile.get())}
+                    </h2>
                     <p class="text-sm text-theme-muted mt-1">{move || t.upstream_pool_desc()}</p>
+                    {move || (active_profile.get() == "deepseek").then(|| view! {
+                        <p class="text-xs text-theme-muted mt-2">
+                            {use_translations().upstream_pool_deepseek_hint()}
+                        </p>
+                    })}
+                    {move || (active_profile.get() != "deepseek").then(|| view! {
+                        <p class="text-xs text-theme-muted mt-2">
+                            {use_translations().upstream_pool_patch_deepseek_only()}
+                        </p>
+                    })}
                 </div>
 
                 {move || match key_pool.get() {
@@ -599,6 +642,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                     <tr class="text-left text-theme-muted border-b border-theme/10">
                                         <th class="py-2 pr-3">{move || t.upstream_pool_col_id()}</th>
                                         <th class="py-2 pr-3">{move || t.upstream_pool_col_preview()}</th>
+                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_account()}</th>
                                         <th class="py-2 pr-3">{move || t.upstream_pool_col_enabled()}</th>
                                         <th class="py-2 pr-3">{move || t.upstream_pool_col_inflight()}</th>
                                         <th class="py-2">{move || t.upstream_pool_col_cooldown()}</th>
@@ -608,10 +652,18 @@ pub fn UpstreamPage() -> impl IntoView {
                                     {pool.keys.iter().map(|k| {
                                         let id = k.id.clone();
                                         let enabled = k.enabled;
+                                        let pid = active_profile.get();
                                         view! {
                                             <tr class="border-b border-theme/5">
                                                 <td class="py-2 pr-3 font-mono">{k.id.clone()}</td>
                                                 <td class="py-2 pr-3 font-mono">{k.preview.clone()}</td>
+                                                <td class="py-2 pr-3 font-mono text-xs">
+                                                    {if k.account_id.is_empty() {
+                                                        "default".to_string()
+                                                    } else {
+                                                        k.account_id.clone()
+                                                    }}
+                                                </td>
                                                 <td class="py-2 pr-3">
                                                     <input
                                                         type="checkbox"
@@ -619,14 +671,20 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         on:change=move |_| {
                                                             let id = id.clone();
                                                             let next = !enabled;
+                                                            let pid = pid.clone();
                                                             leptos::task::spawn_local(async move {
-                                                                let _ = api::patch_upstream_key(
-                                                                    &id,
-                                                                    &PatchUpstreamKeyRequest {
-                                                                        enabled: Some(next),
-                                                                        secret: None,
-                                                                    },
-                                                                ).await;
+                                                                let req = PatchUpstreamKeyRequest {
+                                                                    enabled: Some(next),
+                                                                    secret: None,
+                                                                };
+                                                                let _ = if pid == "deepseek" {
+                                                                    api::patch_upstream_key(&id, &req).await
+                                                                } else {
+                                                                    api::patch_upstream_profile_key(
+                                                                        &pid, &id, &req,
+                                                                    )
+                                                                    .await
+                                                                };
                                                                 load_key_pool();
                                                             });
                                                         }
@@ -661,7 +719,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                 prop:value=move || pool_secrets_text.get()
                                 on:input=move |ev| pool_secrets_text.set(event_target_value(&ev))
                                 class="input font-mono text-sm h-24 resize-y"
-                                placeholder="sk-...\nsk-..."
+                                placeholder="sk-...\nacct-b:sk-...\n"
                             ></textarea>
                         </div>
 

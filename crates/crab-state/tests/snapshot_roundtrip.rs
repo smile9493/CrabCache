@@ -175,6 +175,7 @@ fn upstream_profiles_snapshot_roundtrip() {
                 id: "m1".to_string(),
                 secret: "sk-mimo-snapshot-key-12345678".to_string(),
                 enabled: true,
+                account_id: String::new(),
             }],
         }]),
         domain_policies: HashMap::new(),
@@ -206,6 +207,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
             id: "m1".to_string(),
             secret: "sk-mimo-snapshot-key-12345678".to_string(),
             enabled: true,
+            account_id: String::new(),
         }],
     };
 
@@ -239,6 +241,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
                 id: "d1".to_string(),
                 secret: "sk-deepseek-snapshot-key-12345678".to_string(),
                 enabled: true,
+                account_id: String::new(),
             }],
         }]),
         domain_policies: HashMap::new(),

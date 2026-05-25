@@ -88,8 +88,7 @@ pub fn build_profile_runtime(
             let pool = if key_specs.is_empty() {
                 UpstreamKeyPool::new(Vec::new(), cooldown_secs)
             } else {
-                let secrets: Vec<String> = key_specs.iter().map(|s| s.secret.clone()).collect();
-                UpstreamKeyPool::from_secrets(secrets, cooldown_secs)
+                UpstreamKeyPool::new(key_specs.clone(), cooldown_secs)
             };
             Arc::new(RwLock::new(pool))
         }

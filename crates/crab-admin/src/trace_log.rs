@@ -71,6 +71,18 @@ pub struct TraceLogEntry {
     pub reasoning_strategy: Option<String>,
     #[serde(default)]
     pub prompt_cache_hit_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_body_user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id_audit: Option<String>,
 }
 
 impl TraceLogEntry {
@@ -751,6 +763,12 @@ mod tests {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            upstream_user_id: None,
+            user_id_audit: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -776,6 +794,12 @@ mod tests {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            upstream_user_id: None,
+            user_id_audit: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -841,6 +865,12 @@ mod tests {
                 retired_prefix_messages: None,
                 reasoning_strategy: None,
                 prompt_cache_hit_ratio: None,
+                upstream_profile_id: None,
+                pipeline: None,
+                upstream_model: None,
+                client_body_user_id: None,
+                upstream_user_id: None,
+                user_id_audit: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -866,6 +896,12 @@ mod tests {
                 retired_prefix_messages: None,
                 reasoning_strategy: None,
                 prompt_cache_hit_ratio: None,
+                upstream_profile_id: None,
+                pipeline: None,
+                upstream_model: None,
+                client_body_user_id: None,
+                upstream_user_id: None,
+                user_id_audit: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);

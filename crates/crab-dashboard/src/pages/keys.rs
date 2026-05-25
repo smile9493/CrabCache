@@ -142,6 +142,20 @@ pub fn KeysPage() -> impl IntoView {
         creating.set(true);
         create_error.set(String::new());
         let domain = new_key_domain.get();
+        let project_raw = new_key_project_id.get();
+        if !project_raw.trim().is_empty()
+            && (project_raw.trim().len() > 512
+                || !project_raw
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        {
+            create_error.set(
+                "project_id must match [a-zA-Z0-9\\-_]+ and be at most 512 characters".into(),
+            );
+            creating.set(false);
+            return;
+        }
         let req = CreateKeyRequest {
             name: new_key_name.get(),
             rpm_limit: new_key_rpm.get(),
@@ -455,9 +469,10 @@ pub fn KeysPage() -> impl IntoView {
                                         on:input=move |ev| {
                                             new_key_project_id.set(event_target_value(&ev));
                                         }
-                                        class="input"
-                                        placeholder="e.g. project-alpha"
+                                        class="input font-mono text-sm"
+                                        placeholder="e.g. project_alpha"
                                     />
+                                    <p class="text-xs text-theme-muted mt-1">{t.keys_project_id_hint()}</p>
                                 </div>
                                 <div>
                                     <label class="block text-xs text-theme-muted mb-1">{t.keys_rpm_label()}</label>
@@ -498,6 +513,7 @@ pub fn KeysPage() -> impl IntoView {
                                             view! { <option value=id.clone()>{id.clone()}</option> }
                                         }).collect_view()}
                                     </select>
+                                    <p class="text-xs text-theme-muted mt-1">{t.keys_upstream_profile_hint()}</p>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-4">

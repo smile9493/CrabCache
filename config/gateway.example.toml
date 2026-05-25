@@ -60,6 +60,15 @@ default_weight = 1
 # keys = ["sk-ds-account-1", "sk-ds-account-2"]
 # Cooldown seconds after HTTP 429 before reusing a key (default 60)
 # key_cooldown_secs = 60
+# Per-key account_id (via Management API / Dashboard as account_id:sk-...) groups keys for
+# 429 rotation: only keys with a different account_id are tried after rate limit.
+
+# Optional per-project_id (upstream user_id) concurrency soft limits for DeepSeek v4 models.
+# Disabled by default; enable when using expanded per-user_id quotas (v4-pro 500 / v4-flash 2500).
+# [upstream.deepseek_user_concurrency]
+# enabled = false
+# v4_pro_per_user_id = 500
+# v4_flash_per_user_id = 2500
 
 # Ketama peer addresses (host:port). When omitted, derived from base_url host (port 443/80).
 deepseek_endpoints = ["api.deepseek.com:443"]
@@ -227,10 +236,11 @@ upstream_connection_timeout_secs = 60
 [trace_logging]
 enabled = true
 # Trace log file path. Each line is a JSON-serialized SanitizedLogEntry.
-# When the crab-composition crate is enabled, each entry automatically includes
-# a `composition` field with a structural fingerprint of the request (model,
-# tool usage, message counts, Cursor component detection, etc.).
-# See docs/OBSERVABILITY.md → "请求组成分析（Request Composition）".
+# Includes DeepSeek user_id audit fields: upstream_user_id, client_body_user_id,
+# user_id_audit (injected/absent/...), upstream_profile_id, pipeline, upstream_model.
+# Dashboard Trace page shows deepseek_user_id isolation summary (no max_payload_bytes required).
+# When the crab-composition crate is enabled, each entry also includes `composition`.
+# See docs/OBSERVABILITY.md.
 path = "/var/log/crabcache/trace.jsonl"
 # Production: raise max_lines (e.g. 50000) and max_files (e.g. 10) under sustained Cursor traffic.
 # max_lines = 50000

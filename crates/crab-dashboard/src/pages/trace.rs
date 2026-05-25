@@ -163,6 +163,117 @@ pub fn TracePage() -> impl IntoView {
                                     }).collect::<Vec<_>>()}
                                 </div>
                             </div>
+
+                            {data.deepseek_user_id.clone().map(|audit| {
+                                let ok = audit.isolation_ok;
+                                let conclusion = audit.conclusion.clone();
+                                let top_projects = audit.top_project_ids.clone();
+                                let breakdown = audit.audit_breakdown.clone();
+                                view! {
+                                    <div class="glass-card space-y-4">
+                                        <div>
+                                            <h3 class="text-sm font-semibold text-theme">
+                                                {t.trace_deepseek_user_id_title()}
+                                            </h3>
+                                            <p class="text-xs text-theme-muted mt-1">
+                                                {t.trace_deepseek_user_id_hint()}
+                                            </p>
+                                        </div>
+                                        <div class=move || if ok {
+                                            "text-sm font-medium text-accent"
+                                        } else {
+                                            "text-sm font-medium text-warning"
+                                        }>
+                                            {move || if ok {
+                                                t.trace_isolation_ok()
+                                            } else {
+                                                t.trace_isolation_fail()
+                                            }}
+                                            <span class="text-theme-muted font-normal ml-2">
+                                                {conclusion.clone()}
+                                            </span>
+                                        </div>
+                                        <div class="bento-grid-4">
+                                            <div class="bento-cell">
+                                                <div class="text-xs text-theme-muted mb-1">
+                                                    {t.trace_deepseek_requests()}
+                                                </div>
+                                                <div class="text-xl font-bold font-mono text-theme">
+                                                    {audit.deepseek_requests}
+                                                </div>
+                                            </div>
+                                            <div class="bento-cell">
+                                                <div class="text-xs text-theme-muted mb-1">
+                                                    {t.trace_upstream_user_id_ratio()}
+                                                </div>
+                                                <div class="text-xl font-bold font-mono text-theme">
+                                                    {format!("{:.1}%", audit.upstream_user_id_ratio * 100.0)}
+                                                </div>
+                                            </div>
+                                            <div class="bento-cell">
+                                                <div class="text-xs text-theme-muted mb-1">
+                                                    {t.trace_missing_project_id()}
+                                                </div>
+                                                <div class="text-xl font-bold font-mono text-theme">
+                                                    {audit.missing_project_id}
+                                                </div>
+                                            </div>
+                                            <div class="bento-cell">
+                                                <div class="text-xs text-theme-muted mb-1">
+                                                    {t.trace_client_user_id_leaks()}
+                                                </div>
+                                                <div class="text-xl font-bold font-mono text-theme">
+                                                    {audit.client_user_id_leaks}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <h4 class="text-xs font-semibold text-theme-muted mb-2">
+                                                    {t.trace_audit_injected()}
+                                                </h4>
+                                                <div class="text-sm font-mono space-y-1">
+                                                    <div class="flex justify-between">
+                                                        <span>injected</span>
+                                                        <span>{breakdown.injected}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>absent</span>
+                                                        <span>{breakdown.absent}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>stripped_client</span>
+                                                        <span>{breakdown.stripped_client}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>mismatch</span>
+                                                        <span>{breakdown.mismatch}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <h4 class="text-xs font-semibold text-theme-muted mb-2">
+                                                    {t.trace_top_project_ids()}
+                                                </h4>
+                                                <div class="space-y-1">
+                                                    {top_projects.into_iter().map(|p| {
+                                                        view! {
+                                                            <div class="flex justify-between text-xs font-mono">
+                                                                <span class="text-theme truncate pr-2">
+                                                                    {p.project_id}
+                                                                </span>
+                                                                <span class="text-theme-muted">
+                                                                    {format!("{} ({:.1}%)", p.count, p.percentage)}
+                                                                </span>
+                                                            </div>
+                                                        }
+                                                    }).collect_view()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            })}
                         </div>
                     }.into_any()
                 }

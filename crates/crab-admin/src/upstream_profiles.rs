@@ -7,8 +7,9 @@ use crate::types::{
 };
 use axum::Json;
 use crab_control::{
-    PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest, UpstreamKeyInput, UpstreamKeysPutMode,
-    UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
+    PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest,
+    UpstreamKeyInput, UpstreamKeysPutMode, UpstreamKeyView, UpstreamProfileView,
+    UpstreamProfilesResponse, UpstreamTestResult,
 };
 use std::sync::Arc;
 
@@ -81,17 +82,7 @@ pub async fn get_profile_keys(
         .map_err(|e| e.to_string())?;
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
-        keys: view
-            .keys
-            .into_iter()
-            .map(|k| crate::types::UpstreamKeyPoolEntry {
-                id: k.id,
-                preview: k.preview,
-                enabled: k.enabled,
-                inflight: k.inflight,
-                cooldown_remaining_secs: k.cooldown_remaining_secs,
-            })
-            .collect(),
+        keys: view.keys.into_iter().map(key_entry_from_view).collect(),
     })
 }
 
@@ -132,18 +123,34 @@ pub async fn put_profile_keys(
     state.flush_persist();
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
-        keys: view
-            .keys
-            .into_iter()
-            .map(|k| crate::types::UpstreamKeyPoolEntry {
-                id: k.id,
-                preview: k.preview,
-                enabled: k.enabled,
-                inflight: k.inflight,
-                cooldown_remaining_secs: k.cooldown_remaining_secs,
-            })
-            .collect(),
+        keys: view.keys.into_iter().map(key_entry_from_view).collect(),
     })
+}
+
+pub async fn patch_profile_key(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    key_id: &str,
+    req: PatchUpstreamKeyRequest,
+) -> Result<crate::types::UpstreamKeyPoolEntry, String> {
+    let view: UpstreamKeyView = state
+        .gateway
+        .patch_upstream_profile_key(profile_id, key_id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
+    state.flush_persist();
+    Ok(key_entry_from_view(view))
+}
+
+fn key_entry_from_view(k: UpstreamKeyView) -> crate::types::UpstreamKeyPoolEntry {
+    crate::types::UpstreamKeyPoolEntry {
+        id: k.id,
+        preview: k.preview,
+        account_id: k.account_id,
+        enabled: k.enabled,
+        inflight: k.inflight,
+        cooldown_remaining_secs: k.cooldown_remaining_secs,
+    }
 }
 
 pub async fn test_profile(

@@ -7,7 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use crab_control::{
-    ErrorResponse, PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest, UpstreamKeyView,
+    ErrorResponse, PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest,
+    UpstreamKeyView,
     UpstreamKeysPutMode, UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse,
     UpstreamTestResult, parse_upstream_base_url, validate_upstream_key,
 };
@@ -146,6 +147,7 @@ pub async fn get_profile_keys(
         .map(|s| UpstreamKeyView {
             id: s.id,
             preview: s.preview,
+            account_id: s.account_id,
             enabled: s.enabled,
             inflight: s.inflight,
             cooldown_remaining_secs: s.cooldown_remaining_secs,
@@ -187,6 +189,7 @@ pub async fn put_profile_keys(
             id: k.id,
             secret: k.secret,
             enabled: k.enabled,
+            account_id: k.account_id,
         })
         .collect();
     let profile = state.runtime.profile(id).unwrap();
@@ -201,6 +204,70 @@ pub async fn put_profile_keys(
         .map_err(|e| bad_request(&e))?;
     schedule_persist_state(&state);
     get_profile_keys(State(state), headers, Path(id.to_string())).await
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProfileKeyPath {
+    pub id: String,
+    pub key_id: String,
+}
+
+pub async fn patch_profile_key(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(path): Path<ProfileKeyPath>,
+    Json(req): Json<PatchUpstreamKeyRequest>,
+) -> Result<Json<UpstreamKeyView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let profile_id = path.id.trim();
+    let key_id = path.key_id.trim();
+    if !state.runtime.profile(profile_id).is_some() {
+        return Err(bad_request("unknown upstream profile"));
+    }
+    if req.enabled.is_none() && req.secret.is_none() {
+        return Err(bad_request("no fields to update"));
+    }
+    if req.secret.is_some() {
+        return Err(bad_request(
+            "rotating secret via PATCH is not supported; use PUT /v1/upstream/profiles/{id}/keys",
+        ));
+    }
+    let profile = state.runtime.profile(profile_id).unwrap();
+    let pool = profile.resolve_upstream_pool();
+    if let Some(enabled) = req.enabled {
+        if !pool.set_enabled(key_id, enabled) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("upstream key '{key_id}' not found"),
+                }),
+            )
+                .into_response());
+        }
+    }
+    let view = pool
+        .list_status()
+        .into_iter()
+        .find(|k| k.id == key_id)
+        .map(|k| UpstreamKeyView {
+            id: k.id,
+            preview: k.preview,
+            account_id: k.account_id,
+            enabled: k.enabled,
+            inflight: k.inflight,
+            cooldown_remaining_secs: k.cooldown_remaining_secs,
+        })
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("upstream key '{key_id}' not found"),
+                }),
+            )
+                .into_response()
+        })?;
+    schedule_persist_state(&state);
+    Ok(Json(view))
 }
 
 pub async fn test_upstream_profile(

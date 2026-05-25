@@ -470,6 +470,24 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn patch_upstream_profile_key(
+        &self,
+        profile_id: &str,
+        key_id: &str,
+        req: &PatchUpstreamKeyRequest,
+    ) -> Result<UpstreamKeyView, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::PATCH,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/{key_id}"),
+            )
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn test_upstream_profile(
         &self,
         id: &str,

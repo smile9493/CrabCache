@@ -27,6 +27,17 @@ pub fn upstream_pool_exhausted_error_json() -> Vec<u8> {
     serde_json::to_vec(&body).unwrap_or_default()
 }
 
+pub fn deepseek_user_concurrency_exceeded_error_json() -> Vec<u8> {
+    let body = serde_json::json!({
+        "error": {
+            "message": "Too many concurrent DeepSeek requests for this project_id (user_id). Retry when in-flight requests complete or raise limits in [upstream.deepseek_user_concurrency].",
+            "type": "rate_limit_error",
+            "code": "deepseek_user_concurrency_exceeded",
+        }
+    });
+    serde_json::to_vec(&body).unwrap_or_default()
+}
+
 pub fn client_concurrency_exceeded_error_json() -> Vec<u8> {
     let body = serde_json::json!({
         "error": {
