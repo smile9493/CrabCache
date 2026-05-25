@@ -11,6 +11,11 @@
   --color-theme-muted: var(--cc-text-muted);
   --color-theme-secondary: var(--text-secondary);
   --color-theme-border: var(--cc-border);
+  --color-accent: var(--cc-accent);
+  --color-error: var(--cc-error);
+  --color-warning: var(--cc-warning);
+  --color-success: var(--cc-success);
+  --color-info: var(--cc-info);
 }
 
 /* Theme text utilities */
@@ -525,6 +530,11 @@ body {
 
 .btn:disabled { opacity: 0.40; cursor: not-allowed; }
 
+.btn-sm {
+  padding: 0.3rem 0.625rem;
+  font-size: 0.75rem;
+}
+
 /* ==============================================================
    INPUTS
    ============================================================== */
@@ -540,6 +550,18 @@ body {
 }
 .input:focus { border-color: var(--cc-accent); box-shadow: 0 0 0 2px var(--cc-accent-muted); }
 .input::placeholder { color: var(--cc-text-muted); }
+
+.form-input {
+  width: 100%; padding: 0.5rem 0.75rem;
+  background: var(--cc-bg-card); border: 1px solid var(--cc-border);
+  border-radius: 0.5rem; color: var(--cc-text);
+  font-size: 0.875rem;
+  transition: border-color var(--transition-speed) var(--transition-curve),
+              box-shadow var(--transition-speed) var(--transition-curve);
+  outline: none;
+}
+.form-input:focus { border-color: var(--cc-accent); box-shadow: 0 0 0 2px var(--cc-accent-muted); }
+.form-input::placeholder { color: var(--cc-text-muted); }
 
 /* ==============================================================
    TABLE
@@ -576,6 +598,11 @@ body {
 .badge-error   { background: color-mix(in srgb, var(--cc-error)   15%, transparent); color: var(--cc-error); }
 .badge-info    { background: color-mix(in srgb, var(--cc-info)    15%, transparent); color: var(--cc-info); }
 .badge-accent  { background: var(--cc-accent-muted); color: var(--cc-accent-bright); }
+
+.badge-sm {
+  padding: 0.05rem 0.35rem;
+  font-size: 0.625rem;
+}
 
 /* ==============================================================
    PROGRESS BAR · SPINNER · SECTION HEADER · EMPTY STATE
@@ -889,6 +916,9 @@ body {
 
 .table-compact th,
 .table-compact td { padding: 0.5rem 0.75rem; }
+
+.table-xs th,
+.table-xs td { padding: 0.35rem 0.5rem; font-size: 0.75rem; }
 
 .logs-detail-empty  { display: flex; align-items: center; justify-content: center; min-height: 16rem; padding: 2rem; text-align: center; }
 .logs-detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--cc-border-light); }

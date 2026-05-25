@@ -75,7 +75,7 @@ pub fn handle_unauthorized(request_epoch: u64) {
     reset_admin_key_signal();
 }
 
-/// Sign out from the sidebar / settings UI.
+/// Sign out from the topnav / settings UI.
 pub fn logout() {
     bump_auth_epoch();
     clear_admin_key();

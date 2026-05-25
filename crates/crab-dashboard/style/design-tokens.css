@@ -1,31 +1,30 @@
-/* CrabCache Design Tokens — canonical source (see docs/DESIGN.md)
- * Dark values match docs/demo.html; Light/Midnight extend the same semantic keys.
- */
+/* CrabCache Design Tokens — warm amber palette (1.html reference redesign) */
 
-/* ── DARK (default, demo canonical) ───────────────────────── */
+/* ── LIGHT (default, warm cream) ─────────────────────────── */
 :root,
-.theme-dark {
-  --cc-bg: #0d1117;
-  --cc-bg-sidebar: #0a0e13;
-  --cc-bg-card: #161b22;
-  --cc-bg-elevated: #21262d;
-  --cc-bg-input: #0d1117;
-  --cc-border: #30363d;
-  --cc-text: #e6edf3;
-  --cc-text-muted: #8b949e;
-  --cc-accent: #f78166;
-  --cc-accent-bright: #ff967d;
-  --cc-accent-muted: rgba(247, 129, 102, 0.12);
-  --cc-success: #3fb950;
-  --cc-info: #58a6ff;
-  --cc-warning: #d2991d;
-  --cc-error: #f85149;
-  --cc-purple: #bc8cff;
-  --cc-yellow: #d2991d;
-  --cc-shadow: rgba(0, 0, 0, 0.12);
-  --cc-nav-active-bg: rgba(247, 129, 102, 0.12);
-  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), var(--cc-yellow));
-  --sidebar-width: 230px;
+.theme-light {
+  --cc-bg: #faf8f5;
+  --cc-bg-topnav: #ffffff;
+  --cc-bg-card: #ffffff;
+  --cc-bg-elevated: #f5f2ed;
+  --cc-bg-input: #ffffff;
+  --cc-border: #e5e0d8;
+  --cc-border-light: #edeae4;
+  --cc-text: #2d2a26;
+  --cc-text-muted: #8a847a;
+  --cc-accent: #c4841a;
+  --cc-accent-bright: #d9952e;
+  --cc-accent-muted: rgba(196, 132, 26, 0.12);
+  --cc-success: #2d8a4e;
+  --cc-info: #2563eb;
+  --cc-warning: #b8860b;
+  --cc-error: #c44536;
+  --cc-purple: #8250df;
+  --cc-yellow: #b8860b;
+  --cc-shadow: rgba(45, 42, 38, 0.06);
+  --cc-nav-active-bg: rgba(196, 132, 26, 0.10);
+  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), #b8860b);
+  --topnav-height: 52px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --transition-speed: 180ms;
@@ -33,7 +32,7 @@
 
   /* Dashboard compatibility aliases */
   --bg-primary: var(--cc-bg);
-  --bg-secondary: var(--cc-bg-sidebar);
+  --bg-secondary: var(--cc-bg-topnav);
   --bg-tertiary: var(--cc-bg-elevated);
   --bg-elevated: var(--cc-bg-elevated);
   --bg-glass: var(--cc-bg-card);
@@ -43,7 +42,7 @@
   --text-secondary: var(--cc-text-muted);
   --text-muted: var(--cc-text-muted);
   --border-color: var(--cc-border);
-  --border-light: var(--cc-border);
+  --border-light: var(--cc-border-light);
   --accent-primary: var(--cc-accent);
   --accent-secondary: var(--cc-accent-bright);
   --accent-muted: var(--cc-accent-muted);
@@ -55,7 +54,7 @@
 
   /* Demo page aliases */
   --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-sidebar);
+  --bg-sidebar: var(--cc-bg-topnav);
   --bg-card: var(--cc-bg-card);
   --border: var(--cc-border);
   --text: var(--cc-text);
@@ -67,41 +66,42 @@
   --red: var(--cc-error);
 }
 
-/* ── LIGHT ────────────────────────────────────────────────── */
-.theme-light {
-  --cc-bg: #f6f4f0;
-  --cc-bg-sidebar: #ebe8e2;
-  --cc-bg-card: #ffffff;
-  --cc-bg-elevated: #f0ede8;
-  --cc-bg-input: #ffffff;
-  --cc-border: #c9c4bc;
-  --cc-text: #1a1814;
-  --cc-text-muted: #5c574f;
-  --cc-accent: #c44d2f;
-  --cc-accent-bright: #d65a3a;
-  --cc-accent-muted: rgba(196, 77, 47, 0.14);
-  --cc-success: #1a7f37;
-  --cc-info: #0969da;
-  --cc-warning: #9a6700;
-  --cc-error: #cf222e;
-  --cc-purple: #8250df;
-  --cc-yellow: #9a6700;
-  --cc-shadow: rgba(26, 24, 20, 0.08);
-  --cc-nav-active-bg: rgba(196, 77, 47, 0.12);
-  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), #b8860b);
+/* ── DARK ────────────────────────────────────────────────── */
+.theme-dark {
+  --cc-bg: #1a1714;
+  --cc-bg-topnav: #151210;
+  --cc-bg-card: #211e1a;
+  --cc-bg-elevated: #2a2622;
+  --cc-bg-input: #1a1714;
+  --cc-border: #3a3530;
+  --cc-border-light: #2e2a26;
+  --cc-text: #e8e2da;
+  --cc-text-muted: #8a827a;
+  --cc-accent: #c4841a;
+  --cc-accent-bright: #d9952e;
+  --cc-accent-muted: rgba(196, 132, 26, 0.14);
+  --cc-success: #3fb950;
+  --cc-info: #58a6ff;
+  --cc-warning: #d2991d;
+  --cc-error: #f85149;
+  --cc-purple: #bc8cff;
+  --cc-yellow: #d2991d;
+  --cc-shadow: rgba(0, 0, 0, 0.15);
+  --cc-nav-active-bg: rgba(196, 132, 26, 0.14);
+  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), var(--cc-yellow));
 
   --bg-primary: var(--cc-bg);
-  --bg-secondary: var(--cc-bg-sidebar);
+  --bg-secondary: var(--cc-bg-topnav);
   --bg-tertiary: var(--cc-bg-elevated);
-  --bg-elevated: #ffffff;
+  --bg-elevated: var(--cc-bg-elevated);
   --bg-glass: var(--cc-bg-card);
   --bg-glass-hover: var(--cc-bg-elevated);
-  --bg-glass-raised: #ffffff;
+  --bg-glass-raised: var(--cc-bg-elevated);
   --text-primary: var(--cc-text);
   --text-secondary: var(--cc-text-muted);
   --text-muted: var(--cc-text-muted);
   --border-color: var(--cc-border);
-  --border-light: #ddd8d0;
+  --border-light: var(--cc-border-light);
   --accent-primary: var(--cc-accent);
   --accent-secondary: var(--cc-accent-bright);
   --accent-muted: var(--cc-accent-muted);
@@ -112,7 +112,7 @@
   --shadow-color: var(--cc-shadow);
 
   --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-sidebar);
+  --bg-sidebar: var(--cc-bg-topnav);
   --bg-card: var(--cc-bg-card);
   --border: var(--cc-border);
   --text: var(--cc-text);
@@ -126,17 +126,18 @@
 
 /* ── MIDNIGHT ─────────────────────────────────────────────── */
 .theme-midnight {
-  --cc-bg: #0c0a14;
-  --cc-bg-sidebar: #080610;
-  --cc-bg-card: #14101f;
-  --cc-bg-elevated: #1e1830;
-  --cc-bg-input: #0c0a14;
-  --cc-border: #2e2842;
-  --cc-text: #ece8f5;
-  --cc-text-muted: #9b92b0;
-  --cc-accent: #f78166;
-  --cc-accent-bright: #ffa08a;
-  --cc-accent-muted: rgba(247, 129, 102, 0.14);
+  --cc-bg: #14110d;
+  --cc-bg-topnav: #100e0a;
+  --cc-bg-card: #1e1a16;
+  --cc-bg-elevated: #282320;
+  --cc-bg-input: #14110d;
+  --cc-border: #352f2a;
+  --cc-border-light: #2a2520;
+  --cc-text: #e8e2da;
+  --cc-text-muted: #8a827a;
+  --cc-accent: #d9952e;
+  --cc-accent-bright: #e8a840;
+  --cc-accent-muted: rgba(217, 149, 46, 0.14);
   --cc-success: #3fb950;
   --cc-info: #79b8ff;
   --cc-warning: #d2991d;
@@ -144,11 +145,11 @@
   --cc-purple: #bc8cff;
   --cc-yellow: #d2991d;
   --cc-shadow: rgba(0, 0, 0, 0.2);
-  --cc-nav-active-bg: rgba(247, 129, 102, 0.14);
+  --cc-nav-active-bg: rgba(217, 149, 46, 0.14);
   --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), var(--cc-purple));
 
   --bg-primary: var(--cc-bg);
-  --bg-secondary: var(--cc-bg-sidebar);
+  --bg-secondary: var(--cc-bg-topnav);
   --bg-tertiary: var(--cc-bg-elevated);
   --bg-elevated: var(--cc-bg-elevated);
   --bg-glass: var(--cc-bg-card);
@@ -158,7 +159,7 @@
   --text-secondary: var(--cc-text-muted);
   --text-muted: var(--cc-text-muted);
   --border-color: var(--cc-border);
-  --border-light: var(--cc-border);
+  --border-light: var(--cc-border-light);
   --accent-primary: var(--cc-accent);
   --accent-secondary: var(--cc-accent-bright);
   --accent-muted: var(--cc-accent-muted);
@@ -169,7 +170,7 @@
   --shadow-color: var(--cc-shadow);
 
   --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-sidebar);
+  --bg-sidebar: var(--cc-bg-topnav);
   --bg-card: var(--cc-bg-card);
   --border: var(--cc-border);
   --text: var(--cc-text);

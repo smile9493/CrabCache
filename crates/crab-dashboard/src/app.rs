@@ -4,7 +4,7 @@ use leptos_router::path;
 
 use crate::auth::{is_authenticated, provide_admin_auth};
 use crate::components::auth_gate::AuthGate;
-use crate::components::sidebar::{MobileTopBar, Sidebar, provide_mobile_nav};
+use crate::components::topnav::TopNav;
 use crate::components::toast::{provide_toast, ToastContainer};
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache::CachePage;
@@ -37,13 +37,11 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn AuthenticatedShell() -> impl IntoView {
-    provide_mobile_nav();
     provide_toast();
     view! {
         <Router>
             <div class="app-shell font-sans">
-                <MobileTopBar />
-                <Sidebar />
+                <TopNav />
                 <main class="main-content overflow-y-auto theme-scrollbar">
                     <Routes fallback=|| view! { <NotFound /> }>
                         <Route path=path!("/") view=OverviewPage />
@@ -68,7 +66,7 @@ fn NotFound() -> impl IntoView {
     let t = use_translations();
     view! {
         <div class="page-content not-found-page">
-            <div class="not-found-card glass-card-raised">
+            <div class="not-found-card">
                 <div class="not-found-code">{crate::locale::Translations::not_found_title()}</div>
                 <p class="not-found-desc">{t.not_found_desc()}</p>
                 <A href="/" attr:class="btn btn-primary text-sm">

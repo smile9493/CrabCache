@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CrabCache Admin — Dashboard</title>
+  <style>
+    /* ========== 设计令牌（暖色调主题） ========== */
+    :root {
+      --bg: #faf8f5;
+      --bg-card: #ffffff;
+      --bg-elevated: #f5f2ed;
+      --bg-sidebar: #f0ece6;
+      --border: #e5e0d8;
+      --border-light: #edeae4;
+      --text: #2d2a26;
+      --text-muted: #8a847a;
+      --accent: #c4841a;
+      --accent-bright: #d9952e;
+      --accent-muted: rgba(196, 132, 26, 0.12);
+      --success: #2d8a4e;
+      --error: #c44536;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --shadow: rgba(45, 42, 38, 0.06);
+      --transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* ========== 顶部导航 ========== */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    .brand-name {
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .brand-version {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .topbar-item {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius-sm);
+      transition: background var(--transition);
+    }
+
+    .topbar-item:hover {
+      background: var(--bg-elevated);
+    }
+
+    /* ========== 主内容区 ========== */
+    .main {
+      padding: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ========== 卡片网格 ========== */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    @media (max-width: 1024px) {
+      .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 640px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ========== 卡片 ========== */
+    .dash-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: 0 1px 3px var(--shadow);
+      transition: box-shadow var(--transition), border-color var(--transition);
+    }
+
+    .dash-card:hover {
+      box-shadow: 0 4px 12px var(--shadow);
+      border-color: var(--border-light);
+    }
+
+    /* 卡片头部 */
+    .dash-card-header {
+      padding: 0.875rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .dash-card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .dash-card-title .icon {
+      width: 18px;
+      height: 18px;
+      opacity: 0.8;
+    }
+
+    .dash-card-actions {
+      display: flex;
+      gap: 0.125rem;
+    }
+
+    .icon-btn {
+      width: 1.5rem;
+      height: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-sm);
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.75rem;
+      transition: all var(--transition);
+    }
+
+    .icon-btn:hover {
+      background: var(--bg-elevated);
+      color: var(--text);
+    }
+
+    /* ========== 列表项 ========== */
+    .dash-list {
+      padding: 0.5rem;
+    }
+
+    .dash-item {
+      padding: 0.5rem 0.625rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-radius: var(--radius-sm);
+      transition: background var(--transition);
+      cursor: pointer;
+    }
+
+    .dash-item:hover {
+      background: var(--bg-elevated);
+    }
+
+    .dash-item.active {
+      background: var(--accent-muted);
+      border: 1px solid var(--accent);
+    }
+
+    .dash-item-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .dash-item-check {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 0.625rem;
+      flex-shrink: 0;
+    }
+
+    .dash-item-check.empty {
+      background: transparent;
+      border: 2px solid var(--border);
+    }
+
+    .dash-item-name {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dash-item-meta {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      margin-top: 0.125rem;
+    }
+
+    .dash-item-actions {
+      display: flex;
+      gap: 0.125rem;
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+
+    .dash-item:hover .dash-item-actions {
+      opacity: 1;
+    }
+
+    /* ========== 节点项特殊样式 ========== */
+    .node-item {
+      padding: 0.625rem;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .node-item:last-child {
+      border-bottom: none;
+    }
+
+    .node-protocol {
+      font-size: 0.625rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+    }
+
+    .node-name {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .node-location {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+    }
+
+    .node-reveal {
+      font-size: 0.6875rem;
+      color: var(--accent);
+      cursor: pointer;
+      margin-top: 0.25rem;
+    }
+
+    /* ========== 订阅项 ========== */
+    .sub-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.625rem;
+      cursor: pointer;
+    }
+
+    .sub-header:hover {
+      background: var(--bg-elevated);
+    }
+
+    .sub-title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .sub-badge {
+      font-size: 0.625rem;
+      font-weight: 600;
+      padding: 0.125rem 0.375rem;
+      border-radius: 9999px;
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+    }
+
+    .sub-name {
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
+
+    .sub-meta {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      margin-top: 0.125rem;
+    }
+
+    .sub-expand {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      transition: transform var(--transition);
+    }
+
+    .sub-expanded .sub-expand {
+      transform: rotate(180deg);
+    }
+
+    .sub-content {
+      padding: 0 0.625rem 0.625rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* ========== 分组统计 ========== */
+    .group-stats {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .group-subitems {
+      padding-left: 1.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .group-subitem {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .subitem-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+
+    .subitem-count {
+      margin-left: auto;
+      font-size: 0.6875rem;
+      background: var(--bg-elevated);
+      padding: 0.125rem 0.375rem;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <nav class="topbar">
+    <div class="brand">
+      <div class="brand-logo">CC</div>
+      <span class="brand-name">CrabCache</span>
+      <span class="brand-version">v0.1.0</span>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-item">
+        <span>◐</span>
+        <span>Default</span>
+      </div>
+      <div class="topbar-item">
+        <span>👤</span>
+        <span>Administrator</span>
+      </div>
+      <div class="topbar-item">🔔</div>
+      <div class="topbar-item">⚙️</div>
+    </div>
+  </nav>
+
+  <!-- 主内容 -->
+  <main class="main">
+    <div class="dashboard-grid">
+      <!-- Config 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            Config
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">+</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="dash-item active">
+            <div class="dash-item-left">
+              <div class="dash-item-check">✓</div>
+              <span class="dash-item-name">default</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">👁</button>
+            </div>
+          </div>
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <div class="dash-item-check empty"></div>
+              <span class="dash-item-name">Gaming Config</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">🗑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DNS 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            DNS
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">+</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="dash-item active">
+            <div class="dash-item-left">
+              <div class="dash-item-check">✓</div>
+              <span class="dash-item-name">default</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+            </div>
+          </div>
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <div class="dash-item-check empty"></div>
+              <span class="dash-item-name">DoH Only</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">🗑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Routing 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 20l-5.447-2.724A1 1 0 0 1 3 16.382V5.618a1 1 0 0 1 1.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0 0 21 18.382V7.618a1 1 0 0 0-.553-.894L15 7m0 13V7"/>
+            </svg>
+            Routing
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">+</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="dash-item active">
+            <div class="dash-item-left">
+              <div class="dash-item-check">✓</div>
+              <span class="dash-item-name">default</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+            </div>
+          </div>
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <div class="dash-item-check empty"></div>
+              <span class="dash-item-name">Global Proxy</span>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">📋</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">🗑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Group
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">+</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <span class="dash-item-name">Proxy</span>
+              <div class="group-stats">mix_moving_avg · 2 nodes<br>1 subscription groups</div>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">☰</button>
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">›</button>
+            </div>
+          </div>
+          <div class="group-subitems">
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Node</span>
+              <span class="subitem-count">2</span>
+            </div>
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Subscription Groups</span>
+              <span class="subitem-count">1</span>
+            </div>
+          </div>
+
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <span class="dash-item-name">Gaming</span>
+              <div class="group-stats">mix · 1 nodes<br>0 subscription groups</div>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">☰</button>
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">›</button>
+              <button class="icon-btn">🗑</button>
+            </div>
+          </div>
+          <div class="group-subitems">
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Node</span>
+              <span class="subitem-count">1</span>
+            </div>
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Subscription Groups</span>
+              <span class="subitem-count">0</span>
+            </div>
+          </div>
+
+          <div class="dash-item">
+            <div class="dash-item-left">
+              <span class="dash-item-name">Streaming</span>
+              <div class="group-stats">random · 0 nodes<br>1 subscription groups</div>
+            </div>
+            <div class="dash-item-actions">
+              <button class="icon-btn">☰</button>
+              <button class="icon-btn">T</button>
+              <button class="icon-btn">🔄</button>
+              <button class="icon-btn">›</button>
+              <button class="icon-btn">🗑</button>
+            </div>
+          </div>
+          <div class="group-subitems">
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Node</span>
+              <span class="subitem-count">0</span>
+            </div>
+            <div class="group-subitem">
+              <span class="subitem-dot"></span>
+              <span>Subscription Groups</span>
+              <span class="subitem-count">1</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Node 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            Node
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">📋</button>
+            <button class="icon-btn">🔄</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="node-item">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <div class="node-protocol">vmess</div>
+                <div class="node-name">JP-Tokyo-Premium</div>
+                <div class="node-location">Tokyo-01</div>
+                <div class="node-reveal">Click to reveal</div>
+              </div>
+              <div class="dash-item-actions" style="opacity:1;">
+                <button class="icon-btn">📋</button>
+                <button class="icon-btn">🔄</button>
+              </div>
+            </div>
+          </div>
+          <div class="node-item">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <div class="node-protocol">trojan</div>
+                <div class="node-name">SG-Singapore-Standard</div>
+                <div class="node-location">Singapore-07</div>
+                <div class="node-reveal">Click to reveal</div>
+              </div>
+              <div class="dash-item-actions" style="opacity:1;">
+                <button class="icon-btn">📋</button>
+                <button class="icon-btn">🔄</button>
+              </div>
+            </div>
+          </div>
+          <div class="node-item">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <div class="node-protocol">shadowsocks</div>
+                <div class="node-name">HK-HongKong-IPLC</div>
+                <div class="node-location">HongKong-03</div>
+                <div class="node-reveal">Click to reveal</div>
+              </div>
+              <div class="dash-item-actions" style="opacity:1;">
+                <button class="icon-btn">📋</button>
+                <button class="icon-btn">🔄</button>
+              </div>
+            </div>
+          </div>
+          <div class="node-item">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <div class="node-protocol">vless</div>
+                <div class="node-name">US-LosAngeles-BGP</div>
+                <div class="node-location">US-West-04</div>
+                <div class="node-reveal">Click to reveal</div>
+              </div>
+              <div class="dash-item-actions" style="opacity:1;">
+                <button class="icon-btn">📋</button>
+                <button class="icon-btn">🔄</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subscription 卡片 -->
+      <div class="dash-card">
+        <div class="dash-card-header">
+          <div class="dash-card-title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            Subscription
+          </div>
+          <div class="dash-card-actions">
+            <button class="icon-btn">🔄</button>
+          </div>
+        </div>
+        <div class="dash-list">
+          <div class="sub-header">
+            <div>
+              <div class="sub-title-row">
+                <span class="sub-badge">5 Node</span>
+                <span class="sub-name">Premium Provider</span>
+              </div>
+              <div class="sub-meta">2024-11-28 10:26:00 · 0.0 ↑↓</div>
+              <div class="node-reveal">Click to reveal</div>
+            </div>
+            <span class="sub-expand">▼</span>
+          </div>
+          <div class="sub-content">Show content</div>
+
+          <div class="sub-header">
+            <div>
+              <div class="sub-title-row">
+                <span class="sub-badge">3 Node</span>
+                <span class="sub-name">Backup Provider</span>
+              </div>
+              <div class="sub-meta">2024-11-27 15:43:00</div>
+              <div class="node-reveal">Click to reveal</div>
+            </div>
+            <span class="sub-expand">▼</span>
+          </div>
+          <div class="sub-content">Show content</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

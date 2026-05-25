@@ -52,23 +52,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Cargo fmt
         run: cargo fmt --all --check
@@ -81,6 +65,29 @@ jobs:
         with:
           command: check
           arguments: --all-features
+
+      - name: Security audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  check-wasm:
+    name: Check WASM (dashboard)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check dashboard compiles to WASM
+        run: cargo check -p crab-dashboard --target wasm32-unknown-unknown
 
   test:
     name: Test (core crates)
@@ -108,23 +115,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-test-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-test-${{ hashFiles('**/Cargo.lock') }}-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: |
@@ -136,6 +127,12 @@ jobs:
             -p crab-metrics \
             -p crab-admin \
             -p crab-state \
+            -p crab-pipeline \
+            -p crab-reasoning \
+            -p crab-semantic \
+            -p crab-composition \
+            -p crab-admin-types \
+            -p crab-capture \
             --no-fail-fast
 
   build-gateway:
@@ -154,36 +151,20 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-release-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build crab-gateway
         run: cargo build --release -p crab-gateway
 
-      - name: Strip binary
-        run: strip target/release/crab-gateway
+      - name: Compress binary
+        run: tar -cJf crab-gateway-linux-amd64.tar.xz -C target/release crab-gateway
 
       - name: Upload gateway artifact (branch)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: crab-gateway-${{ github.sha }}
-          path: target/release/crab-gateway
+          path: crab-gateway-linux-amd64.tar.xz
           retention-days: 3
 
       - name: Upload gateway artifact (tag)
@@ -191,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crab-gateway-${{ github.ref_name }}
-          path: target/release/crab-gateway
+          path: crab-gateway-linux-amd64.tar.xz
           retention-days: 7
 
   build-admin:
@@ -215,23 +196,7 @@ jobs:
         with:
           tool: trunk
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-release-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build crab-admin
         run: cargo build --release -p crab-admin
@@ -240,17 +205,19 @@ jobs:
         working-directory: crates/crab-dashboard
         run: trunk build --release
 
-      - name: Strip binary
-        run: strip target/release/crab-admin
+      - name: Compress binary
+        run: |
+          mkdir -p pkg/crab-admin
+          cp target/release/crab-admin pkg/crab-admin/
+          cp -r crates/crab-dashboard/dist pkg/crab-admin/dashboard
+          tar -cJf crab-admin-linux-amd64.tar.xz -C pkg crab-admin
 
       - name: Upload admin artifact (branch)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: crab-admin-${{ github.sha }}
-          path: |
-            target/release/crab-admin
-            crates/crab-dashboard/dist/
+          path: crab-admin-linux-amd64.tar.xz
           retention-days: 3
 
       - name: Upload admin artifact (tag)
@@ -258,9 +225,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crab-admin-${{ github.ref_name }}
-          path: |
-            target/release/crab-admin
-            crates/crab-dashboard/dist/
+          path: crab-admin-linux-amd64.tar.xz
           retention-days: 7
 
   docker-gateway:
@@ -388,7 +353,7 @@ jobs:
           name: CrabCache ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.content || 'No changelog available.' }}
           files: |
-            crab-gateway
-            crab-admin
+            crab-gateway-linux-amd64.tar.xz
+            crab-admin-linux-amd64.tar.xz
           draft: false
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
