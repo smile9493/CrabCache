@@ -1317,7 +1317,7 @@ pub fn prepare_upstream_request(
         false,
         !thinking_disabled,
     );
-    let record_response_messages = pre_repair.messages.clone();
+    let mut record_response_messages = pre_repair.messages.clone();
     let record_response_scope = resolve_reasoning_scope(
         stable_session_id,
         &record_response_messages,
@@ -1385,6 +1385,11 @@ pub fn prepare_upstream_request(
         );
         result.patched_count += inline_patched;
         missing_indexes = result.missing_indexes;
+        // Update record_response_messages to reflect patched reasoning so
+        // ReasoningStore recording uses the same context as the upstream request.
+        if inline_patched > 0 {
+            record_response_messages = result.messages.clone();
+        }
     }
 
     while !missing_indexes.is_empty()

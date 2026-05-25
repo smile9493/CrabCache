@@ -22,9 +22,9 @@ pub fn strip_reasoning_delta_for_client(chunk: &mut Value) {
             None => continue,
         };
         delta.remove("reasoning_content");
-        if delta.get("role").is_some() && !delta.contains_key("content") {
-            delta.insert("content".into(), Value::String(String::new()));
-        } else if delta.get("content").map(|v| v.is_null()).unwrap_or(false) {
+        if !delta.contains_key("content")
+            || delta.get("content").map(|v| v.is_null()).unwrap_or(false)
+        {
             delta.insert("content".into(), Value::String(String::new()));
         }
     }
@@ -624,5 +624,21 @@ mod tests {
             None,
         );
         assert!(result.finalized);
+    }
+
+    #[test]
+    fn strip_reasoning_only_chunk_inserts_empty_content() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"reasoning_content": "thinking step"}
+            }]
+        });
+        let mut chunk = payload.clone();
+        strip_reasoning_delta_for_client(&mut chunk);
+        let delta = &chunk["choices"][0]["delta"];
+        assert!(delta.get("reasoning_content").is_none(), "reasoning_content must be removed");
+        assert!(delta.get("content").is_some(), "content field must be present even for reasoning-only chunks");
+        assert_eq!(delta["content"].as_str(), Some(""));
     }
 }

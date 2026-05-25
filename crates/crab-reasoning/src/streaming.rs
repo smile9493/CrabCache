@@ -323,7 +323,11 @@ impl CursorReasoningDisplayAdapter {
                         if !self.open_choices.contains_key(&index) {
                             self.open_choices.insert(index, true);
                         }
-                        obj.insert("content".into(), Value::String(reasoning_content));
+                        if existing_content.is_empty() {
+                            obj.insert("content".into(), Value::String(reasoning_content));
+                        } else {
+                            obj.insert("content".into(), Value::String(format!("{reasoning_content}{existing_content}")));
+                        }
                     } else if obj.get("role").is_some() && !obj.contains_key("content") {
                         obj.insert("content".into(), Value::String(String::new()));
                     } else if !existing_content.is_empty() {
@@ -482,6 +486,25 @@ mod tests {
         let delta = &chunk["choices"][0]["delta"];
         assert!(delta.get("reasoning_content").is_none());
         assert_eq!(delta.get("content").and_then(|c| c.as_str()), Some(""));
+    }
+
+    #[test]
+    fn cursor_adapter_preserves_content_when_reasoning_also_present() {
+        let mut adapter = CursorReasoningDisplayAdapter::new(true);
+        let mut chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": "actual answer", "reasoning_content": "thinking..."}
+            }]
+        });
+        adapter.rewrite_chunk(&mut chunk);
+        let delta = &chunk["choices"][0]["delta"];
+        assert!(delta.get("reasoning_content").is_none(), "reasoning_content must be removed");
+        assert_eq!(
+            delta.get("content").and_then(|c| c.as_str()),
+            Some("thinking...actual answer"),
+            "both reasoning and original content must be preserved"
+        );
     }
 
     #[test]
