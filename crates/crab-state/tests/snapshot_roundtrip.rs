@@ -269,10 +269,6 @@ fn connection_config_roundtrip() {
 
     let runtime_b = test_runtime();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply");
-    let loaded = runtime_b
-        .conn_config
-        .read()
-        .expect("conn lock")
-        .clone();
+    let loaded = runtime_b.conn_config.read().expect("conn lock").clone();
     assert_eq!(loaded.tcp_keepalive_idle_secs, Some(120));
 }
