@@ -179,6 +179,10 @@ pub fn router(state: ManagementState) -> Router {
             patch(management_profiles::patch_profile_key),
         )
         .route(
+            "/v1/upstream/profiles/{id}/keys/{key_id}/test",
+            post(management_profiles::test_upstream_profile_key),
+        )
+        .route(
             "/v1/upstream/profiles/{id}/test",
             post(management_profiles::test_upstream_profile),
         )

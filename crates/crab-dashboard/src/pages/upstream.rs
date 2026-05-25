@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use leptos::prelude::*;
 
 use crate::api;
@@ -5,9 +7,9 @@ use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
-    PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest, SyncResult,
-    UpdateUpstreamConfigRequest, UpstreamConfig, UpstreamKeyInput, UpstreamKeysPutMode,
-    UpstreamKeysView, UpstreamTestBody, UpstreamProfileAdminView, UpstreamTestResult
+    KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest,
+    SyncResult, UpdateUpstreamConfigRequest, UpstreamKeyInput, UpstreamKeysPutMode,
+    UpstreamKeysView, UpstreamTestBody, UpstreamProfileAdminView, UpstreamTestResult,
 };
 
 const OFFICIAL_BASE: &str = "https://api.deepseek.com";
@@ -104,6 +106,12 @@ pub fn UpstreamPage() -> impl IntoView {
     let pool_saved = RwSignal::new(false);
     let pool_error = RwSignal::new(String::new());
 
+    // Per-key quota test state
+    let key_test_results: RwSignal<HashMap<String, UpstreamTestResult>> =
+        RwSignal::new(HashMap::new());
+    let key_testing: RwSignal<HashMap<String, bool>> = RwSignal::new(HashMap::new());
+    let testing_all = RwSignal::new(false);
+
     // Profile deletion state
     let show_delete_confirm = RwSignal::new(false);
     let deleting = RwSignal::new(false);
@@ -111,6 +119,8 @@ pub fn UpstreamPage() -> impl IntoView {
     // API loaders
     let load_key_pool = move |pid: String| {
         key_pool.set(None);
+        key_test_results.set(HashMap::new());
+        key_testing.set(HashMap::new());
         leptos::task::spawn_local(async move {
             let result = if pid == "deepseek" {
                 api::fetch_upstream_keys().await
@@ -774,140 +784,269 @@ pub fn UpstreamPage() -> impl IntoView {
                                     Some(Err(e)) => view! {
                                         <p class="text-xs text-error">{e}</p>
                                     }.into_any(),
-                                    Some(Ok(pool)) => view! {
-                                        <div class="overflow-x-auto">
-                                            <table class="table text-sm">
-                                                <thead>
-                                                    <tr>
-                                                        <th>{t.upstream_pool_col_id()}</th>
-                                                        <th>{t.upstream_pool_col_preview()}</th>
-                                                        <th>{t.upstream_pool_col_account()}</th>
-                                                        <th>{t.upstream_pool_col_enabled()}</th>
-                                                        <th>{t.upstream_pool_col_inflight()}</th>
-                                                        <th>{t.upstream_pool_col_cooldown()}</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {pool.keys.iter().map(|k| {
-                                                        let id = k.id.clone();
-                                                        let enabled = k.enabled;
-                                                        let pid = active_profile.get();
-                                                        view! {
-                                                            <tr>
-                                                                <td class="font-mono">{k.id.clone()}</td>
-                                                                <td class="font-mono">{k.preview.clone()}</td>
-                                                                <td class="font-mono text-xs">
-                                                                    {if k.account_id.is_empty() {
-                                                                        "default".to_string()
-                                                                    } else {
-                                                                        k.account_id.clone()
-                                                                    }}
-                                                                </td>
-                                                                <td>
-                                                                    <div class="flex items-center gap-2">
-                                                                        <input
-                                                                            type="checkbox"
-                                                                            prop:checked=enabled
-                                                                            on:change=move |_| {
-                                                                                let id = id.clone();
-                                                                                let next = !enabled;
-                                                                                let pid = pid.clone();
-                                                                                leptos::task::spawn_local(async move {
-                                                                                    let req = PatchUpstreamKeyRequest {
-                                                                                        enabled: Some(next),
-                                                                                        secret: None,
-                                                                                    };
-                                                                                    let _ = if pid == "deepseek" {
-                                                                                        api::patch_upstream_key(&id, &req).await
-                                                                                    } else {
-                                                                                        api::patch_upstream_profile_key(
-                                                                                            &pid, &id, &req,
-                                                                                        )
-                                                                                        .await
-                                                                                    };
-                                                                                    load_key_pool(pid.clone());
-                                                                                });
-                                                                            }
-                                                                        />
-                                                                        <span class=move || if enabled { "badge badge-success text-xs" } else { "badge text-xs" }>
-                                                                            {if enabled { t.upstream_key_status_enabled() } else { t.upstream_key_status_disabled() }}
-                                                                        </span>
-                                                                    </div>
-                                                                </td>
-                                                                <td class="font-mono">{k.inflight}</td>
-                                                                <td class="font-mono text-xs">
-                                                                    {if k.cooldown_remaining_secs > 0 {
-                                                                        view! {
-                                                                            <span class="text-warning">
-                                                                                {format!("{}s", k.cooldown_remaining_secs)}
-                                                                            </span>
-                                                                        }.into_any()
-                                                                    } else {
-                                                                        view! { <span class="text-theme-muted">"-"</span> }.into_any()
-                                                                    }}
-                                                                </td>
-                                                            </tr>
-                                                        }
-                                                    }).collect_view()}
-                                                </tbody>
-                                            </table>
-                                        </div>
-
-                                        <div class="space-y-4 pt-4 border-t border-theme/10">
+                                    Some(Ok(pool)) => {
+                                        let keys_for_all = pool.keys.clone();
+                                        let pid_for_all = active_profile.get();
+                                        view! {
                                             <div>
-                                                <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                                    {move || if pool_replace_mode.get() {
-                                                        t.upstream_pool_replace_label()
-                                                    } else {
-                                                        t.upstream_pool_append_label()
-                                                    }}
-                                                </label>
-                                                <label class="flex items-center gap-2 text-xs text-theme-muted mb-2">
-                                                    <input
-                                                        type="checkbox"
-                                                        prop:checked=move || pool_replace_mode.get()
-                                                        on:change=move |ev| pool_replace_mode.set(event_target_checked(&ev))
-                                                    />
-                                                    {t.upstream_pool_replace_confirm()}
-                                                </label>
-                                                <textarea
-                                                    prop:value=move || pool_secrets_text.get()
-                                                    on:input=move |ev| pool_secrets_text.set(event_target_value(&ev))
-                                                    class="input font-mono text-sm h-24 resize-y"
-                                                    placeholder="sk-...\nacct-b:sk-...\n"
-                                                ></textarea>
-                                            </div>
+                                                // "Test All" button
+                                                <div class="flex items-center gap-2 mb-3">
+                                                    <button
+                                                        type="button"
+                                                        class="btn btn-secondary text-xs"
+                                                        disabled=move || testing_all.get()
+                                                        on:click={
+                                                            let keys = keys_for_all.clone();
+                                                            let pid = pid_for_all.clone();
+                                                            move |_| {
+                                                                let keys = keys.clone();
+                                                                let pid = pid.clone();
+                                                                testing_all.set(true);
+                                                                leptos::task::spawn_local(async move {
+                                                                    for k in &keys {
+                                                                        key_testing.update(|m| { m.insert(k.id.clone(), true); });
+                                                                        let result = api::test_upstream_profile_key(&pid, &k.id).await;
+                                                                        key_testing.update(|m| { m.insert(k.id.clone(), false); });
+                                                                        let tr = match result {
+                                                                            Ok(r) => r,
+                                                                            Err(e) => UpstreamTestResult {
+                                                                                ok: false,
+                                                                                status_code: 0,
+                                                                                latency_ms: 0,
+                                                                                model_count: None,
+                                                                                error: Some(e),
+                                                                                quota: None,
+                                                                            },
+                                                                        };
+                                                                        key_test_results.update(|m| { m.insert(k.id.clone(), tr); });
+                                                                    }
+                                                                    testing_all.set(false);
+                                                                });
+                                                            }
+                                                        }
+                                                    >
+                                                        {move || if testing_all.get() { "Testing..." } else { "Test All Quotas" }}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="text-xs text-accent cursor-pointer"
+                                                        on:click=move |_| {
+                                                            key_test_results.set(HashMap::new());
+                                                        }
+                                                    >
+                                                        "Clear Results"
+                                                    </button>
+                                                </div>
 
-                                            <div class="flex items-center gap-3">
-                                                <button
-                                                    on:click=on_save_pool
-                                                    disabled=move || pool_saving.get()
-                                                    class="btn btn-primary text-xs"
-                                                >
-                                                    {move || if pool_saving.get() {
-                                                        t.upstream_pool_saving()
-                                                    } else {
-                                                        t.upstream_pool_save_btn()
-                                                    }}
-                                                </button>
-                                                {move || if pool_saved.get() {
-                                                    view! {
-                                                        <span class="text-xs text-accent font-medium">
-                                                            {t.upstream_pool_saved()}
-                                                        </span>
-                                                    }.into_any()
-                                                } else {
-                                                    view! { <span></span> }.into_any()
-                                                }}
-                                                {move || if !pool_error.get().is_empty() {
-                                                    view! { <span class="text-xs text-error">{pool_error.get()}</span> }.into_any()
-                                                } else {
-                                                    view! { <span></span> }.into_any()
-                                                }}
+                                                <div class="overflow-x-auto">
+                                                    <table class="table text-sm">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>{t.upstream_pool_col_id()}</th>
+                                                                <th>{t.upstream_pool_col_preview()}</th>
+                                                                <th>{t.upstream_pool_col_account()}</th>
+                                                                <th>{t.upstream_pool_col_enabled()}</th>
+                                                                <th>"Quota"</th>
+                                                                <th>{t.upstream_pool_col_inflight()}</th>
+                                                                <th>{t.upstream_pool_col_cooldown()}</th>
+                                                                <th>"Test"</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {pool.keys.iter().map(|k| {
+                                                                let kid = k.id.clone();
+                                                                let kid2 = k.id.clone();
+                                                                let kid3 = k.id.clone();
+                                                                let kid_for_test = k.id.clone();
+                                                                let enabled = k.enabled;
+                                                                let pid = active_profile.get();
+                                                                let pid2 = active_profile.get();
+                                                                view! {
+                                                                    <tr>
+                                                                        <td class="font-mono">{k.id.clone()}</td>
+                                                                        <td class="font-mono">{k.preview.clone()}</td>
+                                                                        <td class="font-mono text-xs">
+                                                                            {if k.account_id.is_empty() {
+                                                                                "default".to_string()
+                                                                            } else {
+                                                                                k.account_id.clone()
+                                                                            }}
+                                                                        </td>
+                                                                        <td>
+                                                                            <div class="flex items-center gap-2">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    prop:checked=enabled
+                                                                                    on:change=move |_| {
+                                                                                        let id = kid.clone();
+                                                                                        let next = !enabled;
+                                                                                        let pid = pid.clone();
+                                                                                        leptos::task::spawn_local(async move {
+                                                                                            let req = PatchUpstreamKeyRequest {
+                                                                                                enabled: Some(next),
+                                                                                                secret: None,
+                                                                                            };
+                                                                                            let _ = if pid == "deepseek" {
+                                                                                                api::patch_upstream_key(&id, &req).await
+                                                                                            } else {
+                                                                                                api::patch_upstream_profile_key(
+                                                                                                    &pid, &id, &req,
+                                                                                                )
+                                                                                                .await
+                                                                                            };
+                                                                                            load_key_pool(pid.clone());
+                                                                                        });
+                                                                                    }
+                                                                                />
+                                                                                <span class=move || if enabled { "badge badge-success text-xs" } else { "badge text-xs" }>
+                                                                                    {if enabled { t.upstream_key_status_enabled() } else { t.upstream_key_status_disabled() }}
+                                                                                </span>
+                                                                            </div>
+                                                                        </td>
+                                                                        // Quota column
+                                                                        <td>
+                                                                            {move || {
+                                                                                let results = key_test_results.get();
+                                                                                match results.get(&kid2) {
+                                                                                    Some(result) => match &result.quota {
+                                                                                        Some(quota) => view! {
+                                                                                            <QuotaProgressBar quota=quota.clone() />
+                                                                                        }.into_any(),
+                                                                                        None => {
+                                                                                            if result.ok {
+                                                                                                view! {
+                                                                                                    <span class="text-xs text-accent">"OK"</span>
+                                                                                                }.into_any()
+                                                                                            } else {
+                                                                                                let err_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
+                                                                                                view! {
+                                                                                                    <span class="text-xs text-error" title={err_msg}>"Fail"</span>
+                                                                                                }.into_any()
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    None => view! {
+                                                                                        <span class="text-xs text-theme-muted">"-"</span>
+                                                                                    }.into_any(),
+                                                                                }
+                                                                            }}
+                                                                        </td>
+                                                                        <td class="font-mono">{k.inflight}</td>
+                                                                        <td class="font-mono text-xs">
+                                                                            {if k.cooldown_remaining_secs > 0 {
+                                                                                view! {
+                                                                                    <span class="text-warning">
+                                                                                        {format!("{}s", k.cooldown_remaining_secs)}
+                                                                                    </span>
+                                                                                }.into_any()
+                                                                            } else {
+                                                                                view! { <span class="text-theme-muted">"-"</span> }.into_any()
+                                                                            }}
+                                                                        </td>
+                                                                        // Test button column
+                                                                        <td>
+                                                                            {move || {
+                                                                                let is_testing = key_testing.get().get(&kid3).copied().unwrap_or(false);
+                                                                                view! {
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        class="btn btn-secondary text-xs"
+                                                                                        disabled=is_testing
+                                                                                        on:click={
+                                                                                            let kid = kid_for_test.clone();
+                                                                                            let pid = pid2.clone();
+                                                                                            move |_| {
+                                                                                                let kid = kid.clone();
+                                                                                                let pid = pid.clone();
+                                                                                            leptos::task::spawn_local(async move {
+                                                                                                key_testing.update(|m| { m.insert(kid.clone(), true); });
+                                                                                                let result = api::test_upstream_profile_key(&pid, &kid).await;
+                                                                                                key_testing.update(|m| { m.insert(kid.clone(), false); });
+                                                                                                let tr = match result {
+                                                                                                    Ok(r) => r,
+                                                                                                    Err(e) => UpstreamTestResult {
+                                                                                                        ok: false,
+                                                                                                        status_code: 0,
+                                                                                                        latency_ms: 0,
+                                                                                                        model_count: None,
+                                                                                                        error: Some(e),
+                                                                                                        quota: None,
+                                                                                                    },
+                                                                                                };
+                                                                                                key_test_results.update(|m| { m.insert(kid, tr); });
+                                                                                            });
+                                                                                            }
+                                                                                        }
+                                                                                    >
+                                                                                        {if is_testing { "..." } else { "Test" }}
+                                                                                    </button>
+                                                                                }
+                                                                            }}
+                                                                        </td>
+                                                                    </tr>
+                                                                }
+                                                            }).collect_view()}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
                                             </div>
-                                        </div>
-                                    }.into_any(),
+                                        }.into_any()
+                                    },
                                 }}
+
+                                <div class="space-y-4 pt-4 border-t border-theme/10">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {move || if pool_replace_mode.get() {
+                                                t.upstream_pool_replace_label()
+                                            } else {
+                                                t.upstream_pool_append_label()
+                                            }}
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs text-theme-muted mb-2">
+                                            <input
+                                                type="checkbox"
+                                                prop:checked=move || pool_replace_mode.get()
+                                                on:change=move |ev| pool_replace_mode.set(event_target_checked(&ev))
+                                            />
+                                            {t.upstream_pool_replace_confirm()}
+                                        </label>
+                                        <textarea
+                                            prop:value=move || pool_secrets_text.get()
+                                            on:input=move |ev| pool_secrets_text.set(event_target_value(&ev))
+                                            class="input font-mono text-sm h-24 resize-y"
+                                            placeholder="sk-...\nacct-b:sk-...\n"
+                                        ></textarea>
+                                    </div>
+
+                                    <div class="flex items-center gap-3">
+                                        <button
+                                            on:click=on_save_pool
+                                            disabled=move || pool_saving.get()
+                                            class="btn btn-primary text-xs"
+                                        >
+                                            {move || if pool_saving.get() {
+                                                t.upstream_pool_saving()
+                                            } else {
+                                                t.upstream_pool_save_btn()
+                                            }}
+                                        </button>
+                                        {move || if pool_saved.get() {
+                                            view! {
+                                                <span class="text-xs text-accent font-medium">
+                                                    {t.upstream_pool_saved()}
+                                                </span>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }}
+                                        {move || if !pool_error.get().is_empty() {
+                                            view! { <span class="text-xs text-error">{pool_error.get()}</span> }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }}
+                                    </div>
+                                </div>
                             </div>
                         }.into_any()
                     }}
@@ -992,6 +1131,59 @@ pub fn UpstreamPage() -> impl IntoView {
                             </button>
                         </div>
                     </div>
+                </div>
+            })}
+        </div>
+    }
+}
+
+/// Displays a quota progress bar for an upstream key.
+#[component]
+fn QuotaProgressBar(quota: KeyQuotaInfo) -> impl IntoView {
+    let percentage = match (quota.balance, quota.total_granted) {
+        (Some(b), Some(g)) if g > 0.0 => Some((b / g * 100.0).clamp(0.0, 100.0)),
+        _ => None,
+    };
+
+    let bar_color = match percentage {
+        Some(p) if p > 50.0 => "bg-success",
+        Some(p) if p > 20.0 => "bg-warning",
+        Some(_) => "bg-error",
+        None => "bg-theme-muted",
+    };
+
+    let available_icon = match quota.is_available {
+        Some(true) => view! { <span class="text-success text-xs mr-1">{"OK"}</span> }.into_any(),
+        Some(false) => view! { <span class="text-error text-xs mr-1">{"X"}</span> }.into_any(),
+        None => view! { <span></span> }.into_any(),
+    };
+
+    view! {
+        <div class="min-w-[120px]">
+            <div class="flex items-center gap-1 mb-0.5">
+                {available_icon}
+                {match (quota.balance, quota.total_granted) {
+                    (Some(b), Some(g)) => view! {
+                        <span class="text-xs font-mono">
+                            {format!("${:.2} / ${:.2}", b, g)}
+                        </span>
+                    }.into_any(),
+                    (Some(b), _) => view! {
+                        <span class="text-xs font-mono">
+                            {format!("${:.2}", b)}
+                        </span>
+                    }.into_any(),
+                    _ => view! {
+                        <span class="text-xs text-theme-muted">"N/A"</span>
+                    }.into_any(),
+                }}
+            </div>
+            {percentage.map(|p| view! {
+                <div class="w-full h-1.5 rounded-full bg-theme/10 overflow-hidden">
+                    <div
+                        class={format!("h-full rounded-full transition-all {}", bar_color)}
+                        style={format!("width: {:.1}%", p)}
+                    ></div>
                 </div>
             })}
         </div>

@@ -398,6 +398,14 @@ impl UpstreamKeyPool {
             false
         }
     }
+
+    /// Return the full secret for a specific key by ID (for per-key testing).
+    pub fn secret_by_id(&self, key_id: &str) -> Option<String> {
+        self.slots
+            .iter()
+            .find(|s| s.id == key_id)
+            .map(|s| s.secret.to_string())
+    }
 }
 
 #[cfg(test)]

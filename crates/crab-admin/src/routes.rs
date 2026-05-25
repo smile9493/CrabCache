@@ -155,6 +155,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             patch(patch_upstream_profile_key),
         )
         .route(
+            "/api/admin/upstream/profiles/{id}/keys/{key_id}/test",
+            post(post_upstream_profile_key_test),
+        )
+        .route(
             "/api/admin/upstream/profiles/{id}/test",
             post(post_upstream_profile_test),
         )
@@ -184,6 +188,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/admin/composition/debug",
             get(crate::composition::get_composition_debug),
+        )
+        // ── Raw Capture ──
+        .route(
+            "/api/admin/capture/list",
+            get(crate::raw_capture::get_capture_list),
+        )
+        .route(
+            "/api/admin/capture/stats",
+            get(crate::raw_capture::get_capture_stats),
+        )
+        .route(
+            "/api/admin/capture/{request_id}",
+            get(crate::raw_capture::get_capture_detail),
         )
         // ── Infra (container / host monitoring) ──
         .route("/api/admin/infra/snapshot", get(get_infra_snapshot))
@@ -2223,6 +2240,16 @@ async fn post_upstream_profile_test(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
     let result = crate::upstream_profiles::test_profile(&state, &id)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(result))
+}
+
+async fn post_upstream_profile_key_test(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, key_id)): axum::extract::Path<(String, String)>,
+) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
+    let result = crate::upstream_profiles::test_profile_key(&state, &id, &key_id)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(result))

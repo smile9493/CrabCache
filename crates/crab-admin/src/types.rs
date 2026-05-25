@@ -92,6 +92,15 @@ pub fn upstream_keys_view_from_control(v: crab_control::UpstreamKeysView) -> Ups
     }
 }
 
+fn key_quota_from_control(q: crab_control::KeyQuotaInfo) -> KeyQuotaInfo {
+    KeyQuotaInfo {
+        is_available: q.is_available,
+        balance: q.balance,
+        total_granted: q.total_granted,
+        total_used: q.total_used,
+    }
+}
+
 pub fn upstream_test_from_control(t: crab_control::UpstreamTestResult) -> UpstreamTestResult {
     UpstreamTestResult {
         ok: t.ok,
@@ -99,6 +108,7 @@ pub fn upstream_test_from_control(t: crab_control::UpstreamTestResult) -> Upstre
         latency_ms: t.latency_ms,
         model_count: t.model_count,
         error: t.error,
+        quota: t.quota.map(key_quota_from_control),
     }
 }
 

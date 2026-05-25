@@ -92,6 +92,19 @@ pub struct PutUpstreamKeysRequest {
     pub mode: UpstreamKeysPutMode,
 }
 
+/// Balance / quota info returned by per-key upstream testing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyQuotaInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_granted: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_used: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpstreamTestResult {
     pub ok: bool,
@@ -99,6 +112,8 @@ pub struct UpstreamTestResult {
     pub latency_ms: u64,
     pub model_count: Option<usize>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<KeyQuotaInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

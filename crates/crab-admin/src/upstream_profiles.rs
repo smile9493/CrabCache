@@ -161,6 +161,19 @@ pub async fn test_profile(
         .map_err(|e| e.to_string())
 }
 
+pub async fn test_profile_key(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    key_id: &str,
+) -> Result<crate::types::UpstreamTestResult, String> {
+    state
+        .gateway
+        .test_upstream_profile_key(profile_id, key_id)
+        .await
+        .map(upstream_test_from_control)
+        .map_err(|e| e.to_string())
+}
+
 pub async fn list_profiles_json(
     state: axum::extract::State<Arc<AppState>>,
 ) -> Result<Json<UpstreamProfilesAdminResponse>, (axum::http::StatusCode, String)> {

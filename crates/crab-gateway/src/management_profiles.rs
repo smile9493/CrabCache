@@ -7,8 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use crab_control::{
-    ErrorResponse, PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest,
-    UpstreamKeyView,
+    ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest,
+    PutUpstreamProfileRequest, UpstreamKeyView,
     UpstreamKeysPutMode, UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse,
     UpstreamTestResult, parse_upstream_base_url, validate_upstream_key,
 };
@@ -289,6 +289,7 @@ pub async fn test_upstream_profile(
             latency_ms: 0,
             model_count: None,
             error: Some("no upstream API keys available".to_string()),
+            quota: None,
         }));
     };
     let api_key = guard.bearer_secret().to_string();
@@ -332,6 +333,7 @@ pub async fn test_upstream_profile(
                 latency_ms,
                 model_count,
                 error,
+                quota: None,
             }))
         }
         Err(e) => Ok(Json(UpstreamTestResult {
@@ -340,6 +342,131 @@ pub async fn test_upstream_profile(
             latency_ms,
             model_count: None,
             error: Some(e.to_string()),
+            quota: None,
+        })),
+    }
+}
+
+/// Test a specific upstream key by ID: first tries `/v1/user/balance` for quota info,
+/// then falls back to `/v1/models` for basic connectivity.
+pub async fn test_upstream_profile_key(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(path): Path<ProfileKeyPath>,
+) -> Result<Json<UpstreamTestResult>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let profile_id = path.id.trim();
+    let key_id = path.key_id.trim();
+    let profile = state
+        .runtime
+        .profile(profile_id)
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
+    let pool = profile.resolve_upstream_pool();
+    let api_key = pool.secret_by_id(key_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response()
+    })?;
+
+    let base_url = profile.base_url.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|_| internal_error("http client"))?;
+
+    // Step 1: Try GET /v1/user/balance (DeepSeek-style quota endpoint)
+    let balance_url = format!("{}/v1/user/balance", base_url);
+    let start = std::time::Instant::now();
+    let balance_resp = client
+        .get(&balance_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    if let Ok(r) = balance_resp {
+        if r.status().is_success() {
+            if let Ok(body) = r.json::<serde_json::Value>().await {
+                // Parse balance fields: DeepSeek returns strings at top level,
+                // some providers wrap in "data" or return numbers directly.
+                let parse_f64 = |v: &serde_json::Value| -> Option<f64> {
+                    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+                };
+                // Try top-level first, then fall back to body["data"] (if it's an object).
+                let src = body
+                    .get("data")
+                    .filter(|d| d.is_object())
+                    .unwrap_or(&body);
+                let get_field = |field: &str| -> Option<&serde_json::Value> {
+                    src.get(field).or_else(|| body.get(field))
+                };
+                let is_available = get_field("is_available").and_then(|v| v.as_bool());
+                let balance = get_field("balance").and_then(parse_f64);
+                let total_granted = get_field("total_granted").and_then(parse_f64);
+                let total_used = get_field("total_used").and_then(parse_f64);
+                return Ok(Json(UpstreamTestResult {
+                    ok: true,
+                    status_code: 200,
+                    latency_ms,
+                    model_count: None,
+                    error: None,
+                    quota: Some(KeyQuotaInfo {
+                        is_available,
+                        balance,
+                        total_granted,
+                        total_used,
+                    }),
+                }));
+            }
+        }
+    }
+
+    // Step 2: Fallback to GET /v1/models (generic validity check)
+    let models_url = format!("{}/v1/models", base_url);
+    let start2 = std::time::Instant::now();
+    let resp = client
+        .get(&models_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await;
+    let latency_ms2 = start2.elapsed().as_millis() as u64;
+    match resp {
+        Ok(r) => {
+            let status = r.status();
+            let ok = status.is_success();
+            let model_count = if ok {
+                r.json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len()))
+            } else {
+                None
+            };
+            let error = if ok {
+                None
+            } else {
+                Some(format!("HTTP {}", status.as_u16()))
+            };
+            Ok(Json(UpstreamTestResult {
+                ok,
+                status_code: status.as_u16(),
+                latency_ms: latency_ms + latency_ms2,
+                model_count,
+                error,
+                quota: None,
+            }))
+        }
+        Err(e) => Ok(Json(UpstreamTestResult {
+            ok: false,
+            status_code: 0,
+            latency_ms: latency_ms + latency_ms2,
+            model_count: None,
+            error: Some(e.to_string()),
+            quota: None,
         })),
     }
 }

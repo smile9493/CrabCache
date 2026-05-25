@@ -502,4 +502,20 @@ impl GatewayAdminClient {
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
+
+    pub async fn test_upstream_profile_key(
+        &self,
+        profile_id: &str,
+        key_id: &str,
+    ) -> Result<UpstreamTestResult, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::POST,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/{key_id}/test"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
 }

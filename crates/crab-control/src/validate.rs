@@ -17,6 +17,23 @@ pub fn validate_deepseek_key(secret: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Balance / quota info returned by per-key upstream testing.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyQuotaInfo {
+    /// Whether the upstream reports the key as available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_available: Option<bool>,
+    /// Current remaining balance (e.g. DeepSeek `/v1/user/balance`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance: Option<f64>,
+    /// Total granted quota.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_granted: Option<f64>,
+    /// Total consumed quota.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_used: Option<f64>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UpstreamTestResult {
     pub ok: bool,
@@ -26,6 +43,9 @@ pub struct UpstreamTestResult {
     pub model_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Quota / balance info from per-key testing (None when not a per-key test).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<KeyQuotaInfo>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -14,6 +14,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
             latency_ms: 0,
             model_count: None,
             error: Some(e),
+            quota: None,
         };
     }
     if let Err(e) = validate_upstream_key(api_key) {
@@ -23,6 +24,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
             latency_ms: 0,
             model_count: None,
             error: Some(e),
+            quota: None,
         };
     }
 
@@ -40,6 +42,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
                 latency_ms: 0,
                 model_count: None,
                 error: Some(format!("HTTP client error: {e}")),
+                quota: None,
             };
         }
     };
@@ -58,6 +61,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
                 latency_ms: start.elapsed().as_millis() as u64,
                 model_count: None,
                 error: Some(format!("Cannot reach upstream: {e}")),
+                quota: None,
             };
         }
     };
@@ -80,6 +84,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
             latency_ms,
             model_count: None,
             error: Some(msg),
+            quota: None,
         };
     }
 
@@ -92,6 +97,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
                 latency_ms,
                 model_count: None,
                 error: Some(format!("Failed to parse upstream response: {e}")),
+                quota: None,
             };
         }
     };
@@ -102,6 +108,7 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
         latency_ms,
         model_count: Some(upstream.data.len()),
         error: None,
+        quota: None,
     }
 }
 

@@ -435,6 +435,22 @@ pub async fn test_upstream_profile(id: &str) -> Result<UpstreamTestResult, Strin
     .await
 }
 
+pub async fn test_upstream_profile_key(
+    profile_id: &str,
+    key_id: &str,
+) -> Result<UpstreamTestResult, String> {
+    #[derive(serde::Serialize)]
+    struct EmptyBody {}
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{profile_id}/keys/{key_id}/test",
+            API_BASE
+        ),
+        &EmptyBody {},
+    )
+    .await
+}
+
 pub async fn fetch_upstream_profile_keys(
     id: &str,
 ) -> Result<crate::types::UpstreamProfileKeysAdminView, String> {
@@ -704,4 +720,41 @@ pub async fn post_infra_speed_test_upload(
         return Err(http_error(resp, epoch).await);
     }
     Ok(())
+}
+
+// ── Raw Capture API ──────────────────────────────────────────────
+
+pub async fn fetch_capture_list(
+    hours: u32,
+    limit: Option<usize>,
+    consumer: Option<&str>,
+    project_id: Option<&str>,
+    request_hash: Option<&str>,
+) -> Result<crate::types::CaptureListResponse, String> {
+    let mut path = format!("{}/capture/list?hours={}", API_BASE, hours);
+    if let Some(l) = limit {
+        path.push_str(&format!("&limit={}", l));
+    }
+    if let Some(c) = consumer.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&consumer={}", percent_encode_query(c)));
+    }
+    if let Some(pid) = project_id.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&project_id={}", percent_encode_query(pid)));
+    }
+    if let Some(rh) = request_hash.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&request_hash={}", percent_encode_query(rh)));
+    }
+    fetch_json(&path).await
+}
+
+pub async fn fetch_capture_detail(
+    request_id: &str,
+) -> Result<crate::types::CaptureDetailResponse, String> {
+    fetch_json(&format!("{}/capture/{}", API_BASE, request_id)).await
+}
+
+pub async fn fetch_capture_stats(
+    hours: u32,
+) -> Result<crate::types::CaptureStatsResponse, String> {
+    fetch_json(&format!("{}/capture/stats?hours={}", API_BASE, hours)).await
 }
