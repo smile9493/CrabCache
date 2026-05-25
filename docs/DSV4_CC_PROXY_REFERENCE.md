@@ -33,6 +33,6 @@ backend = "redis"
 修改 `[reasoning].display_reasoning` 或 `PUT /v1/runtime/reasoning` 后：
 
 1. **推荐**：`POST /v1/cache/invalidate`（`scope: all`，带 `x-cache-invalidate-confirm: all`），或 `PUT /v1/cache/fingerprint` 升版本使旧精确键自然 miss。
-2. **自动兜底**：缓存条目含 `client_display_reasoning`；与当前配置不一致时，流式命中会强制 JSON→SSE 再生（无需清库也能避免错误展示，但仍有旧 JSON 中已 fold 的 thinking 块风险，清库最干净）。
+2. **自动兜底**：缓存条目含 `client_display_reasoning`；静默模式下若 `response_body` 或 `sse_body` 仍含 Thinking 标记（`<details>Thinking`、`<think>`、`reasoning_content` 字段等），流式命中会 **force regen**（`thinking_markup_regen`）。非流式命中会对 JSON 做 `sanitize_client_completion` 后再下发。切换开关后仍建议 `invalidate` 一次最干净。
 
 `PUT /v1/runtime/reasoning` 在 `display_reasoning` 变更时返回 `cache_invalidate_recommended: true` 并写 warn 日志。

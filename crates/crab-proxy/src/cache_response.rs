@@ -5,6 +5,10 @@ use tracing::warn;
 
 use crab_cache::CacheEntry;
 use crab_metrics::CacheTier;
+use crab_reasoning::{
+    completion_message_content_has_thinking_markup, response_body_has_thinking_markup,
+    sanitize_client_completion, sanitize_client_message_content,
+};
 
 use crate::debug_log::debug_agent_log;
 
@@ -72,7 +76,18 @@ pub async fn send_cached_response(
             .sse_body
             .as_ref()
             .is_some_and(|s| !cached_sse_has_nonempty_content(s));
-        let force_regen = display_mismatch || used_legacy_regen || saved_empty_content;
+        let thinking_markup_in_body =
+            !display_reasoning && response_body_has_thinking_markup(response_body);
+        let thinking_markup_in_sse = !display_reasoning
+            && entry
+                .sse_body
+                .as_ref()
+                .is_some_and(|s| cached_sse_has_thinking_markup(s));
+        let force_regen = display_mismatch
+            || used_legacy_regen
+            || saved_empty_content
+            || thinking_markup_in_body
+            || thinking_markup_in_sse;
         let sse_source = if entry.sse_body.is_none() || force_regen {
             if display_mismatch {
                 "display_mismatch_regen"
@@ -80,6 +95,8 @@ pub async fn send_cached_response(
                 "legacy_regen"
             } else if saved_empty_content {
                 "empty_content_regen"
+            } else if thinking_markup_in_body || thinking_markup_in_sse {
+                "thinking_markup_regen"
             } else {
                 "json_regen"
             }
@@ -108,6 +125,8 @@ pub async fn send_cached_response(
                 "display_mismatch": display_mismatch,
                 "used_legacy_regen": used_legacy_regen,
                 "saved_empty_content": saved_empty_content,
+                "thinking_markup_in_body": thinking_markup_in_body,
+                "thinking_markup_in_sse": thinking_markup_in_sse,
                 "json_choices": json_choices,
                 "has_done": has_done,
                 "has_nonempty_content": has_nonempty,
@@ -131,7 +150,8 @@ pub async fn send_cached_response(
             .write_response_body(Bytes::from(sse_body), true)
             .await;
     } else {
-        let Some(header) = build_json_response_header(response_body.len(), cache_tier) else {
+        let json_body = sanitize_cached_json_body(response_body, display_reasoning);
+        let Some(header) = build_json_response_header(json_body.len(), cache_tier) else {
             warn!("Failed to build JSON cache response header");
             return false;
         };
@@ -141,16 +161,25 @@ pub async fn send_cached_response(
             .await;
         let _ = session
             .downstream_session
-            .write_response_body(Bytes::from(response_body.clone()), true)
+            .write_response_body(Bytes::from(json_body), true)
             .await;
     }
     true
 }
 
+fn sanitize_cached_json_body(body: &[u8], display_reasoning: bool) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    sanitize_client_completion(&mut value, display_reasoning, true);
+    serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
+}
+
 pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool) -> Vec<u8> {
     use serde_json::json;
 
-    let value: serde_json::Value = match serde_json::from_slice(json_body) {
+    let sanitized = sanitize_cached_json_body(json_body, display_reasoning);
+    let value: serde_json::Value = match serde_json::from_slice(&sanitized) {
         Ok(v) => v,
         Err(_) => {
             debug_agent_log(
@@ -162,7 +191,7 @@ pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool
                     "model": model,
                 }),
             );
-            return json_body.to_vec();
+            return sanitized;
         }
     };
 
@@ -256,18 +285,58 @@ pub fn message_to_cursor_safe_delta(
         && content_str.is_empty()
         && !reasoning_str.is_empty()
     {
-        reasoning_str
+        reasoning_str.to_string()
     } else {
-        content_str
+        sanitize_client_message_content(content_str, display_reasoning)
     };
     if !effective.is_empty() || obj.contains_key("content") || obj.contains_key("reasoning_content")
     {
-        delta.insert("content".into(), Value::String(effective.to_string()));
+        delta.insert("content".into(), Value::String(effective));
     }
     if let Some(tool_calls) = obj.get("tool_calls") {
         delta.insert("tool_calls".into(), tool_calls.clone());
     }
     Value::Object(delta)
+}
+
+/// True when cached client SSE contains thinking markup in parsed `delta.content` (silent regen).
+///
+/// `reasoning_content` field leaks are handled separately via `used_legacy_regen`.
+pub fn cached_sse_has_thinking_markup(sse: &[u8]) -> bool {
+    for line in sse.split(|b| *b == b'\n') {
+        let stripped = line.trim_ascii();
+        if !stripped.starts_with(b"data:") {
+            continue;
+        }
+        let data = stripped[b"data:".len()..].trim_ascii();
+        if data == b"[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(data) else {
+            continue;
+        };
+        let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for choice in choices {
+            let content = choice
+                .get("delta")
+                .and_then(|d| d.get("content"))
+                .and_then(|c| c.as_str())
+                .or_else(|| {
+                    choice
+                        .get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                });
+            if let Some(text) = content {
+                if completion_message_content_has_thinking_markup(text) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
@@ -317,6 +386,75 @@ mod tests {
             is_stream: true,
             client_display_reasoning: client_display,
         }
+    }
+
+    #[test]
+    fn cached_sse_markup_detection_ignores_plain_text_mentioning_thinking() {
+        let saved = br#"data: {"choices":[{"delta":{"content":"Discuss summary Thinking in prose only"}}]}
+
+data: [DONE]
+
+"#
+        .to_vec();
+        assert!(!cached_sse_has_thinking_markup(&saved));
+    }
+
+    #[test]
+    fn sanitize_cached_json_body_strips_thinking_for_silent() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nx\n</details>\n\nok",
+                    "reasoning_content": "hidden"
+                },
+                "finish_reason": "stop"
+            }]
+        })
+        .to_string()
+        .into_bytes();
+        let sse = json_to_sse_stream(&body, "deepseek-v4-pro", false);
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(!text.contains("<summary>Thinking"));
+        assert!(text.contains("ok"));
+    }
+
+    #[test]
+    fn message_to_cursor_safe_delta_strips_thinking_when_silent() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "<details>\n<summary>Thinking</summary>\n\nthink\n</details>\n\nanswer"
+        });
+        let delta = message_to_cursor_safe_delta(Some(&msg), false);
+        assert_eq!(delta.get("content").and_then(|c| c.as_str()), Some("answer"));
+    }
+
+    #[test]
+    fn thinking_markup_in_sse_forces_regen() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nx\n</details>\n\nok"
+                },
+                "finish_reason": "stop"
+            }]
+        })
+        .to_string()
+        .into_bytes();
+        let saved = br#"data: {"choices":[{"delta":{"content":"<details>\n<summary>Thinking</summary>\n\nx\n</details>\n\n"}}]}
+
+data: [DONE]
+
+"#
+        .to_vec();
+        assert!(response_body_has_thinking_markup(&body));
+        assert!(cached_sse_has_thinking_markup(&saved));
+        let sse = json_to_sse_stream(&body, "deepseek-v4-pro", false);
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("Thinking"));
+        assert!(text.contains("ok"));
     }
 
     #[test]

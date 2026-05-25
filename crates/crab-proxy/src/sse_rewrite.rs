@@ -1,7 +1,46 @@
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, rewrite_sse_chunk,
+    strip_silent_sse_chunk_for_client,
 };
 use crab_reasoning::PreparedRequest;
+use serde_json::Value;
+
+/// Best-effort silent strip when streaming bypasses `prepare_upstream_request` (no accumulator).
+pub fn apply_silent_strip_to_sse_chunk(chunk: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for line in chunk.split_inclusive(|&b| b == b'\n') {
+        let start = line
+            .iter()
+            .position(|&b| !b" \t\r\n".contains(&b))
+            .unwrap_or(0);
+        let end = line
+            .iter()
+            .rposition(|&b| !b" \t\r\n".contains(&b))
+            .map(|p| p + 1)
+            .unwrap_or(line.len());
+        let stripped_line = &line[start..end];
+        if stripped_line.starts_with(b"data:") {
+            let data = stripped_line[b"data:".len()..].trim_ascii_start();
+            if data != b"[DONE]" {
+                if let Ok(mut payload) = serde_json::from_slice::<Value>(data) {
+                    if payload.is_object() {
+                        strip_silent_sse_chunk_for_client(&mut payload);
+                        let ending = if line.ends_with(b"\r\n") {
+                            "\r\n"
+                        } else {
+                            "\n"
+                        };
+                        let json = serde_json::to_string(&payload).unwrap_or_default();
+                        out.extend_from_slice(format!("data: {json}{ending}").as_bytes());
+                        continue;
+                    }
+                }
+            }
+        }
+        out.extend_from_slice(line);
+    }
+    out
+}
 
 /// Rewrite upstream SSE lines for OpenAI-compatible clients (mirror reasoning into `content`).
 pub fn rewrite_upstream_sse_bytes(
@@ -91,4 +130,28 @@ pub fn flush_streaming_reasoning(
             accumulator.store_reasoning(store, scope, &prepared.cache_namespace, prior_messages)
         })
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_silent_strip_removes_reasoning_field_and_thinking_markup() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "reasoning_content": "secret",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nx\n</details>\n\nhi"
+                }
+            }]
+        });
+        let line = format!("data: {payload}\n\n");
+        let out = apply_silent_strip_to_sse_chunk(line.as_bytes());
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(!text.contains("<summary>Thinking"));
+        assert!(text.contains("hi"));
+    }
 }

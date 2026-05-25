@@ -1,4 +1,5 @@
 use crate::backend::ReasoningBackend;
+use crate::normalize::strip_cursor_thinking_blocks;
 use crate::streaming::{
     CursorReasoningDisplayAdapter, StreamAccumulator, fold_reasoning_into_content,
 };
@@ -29,6 +30,27 @@ pub fn strip_reasoning_delta_for_client(chunk: &mut Value) {
     }
 }
 
+
+
+/// Silent-mode SSE chunk: strip `reasoning_content` and thinking markup from `delta.content`.
+pub fn strip_silent_sse_chunk_for_client(chunk: &mut Value) {
+    strip_reasoning_delta_for_client(chunk);
+    let Some(choices) = chunk.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for choice in choices {
+        let delta = match choice.get_mut("delta").and_then(|d| d.as_object_mut()) {
+            Some(d) => d,
+            None => continue,
+        };
+        if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+            delta.insert(
+                "content".into(),
+                Value::String(sanitize_client_message_content(content, false)),
+            );
+        }
+    }
+}
 /// Map `delta.reasoning_content` → incremental `delta.content` for OpenAI-compatible clients.
 fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
     let choices = match chunk.get_mut("choices").and_then(|c| c.as_array_mut()) {
@@ -64,6 +86,64 @@ pub fn strip_reasoning_from_completion_value(value: &mut Value) {
             msg.remove("reasoning_content");
         }
     }
+}
+
+/// Cursor-safe assistant `content` for downstream clients.
+pub fn sanitize_client_message_content(content: &str, display_reasoning: bool) -> String {
+    if display_reasoning {
+        content.to_string()
+    } else {
+        strip_cursor_thinking_blocks(content)
+    }
+}
+
+/// True when `content` contains Cursor thinking markup stripped by [`strip_cursor_thinking_blocks`].
+pub fn completion_message_content_has_thinking_markup(content: &str) -> bool {
+    strip_cursor_thinking_blocks(content) != content
+}
+
+/// Shape a chat completion JSON for Cursor without mutating upstream fields used by ReasoningStore.
+pub fn sanitize_client_completion(
+    value: &mut Value,
+    display_reasoning: bool,
+    collapsible_reasoning: bool,
+) {
+    if display_reasoning {
+        fold_reasoning_into_content(value, collapsible_reasoning);
+        return;
+    }
+    strip_reasoning_from_completion_value(value);
+    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for choice in choices {
+        let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) else {
+            continue;
+        };
+        if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+            msg.insert(
+                "content".into(),
+                Value::String(sanitize_client_message_content(content, false)),
+            );
+        }
+    }
+}
+
+/// Parse completion JSON and detect thinking markup in any `choices[].message.content`.
+pub fn response_body_has_thinking_markup(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let Some(choices) = value.get("choices").and_then(|c| c.as_array()) else {
+        return false;
+    };
+    choices.iter().any(|choice| {
+        choice
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .is_some_and(completion_message_content_has_thinking_markup)
+    })
 }
 
 pub fn record_response_reasoning(
@@ -120,11 +200,11 @@ pub fn rewrite_response_body(
         cache_namespace,
         recording_contexts,
     );
-    if display_reasoning {
-        fold_reasoning_into_content(&mut response_payload, collapsible_reasoning);
-    } else {
-        strip_reasoning_from_completion_value(&mut response_payload);
-    }
+    sanitize_client_completion(
+        &mut response_payload,
+        display_reasoning,
+        collapsible_reasoning,
+    );
     if let Some(obj) = response_payload.as_object_mut() {
         if let Some(model) = obj.get_mut("model") {
             *model = Value::String(original_model.to_string());
@@ -407,6 +487,38 @@ mod tests {
             parsed.get("model").unwrap().as_str(),
             Some("deepseek-v4-pro")
         );
+    }
+
+
+    #[test]
+    fn rewrite_response_body_silent_strips_thinking_markup() {
+        let body = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<details>\n<summary>Thinking</summary>\n\nsecret\n</details>\n\nhi",
+                    "reasoning_content": "hidden"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let result = rewrite_response_body(
+            body.to_string().as_bytes(),
+            "deepseek-v4-pro",
+            None,
+            &[],
+            "",
+            None,
+            &[],
+            false,
+            true,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_slice(&result).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert!(msg.get("reasoning_content").is_none());
+        assert_eq!(msg["content"].as_str(), Some("hi"));
     }
 
     #[test]

@@ -71,7 +71,8 @@ thinking_mode = "enabled"
 reasoning_effort = "medium"
 # deepseek-cursor-proxy：recover（默认）| reject（409）
 missing_reasoning_strategy = "recover"
-display_reasoning = true
+# Set true only for dev/demo (folds thinking into Cursor content).
+display_reasoning = false
 collapsible_reasoning = true
 cache_db_path = "/app/data/reasoning_content.sqlite3"
 cache_max_age_secs = 2592000

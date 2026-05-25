@@ -25,15 +25,15 @@ use crab_pipeline::{
 };
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator,
-    fold_reasoning_into_content, prepare_generic_request, prepare_light_request,
-    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
-    strip_reasoning_from_completion_value,
+    prepare_generic_request, prepare_light_request, prepare_upstream_request,
+    rewrite_response_body, rewrite_sse_chunk, sanitize_client_completion,
 };
 use crate::cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
 };
 use crate::cache_response::send_cached_response;
+use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
@@ -779,6 +779,7 @@ impl ProxyHttp for GatewayProxy {
                 ctx.new_request_body = Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
             }
         }
+        ctx.upstream_model = Some(upstream_model_log.clone());
 
         info!(
             request_id = %ctx.request_id,
@@ -886,7 +887,7 @@ impl ProxyHttp for GatewayProxy {
                         .map(|p| p.as_str().to_string())
                         .unwrap_or_default(),
                     user_agent: None,
-                    upstream_model: None,
+                    upstream_model: ctx.upstream_model.clone(),
                 };
                 ctx.request_composition = Some(extract_composition(&payload, &hints));
                 if let Some(ref comp) = ctx.request_composition {
@@ -1747,9 +1748,24 @@ impl ProxyHttp for GatewayProxy {
                         Some(bytes::Bytes::from(rewritten))
                     }
                 } else {
-                    ctx.stream.client_sse_body.extend_from_slice(&data);
+                    let client_bytes = if ctx.request_pipeline
+                        == Some(RequestPipeline::CursorDeepSeekV4)
+                        && !self.reasoning_config().display_reasoning
+                    {
+                        if !ctx.stream.reasoning_bypass_warned {
+                            ctx.stream.reasoning_bypass_warned = true;
+                            warn!(
+                                request_id = %ctx.request_id,
+                                "CursorDeepSeekV4 stream without prepared_request; applying silent reasoning strip"
+                            );
+                        }
+                        apply_silent_strip_to_sse_chunk(&data)
+                    } else {
+                        data.to_vec()
+                    };
+                    ctx.stream.client_sse_body.extend_from_slice(&client_bytes);
                     ctx.accumulated_body.extend_from_slice(&data);
-                    Some(data.clone())
+                    Some(bytes::Bytes::from(client_bytes))
                 };
 
                 let parse_src = downstream_chunk.as_ref().unwrap_or(&data);
@@ -2011,16 +2027,15 @@ impl ProxyHttp for GatewayProxy {
                             "total_tokens": 0
                         }
                     });
-                    if reasoning_cfg.display_reasoning {
-                        fold_reasoning_into_content(
-                            &mut response_value,
-                            reasoning_cfg.collapsible_reasoning,
-                        );
-                    }
-                    strip_reasoning_from_completion_value(&mut response_value);
-                    let response_json = serde_json::to_string(&response_value).unwrap_or_default();
+                    sanitize_client_completion(
+                        &mut response_value,
+                        reasoning_cfg.display_reasoning,
+                        reasoning_cfg.collapsible_reasoning,
+                    );
+                    let response_bytes =
+                        serde_json::to_vec(&response_value).unwrap_or_default();
                     // Store synthesized completion JSON as response preview for trace logging.
-                    ctx.response_body_preview = response_json.clone().into_bytes();
+                    ctx.response_body_preview = response_bytes.clone();
 
                     if self.state.runtime.stream_cache_enabled() {
                         let ttl_secs = self
@@ -2030,10 +2045,6 @@ impl ProxyHttp for GatewayProxy {
 
                         let sse_body = ctx.stream.client_sse_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
-                        let response_bytes = prepare_response_body_for_cache(
-                            response_json.clone().into_bytes(),
-                            reasoning_cfg.display_reasoning,
-                        );
                         let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                             build_cache_entry_with_sse(
                                 response_bytes.clone(),
@@ -2051,7 +2062,7 @@ impl ProxyHttp for GatewayProxy {
                             );
                             global_metrics().record_stream_cache_sse_omitted("over_limit");
                             build_cache_entry(
-                                response_bytes,
+                                response_bytes.clone(),
                                 ctx.model.clone(),
                                 ttl_secs,
                                 true,
@@ -2084,10 +2095,7 @@ impl ProxyHttp for GatewayProxy {
                                         {
                                             let semantic_cache = semantic_cache.clone();
                                             let entry_for_semantic = build_cache_entry(
-                                                prepare_response_body_for_cache(
-                                                    response_json.into_bytes(),
-                                                    reasoning_cfg.display_reasoning,
-                                                ),
+                                                response_bytes.clone(),
                                                 ctx.model.clone(),
                                                 ttl_secs,
                                                 true,

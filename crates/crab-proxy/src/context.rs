@@ -254,6 +254,8 @@ pub struct StreamState {
     /// Client-shaped SSE bytes accumulated for L0/L1 `sse_body` (not upstream raw).
     pub client_sse_body: Vec<u8>,
     pub pending_recovery_notice: Option<String>,
+    /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
+    pub reasoning_bypass_warned: bool,
 }
 
 impl Default for StreamState {
@@ -265,6 +267,7 @@ impl Default for StreamState {
             sse_remainder: Vec::new(),
             client_sse_body: Vec::new(),
             pending_recovery_notice: None,
+            reasoning_bypass_warned: false,
         }
     }
 }
@@ -282,6 +285,8 @@ pub struct GatewayContext {
     pub request_pipeline: Option<RequestPipeline>,
     pub pipeline_reason: Option<PipelineSelectionReason>,
     pub upstream_profile_id: Option<String>,
+    /// Model name after pipeline prepare (upstream-bound).
+    pub upstream_model: Option<String>,
     pub request_start: Instant,
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
@@ -332,6 +337,7 @@ impl GatewayContext {
             request_pipeline: None,
             pipeline_reason: None,
             upstream_profile_id: None,
+            upstream_model: None,
             request_start: Instant::now(),
             ttft: None,
             accumulated_body: Vec::new(),
