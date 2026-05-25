@@ -14,6 +14,9 @@ metrics_addr = "0.0.0.0:9090"
 # Overridden by CRABCACHE_API_KEY at startup (required for production).
 api_key = "set-via-CRABCACHE_API_KEY-environment-variable"
 
+[gateway]
+default_upstream_profile = "deepseek"
+
 [management]
 listen_addr = "0.0.0.0:9080"
 admin_key = "CrabCache-Admin-Secret-2026"

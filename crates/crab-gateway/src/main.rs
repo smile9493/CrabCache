@@ -180,7 +180,10 @@ fn main() -> Result<()> {
     };
     server.add_service(background_service("metrics", metrics_service));
 
-    let rt = tokio::runtime::Runtime::new()?;
+    // Single-threaded runtime for startup block_on — avoids worker-pool deadlock before run_forever.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
     let upstream_profiles = config.build_upstream_profile_runtimes(&rt)?;
     let default_profile_id = config.gateway.default_upstream_profile.clone();
