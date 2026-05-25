@@ -667,7 +667,7 @@ pub fn scrape_ops_metrics(body: &str, history: &MetricsHistory, now: u64) -> cra
         cost_saved_usd_total: counters.cost_saved_usd,
         cost_saved_usd_5m,
         coalesced_total: counters.coalesced_total,
-        coalesced_5m: coalesced_5m as f64,
+        coalesced_5m,
         rejected_total: counters.rejected_total,
         rejected_5m,
         ttft_ms: avg_prometheus_histogram_ms(

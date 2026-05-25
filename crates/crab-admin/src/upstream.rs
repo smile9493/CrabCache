@@ -1,8 +1,8 @@
 //! Upstream test and model sync helpers.
 
 use crate::state::AppState;
-use crate::types::{SyncResult, UpstreamModelsResponse};
-use crab_control::{UpstreamTestResult, parse_upstream_base_url, validate_upstream_key};
+use crate::types::{SyncResult, UpstreamModelsResponse, UpstreamTestResult};
+use crab_control::{parse_upstream_base_url, validate_upstream_key};
 use std::sync::Arc;
 use std::time::Instant;
 

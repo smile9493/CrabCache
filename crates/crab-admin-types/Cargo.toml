@@ -1,13 +1,13 @@
 [package]
 name = "crab-admin-types"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Shared serde types for CrabCache Admin API and Dashboard (wasm-safe)"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-crab-composition = { path = "../crab-composition" }
+serde.workspace = true
+crab-composition.workspace = true
 
 [dev-dependencies]
-serde_json = "1"
+serde_json.workspace = true

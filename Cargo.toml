@@ -17,6 +17,7 @@ members = [
     "crates/crab-control",
     "crates/crab-state",
     "crates/crab-composition",
+    "crates/crab-admin-types",
 ]
 
 [workspace.package]
@@ -84,6 +85,7 @@ crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
 crab-state      = { path = "crates/crab-state" }
 crab-composition = { path = "crates/crab-composition" }
+crab-admin-types = { path = "crates/crab-admin-types" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
 unicode-normalization = "0.1"

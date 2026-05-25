@@ -2,15 +2,14 @@
 
 use crate::state::{AppState, UpstreamPoolSecret};
 use crate::types::{
-    PutUpstreamProfileAdminRequest, UpstreamProfileAdminView, UpstreamProfileKeysAdminView,
-    UpstreamProfilesAdminResponse,
+    patch_upstream_key_to_control, put_upstream_profile_keys_to_control,
+    upstream_key_view_from_control, PutUpstreamProfileAdminRequest, UpstreamKeyInput,
+    UpstreamKeyPoolEntry, UpstreamProfileAdminView, UpstreamProfileKeysAdminView,
+    UpstreamProfilesAdminResponse, PatchUpstreamKeyRequest, UpstreamKeysPutMode,
 };
 use axum::Json;
-use crab_control::{
-    PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest, PutUpstreamProfileRequest,
-    UpstreamKeyInput, UpstreamKeysPutMode, UpstreamKeyView, UpstreamProfileView,
-    UpstreamProfilesResponse, UpstreamTestResult,
-};
+use crate::types::upstream_test_from_control;
+use crab_control::{PutUpstreamProfileRequest, UpstreamProfileView, UpstreamProfilesResponse};
 use std::sync::Arc;
 
 fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
@@ -82,7 +81,11 @@ pub async fn get_profile_keys(
         .map_err(|e| e.to_string())?;
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
-        keys: view.keys.into_iter().map(key_entry_from_view).collect(),
+        keys: view
+            .keys
+            .into_iter()
+            .map(upstream_key_view_from_control)
+            .collect(),
     })
 }
 
@@ -114,7 +117,7 @@ pub async fn put_profile_keys(
         let mut map = state.upstream_profile_secrets.write();
         map.insert(id.to_string(), secrets);
     }
-    let req = PutUpstreamProfileKeysRequest { keys, mode };
+    let req = put_upstream_profile_keys_to_control(&keys, mode);
     let view = state
         .gateway
         .put_upstream_profile_keys(id, &req)
@@ -123,7 +126,11 @@ pub async fn put_profile_keys(
     state.flush_persist();
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
-        keys: view.keys.into_iter().map(key_entry_from_view).collect(),
+        keys: view
+            .keys
+            .into_iter()
+            .map(upstream_key_view_from_control)
+            .collect(),
     })
 }
 
@@ -132,35 +139,25 @@ pub async fn patch_profile_key(
     profile_id: &str,
     key_id: &str,
     req: PatchUpstreamKeyRequest,
-) -> Result<crate::types::UpstreamKeyPoolEntry, String> {
-    let view: UpstreamKeyView = state
+) -> Result<UpstreamKeyPoolEntry, String> {
+    let view = state
         .gateway
-        .patch_upstream_profile_key(profile_id, key_id, &req)
+        .patch_upstream_profile_key(profile_id, key_id, &patch_upstream_key_to_control(&req))
         .await
         .map_err(|e| e.to_string())?;
     state.flush_persist();
-    Ok(key_entry_from_view(view))
-}
-
-fn key_entry_from_view(k: UpstreamKeyView) -> crate::types::UpstreamKeyPoolEntry {
-    crate::types::UpstreamKeyPoolEntry {
-        id: k.id,
-        preview: k.preview,
-        account_id: k.account_id,
-        enabled: k.enabled,
-        inflight: k.inflight,
-        cooldown_remaining_secs: k.cooldown_remaining_secs,
-    }
+    Ok(upstream_key_view_from_control(view))
 }
 
 pub async fn test_profile(
     state: &Arc<AppState>,
     id: &str,
-) -> Result<UpstreamTestResult, String> {
+) -> Result<crate::types::UpstreamTestResult, String> {
     state
         .gateway
         .test_upstream_profile(id)
         .await
+        .map(upstream_test_from_control)
         .map_err(|e| e.to_string())
 }
 

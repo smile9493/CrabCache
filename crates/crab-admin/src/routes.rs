@@ -12,9 +12,7 @@ use axum::{
 use serde::Deserialize;
 use crab_control::{
     CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
-    PutTtlConfigRequest, PutUpstreamKeysRequest,
-    UpstreamKeyInput, UpstreamKeysPutMode, parse_upstream_base_url, validate_deepseek_key,
-    CursorModelsConfigView,
+    PutTtlConfigRequest, parse_upstream_base_url, validate_deepseek_key, CursorModelsConfigView,
 };
 use crate::metrics_history::{
     domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
@@ -2223,7 +2221,7 @@ async fn patch_upstream_profile_key(
 async fn post_upstream_profile_test(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Json<crab_control::UpstreamTestResult>, (StatusCode, String)> {
+) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
     let result = crate::upstream_profiles::test_profile(&state, &id)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
@@ -2233,7 +2231,7 @@ async fn post_upstream_profile_test(
 async fn post_upstream_test(
     State(state): State<Arc<AppState>>,
     Json(body): Json<crate::types::UpstreamTestBody>,
-) -> Json<crab_control::UpstreamTestResult> {
+) -> Json<UpstreamTestResult> {
     let result = crate::upstream::test_upstream_connection(&body.base_url, &body.api_key).await;
     *state.last_upstream_test.write() = Some(result.clone());
     state.flush_persist();
@@ -2282,6 +2280,7 @@ async fn get_upstream_keys_pool(
         .gateway
         .get_upstream_keys()
         .await
+        .map(crate::types::upstream_keys_view_from_control)
         .map(Json)
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
@@ -2296,8 +2295,14 @@ async fn put_upstream_keys_pool(
         }
     }
 
+    let ctrl_keys: Vec<crab_control::UpstreamKeyInput> = req
+        .keys
+        .iter()
+        .map(crate::types::upstream_key_input_to_control)
+        .collect();
+
     if req.mode == UpstreamKeysPutMode::Replace {
-        state.replace_upstream_pool_secrets(&req.keys);
+        state.replace_upstream_pool_secrets(&ctrl_keys);
     } else {
         let mut merged = state.upstream_pool_secrets.read().clone();
         let mut seen: std::collections::HashSet<String> =
@@ -2327,16 +2332,20 @@ async fn put_upstream_keys_pool(
                 account_id: String::new(),
             })
             .collect();
-        state.replace_upstream_pool_secrets(&inputs);
+        let append_ctrl: Vec<crab_control::UpstreamKeyInput> = inputs
+            .iter()
+            .map(crate::types::upstream_key_input_to_control)
+            .collect();
+        state.replace_upstream_pool_secrets(&append_ctrl);
     }
 
     let view = state
         .gateway
-        .put_upstream_keys(&req)
+        .put_upstream_keys(&crate::types::put_upstream_keys_to_control(&req))
         .await
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
     state.flush_persist();
-    Ok(Json(view))
+    Ok(Json(crate::types::upstream_keys_view_from_control(view)))
 }
 
 async fn patch_upstream_key_pool(
@@ -2346,8 +2355,9 @@ async fn patch_upstream_key_pool(
 ) -> Result<Json<UpstreamKeyView>, (StatusCode, String)> {
     state
         .gateway
-        .patch_upstream_key(&id, &req)
+        .patch_upstream_key(&id, &crate::types::patch_upstream_key_to_control(&req))
         .await
+        .map(crate::types::upstream_key_view_from_control)
         .map(Json)
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
@@ -2480,8 +2490,15 @@ async fn update_upstream_config(
                 account_id: String::new(),
             })
             .collect();
-        state.replace_upstream_pool_secrets(&merged_inputs);
-        let _ = state.gateway.put_upstream_keys(&put_req).await;
+        let merged_ctrl: Vec<crab_control::UpstreamKeyInput> = merged_inputs
+            .iter()
+            .map(crate::types::upstream_key_input_to_control)
+            .collect();
+        state.replace_upstream_pool_secrets(&merged_ctrl);
+        let _ = state
+            .gateway
+            .put_upstream_keys(&crate::types::put_upstream_keys_to_control(&put_req))
+            .await;
     }
 
     {

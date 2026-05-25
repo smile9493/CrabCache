@@ -48,7 +48,8 @@ pub fn ReasoningPage() -> impl IntoView {
                 Some(Ok(cfg)) => {
                     let thinking_mode = RwSignal::new(cfg.thinking_mode.clone());
                     let reasoning_effort = RwSignal::new(cfg.reasoning_effort.clone());
-                    let reasoning_recovery = RwSignal::new(cfg.reasoning_recovery);
+                    let reasoning_recovery =
+                        RwSignal::new(cfg.reasoning_recovery.unwrap_or(false));
                     let sqlite_cache_enabled = RwSignal::new(cfg.sqlite_cache_enabled);
                     let sqlite_cache_path = RwSignal::new(cfg.sqlite_cache_path.clone().unwrap_or_default());
 
@@ -58,17 +59,16 @@ pub fn ReasoningPage() -> impl IntoView {
                         let save_ok = t.routing_saved().to_string();
                         move |_| {
                             saving.set(true);
-                            let req = ReasoningConfig {
-                                thinking_mode: thinking_mode.get(),
-                                reasoning_effort: reasoning_effort.get(),
-                                reasoning_recovery: reasoning_recovery.get(),
-                                sqlite_cache_enabled: sqlite_cache_enabled.get(),
-                                sqlite_cache_path: if sqlite_cache_enabled.get() {
-                                    let p = sqlite_cache_path.get();
-                                    if p.is_empty() { None } else { Some(p) }
-                                } else {
-                                    None
-                                },
+                            let mut req = cfg.clone();
+                            req.thinking_mode = thinking_mode.get();
+                            req.reasoning_effort = reasoning_effort.get();
+                            req.reasoning_recovery = Some(reasoning_recovery.get());
+                            req.sqlite_cache_enabled = sqlite_cache_enabled.get();
+                            req.sqlite_cache_path = if sqlite_cache_enabled.get() {
+                                let p = sqlite_cache_path.get();
+                                if p.is_empty() { None } else { Some(p) }
+                            } else {
+                                None
                             };
                             let save_ok = save_ok.clone();
                             leptos::task::spawn_local(async move {

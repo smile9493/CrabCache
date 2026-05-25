@@ -4,7 +4,8 @@ use crate::persist::{self, PersistHandle};
 use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, TraceSummary};
 use std::collections::HashMap;
 use std::time::Instant;
-use crab_control::{GatewayAdminClient, GatewayStatus, UpstreamTestResult};
+use crate::types::UpstreamTestResult;
+use crab_control::{GatewayAdminClient, GatewayStatus};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -396,9 +397,16 @@ impl AppState {
             reasoning_config: RwLock::new(ReasoningConfig {
                 thinking_mode: "auto".to_string(),
                 reasoning_effort: "medium".to_string(),
-                reasoning_recovery: true,
+                missing_reasoning_strategy: "recover".to_string(),
+                display_reasoning: true,
+                collapsible_reasoning: true,
+                cache_invalidate_recommended: None,
+                storage_backend: String::new(),
+                cache_db_path: String::new(),
+                redis_url_masked: None,
                 sqlite_cache_enabled: true,
                 sqlite_cache_path: None,
+                reasoning_recovery: Some(true),
             }),
             upstream_config: RwLock::new(upstream_cfg),
             models: RwLock::new(models),

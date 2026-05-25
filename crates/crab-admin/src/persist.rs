@@ -1,7 +1,7 @@
 //! Admin auxiliary state persisted to JSON (models metadata, notes, test snapshots).
 
 use crate::state::{KeyMetadata, StoredModel, StoredModelList, StoredUpstreamConfig};
-use crab_control::UpstreamTestResult;
+use crate::types::UpstreamTestResult;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
