@@ -321,6 +321,30 @@ body {
 .sidebar-footer { padding: 0.5rem 0.75rem; border-top: 1px solid var(--border-light); font-size: 0.6875rem; color: var(--text-muted); }
 
 /* ==============================================================
+   TAB BAR
+   ============================================================== */
+.tab-bar {
+  display: flex; gap: 0.125rem;
+  border-bottom: 1px solid var(--border-light);
+  padding: 0 0.25rem;
+  margin-bottom: 1rem;
+}
+.tab-item {
+  padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 500;
+  color: var(--text-secondary); background: transparent;
+  border: none; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-speed) var(--transition-curve),
+              border-color var(--transition-speed) var(--transition-curve);
+}
+.tab-item:hover { color: var(--text-primary); }
+.tab-item-active {
+  color: var(--cc-accent-bright);
+  border-bottom-color: var(--cc-accent);
+  font-weight: 600;
+}
+
+/* ==============================================================
    MAIN CONTENT
    ============================================================== */
 

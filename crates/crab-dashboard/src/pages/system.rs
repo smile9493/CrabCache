@@ -2,12 +2,39 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::auth::{complete_login, use_admin_key};
-use crate::components::ui::{SectionHeader, Spinner};
+use crate::components::ui::*;
 use crate::locale::use_translations;
+use crate::pages::pipeline::PipelinePage;
+use crate::pages::reasoning::ReasoningPage;
 use crate::types::{SystemUpdateResult, SystemVersion, UpdateCheckResult};
 
 #[component]
 pub fn SystemPage() -> impl IntoView {
+    let t = use_translations();
+    let active_tab: RwSignal<usize> = RwSignal::new(0);
+
+    view! {
+        <div class="page-content space-y-4">
+            <SectionHeader title=t.system_title() description=t.system_desc() />
+            <TabBar
+                tabs=vec!["General", "Pipeline", "Reasoning"]
+                active=active_tab
+            />
+            <div class=move || if active_tab.get() == 0 { "" } else { "hidden" }>
+                <GeneralTab />
+            </div>
+            <div class=move || if active_tab.get() == 1 { "" } else { "hidden" }>
+                <PipelinePage />
+            </div>
+            <div class=move || if active_tab.get() == 2 { "" } else { "hidden" }>
+                <ReasoningPage />
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn GeneralTab() -> impl IntoView {
     let t = use_translations();
     let admin_key_signal = use_admin_key();
 
@@ -26,7 +53,6 @@ pub fn SystemPage() -> impl IntoView {
     let new_key: RwSignal<String> = RwSignal::new(String::new());
     let confirm_key: RwSignal<String> = RwSignal::new(String::new());
 
-    // Load version info on mount
     let load_version = move || {
         leptos::task::spawn_local(async move {
             version.set(None);
@@ -113,16 +139,14 @@ pub fn SystemPage() -> impl IntoView {
     load_version();
 
     view! {
-        <div class="page-content">
-            <SectionHeader title=t.system_title() description=t.system_desc() />
-
-            // ── Version & Update ──────────────────────────────
+        <div class="space-y-6">
+            // Version & Update
             <div class="card">
-                <div class="card-header">{move || t.system_version_title()}</div>
+                <div class="card-header">{t.system_version_title()}</div>
                 <div class="card-body space-y-3">
                     <div class="flex flex-col gap-2">
                         <div class="flex items-center gap-2">
-                            <span class="text-sm font-medium">{move || t.system_current_version()}:</span>
+                            <span class="text-sm font-medium">{t.system_current_version()}:</span>
                             <code class="text-sm px-2 py-0.5 rounded bg-muted">
                                 {move || {
                                     version.get()
@@ -134,7 +158,7 @@ pub fn SystemPage() -> impl IntoView {
                         </div>
 
                         <div class="flex items-center gap-2">
-                            <span class="text-sm font-medium">{move || t.system_latest_version()}:</span>
+                            <span class="text-sm font-medium">{t.system_latest_version()}:</span>
                             <code class="text-sm px-2 py-0.5 rounded bg-muted">
                                 {move || {
                                     update_check.get()
@@ -187,26 +211,19 @@ pub fn SystemPage() -> impl IntoView {
                         }}
                     </div>
 
-                    {move || {
-                        checking.get().then(|| {
-                            view! {
-                                <div class="flex items-center gap-2 text-sm text-muted-foreground">
-                                    <Spinner />
-                                    <span>{t.system_checking()}</span>
-                                </div>
-                            }.into_any()
-                        })
-                    }}
+                    {move || checking.get().then(|| {
+                        view! {
+                            <div class="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Spinner />
+                                <span>{t.system_checking()}</span>
+                            </div>
+                        }.into_any()
+                    })}
 
                     <div class="flex gap-2">
-                        <button
-                            class="btn btn-secondary"
-                            on:click=move |_| do_check_updates()
-                            disabled=move || checking.get()
-                        >
-                            {move || t.system_check_updates()}
+                        <button class="btn btn-secondary" on:click=move |_| do_check_updates() disabled=move || checking.get()>
+                            {t.system_check_updates()}
                         </button>
-
                         {move || {
                             let available = update_check.get()
                                 .and_then(|r| r.ok())
@@ -214,129 +231,98 @@ pub fn SystemPage() -> impl IntoView {
                                 .unwrap_or(false);
                             available.then(|| {
                                 view! {
-                                    <button
-                                        class="btn btn-primary"
-                                        on:click=move |_| show_update_confirm.set(true)
-                                        disabled=move || updating.get()
-                                    >
-                                        {move || {
-                                            if updating.get() {
-                                                format!("{}...", t.system_update_now())
-                                            } else {
-                                                t.system_update_now().to_string()
-                                            }
-                                        }}
+                                    <button class="btn btn-primary" on:click=move |_| show_update_confirm.set(true) disabled=move || updating.get()>
+                                        {move || if updating.get() { format!("{}...", t.system_update_now()) } else { t.system_update_now().to_string() }}
                                     </button>
                                 }.into_any()
                             })
                         }}
                     </div>
 
-                    // Update result message
-                    {move || {
-                        update_result.get().map(|res| {
-                            match res {
-                                Ok(r) => {
-                                    let cls = if r.success { "alert alert-success" } else { "alert alert-danger" };
-                                    let msg = r.message.as_deref().unwrap_or(
-                                        r.error.as_deref().unwrap_or("Unknown result")
-                                    );
-                                    view! { <div class=cls>{msg.to_string()}</div> }.into_any()
-                                }
-                                Err(e) => {
-                                    view! { <div class="alert alert-danger">{e}</div> }.into_any()
-                                }
+                    {move || update_result.get().map(|res| {
+                        match res {
+                            Ok(r) => {
+                                let cls = if r.success { "alert alert-success" } else { "alert alert-danger" };
+                                let msg = r.message.as_deref().unwrap_or(r.error.as_deref().unwrap_or("Unknown result"));
+                                view! { <div class=cls>{msg.to_string()}</div> }.into_any()
                             }
-                        })
-                    }}
+                            Err(e) => view! { <div class="alert alert-danger">{e}</div> }.into_any(),
+                        }
+                    })}
 
-                    {move || {
-                        version.get().and_then(|r| r.err()).map(|e| {
-                            view! { <div class="alert alert-info">{t.system_no_release()}: {e}</div> }.into_any()
-                        })
-                    }}
+                    {move || version.get().and_then(|r| r.err()).map(|e| {
+                        view! { <div class="alert alert-info">{t.system_no_release()}: {e}</div> }.into_any()
+                    })}
                 </div>
             </div>
 
-            // ── Admin Key Management ──────────────────────────
+            // Admin Key Management
             <div class="card">
-                <div class="card-header">{move || t.system_admin_key_title()}</div>
+                <div class="card-header">{t.system_admin_key_title()}</div>
                 <div class="card-body space-y-3">
-                    <p class="text-sm text-muted-foreground">{move || t.system_admin_key_desc()}</p>
-
+                    <p class="text-sm text-muted-foreground">{t.system_admin_key_desc()}</p>
                     <div class="flex flex-col gap-2 max-w-sm">
-                        <label class="text-sm font-medium">{move || t.system_current_key()}</label>
-                        <input
-                            type="password"
-                            class="input"
-                            placeholder="••••••••"
+                        <label class="text-sm font-medium">{t.system_current_key()}</label>
+                        <input type="password" class="input" placeholder="••••••••"
                             on:input=move |ev| current_key.set(event_target_value(&ev))
                             prop:value=move || current_key.get()
                         />
                     </div>
-
                     <div class="flex flex-col gap-2 max-w-sm">
-                        <label class="text-sm font-medium">{move || t.system_new_key()}</label>
-                        <input
-                            type="password"
-                            class="input"
-                            placeholder={move || t.system_new_key()}
+                        <label class="text-sm font-medium">{t.system_new_key()}</label>
+                        <input type="password" class="input" placeholder={t.system_new_key().to_string()}
                             on:input=move |ev| new_key.set(event_target_value(&ev))
                             prop:value=move || new_key.get()
                         />
                     </div>
-
                     <div class="flex flex-col gap-2 max-w-sm">
-                        <label class="text-sm font-medium">{move || t.system_confirm_key()}</label>
-                        <input
-                            type="password"
-                            class="input"
-                            placeholder={move || t.system_confirm_key()}
+                        <label class="text-sm font-medium">{t.system_confirm_key()}</label>
+                        <input type="password" class="input" placeholder={t.system_confirm_key().to_string()}
                             on:input=move |ev| confirm_key.set(event_target_value(&ev))
                             prop:value=move || confirm_key.get()
                         />
                     </div>
-
-                    <button
-                        class="btn btn-primary"
-                        on:click=move |_| do_change_key()
-                    >
-                        {move || t.system_change_key()}
+                    <button class="btn btn-primary" on:click=move |_| do_change_key()>
+                        {t.system_change_key()}
                     </button>
-
                     {move || {
-                        key_message.get().map(|msg| {
-                            let cls = if key_error.get() { "alert alert-danger" } else { "alert alert-success" };
-                            view! { <div class=cls>{msg}</div> }
-                        })
+                        key_message
+                            .get()
+                            .map(|msg| {
+                                let cls = if key_error.get() {
+                                    "alert alert-danger"
+                                } else {
+                                    "alert alert-success"
+                                };
+                                view! { <div class=cls>{msg}</div> }.into_any()
+                            })
+                            .unwrap_or_else(|| ().into_any())
                     }}
                 </div>
             </div>
 
-            // ── Confirm Update Dialog ─────────────────────────
+            // Confirm Update Dialog
             {move || {
-                show_update_confirm.get().then(|| {
+                if show_update_confirm.get() {
                     view! {
                         <div class="modal-overlay" on:click=move |_| show_update_confirm.set(false)>
-                            <div class="modal-box" on:click=|ev| ev.stop_propagation()>
+                            <div class="modal-box" on:click=move |ev| { ev.stop_propagation(); }>
                                 <div class="modal-title">{t.system_update_now()}</div>
                                 <p class="text-sm text-muted mb-4">{t.system_update_confirm()}</p>
                                 <div class="flex gap-2 justify-end">
-                                    <button class="btn btn-secondary" on:click=move |_| show_update_confirm.set(false)>
-                                        Cancel
-                                    </button>
-                                    <button class="btn btn-primary" on:click=move |_| do_update()>
-                                        {move || t.system_update_now()}
-                                    </button>
+                                    <button class="btn btn-secondary" on:click=move |_| show_update_confirm.set(false)>Cancel</button>
+                                    <button class="btn btn-primary" on:click=move |_| do_update()>{t.system_update_now()}</button>
                                 </div>
                             </div>
                         </div>
                     }.into_any()
-                })
+                } else {
+                    ().into_any()
+                }
             }}
 
             {move || {
-                updating.get().then(|| {
+                if updating.get() {
                     view! {
                         <div class="modal-overlay">
                             <div class="modal-box text-center">
@@ -345,7 +331,9 @@ pub fn SystemPage() -> impl IntoView {
                             </div>
                         </div>
                     }.into_any()
-                })
+                } else {
+                    ().into_any()
+                }
             }}
         </div>
     }

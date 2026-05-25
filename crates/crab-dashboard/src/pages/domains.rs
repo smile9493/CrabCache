@@ -583,14 +583,17 @@ fn DomainOverviewTable(
 }
 
 #[component]
-pub fn DomainOverviewTableInline(metrics: crate::types::MetricsSnapshot) -> impl IntoView {
+pub fn DomainOverviewTableInline(
+    metrics: crate::types::MetricsSnapshot,
+    #[prop(optional)]
+    on_domain_click: Option<Callback<String>>,
+) -> impl IntoView {
     let t = use_translations();
     let buckets = metrics.domain_buckets.clone();
     view! {
         <div class="glass-card">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-sm font-semibold text-theme">{t.domains_table_title()}</h3>
-                <A href="/domains" attr:class="text-xs text-accent hover:underline">{t.domains_view_all()}</A>
             </div>
             {if buckets.is_empty() {
                 view! {
@@ -610,14 +613,25 @@ pub fn DomainOverviewTableInline(metrics: crate::types::MetricsSnapshot) -> impl
                             </thead>
                             <tbody>
                                 {buckets.into_iter().take(8).map(|b| {
+                                    let domain_name = b.domain.clone();
                                     let qps = if b.qps_5m > 0.0 {
                                         format!("{:.2}/s", b.qps_5m)
                                     } else {
                                         "—".to_string()
                                     };
+                                    let has_click = on_domain_click.is_some();
+                                    let domain_for_click = domain_name.clone();
+                                    let cb = on_domain_click.clone();
                                     view! {
-                                        <tr class="border-b border-theme/50">
-                                            <td class="py-2 pr-4 font-mono text-theme">{b.domain}</td>
+                                        <tr
+                                            class=if has_click { "border-b border-theme/50 cursor-pointer hover:bg-theme-hover" } else { "border-b border-theme/50" }
+                                            on:click=move |_| {
+                                                if let Some(ref cb) = cb {
+                                                    cb.run(domain_for_click.clone());
+                                                }
+                                            }
+                                        >
+                                            <td class="py-2 pr-4 font-mono text-theme">{domain_name}</td>
                                             <td class="py-2 pr-4 font-mono tabular-nums text-accent">
                                                 {format!("{:.1}%", b.hit_ratio * 100.0)}
                                             </td>
@@ -632,6 +646,62 @@ pub fn DomainOverviewTableInline(metrics: crate::types::MetricsSnapshot) -> impl
                 }.into_any()
             }}
         </div>
+    }
+}
+
+/// Slide-in drawer for domain detail, used in Overview page.
+#[component]
+pub fn DomainDetailDrawer(
+    domain: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let t = use_translations();
+    let detail: RwSignal<Option<Result<DomainDetailBundle, String>>> = RwSignal::new(None);
+    let policy_save_tick = RwSignal::new(0u32);
+    let visible = move || domain.get().is_some();
+
+    let load_detail = move |name: String| {
+        leptos::task::spawn_local(async move {
+            detail.set(Some(api::fetch_domain_detail(&name).await));
+        });
+    };
+
+    Effect::new(move |_| {
+        let _ = policy_save_tick.get();
+        if let Some(name) = domain.get() {
+            load_detail(name);
+        }
+    });
+
+    let close = move |_| domain.set(None);
+
+    view! {
+        <Show when=visible>
+            <div class="fixed inset-0 z-50 flex justify-end">
+                <div class="absolute inset-0 bg-black/30" on:click=close></div>
+                <div class="relative w-full max-w-2xl bg-[var(--bg-primary)] shadow-xl overflow-y-auto">
+                    <div class="sticky top-0 flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-primary)] z-10">
+                        <h2 class="text-sm font-semibold font-mono text-[var(--text-primary)]">
+                            {move || domain.get().unwrap_or_default()}
+                        </h2>
+                        <button class="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2 py-1" on:click=close>
+                            {t.domains_back()}
+                        </button>
+                    </div>
+
+                    <div class="p-4 space-y-4">
+                        {move || match detail.get() {
+                            None => view! { <Spinner /> }.into_any(),
+                            Some(Ok(bundle)) => view! {
+                                <DomainDetailBody bundle=bundle policy_save_tick=policy_save_tick />
+                            }.into_any(),
+                            Some(Err(e)) => view! {
+                                <p class="text-sm text-warning">{e}</p>
+                            }.into_any(),
+                        }}
+                    </div>
+                </div>
+            </div>
+        </Show>
     }
 }
 

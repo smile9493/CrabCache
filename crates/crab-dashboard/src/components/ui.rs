@@ -169,6 +169,35 @@ pub fn ConfigRangeF64(
     }
 }
 
+/// Horizontal tab bar. `active` is the index of the selected tab.
+#[component]
+pub fn TabBar(
+    tabs: Vec<&'static str>,
+    active: RwSignal<usize>,
+) -> impl IntoView {
+    view! {
+        <div class="tab-bar">
+            {tabs.into_iter().enumerate().map(|(i, label)| {
+                let is_active = move || active.get() == i;
+                view! {
+                    <button
+                        class=move || {
+                            if is_active() {
+                                "tab-item tab-item-active"
+                            } else {
+                                "tab-item"
+                            }
+                        }
+                        on:click=move |_| active.set(i)
+                    >
+                        {label}
+                    </button>
+                }
+            }).collect_view()}
+        </div>
+    }
+}
+
 #[component]
 pub fn Alert(variant: &'static str, message: Signal<String>) -> impl IntoView {
     let class = match variant {
