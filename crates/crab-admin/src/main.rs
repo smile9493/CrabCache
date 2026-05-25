@@ -241,26 +241,37 @@ async fn main() -> anyhow::Result<()> {
     match state.gateway.list_keys().await {
         Ok(specs) => {
             for spec in specs {
-                state.keys_meta.insert(
-                    spec.id.clone(),
-                    crate::state::KeyMetadata {
-                        id: spec.id,
-                        name: spec.name,
-                        token: spec.key_full.unwrap_or_default(),
-                        rpm_limit: 0,
-                        monthly_token_limit: 0,
-                        current_rpm: 0,
-                        tokens_this_month: 0,
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        expired_at: None,
-                        model_limits: Vec::new(),
-                        remain_quota: -1,
-                        unlimited_quota: true,
-                        max_concurrent: spec.max_concurrent,
-                        usage_month: String::new(),
-                    },
-                );
+                use dashmap::mapref::entry::Entry;
+                match state.keys_meta.entry(spec.id.clone()) {
+                    Entry::Vacant(v) => {
+                        v.insert(crate::state::KeyMetadata {
+                            id: spec.id.clone(),
+                            name: spec.name.clone(),
+                            token: spec.key_full.clone().unwrap_or_default(),
+                            rpm_limit: spec.rpm_limit as u64,
+                            monthly_token_limit: 0,
+                            current_rpm: 0,
+                            tokens_this_month: 0,
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            expired_at: None,
+                            model_limits: Vec::new(),
+                            remain_quota: -1,
+                            unlimited_quota: true,
+                            max_concurrent: spec.max_concurrent,
+                            usage_month: String::new(),
+                        });
+                    }
+                    Entry::Occupied(mut o) => {
+                        let m = o.get_mut();
+                        m.name = spec.name.clone();
+                        m.max_concurrent = spec.max_concurrent;
+                        m.rpm_limit = spec.rpm_limit as u64;
+                        if let Some(full) = spec.key_full.filter(|t| !t.is_empty()) {
+                            m.token = full;
+                        }
+                    }
+                }
             }
             info!(
                 count = state.keys_meta.len(),

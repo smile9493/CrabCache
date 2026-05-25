@@ -71,7 +71,7 @@ pub fn KeysPage() -> impl IntoView {
     let new_key_name = RwSignal::new(String::new());
     let new_key_domain = RwSignal::new(String::new());
     let new_key_project_id = RwSignal::new(String::new());
-    let new_key_rpm = RwSignal::new(60u32);
+    let new_key_rpm = RwSignal::new(0u32);
     let new_key_budget = RwSignal::new(1_000_000u64);
     let new_key_unlimited = RwSignal::new(true);
     let new_key_quota = RwSignal::new(1_000_000i64);
@@ -81,6 +81,8 @@ pub fn KeysPage() -> impl IntoView {
     let pipeline_profiles: RwSignal<Option<Vec<String>>> = RwSignal::new(None);
     let creating = RwSignal::new(false);
     let create_error = RwSignal::new(String::new());
+    let edit_error = RwSignal::new(String::new());
+    let edit_success = RwSignal::new(false);
 
     let selected_keys: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
     let show_confirm_revoke: RwSignal<Option<String>> = RwSignal::new(None);
@@ -227,9 +229,16 @@ pub fn KeysPage() -> impl IntoView {
     let edit_upstream_profile = RwSignal::new(String::new());
     let edit_enabled = RwSignal::new(true);
     let edit_max_concurrent = RwSignal::new(0u32);
+    let edit_rpm = RwSignal::new(0u32);
+    let edit_budget = RwSignal::new(0u64);
+    let edit_unlimited = RwSignal::new(true);
+    let edit_quota = RwSignal::new(0i64);
 
     let start_edit = move |key: ApiKey| {
         editing_key_id.set(Some(key.id.clone()));
+        edit_error.set(String::new());
+        edit_success.set(false);
+        copy_notice.set(None);
         edit_name.set(key.name.clone());
         edit_domain.set(key.domain.clone().unwrap_or_default());
         edit_project_id.set(key.project_id.clone().unwrap_or_default());
@@ -237,6 +246,15 @@ pub fn KeysPage() -> impl IntoView {
         edit_upstream_profile.set(key.upstream_profile.clone().unwrap_or_default());
         edit_enabled.set(key.active);
         edit_max_concurrent.set(key.max_concurrent);
+        edit_rpm.set(key.rpm_limit);
+        edit_budget.set(key.monthly_token_budget);
+        edit_unlimited.set(key.unlimited_quota);
+        edit_quota.set(key.remain_quota);
+        leptos::task::spawn_local(async move {
+            if let Ok(cfg) = api::fetch_pipeline_runtime().await {
+                pipeline_profiles.set(Some(cfg.profiles.into_iter().map(|p| p.id).collect()));
+            }
+        });
     };
 
     let cancel_edit = move || {
@@ -252,6 +270,10 @@ pub fn KeysPage() -> impl IntoView {
         let upstream_profile_val = edit_upstream_profile.get();
         let enabled_val = edit_enabled.get();
         let max_concurrent_val = edit_max_concurrent.get();
+        let rpm_val = edit_rpm.get();
+        let budget_val = edit_budget.get();
+        let unlimited_val = edit_unlimited.get();
+        let quota_val = edit_quota.get();
 
         let req = PatchKeyRequest {
             name: {
@@ -276,11 +298,29 @@ pub fn KeysPage() -> impl IntoView {
                 if v.is_empty() { None } else { Some(v) }
             },
             max_concurrent: Some(max_concurrent_val),
+            rpm_limit: Some(rpm_val),
+            monthly_token_budget: Some(budget_val),
+            remain_quota: if unlimited_val {
+                None
+            } else {
+                Some(quota_val)
+            },
+            unlimited_quota: Some(unlimited_val),
         };
         leptos::task::spawn_local(async move {
-            let _ = api::patch_key(&id, &req).await;
-            editing_key_id.set(None);
-            load_keys();
+            edit_error.set(String::new());
+            match api::patch_key(&id, &req).await {
+                Ok(_) => {
+                    edit_success.set(true);
+                    editing_key_id.set(None);
+                    load_keys();
+                    leptos::task::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(3000).await;
+                        edit_success.set(false);
+                    });
+                }
+                Err(e) => edit_error.set(e),
+            }
         });
     };
 
@@ -294,6 +334,7 @@ pub fn KeysPage() -> impl IntoView {
                 <button
                     on:click=move |_| {
                         show_create.set(true);
+                        edit_success.set(false);
                         leptos::task::spawn_local(async move {
                             if let Ok(cfg) = api::fetch_pipeline_runtime().await {
                                 pipeline_profiles.set(Some(
@@ -307,6 +348,19 @@ pub fn KeysPage() -> impl IntoView {
                     {t.keys_new_btn()}
                 </button>
             </div>
+
+            {move || {
+                if edit_success.get() {
+                    let t = use_translations();
+                    view! {
+                        <div class="text-xs text-teal-400 font-medium" role="status">
+                            {t.keys_edit_success()}
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
 
             {move || {
                 if let Some(kind) = copy_notice.get() {
@@ -478,10 +532,26 @@ pub fn KeysPage() -> impl IntoView {
                                     <label class="block text-xs text-theme-muted mb-1">{t.keys_rpm_label()}</label>
                                     <input
                                         type="number"
+                                        min="0"
                                         prop:value=move || new_key_rpm.get()
                                         on:input=move |ev| {
                                             if let Ok(v) = event_target_value(&ev).parse() {
                                                 new_key_rpm.set(v);
+                                            }
+                                        }
+                                        class="input"
+                                    />
+                                    <p class="text-xs text-theme-muted mt-1">{t.keys_rpm_hint()}</p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-theme-muted mb-1">{t.keys_budget_label()}</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        prop:value=move || new_key_budget.get()
+                                        on:input=move |ev| {
+                                            if let Ok(v) = event_target_value(&ev).parse() {
+                                                new_key_budget.set(v);
                                             }
                                         }
                                         class="input"
@@ -706,8 +776,9 @@ pub fn KeysPage() -> impl IntoView {
                                             </th>
                                             <th>{t.keys_col_name()}</th>
                                             <th>{t.keys_col_key()}</th>
-                                            <th>{t.keys_col_quota()}</th>
+                                            <th>{t.keys_col_rpm()}</th>
                                             <th>{t.keys_col_concurrency()}</th>
+                                            <th>{t.keys_col_quota()}</th>
                                             <th>{t.keys_col_tokens()}</th>
                                             <th>{t.keys_col_status()}</th>
                                             <th class="text-right">""</th>
@@ -721,6 +792,16 @@ pub fn KeysPage() -> impl IntoView {
                                                 .clone()
                                                 .unwrap_or_else(|| key.key_preview.clone());
                                             let can_copy = key.key_full.is_some();
+                                            let rpm_str = if key.rpm_limit == 0 {
+                                                t.keys_unlimited().to_string()
+                                            } else {
+                                                format!("{}", key.rpm_limit)
+                                            };
+                                            let concurrency_str = if key.max_concurrent == 0 {
+                                                format!("{} ({})", t.keys_unlimited(), key.inflight)
+                                            } else {
+                                                format!("{}/{}", key.inflight, key.max_concurrent)
+                                            };
                                             let quota_str = if key.unlimited_quota {
                                                 t.keys_unlimited().to_string()
                                             } else {
@@ -735,8 +816,9 @@ pub fn KeysPage() -> impl IntoView {
                                             if is_editing() {
                                                 view! {
                                                             <tr class="bg-theme-tertiary/40">
-                                                                <td colspan="7" class="p-3">
-                                                                    <div class="grid grid-cols-2 gap-3">
+                                                                <td colspan="9" class="p-3">
+                                                                    <h4 class="text-xs font-semibold text-theme mb-2">{t.keys_edit_title()}</h4>
+                                                                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
                                                                         <div>
                                                                             <label class="block text-xs text-theme-muted mb-1">{t.keys_name_label()}</label>
                                                                             <input type="text" prop:value=move || edit_name.get() on:input=move |ev| edit_name.set(event_target_value(&ev)) class="input text-sm" />
@@ -747,7 +829,20 @@ pub fn KeysPage() -> impl IntoView {
                                                                         </div>
                                                                         <div>
                                                                             <label class="block text-xs text-theme-muted mb-1">{t.keys_project_id_label()}</label>
-                                                                            <input type="text" prop:value=move || edit_project_id.get() on:input=move |ev| edit_project_id.set(event_target_value(&ev)) class="input text-sm" />
+                                                                            <input type="text" prop:value=move || edit_project_id.get() on:input=move |ev| edit_project_id.set(event_target_value(&ev)) class="input text-sm font-mono" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_rpm_label()}</label>
+                                                                            <input type="number" min="0" prop:value=move || edit_rpm.get() on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse() { edit_rpm.set(v); } } class="input text-sm" />
+                                                                            <p class="text-xs text-theme-muted mt-0.5">{t.keys_rpm_hint()}</p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_max_concurrent_label()}</label>
+                                                                            <input type="number" min="0" prop:value=move || edit_max_concurrent.get() on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse() { edit_max_concurrent.set(v); } } class="input text-sm" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_budget_label()}</label>
+                                                                            <input type="number" min="0" prop:value=move || edit_budget.get() on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse() { edit_budget.set(v); } } class="input text-sm" />
                                                                         </div>
                                                                         <div>
                                                                             <label class="block text-xs text-theme-muted mb-1">{t.keys_pipeline_label()}</label>
@@ -756,20 +851,41 @@ pub fn KeysPage() -> impl IntoView {
                                                                                 <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
                                                                                 <option value="deepseek_light">"deepseek_light"</option>
                                                                                 <option value="mimo_relay">"mimo_relay"</option>
-                                        <option value="generic_relay">"generic_relay"</option>
+                                                                                <option value="generic_relay">"generic_relay"</option>
                                                                             </select>
                                                                         </div>
                                                                         <div>
                                                                             <label class="block text-xs text-theme-muted mb-1">{t.keys_upstream_profile_label()}</label>
-                                                                            <input type="text" prop:value=move || edit_upstream_profile.get() on:input=move |ev| edit_upstream_profile.set(event_target_value(&ev)) class="input text-sm" />
+                                                                            <select prop:value=move || edit_upstream_profile.get() on:change=move |ev| edit_upstream_profile.set(event_target_value(&ev)) class="input w-full text-sm">
+                                                                                <option value="">{t.keys_override_auto()}</option>
+                                                                                {move || pipeline_profiles.get().unwrap_or_default().into_iter().map(|pid| {
+                                                                                    view! { <option value=pid.clone()>{pid.clone()}</option> }
+                                                                                }).collect_view()}
+                                                                            </select>
                                                                         </div>
-                                                                        <div>
-                                                                            <label class="flex items-center gap-2 text-xs text-theme-muted mt-5">
+                                                                        <div class="flex flex-col gap-2 justify-end">
+                                                                            <label class="flex items-center gap-2 text-xs text-theme-muted">
                                                                                 <input type="checkbox" prop:checked=move || edit_enabled.get() on:change=move |ev| edit_enabled.set(event_target_checked(&ev)) class="rounded" />
                                                                                 {t.keys_status_active()}
                                                                             </label>
+                                                                            <label class="flex items-center gap-2 text-xs text-theme-muted">
+                                                                                <input type="checkbox" prop:checked=move || edit_unlimited.get() on:change=move |ev| edit_unlimited.set(event_target_checked(&ev)) class="rounded" />
+                                                                                {t.keys_unlimited_quota()}
+                                                                            </label>
+                                                                        </div>
+                                                                        <div>
+                                                                            <label class="block text-xs text-theme-muted mb-1">{t.keys_quota_label()}</label>
+                                                                            <input type="number" prop:value=move || edit_quota.get() on:input=move |ev| { if let Ok(v) = event_target_value(&ev).parse() { edit_quota.set(v); } } class="input text-sm" disabled=move || edit_unlimited.get() />
                                                                         </div>
                                                                     </div>
+                                                                    {move || {
+                                                                        let err = edit_error.get();
+                                                                        if !err.is_empty() {
+                                                                            view! { <p class="text-xs text-error mt-2">{err}</p> }.into_any()
+                                                                        } else {
+                                                                            ().into_any()
+                                                                        }
+                                                                    }}
                                                                     <div class="flex gap-2 mt-3">
                                                                         <button on:click={
                                                                             let id = id.clone();
@@ -796,8 +912,8 @@ pub fn KeysPage() -> impl IntoView {
                                                                 </td>
                                                                 <td class="text-theme font-medium">{key_for_edit.name.clone()}</td>
                                                                 <td>
-                                                                    <div class="flex items-center gap-2">
-                                                                        <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded">
+                                                                    <div class="flex items-center gap-2 max-w-md">
+                                                                        <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded break-all">
                                                                             {display_key.clone()}
                                                                         </code>
                                                                         {if can_copy {
@@ -807,7 +923,7 @@ pub fn KeysPage() -> impl IntoView {
                                                                                         let token = display_key.clone();
                                                                                         move |_| copy_text(token.clone())
                                                                                     }
-                                                                                    class="text-xs text-accent hover:text-accent transition-colors"
+                                                                                    class="btn btn-secondary text-xs shrink-0"
                                                                                 >
                                                                                     {t.keys_copy_btn()}
                                                                                 </button>
@@ -815,7 +931,7 @@ pub fn KeysPage() -> impl IntoView {
                                                                         } else {
                                                                             view! {
                                                                                 <span
-                                                                                    class="text-xs text-theme-muted"
+                                                                                    class="text-xs text-theme-muted shrink-0"
                                                                                     title=t.keys_copy_unavailable()
                                                                                 >
                                                                                     {t.keys_copy_unavailable()}
@@ -824,10 +940,16 @@ pub fn KeysPage() -> impl IntoView {
                                                                         }}
                                                                     </div>
                                                                 </td>
-                                                                <td class="font-mono tabular-nums text-theme">
+                                                                <td class="font-mono tabular-nums text-theme text-sm">
+                                                                    {rpm_str}
+                                                                </td>
+                                                                <td class="font-mono tabular-nums text-theme text-sm">
+                                                                    {concurrency_str}
+                                                                </td>
+                                                                <td class="font-mono tabular-nums text-theme text-sm">
                                                                     {quota_str}
                                                                 </td>
-                                                                <td class="font-mono tabular-nums text-theme">
+                                                                <td class="font-mono tabular-nums text-theme text-sm">
                                                                     {format!("{}", key_for_edit.tokens_used_this_month)}
                                                                 </td>
                                                                 <td>

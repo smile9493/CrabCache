@@ -307,6 +307,80 @@ async fn create_key_max_concurrent_roundtrip() {
 }
 
 #[tokio::test]
+async fn patch_key_by_id_rpm_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"by-id-rpm","enabled":true,"rpm_limit":60}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let key_id = created["id"].as_str().expect("id");
+    assert_eq!(created["rpm_limit"].as_u64(), Some(60));
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/v1/keys/by-id/{key_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"rpm_limit":0}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(patch.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(patched["rpm_limit"].as_u64(), Some(0));
+    assert_eq!(patched["id"].as_str(), Some(key_id));
+
+    let list = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let keys: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+    let key = keys
+        .iter()
+        .find(|k| k["id"].as_str() == Some(key_id))
+        .expect("key in list");
+    assert_eq!(key["rpm_limit"].as_u64(), Some(0));
+}
+
+#[tokio::test]
 async fn create_key_with_domain_roundtrip() {
     let Some(state) = require_management_state().await else {
         skip_or_panic_redis_unavailable();

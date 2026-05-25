@@ -1240,7 +1240,7 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
                 project_id: spec.project_id,
                 pipeline: spec.pipeline,
                 upstream_profile: spec.upstream_profile,
-                rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
+                rpm_limit: spec.rpm_limit,
                 monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
                 tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
                 expired_at: meta.as_ref().and_then(|m| m.expired_at),
@@ -1346,15 +1346,9 @@ async fn revoke_key(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let token = state
-        .keys_meta
-        .get(&id)
-        .map(|m| m.token.clone())
-        .ok_or(StatusCode::NOT_FOUND)?;
-
     state
         .gateway
-        .revoke_key(&token)
+        .revoke_key_by_id(&id)
         .await
         .map_err(|e| gateway_status_code(&e))?;
 
@@ -1368,16 +1362,10 @@ async fn patch_key(
     Path(id): Path<String>,
     Json(req): Json<PatchKeyRequest>,
 ) -> Result<Json<ApiKey>, (StatusCode, String)> {
-    let token = state
-        .keys_meta
-        .get(&id)
-        .map(|m| m.token.clone())
-        .ok_or((StatusCode::NOT_FOUND, "key not found".to_string()))?;
-
     let updated = state
         .gateway
-        .patch_key(
-            &token,
+        .patch_key_by_id(
+            &id,
             &crab_control::PatchGatewayKeyRequest {
                 name: req.name.clone(),
                 enabled: req.enabled,
@@ -1386,19 +1374,51 @@ async fn patch_key(
                 pipeline: req.pipeline.clone(),
                 upstream_profile: req.upstream_profile.clone(),
                 max_concurrent: req.max_concurrent,
-                rpm_limit: None,
+                rpm_limit: req.rpm_limit,
             },
         )
         .await
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
 
     if let Some(mut meta) = state.keys_meta.get_mut(&id) {
+        if let Some(name) = req.name.as_ref() {
+            meta.name = name.clone();
+        }
         if req.enabled == Some(false) {
             meta.token = String::new();
         }
-        if let Some(max_concurrent) = req.max_concurrent {
-            meta.max_concurrent = max_concurrent;
+        meta.max_concurrent = updated.max_concurrent;
+        meta.rpm_limit = updated.rpm_limit as u64;
+        if let Some(monthly_token_budget) = req.monthly_token_budget {
+            meta.monthly_token_limit = monthly_token_budget;
         }
+        if let Some(remain_quota) = req.remain_quota {
+            meta.remain_quota = remain_quota;
+        }
+        if let Some(unlimited_quota) = req.unlimited_quota {
+            meta.unlimited_quota = unlimited_quota;
+        }
+    } else {
+        state.keys_meta.insert(
+            id.clone(),
+            KeyMetadata {
+                id: id.clone(),
+                name: updated.name.clone(),
+                token: String::new(),
+                rpm_limit: updated.rpm_limit as u64,
+                monthly_token_limit: req.monthly_token_budget.unwrap_or(0),
+                current_rpm: 0,
+                tokens_this_month: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                expired_at: None,
+                model_limits: Vec::new(),
+                remain_quota: req.remain_quota.unwrap_or(-1),
+                unlimited_quota: req.unlimited_quota.unwrap_or(true),
+                max_concurrent: updated.max_concurrent,
+                usage_month: String::new(),
+            },
+        );
     }
     state.flush_persist();
 
@@ -1409,7 +1429,7 @@ async fn patch_key(
         key_preview: updated.key_preview,
         key_full: meta.as_ref().map(|m| m.token.clone()),
         active: updated.enabled,
-        rpm_limit: meta.as_ref().map(|m| m.rpm_limit as u32).unwrap_or(0),
+        rpm_limit: updated.rpm_limit,
         monthly_token_budget: meta
             .as_ref()
             .map(|m| m.monthly_token_limit)

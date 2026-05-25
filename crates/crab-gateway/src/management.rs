@@ -115,6 +115,10 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/cache/fingerprint",
             get(get_fingerprint).put(put_fingerprint),
         )
+        .route(
+            "/v1/keys/by-id/{id}",
+            delete(revoke_key_by_id).patch(patch_key_by_id),
+        )
         .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
         .route(
             "/v1/domains/policies",
@@ -988,6 +992,45 @@ async fn create_key(
         upstream_profile: req.upstream_profile,
         max_concurrent,
     }))
+}
+
+fn token_for_stored_key_id(
+    runtime: &crab_proxy::RuntimeConfig,
+    id: &str,
+) -> Result<String, Response> {
+    runtime
+        .keys
+        .iter()
+        .find(|entry| entry.value().id == id)
+        .map(|entry| entry.key().clone())
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "key not found".to_string(),
+                }),
+            )
+                .into_response()
+        })
+}
+
+async fn revoke_key_by_id(
+    state: State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Response> {
+    let token = token_for_stored_key_id(&state.runtime, &id)?;
+    revoke_key(state, headers, Path(token)).await
+}
+
+async fn patch_key_by_id(
+    state: State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    req: Json<PatchGatewayKeyRequest>,
+) -> Result<Json<ApiKeySpec>, Response> {
+    let token = token_for_stored_key_id(&state.runtime, &id)?;
+    patch_key(state, headers, Path(token), req).await
 }
 
 async fn revoke_key(

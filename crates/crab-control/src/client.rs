@@ -130,6 +130,29 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    /// Patch by gateway `StoredKey.id` (Dashboard / Admin BFF use this, not the sk-cc-* token).
+    pub async fn patch_key_by_id(
+        &self,
+        id: &str,
+        req: &PatchGatewayKeyRequest,
+    ) -> Result<ApiKeySpec, ControlError> {
+        let path = format!("/v1/keys/by-id/{}", urlencoding::encode(id));
+        let resp = self
+            .authed(reqwest::Method::PATCH, &path)
+            .json(req)
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn revoke_key_by_id(&self, id: &str) -> Result<(), ControlError> {
+        let path = format!("/v1/keys/by-id/{}", urlencoding::encode(id));
+        let resp = self.authed(reqwest::Method::DELETE, &path).send().await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
     pub async fn get_ttl(&self) -> Result<TtlConfigView, ControlError> {
         let resp = self
             .authed(reqwest::Method::GET, "/v1/cache/ttl")

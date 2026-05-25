@@ -44,6 +44,14 @@ pub struct PatchKeyRequest {
     pub upstream_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_concurrent: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm_limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monthly_token_budget: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remain_quota: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlimited_quota: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
