@@ -170,6 +170,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/cursor/models", get(get_cursor_models).put(put_cursor_models))
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
+        // ── Log Management ──
+        .route("/api/admin/logs/usage", get(get_log_disk_usage))
+        .route("/api/admin/logs/clear", post(post_clear_logs))
+        .route(
+            "/api/admin/logs/retention",
+            get(get_retention_policy).put(put_retention_policy),
+        )
         .route("/api/admin/trace/analysis", get(get_trace_analysis))
         .route("/api/admin/live-metrics", get(get_live_metrics))
         .route("/api/admin/live-metrics/consumers", get(get_live_consumers))
@@ -1463,14 +1470,7 @@ async fn batch_revoke_keys(
     let mut revoked = Vec::new();
     let mut errors = Vec::new();
     for id in &body.ids {
-        let token = match state.keys_meta.get(id).map(|m| m.token.clone()) {
-            Some(t) => t,
-            None => {
-                errors.push((id.clone(), "not found".to_string()));
-                continue;
-            }
-        };
-        match state.gateway.revoke_key(&token).await {
+        match state.gateway.revoke_key_by_id(id).await {
             Ok(_) => {
                 state.keys_meta.remove(id);
                 revoked.push(id.clone());
@@ -2115,6 +2115,56 @@ async fn get_log_detail(
     }
 
     Err(StatusCode::NOT_FOUND)
+}
+
+// ── Log Management Handlers ──────────────────────────────────────────
+
+async fn get_log_disk_usage(
+    State(_state): State<Arc<AppState>>,
+) -> Json<crab_admin_types::LogDiskUsage> {
+    Json(crate::log_management::compute_disk_usage())
+}
+
+async fn post_clear_logs(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<crab_admin_types::ClearLogsRequest>,
+) -> Result<Json<crab_admin_types::ClearLogsResponse>, (StatusCode, String)> {
+    crate::log_management::clear_logs(&req)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn get_retention_policy(
+    State(state): State<Arc<AppState>>,
+) -> Json<crab_admin_types::RetentionPolicy> {
+    Json(state.log_retention.read().clone())
+}
+
+async fn put_retention_policy(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<crab_admin_types::RetentionPolicy>,
+) -> Result<Json<crab_admin_types::RetentionPolicy>, (StatusCode, String)> {
+    if req.max_age_hours > 0 && req.max_age_hours < 1 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_age_hours must be >= 1 or 0 (disabled)".to_string(),
+        ));
+    }
+    if req.max_disk_mb > 0 && req.max_disk_mb < 10 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_disk_mb must be >= 10 or 0 (disabled)".to_string(),
+        ));
+    }
+    *state.log_retention.write() = req.clone();
+    tracing::info!(
+        max_age_hours = req.max_age_hours,
+        max_disk_mb = req.max_disk_mb,
+        max_trace_files = req.max_trace_files,
+        max_capture_body_files = req.max_capture_body_files,
+        "Log retention policy updated"
+    );
+    Ok(Json(req))
 }
 
 async fn get_connection_config(State(state): State<Arc<AppState>>) -> Json<ConnectionConfig> {

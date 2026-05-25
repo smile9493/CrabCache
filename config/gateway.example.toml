@@ -293,3 +293,17 @@ max_files = 5
 # max_upstream_bytes = 0
 # mask_api_keys = false  # true = mask sk-* tokens in captured bodies
 # skip_paths = ["/health", "/healthz", "/ready"]
+
+# ── Log Retention (Admin Dashboard) ──────────────────────────────
+# The admin dashboard runs a background cleanup task every 10 minutes
+# that enforces these retention limits. Configure via env vars:
+#   CRABCACHE_LOG_MAX_AGE_HOURS     (default: 168 = 7 days)
+#   CRABCACHE_LOG_MAX_DISK_MB       (default: 500)
+#   CRABCACHE_LOG_MAX_TRACE_FILES   (default: 20)
+#   CRABCACHE_LOG_MAX_CAPTURE_BODY_FILES (default: 5000)
+# Retention can also be updated at runtime via the Dashboard UI or:
+#   PUT /api/admin/logs/retention
+# Manual cleanup:
+#   POST /api/admin/logs/clear
+# Disk usage:
+#   GET /api/admin/logs/usage

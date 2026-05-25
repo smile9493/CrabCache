@@ -6,6 +6,7 @@ pub mod infra;
 pub mod keys;
 pub mod live;
 pub mod logs;
+pub mod logs_manage;
 pub mod models;
 pub mod overview;
 pub mod pipeline;

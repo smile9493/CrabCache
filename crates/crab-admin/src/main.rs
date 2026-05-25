@@ -12,6 +12,7 @@ mod persist;
 mod trace_log;
 mod live_metrics;
 mod composition;
+mod log_management;
 mod raw_capture;
 mod routes;
 mod state;
@@ -236,6 +237,13 @@ async fn main() -> anyhow::Result<()> {
             interval_secs = interval.as_secs(),
             "Overview core cache refresh started"
         );
+    }
+
+    // Spawn log retention enforcement task (runs every 10 minutes).
+    {
+        let bg = Arc::clone(&state);
+        tokio::spawn(crate::log_management::log_retention_loop(bg));
+        info!("Log retention enforcement task started");
     }
 
     match state.gateway.list_keys().await {

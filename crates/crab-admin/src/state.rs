@@ -1,7 +1,7 @@
 use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
-use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, TraceSummary};
+use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceSummary};
 use std::collections::HashMap;
 use std::time::Instant;
 use crate::types::UpstreamTestResult;
@@ -105,6 +105,8 @@ pub struct AppState {
     pub infra_history: RwLock<crate::infra::history::InfraHistoryRing>,
     /// Active bandwidth test jobs.
     pub infra_speed_jobs: Arc<crate::infra::speed_test::SpeedTestJobs>,
+    /// Log retention policy for automatic cleanup.
+    pub log_retention: RwLock<RetentionPolicy>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -457,6 +459,7 @@ impl AppState {
             infra_cache: crate::infra::InfraCache::new(),
             infra_history: RwLock::new(crate::infra::history::InfraHistoryRing::new()),
             infra_speed_jobs: Arc::new(crate::infra::speed_test::SpeedTestJobs::new()),
+            log_retention: RwLock::new(load_retention_policy()),
         }
     }
 
@@ -700,5 +703,30 @@ impl AppState {
             .get(profile_id)
             .cloned()
             .unwrap_or_else(|| profile_id.to_string())
+    }
+}
+
+fn load_retention_policy() -> RetentionPolicy {
+    let max_age_hours = std::env::var("CRABCACHE_LOG_MAX_AGE_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(168);
+    let max_disk_mb = std::env::var("CRABCACHE_LOG_MAX_DISK_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    let max_trace_files = std::env::var("CRABCACHE_LOG_MAX_TRACE_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
+    let max_capture_body_files = std::env::var("CRABCACHE_LOG_MAX_CAPTURE_BODY_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000);
+    RetentionPolicy {
+        max_age_hours,
+        max_disk_mb,
+        max_trace_files,
+        max_capture_body_files,
     }
 }

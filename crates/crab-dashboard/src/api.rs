@@ -758,3 +758,33 @@ pub async fn fetch_capture_stats(
 ) -> Result<crate::types::CaptureStatsResponse, String> {
     fetch_json(&format!("{}/capture/stats?hours={}", API_BASE, hours)).await
 }
+
+// ── Log Management ──
+
+pub async fn fetch_log_disk_usage() -> Result<crate::types::LogDiskUsage, String> {
+    fetch_json(&format!("{API_BASE}/logs/usage")).await
+}
+
+pub async fn clear_logs(
+    target: &str,
+    older_than_hours: Option<u32>,
+) -> Result<crate::types::ClearLogsResponse, String> {
+    post_json(
+        &format!("{API_BASE}/logs/clear"),
+        &serde_json::json!({
+            "target": target,
+            "older_than_hours": older_than_hours,
+        }),
+    )
+    .await
+}
+
+pub async fn fetch_retention_policy() -> Result<crate::types::RetentionPolicy, String> {
+    fetch_json(&format!("{API_BASE}/logs/retention")).await
+}
+
+pub async fn update_retention_policy(
+    policy: &crate::types::RetentionPolicy,
+) -> Result<crate::types::RetentionPolicy, String> {
+    put_json(&format!("{API_BASE}/logs/retention"), policy).await
+}

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 /// Resolve the raw capture directory path.
-fn raw_capture_dir() -> String {
+pub(crate) fn raw_capture_dir() -> String {
     std::env::var("CRABCACHE_RAW_CAPTURE_DIR")
         .unwrap_or_else(|_| "/var/log/crabcache/raw_capture".to_string())
 }
