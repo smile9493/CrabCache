@@ -407,7 +407,9 @@ impl ProxyHttp for GatewayProxy {
 
         if req_path == "/ready" {
             let redis_ok = self.state.tiered_cache.ping().await;
-            // Check that the default upstream profile has at least one available key.
+            // Readiness includes upstream key availability: if all keys are exhausted
+            // (e.g. rate-limited or disabled), the gateway cannot serve requests.
+            // This intentionally reports 503 so load balancers route traffic elsewhere.
             let default_profile = self.state.runtime.default_profile();
             let pool = default_profile.resolve_upstream_pool();
             let keys_available = pool.available_count() > 0;

@@ -3,6 +3,8 @@
 //! Tests cover: cache hit/miss (L0 + L1), request coalescing,
 //! cache key determinism, reasoning display adapter, and rate limiting.
 
+mod common;
+
 use crab_cache::{
     CacheEntry, FingerprintConfig, L0Config, RequestCoalescer, TieredCache, TtlConfig, UsageInfo,
     generate_cache_key_with_fingerprint, generate_namespaced_cache_key_with_fingerprint,
@@ -22,49 +24,6 @@ use std::sync::Arc;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn test_runtime() -> Arc<RuntimeConfig> {
-    let backends = parse_backend_endpoints(
-        &["127.0.0.1:443".to_string()],
-        1,
-        "api.deepseek.com",
-    )
-    .unwrap();
-    let router = crab_route::AffinityRouter::new(&backends).unwrap();
-    let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
-    let pool_handle = Arc::new(RwLock::new(upstream_pool));
-    let mut profiles = HashMap::new();
-    profiles.insert(
-        "deepseek".to_string(),
-        Arc::new(UpstreamProfileRuntime {
-            id: "deepseek".to_string(),
-            provider: UpstreamProvider::Deepseek,
-            base_url: "https://api.deepseek.com".to_string(),
-            fallback_model: "deepseek-v4-pro".to_string(),
-            tls_sni: "api.deepseek.com".to_string(),
-            router: crab_route::AffinityRouter::new(&backends).unwrap(),
-            upstream_pool: pool_handle.clone(),
-        }),
-    );
-    RuntimeConfig::new(
-        router,
-        ttl,
-        ConnectionConfig::default(),
-        true,
-        FingerprintConfig::default(),
-        "https://api.deepseek.com".to_string(),
-        "deepseek-v4-pro".to_string(),
-        pool_handle,
-        profiles,
-        "deepseek".to_string(),
-        PipelineGlobals::default(),
-        false,
-        std::collections::HashSet::new(),
-        false,
-    )
-}
 
 async fn test_redis_pool() -> Option<bb8::Pool<bb8_redis::RedisConnectionManager>> {
     let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
@@ -278,7 +237,7 @@ async fn reasoning_cursor_adapter_constructs() {
 
 #[tokio::test]
 async fn runtime_config_constructs_with_backends() {
-    let runtime = test_runtime();
+    let runtime = common::test_runtime();
     let profile_id = runtime.default_upstream_profile_id();
     assert_eq!(profile_id, "deepseek");
 }

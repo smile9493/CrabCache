@@ -4,13 +4,14 @@ use anyhow::Result;
 use crab_cache::CacheEntry;
 use crab_metrics::global_metrics;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 use tracing::debug;
 
 pub struct SemanticCache {
     pool: Arc<EmbedderPool>,
     store: VectorStore,
-    threshold: f32,
+    threshold: AtomicU32,
     ttl_secs: u64,
 }
 
@@ -26,9 +27,14 @@ impl SemanticCache {
         Ok(Self {
             pool,
             store,
-            threshold,
+            threshold: AtomicU32::new(threshold.to_bits()),
             ttl_secs,
         })
+    }
+
+    /// Update the similarity threshold at runtime (hot-reload).
+    pub fn set_threshold(&self, threshold: f32) {
+        self.threshold.store(threshold.to_bits(), Ordering::Relaxed);
     }
 
     #[tracing::instrument(skip(self), fields(query_len = query_text.len(), tenant = tenant_id.unwrap_or("default")))]
@@ -38,23 +44,24 @@ impl SemanticCache {
         let elapsed = start.elapsed();
         global_metrics().record_semantic_embed_latency(elapsed);
 
+        let threshold = f32::from_bits(self.threshold.load(Ordering::Relaxed));
         let result = self
             .store
-            .search(&vector, self.threshold, tenant_id)
+            .search(&vector, threshold, tenant_id)
             .await;
 
         if result.is_some() {
             global_metrics().record_semantic_cache_hit(true);
             debug!(
                 query_len = query_text.len(),
-                threshold = self.threshold,
+                threshold = threshold,
                 "Semantic cache hit"
             );
         } else {
             global_metrics().record_semantic_cache_hit(false);
             debug!(
                 query_len = query_text.len(),
-                threshold = self.threshold,
+                threshold = threshold,
                 "Semantic cache miss"
             );
         }

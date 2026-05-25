@@ -1,5 +1,7 @@
 //! Integration tests for the gateway management HTTP API.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use crab_cache::{FingerprintConfig, L0Config, TieredCache, TtlConfig};
@@ -23,49 +25,6 @@ use parking_lot::RwLock;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
-fn test_runtime() -> Arc<RuntimeConfig> {
-    let backends = crab_control::parse_backend_endpoints(
-        &["127.0.0.1:443".to_string()],
-        1,
-        "api.deepseek.com",
-    )
-    .unwrap();
-    let router = AffinityRouter::new(&backends).unwrap();
-    let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
-    let pool_handle = Arc::new(RwLock::new(upstream_pool));
-    let mut profiles = HashMap::new();
-    profiles.insert(
-        "deepseek".to_string(),
-        Arc::new(UpstreamProfileRuntime {
-            id: "deepseek".to_string(),
-            provider: UpstreamProvider::Deepseek,
-            base_url: "https://api.deepseek.com".to_string(),
-            fallback_model: "deepseek-v4-pro".to_string(),
-            tls_sni: "api.deepseek.com".to_string(),
-            router: AffinityRouter::new(&backends).unwrap(),
-            upstream_pool: pool_handle.clone(),
-        }),
-    );
-    RuntimeConfig::new(
-        router,
-        ttl,
-        ConnectionConfig::default(),
-        true,
-        FingerprintConfig::default(),
-        "https://api.deepseek.com".to_string(),
-        "deepseek-v4-pro".to_string(),
-        pool_handle,
-        profiles,
-        "deepseek".to_string(),
-        PipelineGlobals::default(),
-        false,
-        std::collections::HashSet::new(),
-        false,
-    )
-}
-
 async fn test_management_state() -> Option<ManagementState> {
     let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
         .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
@@ -87,7 +46,7 @@ async fn test_management_state() -> Option<ManagementState> {
     );
 
     Some(ManagementState {
-        runtime: test_runtime(),
+        runtime: common::test_runtime(),
         tiered_cache,
         reasoning_store,
         reasoning_config: Arc::new(RwLock::new(ReasoningConfig::default())),
@@ -715,7 +674,7 @@ async fn client_key_persisted_in_redis_state() {
         "created key should be in Redis control plane"
     );
 
-    let runtime_b = test_runtime();
+    let runtime_b = common::test_runtime();
     runtime_b.keys.clear();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
     assert!(
@@ -783,7 +742,7 @@ async fn domain_policies_persisted_in_redis_state() {
         500_000
     );
 
-    let runtime_b = test_runtime();
+    let runtime_b = common::test_runtime();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
     let policies = runtime_b.list_domain_policies();
     assert!(
@@ -794,7 +753,7 @@ async fn domain_policies_persisted_in_redis_state() {
 
 #[test]
 fn pipeline_runtime_set_and_read() {
-    let runtime = test_runtime();
+    let runtime = common::test_runtime();
     assert_eq!(
         runtime.pipeline_globals().pipeline_mode,
         PipelineMode::Auto

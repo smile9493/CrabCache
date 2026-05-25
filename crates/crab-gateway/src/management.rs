@@ -1234,8 +1234,8 @@ fn semantic_runtime_view(state: &SemanticRuntimeState) -> SemanticRuntimeView {
     SemanticRuntimeView {
         enabled: state.enabled,
         similarity_threshold: state.threshold as f64,
-        min_query_chars: state.gate.min_query_chars as u32,
-        max_query_chars: state.gate.max_query_chars as u32,
+        min_query_chars: state.gate.min_query_chars,
+        max_query_chars: state.gate.max_query_chars,
         embed_only_on_exact_miss: state.gate.embed_only_on_exact_miss,
     }
 }
@@ -1279,16 +1279,21 @@ async fn put_semantic_runtime(
         runtime.enabled = req.enabled;
         runtime.threshold = req.similarity_threshold as f32;
         runtime.gate = crab_semantic::SemanticGateConfig {
-            min_query_chars: req.min_query_chars as usize,
-            max_query_chars: req.max_query_chars as usize,
+            min_query_chars: req.min_query_chars,
+            max_query_chars: req.max_query_chars,
             embed_only_on_exact_miss: req.embed_only_on_exact_miss,
         };
     }
     if let Some(cache) = &state.semantic_cache {
         cache.set_threshold(req.similarity_threshold as f32);
     }
-    let runtime = state.semantic_runtime.read();
-    Ok(Json(semantic_runtime_view(&runtime)))
+    Ok(Json(SemanticRuntimeView {
+        enabled: req.enabled,
+        similarity_threshold: req.similarity_threshold,
+        min_query_chars: req.min_query_chars,
+        max_query_chars: req.max_query_chars,
+        embed_only_on_exact_miss: req.embed_only_on_exact_miss,
+    }))
 }
 
 fn pipeline_runtime_view(runtime: &RuntimeConfig) -> PipelineRuntimeConfigView {
@@ -1461,7 +1466,7 @@ fn mask_redis_url(url: &str) -> String {
         let scheme_end = trimmed.find("://").map(|i| i + 3).unwrap_or(0);
         format!("{}***@{}", &trimmed[..scheme_end], &trimmed[at + 1..])
     } else {
-        "***".to_string()
+        trimmed.to_string()
     }
 }
 

@@ -347,6 +347,26 @@ pub struct CursorModelsConfigView {
     pub aliases: HashMap<String, CursorModelAliasView>,
 }
 
+/// Hot-reloadable upstream connection tuning (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionRuntimeView {
+    pub tcp_keepalive_idle_secs: u64,
+    pub tcp_keepalive_interval_secs: u64,
+    pub tcp_keepalive_count: usize,
+    pub idle_timeout_secs: u64,
+    pub h2_ping_interval_secs: u64,
+}
+
+/// Hot-reloadable L2 semantic cache settings (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticRuntimeView {
+    pub enabled: bool,
+    pub similarity_threshold: f64,
+    pub min_query_chars: usize,
+    pub max_query_chars: usize,
+    pub embed_only_on_exact_miss: bool,
+}
+
 /// Hot-reloadable reasoning / Cursor compatibility settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningRuntimeConfigView {
@@ -358,6 +378,15 @@ pub struct ReasoningRuntimeConfigView {
     /// True when `display_reasoning` changed on this PUT; clear L0/L1 or bump fingerprint.
     #[serde(default)]
     pub cache_invalidate_recommended: bool,
+    /// `sqlite` or `redis`; read-only (requires restart to change).
+    #[serde(default)]
+    pub storage_backend: Option<String>,
+    /// Path to the SQLite cache file (read-only).
+    #[serde(default)]
+    pub cache_db_path: Option<String>,
+    /// Masked Redis URL for display (read-only).
+    #[serde(default)]
+    pub redis_url_masked: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
