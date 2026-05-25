@@ -73,6 +73,72 @@ impl Translations {
             Locale::EnUS => "Requests",
         }
     }
+    pub fn tab_logs(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求日志",
+            Locale::EnUS => "Logs",
+        }
+    }
+    pub fn tab_insights(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "组成分析",
+            Locale::EnUS => "Insights",
+        }
+    }
+    pub fn tab_config(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置",
+            Locale::EnUS => "Config",
+        }
+    }
+    pub fn tab_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由",
+            Locale::EnUS => "Routing",
+        }
+    }
+    pub fn tab_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运维",
+            Locale::EnUS => "Ops",
+        }
+    }
+    pub fn tab_trace(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "影子分析",
+            Locale::EnUS => "Trace",
+        }
+    }
+    pub fn tab_catalog(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型目录",
+            Locale::EnUS => "Catalog",
+        }
+    }
+    pub fn tab_aliases(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "别名映射",
+            Locale::EnUS => "Aliases",
+        }
+    }
+    pub fn tab_general(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "概览",
+            Locale::EnUS => "General",
+        }
+    }
+    pub fn tab_pipeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管道",
+            Locale::EnUS => "Pipeline",
+        }
+    }
+    pub fn tab_reasoning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理",
+            Locale::EnUS => "Reasoning",
+        }
+    }
     pub fn sidebar_live(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "实时监控",
@@ -3251,6 +3317,73 @@ impl Translations {
             Locale::EnUS => "Replace entire key pool (uncheck to append)",
         }
     }
+    pub fn upstream_tab_new_profile(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "+ 新建 Profile",
+            Locale::EnUS => "+ New Profile",
+        }
+    }
+    pub fn upstream_profile_delete_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确定要删除此上游 Profile 吗？删除后其关联的 Key 池也会被吊销。",
+            Locale::EnUS => "Are you sure you want to delete this upstream profile? Its associated key pool will also be revoked.",
+        }
+    }
+    pub fn upstream_test_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连接延迟",
+            Locale::EnUS => "Connection latency",
+        }
+    }
+    pub fn upstream_test_status_code(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连接状态",
+            Locale::EnUS => "Connection status",
+        }
+    }
+    pub fn upstream_test_models_found(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型数量",
+            Locale::EnUS => "Model count",
+        }
+    }
+    pub fn upstream_key_status_enabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "启用",
+            Locale::EnUS => "Enabled",
+        }
+    }
+    pub fn upstream_key_status_disabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "停用",
+            Locale::EnUS => "Disabled",
+        }
+    }
+    pub fn upstream_test_profile_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试 Profile",
+            Locale::EnUS => "Test Profile",
+        }
+    }
+    pub fn upstream_delete_profile_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除 Profile",
+            Locale::EnUS => "Delete Profile",
+        }
+    }
+    pub fn upstream_tls_sni_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "TLS SNI 域名",
+            Locale::EnUS => "TLS SNI Domain",
+        }
+    }
+    pub fn upstream_tls_sni_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游 TLS 握手的 SNI 服务器名称（可选）",
+            Locale::EnUS => "SNI Server Name Indication for upstream TLS handshake (optional)",
+        }
+    }
+
     pub fn overview_setup_upstream_cta(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "尚未配置 DeepSeek 上游 Key 池，请前往上游配置。",

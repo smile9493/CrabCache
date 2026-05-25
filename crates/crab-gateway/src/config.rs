@@ -3,7 +3,7 @@ use crab_pipeline::{
     validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode,
     PipelineOverride, UpstreamProvider,
 };
-use crab_proxy::{UpstreamKeyPool, UpstreamProfileRuntime};
+use crab_proxy::{RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::AffinityRouter;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -98,6 +98,7 @@ pub struct GatewayConfig {
     pub connection: Option<ConnectionConfig>,
     pub reasoning: Option<ReasoningConfig>,
     pub trace_logging: Option<TraceConfig>,
+    pub raw_capture: Option<RawCaptureConfig>,
     pub management: Option<ManagementConfig>,
     #[serde(default)]
     pub limits: LimitsConfig,

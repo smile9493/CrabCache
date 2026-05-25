@@ -13,14 +13,22 @@ use crate::types::{
 pub fn CachePage() -> impl IntoView {
     let t = use_translations();
     let active_tab: RwSignal<usize> = RwSignal::new(0);
+    let tab_labels = vec![
+        t.tab_config().to_string(),
+        t.tab_routing().to_string(),
+        t.tab_ops().to_string(),
+        t.tab_trace().to_string(),
+    ];
+
+    init_tab_from_query(
+        active_tab,
+        &[("config", 0), ("routing", 1), ("ops", 2), ("trace", 3)],
+    );
 
     view! {
         <div class="page-content space-y-6">
             <SectionHeader title=t.cache_ops_title() description=t.cache_ops_desc() />
-            <TabBar
-                tabs=vec!["Config", "Routing", "Ops", "Trace"]
-                active=active_tab
-            />
+            <TabBar tabs=tab_labels active=active_tab />
             {move || match active_tab.get() {
                 0 => view! { <ConfigTab /> }.into_any(),
                 1 => view! { <RoutingTab /> }.into_any(),

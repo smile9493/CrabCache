@@ -420,6 +420,11 @@ pub async fn put_upstream_profile(
     put_json(&format!("{}/upstream/profiles/{id}", API_BASE), req).await
 }
 
+pub async fn delete_upstream_profile(id: &str) -> Result<(), String> {
+    delete_json(&format!("{}/upstream/profiles/{id}", API_BASE)).await
+}
+
+
 pub async fn test_upstream_profile(id: &str) -> Result<UpstreamTestResult, String> {
     #[derive(serde::Serialize)]
     struct EmptyBody {}

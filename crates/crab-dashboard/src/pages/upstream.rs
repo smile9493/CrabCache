@@ -7,7 +7,7 @@ use crate::locale::use_translations;
 use crate::types::{
     PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest, SyncResult,
     UpdateUpstreamConfigRequest, UpstreamConfig, UpstreamKeyInput, UpstreamKeysPutMode,
-    UpstreamKeysView, UpstreamTestBody,
+    UpstreamKeysView, UpstreamTestBody, UpstreamProfileAdminView, UpstreamTestResult
 };
 
 const OFFICIAL_BASE: &str = "https://api.deepseek.com";
@@ -15,7 +15,6 @@ const DEFAULT_MODEL: &str = "deepseek-v4-pro";
 const MIMO_BASE: &str = "https://api.xiaomimimo.com";
 const MIMO_MODEL: &str = "xiaomi/mimo-v2.5-pro";
 
-/// Parse `account_id:sk-...` or bare secret line for upstream key pool textarea.
 fn parse_upstream_pool_line(line: &str) -> (String, String) {
     let t = line.trim();
     if let Some((account_id, secret)) = t.split_once(':') {
@@ -68,22 +67,36 @@ fn first_key_from_text(text: &str) -> Option<String> {
 #[component]
 pub fn UpstreamPage() -> impl IntoView {
     let t = use_translations();
-    let config: RwSignal<Option<Result<UpstreamConfig, String>>> = RwSignal::new(None);
+    
+    // Page state
+    let profiles: RwSignal<Vec<UpstreamProfileAdminView>> = RwSignal::new(Vec::new());
+    let active_profile = RwSignal::new("deepseek".to_string());
+    let is_creating = RwSignal::new(false);
+    let gateway_reachable = RwSignal::new(true);
 
+    // Form inputs
+    let provider = RwSignal::new("deepseek".to_string());
     let base_url = RwSignal::new(OFFICIAL_BASE.to_string());
     let model = RwSignal::new(DEFAULT_MODEL.to_string());
     let endpoints_text = RwSignal::new(String::new());
+    let tls_sni = RwSignal::new(String::new());
     let show_advanced = RwSignal::new(false);
 
+    // Inline creation state
+    let new_profile_id = RwSignal::new(String::new());
+
+    // Connection testing state
+    let testing = RwSignal::new(false);
+    let test_result: RwSignal<Option<UpstreamTestResult>> = RwSignal::new(None);
+    let test_error = RwSignal::new(String::new());
+
+    // Saving configuration state
     let saving = RwSignal::new(false);
     let saved = RwSignal::new(false);
     let save_error = RwSignal::new(String::new());
     let sync_result: RwSignal<Option<SyncResult>> = RwSignal::new(None);
 
-    let testing = RwSignal::new(false);
-    let test_ok = RwSignal::new(false);
-    let test_message = RwSignal::new(String::new());
-
+    // Key pool state
     let key_pool: RwSignal<Option<Result<UpstreamKeysView, String>>> = RwSignal::new(None);
     let pool_secrets_text = RwSignal::new(String::new());
     let pool_replace_mode = RwSignal::new(false);
@@ -91,24 +104,12 @@ pub fn UpstreamPage() -> impl IntoView {
     let pool_saved = RwSignal::new(false);
     let pool_error = RwSignal::new(String::new());
 
-    let active_profile = RwSignal::new("deepseek".to_string());
-    let provider = RwSignal::new("deepseek".to_string());
-    let profile_ids: RwSignal<Vec<String>> = RwSignal::new(vec!["deepseek".to_string()]);
-    let new_profile_id = RwSignal::new(String::new());
+    // Profile deletion state
+    let show_delete_confirm = RwSignal::new(false);
+    let deleting = RwSignal::new(false);
 
-    let load_profiles = move || {
-        leptos::task::spawn_local(async move {
-            if let Ok(resp) = api::fetch_upstream_profiles().await {
-                let list: Vec<String> = resp.profiles.iter().map(|p| p.id.clone()).collect();
-                if !list.is_empty() {
-                    profile_ids.set(list);
-                }
-            }
-        });
-    };
-
-    let load_key_pool = move || {
-        let pid = active_profile.get();
+    // API loaders
+    let load_key_pool = move |pid: String| {
         key_pool.set(None);
         leptos::task::spawn_local(async move {
             let result = if pid == "deepseek" {
@@ -125,119 +126,94 @@ pub fn UpstreamPage() -> impl IntoView {
         });
     };
 
-    let load_data = move || {
-        leptos::task::spawn_local(async move {
-            match api::fetch_upstream_config().await {
-                Ok(c) => {
-                    base_url.set(c.base_url.clone());
-                    model.set(c.model.clone());
-                    endpoints_text.set(c.endpoints.join("\n"));
-                    if let Some(ref lt) = c.last_test {
-                        test_ok.set(lt.ok);
-                        test_message.set(
-                            lt.error
-                                .clone()
-                                .unwrap_or_else(|| format!("OK ({} ms)", lt.latency_ms)),
-                        );
+    let load_profile_data = move |pid: String| {
+        // Reset states
+        test_result.set(None);
+        test_error.set(String::new());
+        save_error.set(String::new());
+        saved.set(false);
+        sync_result.set(None);
+        
+        let p_list = profiles.get();
+        if pid == "deepseek" {
+            leptos::task::spawn_local(async move {
+                match api::fetch_upstream_config().await {
+                    Ok(c) => {
+                        base_url.set(c.base_url.clone());
+                        model.set(c.model.clone());
+                        endpoints_text.set(c.endpoints.join("\n"));
+                        tls_sni.set(String::new());
+                        provider.set("deepseek".to_string());
+                        gateway_reachable.set(c.gateway_reachable);
+                        if let Some(ref lt) = c.last_test {
+                            test_result.set(Some(lt.clone()));
+                        }
                     }
-                    config.set(Some(Ok(c)));
+                    Err(e) => {
+                        save_error.set(e);
+                    }
                 }
-                Err(e) => config.set(Some(Err(e))),
+            });
+        } else if let Some(p) = p_list.iter().find(|p| p.id == pid) {
+            provider.set(p.provider.clone());
+            base_url.set(p.base_url.clone());
+            model.set(p.fallback_model.clone());
+            endpoints_text.set(p.endpoints.join("\n"));
+            tls_sni.set(p.tls_sni.clone());
+        }
+        load_key_pool(pid);
+    };
+
+    let load_profiles_and_select = move |pid: String| {
+        leptos::task::spawn_local(async move {
+            if let Ok(resp) = api::fetch_upstream_profiles().await {
+                profiles.set(resp.profiles);
             }
+            load_profile_data(pid);
         });
     };
 
-    load_data();
-    load_key_pool();
-    load_profiles();
+    // Initial load
+    load_profiles_and_select("deepseek".to_string());
 
+    // Actions
     let on_test = move |_| {
         testing.set(true);
-        test_ok.set(false);
-        test_message.set(String::new());
+        test_result.set(None);
+        test_error.set(String::new());
+        
         let url = base_url.get();
         if let Some(err) = validate_base_url(&url) {
-            test_message.set(err);
+            test_error.set(err);
             testing.set(false);
             return;
         }
-        let key = first_key_from_text(&pool_secrets_text.get()).or_else(|| {
-            config.get().and_then(|c| match c {
-                Ok(cfg) if cfg.key_pool_count > 0 => None,
-                _ => None,
-            })
-        });
-        let key = match key {
-            Some(k) => k,
-            None => {
-                test_message.set("Add at least one API key in the pool textarea to test".into());
-                testing.set(false);
-                return;
-            }
-        };
-        leptos::task::spawn_local(async move {
-            match api::test_upstream_connection(&UpstreamTestBody {
-                base_url: url,
-                api_key: key,
-            })
-            .await
-            {
-                Ok(r) => {
-                    test_ok.set(r.ok);
-                    test_message.set(r.error.unwrap_or_else(|| {
-                        format!(
-                            "OK — {} models, {} ms",
-                            r.model_count.unwrap_or(0),
-                            r.latency_ms
-                        )
-                    }));
-                }
-                Err(e) => test_message.set(e),
-            }
-            testing.set(false);
-        });
-    };
 
-    let on_save_pool = move |_| {
-        pool_saving.set(true);
-        pool_saved.set(false);
-        pool_error.set(String::new());
-        let secrets: Vec<String> = pool_secrets_text
-            .get()
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if secrets.is_empty() {
-            pool_error.set(use_translations().upstream_pool_empty_keys_error().to_string());
-            pool_saving.set(false);
-            return;
-        }
         let pid = active_profile.get();
-        let keys = pool_lines_to_key_inputs(secrets);
-        let mode = if pool_replace_mode.get() {
-            UpstreamKeysPutMode::Replace
-        } else {
-            UpstreamKeysPutMode::Append
-        };
-        let req = PutUpstreamKeysRequest { keys, mode };
+        let bulk_key = first_key_from_text(&pool_secrets_text.get());
+
         leptos::task::spawn_local(async move {
-            let result = if pid == "deepseek" {
-                api::put_upstream_keys(&req).await
-            } else {
-                api::put_upstream_profile_keys(&pid, &req)
-                    .await
-                    .map(|v| UpstreamKeysView { keys: v.keys })
-            };
-            match result {
-                Ok(v) => {
-                    key_pool.set(Some(Ok(v)));
-                    pool_secrets_text.set(String::new());
-                    pool_saved.set(true);
+            if let Some(key) = bulk_key {
+                // If a new bulk key is entered, test using that key
+                match api::test_upstream_connection(&UpstreamTestBody {
+                    base_url: url,
+                    api_key: key,
+                })
+                .await
+                {
+                    Ok(r) => test_result.set(Some(r)),
+                    Err(e) => test_error.set(e),
                 }
-                Err(e) => pool_error.set(e),
+            } else if pid == "deepseek" || profiles.get().iter().any(|p| p.id == pid) {
+                // Otherwise test saved profile keys
+                match api::test_upstream_profile(&pid).await {
+                    Ok(r) => test_result.set(Some(r)),
+                    Err(e) => test_error.set(e),
+                }
+            } else {
+                test_error.set("Please enter a key in bulk input to test this unsaved profile.".to_string());
             }
-            pool_saving.set(false);
+            testing.set(false);
         });
     };
 
@@ -277,6 +253,8 @@ pub fn UpstreamPage() -> impl IntoView {
 
         let pid = active_profile.get();
         let prov = provider.get();
+        let sni_val = tls_sni.get().trim().to_string();
+        let sni = if sni_val.is_empty() { None } else { Some(sni_val) };
         let keys_to_append_clone = keys_to_append.clone();
 
         leptos::task::spawn_local(async move {
@@ -289,9 +267,6 @@ pub fn UpstreamPage() -> impl IntoView {
                     keys_to_append: keys_to_append_clone.clone(),
                 };
                 api::update_upstream_config(&req).await.map(|resp| {
-                    base_url.set(resp.config.base_url.clone());
-                    model.set(resp.config.model.clone());
-                    endpoints_text.set(resp.config.endpoints.join("\n"));
                     if let Some(s) = resp.sync {
                         sync_result.set(Some(s));
                     }
@@ -302,7 +277,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     base_url: url.clone(),
                     fallback_model: model_val.clone(),
                     endpoints: endpoints.clone(),
-                    tls_sni: None,
+                    tls_sni: sni,
                 };
                 api::put_upstream_profile(&pid, &req).await.map(|_| ())
             };
@@ -331,23 +306,119 @@ pub fn UpstreamPage() -> impl IntoView {
                         pool_secrets_text.set(String::new());
                     }
                     saved.set(true);
-                    if pid == "deepseek" {
-                        match api::fetch_upstream_keys().await {
-                            Ok(v) => key_pool.set(Some(Ok(v))),
-                            Err(e) => key_pool.set(Some(Err(e))),
-                        }
-                    } else {
-                        match api::fetch_upstream_profile_keys(&pid).await {
-                            Ok(v) => {
-                                key_pool.set(Some(Ok(UpstreamKeysView {
-                                    keys: v.keys,
-                                })));
-                            }
-                            Err(e) => key_pool.set(Some(Err(e))),
-                        }
-                    }
+                    load_profiles_and_select(pid);
                 }
                 Err(e) => save_error.set(e),
+            }
+            saving.set(false);
+        });
+    };
+
+    let on_save_pool = move |_| {
+        pool_saving.set(true);
+        pool_saved.set(false);
+        pool_error.set(String::new());
+        let secrets: Vec<String> = pool_secrets_text
+            .get()
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if secrets.is_empty() {
+            pool_error.set(use_translations().upstream_pool_empty_keys_error().to_string());
+            pool_saving.set(false);
+            return;
+        }
+        let pid = active_profile.get();
+        let keys = pool_lines_to_key_inputs(secrets);
+        let mode = if pool_replace_mode.get() {
+            UpstreamKeysPutMode::Replace
+        } else {
+            UpstreamKeysPutMode::Append
+        };
+        let req = PutUpstreamKeysRequest { keys, mode };
+        leptos::task::spawn_local(async move {
+            let result = if pid == "deepseek" {
+                api::put_upstream_keys(&req).await
+            } else {
+                api::put_upstream_profile_keys(&pid, &req)
+                    .await
+                    .map(|v| UpstreamKeysView { keys: v.keys })
+            };
+            match result {
+                Ok(v) => {
+                    key_pool.set(Some(Ok(v)));
+                    pool_secrets_text.set(String::new());
+                    pool_saved.set(true);
+                    // Refresh profiles list (since key count changed)
+                    if let Ok(resp) = api::fetch_upstream_profiles().await {
+                        profiles.set(resp.profiles);
+                    }
+                }
+                Err(e) => pool_error.set(e),
+            }
+            pool_saving.set(false);
+        });
+    };
+
+    let on_delete_profile = move |_| {
+        let pid = active_profile.get();
+        if pid == "deepseek" { return; }
+        deleting.set(true);
+        leptos::task::spawn_local(async move {
+            match api::delete_upstream_profile(&pid).await {
+                Ok(_) => {
+                    show_delete_confirm.set(false);
+                    active_profile.set("deepseek".to_string());
+                    load_profiles_and_select("deepseek".to_string());
+                }
+                Err(e) => {
+                    save_error.set(e);
+                }
+            }
+            deleting.set(false);
+        });
+    };
+
+    let on_create_profile = move |_| {
+        let id = new_profile_id.get().trim().to_string();
+        if id.is_empty() {
+            save_error.set("Profile ID is required".to_string());
+            return;
+        }
+        let prov = provider.get().trim().to_string();
+        let url = base_url.get().trim().to_string();
+        if let Some(err) = validate_base_url(&url) {
+            save_error.set(err);
+            return;
+        }
+        let model_val = model.get().trim().to_string();
+        if model_val.is_empty() {
+            save_error.set("Fallback model is required".to_string());
+            return;
+        }
+        let sni_val = tls_sni.get().trim().to_string();
+        let sni = if sni_val.is_empty() { None } else { Some(sni_val) };
+
+        saving.set(true);
+        leptos::task::spawn_local(async move {
+            let req = PutUpstreamProfileAdminRequest {
+                provider: prov,
+                base_url: url,
+                fallback_model: model_val,
+                endpoints: Vec::new(),
+                tls_sni: sni,
+            };
+            match api::put_upstream_profile(&id, &req).await {
+                Ok(_) => {
+                    is_creating.set(false);
+                    new_profile_id.set(String::new());
+                    active_profile.set(id.clone());
+                    load_profiles_and_select(id);
+                }
+                Err(e) => {
+                    save_error.set(e);
+                }
             }
             saving.set(false);
         });
@@ -364,174 +435,274 @@ pub fn UpstreamPage() -> impl IntoView {
                 {t.upstream_l3_affinity_hint()}
             </div>
 
-            {move || match config.get() {
-                None => view! { <Spinner /> }.into_any(),
-                Some(Err(e)) => view! {
-                    <div class="glass-card text-error text-sm">
-                        {format!("{}: {}", use_translations().upstream_load_error(), e)}
-                    </div>
-                }.into_any(),
-                Some(Ok(cfg)) => {
-                    let gw_ok = cfg.gateway_reachable;
-                    view! {
-                        {(!gw_ok).then(|| view! {
-                            <div class="glass-card text-warning text-sm">
-                                {use_translations().upstream_gateway_unreachable()}
-                            </div>
-                        })}
+            {move || (!gateway_reachable.get()).then(|| view! {
+                <div class="glass-card text-warning text-sm">
+                    {t.upstream_gateway_unreachable()}
+                </div>
+            })}
 
-                        <div class="glass-card space-y-4">
-                            <div class="flex flex-wrap items-end gap-3">
-                                <div>
-                                    <label class="block text-xs text-theme-muted mb-1">
-                                        {use_translations().upstream_profile_label()}
-                                    </label>
-                                    <select
-                                        class="config-input text-sm"
-                                        prop:value=move || active_profile.get()
-                                        on:change=move |ev| {
-                                            let id = event_target_value(&ev);
-                                            active_profile.set(id.clone());
-                                            load_key_pool();
-                                            leptos::task::spawn_local(async move {
-                                                if let Ok(resp) = api::fetch_upstream_profiles().await {
-                                                    if let Some(p) = resp.profiles.into_iter().find(|p| p.id == id) {
-                                                        provider.set(p.provider);
-                                                        base_url.set(p.base_url);
-                                                        model.set(p.fallback_model);
-                                                        endpoints_text.set(p.endpoints.join("\n"));
-                                                    }
-                                                }
-                                            });
+            <div class="tab-bar">
+                {move || profiles.get().into_iter().map(|p| {
+                    let pid = p.id.clone();
+                    let active = active_profile.get() == pid && !is_creating.get();
+                    let badge_count = p.key_pool_count;
+                    view! {
+                        <button
+                            type="button"
+                            class=move || if active { "tab-item tab-item-active" } else { "tab-item" }
+                            on:click=move |_| {
+                                is_creating.set(false);
+                                active_profile.set(pid.clone());
+                                load_profile_data(pid.clone());
+                            }
+                        >
+                            {p.id.clone()}
+                            <span class="profile-tab-badge">{badge_count}</span>
+                            {if p.id != "deepseek" {
+                                view! {
+                                    <span
+                                        class="ml-2 text-theme-muted hover:text-error cursor-pointer font-bold"
+                                        on:click=move |ev| {
+                                            ev.stop_propagation();
+                                            active_profile.set(p.id.clone());
+                                            show_delete_confirm.set(true);
                                         }
                                     >
-                                        {move || profile_ids.get().into_iter().map(|id| {
-                                            view! { <option value=id.clone()>{id.clone()}</option> }
-                                        }).collect_view()}
-                                    </select>
+                                        "✕"
+                                    </span>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
+                        </button>
+                    }
+                }).collect_view()}
+                
+                <button
+                    type="button"
+                    class=move || if is_creating.get() { "tab-item tab-item-active" } else { "tab-item" }
+                    on:click=move |_| {
+                        is_creating.set(true);
+                        // Reset forms to fresh new profile state
+                        new_profile_id.set(String::new());
+                        provider.set("custom".to_string());
+                        base_url.set(String::new());
+                        model.set("deepseek-v4-pro".to_string());
+                        endpoints_text.set(String::new());
+                        tls_sni.set(String::new());
+                        save_error.set(String::new());
+                    }
+                >
+                    {t.upstream_tab_new_profile()}
+                </button>
+            </div>
+
+            <div class="upstream-split">
+                <div class="space-y-6">
+                    {move || if is_creating.get() {
+                        // Rendering New Profile Form
+                        view! {
+                            <div class="glass-card space-y-4">
+                                <h3 class="text-base font-semibold text-theme">
+                                    {t.upstream_tab_new_profile()}
+                                </h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_new_profile_id()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            class="input font-mono text-sm"
+                                            placeholder="e.g. mimo"
+                                            prop:value=move || new_profile_id.get()
+                                            on:input=move |ev| new_profile_id.set(event_target_value(&ev))
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_provider_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            class="input text-sm"
+                                            placeholder="e.g. mimo"
+                                            prop:value=move || provider.get()
+                                            on:input=move |ev| provider.set(event_target_value(&ev))
+                                        />
+                                    </div>
+                                    <div class="md:col-span-2">
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_base_url_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            class="input font-mono text-sm"
+                                            placeholder="https://..."
+                                            prop:value=move || base_url.get()
+                                            on:input=move |ev| base_url.set(event_target_value(&ev))
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_model_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            class="input font-mono text-sm"
+                                            placeholder="deepseek-v4-pro"
+                                            prop:value=move || model.get()
+                                            on:input=move |ev| model.set(event_target_value(&ev))
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_tls_sni_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            class="input font-mono text-sm"
+                                            placeholder="e.g. api.deepseek.com"
+                                            prop:value=move || tls_sni.get()
+                                            on:input=move |ev| tls_sni.set(event_target_value(&ev))
+                                        />
+                                    </div>
                                 </div>
-                                <div>
-                                    <label class="block text-xs text-theme-muted mb-1">
-                                        {use_translations().upstream_new_profile_id()}
-                                    </label>
-                                    <input
-                                        class="config-input text-sm font-mono"
-                                        prop:value=move || new_profile_id.get()
-                                        on:input=move |ev| new_profile_id.set(event_target_value(&ev))
-                                        placeholder="mimo"
-                                    />
+
+                                {move || if !save_error.get().is_empty() {
+                                    view! {
+                                        <div class="text-xs text-error mt-2">{save_error.get()}</div>
+                                    }.into_any()
+                                } else {
+                                    view! { <span></span> }.into_any()
+                                }}
+
+                                <div class="flex justify-end gap-2 pt-4 border-t border-theme/10">
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| is_creating.set(false)
+                                    >
+                                        "Cancel"
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-primary text-xs"
+                                        on:click=on_create_profile
+                                        disabled=move || saving.get()
+                                    >
+                                        "Create Profile"
+                                    </button>
                                 </div>
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary text-xs"
-                                    on:click=move |_| {
-                                        let id = new_profile_id.get().trim().to_string();
-                                        if id.is_empty() { return; }
-                                        active_profile.set(id.clone());
-                                        profile_ids.update(|v| {
-                                            if !v.contains(&id) { v.push(id); }
-                                        });
-                                    }
-                                >
-                                    "+"
-                                </button>
                             </div>
-
-                            <div class="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary text-xs"
-                                    on:click=move |_| {
-                                        base_url.set(OFFICIAL_BASE.into());
-                                        model.set(DEFAULT_MODEL.into());
-                                        provider.set("deepseek".into());
-                                    }
-                                >
-                                    {use_translations().upstream_preset_official()}
-                                </button>
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary text-xs"
-                                    on:click=move |_| {
-                                        base_url.set(MIMO_BASE.into());
-                                        model.set(MIMO_MODEL.into());
-                                        provider.set("mimo".into());
-                                    }
-                                >
-                                    {use_translations().upstream_preset_mimo()}
-                                </button>
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary text-xs"
-                                    on:click=move |_| {
-                                        base_url.set(String::new());
-                                    }
-                                >
-                                    {use_translations().upstream_preset_custom()}
-                                </button>
-                            </div>
-
-                            <div class="grid grid-cols-1 gap-5">
-                                <div>
-                                    <label class="block text-sm font-medium text-theme mb-1.5">
-                                        {use_translations().upstream_provider_label()}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        prop:value=move || provider.get()
-                                        on:input=move |ev| provider.set(event_target_value(&ev))
-                                        class="input font-mono text-sm"
-                                        placeholder="deepseek"
-                                    />
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-theme mb-1.5">
-                                        {use_translations().upstream_base_url_label()}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        prop:value=move || base_url.get()
-                                        on:input=move |ev| base_url.set(event_target_value(&ev))
-                                        class="input font-mono text-sm"
-                                        placeholder=OFFICIAL_BASE
-                                    />
-                                    <p class="text-xs text-theme-muted mt-1">
-                                        {use_translations().upstream_base_url_hint()}
-                                    </p>
+                        }.into_any()
+                    } else {
+                        // Rendering Edit Form
+                        view! {
+                            <div class="glass-card space-y-4">
+                                <div class="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| {
+                                            base_url.set(OFFICIAL_BASE.into());
+                                            model.set(DEFAULT_MODEL.into());
+                                            provider.set("deepseek".into());
+                                        }
+                                    >
+                                        {t.upstream_preset_official()}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| {
+                                            base_url.set(MIMO_BASE.into());
+                                            model.set(MIMO_MODEL.into());
+                                            provider.set("mimo".into());
+                                        }
+                                    >
+                                        {t.upstream_preset_mimo()}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| {
+                                            base_url.set(String::new());
+                                        }
+                                    >
+                                        {t.upstream_preset_custom()}
+                                    </button>
                                 </div>
 
-                                <div>
-                                    <label class="block text-sm font-medium text-theme mb-1.5">
-                                        {use_translations().upstream_model_label()}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        prop:value=move || model.get()
-                                        on:input=move |ev| model.set(event_target_value(&ev))
-                                        class="input font-mono text-sm"
-                                        placeholder=DEFAULT_MODEL
-                                    />
-                                    <p class="text-xs text-theme-muted mt-1">
-                                        {use_translations().upstream_model_hint()}
-                                    </p>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_provider_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            prop:value=move || provider.get()
+                                            on:input=move |ev| provider.set(event_target_value(&ev))
+                                            class="input text-sm"
+                                            placeholder="deepseek"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_base_url_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            prop:value=move || base_url.get()
+                                            on:input=move |ev| base_url.set(event_target_value(&ev))
+                                            class="input font-mono text-sm"
+                                            placeholder=OFFICIAL_BASE
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                            {t.upstream_model_label()}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            prop:value=move || model.get()
+                                            on:input=move |ev| model.set(event_target_value(&ev))
+                                            class="input font-mono text-sm"
+                                            placeholder=DEFAULT_MODEL
+                                        />
+                                    </div>
+                                    {move || (active_profile.get() != "deepseek").then(|| view! {
+                                        <div>
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_tls_sni_label()}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                prop:value=move || tls_sni.get()
+                                                on:input=move |ev| tls_sni.set(event_target_value(&ev))
+                                                class="input font-mono text-sm"
+                                                placeholder="e.g. api.deepseek.com"
+                                            />
+                                        </div>
+                                    })}
                                 </div>
 
-                                <div>
+                                <div class="space-y-2">
                                     <button
                                         type="button"
                                         class="text-xs text-accent"
                                         on:click=move |_| show_advanced.update(|v| *v = !*v)
                                     >
                                         {move || if show_advanced.get() {
-                                            use_translations().upstream_hide_advanced()
+                                            t.upstream_hide_advanced()
                                         } else {
-                                            use_translations().upstream_show_advanced()
+                                            t.upstream_show_advanced()
                                         }}
                                     </button>
                                     {move || show_advanced.get().then(|| view! {
                                         <div class="mt-2">
-                                            <label class="block text-sm font-medium text-theme mb-1.5">
-                                                {use_translations().upstream_endpoints_label()}
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_endpoints_label()}
                                             </label>
                                             <textarea
                                                 prop:value=move || endpoints_text.get()
@@ -540,219 +711,289 @@ pub fn UpstreamPage() -> impl IntoView {
                                                 placeholder="api.deepseek.com:443"
                                             ></textarea>
                                             <p class="text-xs text-theme-muted mt-1">
-                                                {use_translations().upstream_endpoints_hint()}
+                                                {t.upstream_endpoints_hint()}
                                             </p>
                                         </div>
                                     })}
                                 </div>
-                            </div>
 
-                            <div class="flex flex-wrap items-center gap-3 pt-2 border-t border-theme/10">
-                                <button
-                                    type="button"
-                                    on:click=on_test
-                                    disabled=move || testing.get()
-                                    class="btn btn-secondary text-sm"
-                                >
-                                    {move || if testing.get() {
-                                        use_translations().upstream_testing()
+                                <div class="flex items-center gap-3 pt-4 border-t border-theme/10">
+                                    <button
+                                        type="button"
+                                        on:click=on_save
+                                        disabled=move || saving.get()
+                                        class="btn btn-primary text-xs"
+                                    >
+                                        {move || if saving.get() { t.upstream_saving() } else { t.upstream_save_btn() }}
+                                    </button>
+                                    {move || if saved.get() {
+                                        view! {
+                                            <span class="text-xs text-accent font-medium">
+                                                {t.upstream_saved()}
+                                            </span>
+                                        }.into_any()
                                     } else {
-                                        use_translations().upstream_test_btn()
+                                        view! { <span></span> }.into_any()
                                     }}
-                                </button>
-                                <button
-                                    type="button"
-                                    on:click=on_save
-                                    disabled=move || saving.get()
-                                    class=move || {
-                                        if test_ok.get() {
-                                            "btn btn-primary text-sm"
-                                        } else {
-                                            "btn btn-primary text-sm opacity-90"
-                                        }
-                                    }
-                                >
-                                    {move || if saving.get() {
-                                        use_translations().upstream_saving()
+                                    {move || if !save_error.get().is_empty() {
+                                        view! {
+                                            <span class="text-xs text-error">{save_error.get()}</span>
+                                        }.into_any()
                                     } else {
-                                        use_translations().upstream_save_btn()
+                                        view! { <span></span> }.into_any()
                                     }}
-                                </button>
-                                {move || if saved.get() {
-                                    view! {
-                                        <span class="text-xs text-accent font-medium">
-                                            {use_translations().upstream_saved()}
-                                        </span>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
-                                {move || if !save_error.get().is_empty() {
-                                    view! {
-                                        <span class="text-xs text-error">{save_error.get()}</span>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
+                                </div>
+                            </div>
+                        }.into_any()
+                    }}
+                    
+                    {move || if is_creating.get() {
+                        view! { <span></span> }.into_any()
+                    } else {
+                        view! {
+                            <div class="glass-card space-y-4">
+                                <div>
+                                    <h3 class="text-base font-semibold text-theme">
+                                        {move || t.upstream_pool_title_for(&active_profile.get())}
+                                    </h3>
+                                    <p class="text-xs text-theme-muted mt-1">{move || t.upstream_pool_desc()}</p>
+                                    {move || (active_profile.get() == "deepseek").then(|| view! {
+                                        <p class="text-xs text-theme-muted mt-1">
+                                            {t.upstream_pool_deepseek_hint()}
+                                        </p>
+                                    })}
+                                    {move || (active_profile.get() != "deepseek").then(|| view! {
+                                        <p class="text-xs text-theme-muted mt-1">
+                                            {t.upstream_pool_patch_deepseek_only()}
+                                        </p>
+                                    })}
+                                </div>
+
+                                {move || match key_pool.get() {
+                                    None => view! { <Spinner /> }.into_any(),
+                                    Some(Err(e)) => view! {
+                                        <p class="text-xs text-error">{e}</p>
+                                    }.into_any(),
+                                    Some(Ok(pool)) => view! {
+                                        <div class="overflow-x-auto">
+                                            <table class="table text-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>{t.upstream_pool_col_id()}</th>
+                                                        <th>{t.upstream_pool_col_preview()}</th>
+                                                        <th>{t.upstream_pool_col_account()}</th>
+                                                        <th>{t.upstream_pool_col_enabled()}</th>
+                                                        <th>{t.upstream_pool_col_inflight()}</th>
+                                                        <th>{t.upstream_pool_col_cooldown()}</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {pool.keys.iter().map(|k| {
+                                                        let id = k.id.clone();
+                                                        let enabled = k.enabled;
+                                                        let pid = active_profile.get();
+                                                        view! {
+                                                            <tr>
+                                                                <td class="font-mono">{k.id.clone()}</td>
+                                                                <td class="font-mono">{k.preview.clone()}</td>
+                                                                <td class="font-mono text-xs">
+                                                                    {if k.account_id.is_empty() {
+                                                                        "default".to_string()
+                                                                    } else {
+                                                                        k.account_id.clone()
+                                                                    }}
+                                                                </td>
+                                                                <td>
+                                                                    <div class="flex items-center gap-2">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            prop:checked=enabled
+                                                                            on:change=move |_| {
+                                                                                let id = id.clone();
+                                                                                let next = !enabled;
+                                                                                let pid = pid.clone();
+                                                                                leptos::task::spawn_local(async move {
+                                                                                    let req = PatchUpstreamKeyRequest {
+                                                                                        enabled: Some(next),
+                                                                                        secret: None,
+                                                                                    };
+                                                                                    let _ = if pid == "deepseek" {
+                                                                                        api::patch_upstream_key(&id, &req).await
+                                                                                    } else {
+                                                                                        api::patch_upstream_profile_key(
+                                                                                            &pid, &id, &req,
+                                                                                        )
+                                                                                        .await
+                                                                                    };
+                                                                                    load_key_pool(pid.clone());
+                                                                                });
+                                                                            }
+                                                                        />
+                                                                        <span class=move || if enabled { "badge badge-success text-xs" } else { "badge text-xs" }>
+                                                                            {if enabled { t.upstream_key_status_enabled() } else { t.upstream_key_status_disabled() }}
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td class="font-mono">{k.inflight}</td>
+                                                                <td class="font-mono text-xs">
+                                                                    {if k.cooldown_remaining_secs > 0 {
+                                                                        view! {
+                                                                            <span class="text-warning">
+                                                                                {format!("{}s", k.cooldown_remaining_secs)}
+                                                                            </span>
+                                                                        }.into_any()
+                                                                    } else {
+                                                                        view! { <span class="text-theme-muted">"-"</span> }.into_any()
+                                                                    }}
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    }).collect_view()}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <div class="space-y-4 pt-4 border-t border-theme/10">
+                                            <div>
+                                                <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                    {move || if pool_replace_mode.get() {
+                                                        t.upstream_pool_replace_label()
+                                                    } else {
+                                                        t.upstream_pool_append_label()
+                                                    }}
+                                                </label>
+                                                <label class="flex items-center gap-2 text-xs text-theme-muted mb-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=move || pool_replace_mode.get()
+                                                        on:change=move |ev| pool_replace_mode.set(event_target_checked(&ev))
+                                                    />
+                                                    {t.upstream_pool_replace_confirm()}
+                                                </label>
+                                                <textarea
+                                                    prop:value=move || pool_secrets_text.get()
+                                                    on:input=move |ev| pool_secrets_text.set(event_target_value(&ev))
+                                                    class="input font-mono text-sm h-24 resize-y"
+                                                    placeholder="sk-...\nacct-b:sk-...\n"
+                                                ></textarea>
+                                            </div>
+
+                                            <div class="flex items-center gap-3">
+                                                <button
+                                                    on:click=on_save_pool
+                                                    disabled=move || pool_saving.get()
+                                                    class="btn btn-primary text-xs"
+                                                >
+                                                    {move || if pool_saving.get() {
+                                                        t.upstream_pool_saving()
+                                                    } else {
+                                                        t.upstream_pool_save_btn()
+                                                    }}
+                                                </button>
+                                                {move || if pool_saved.get() {
+                                                    view! {
+                                                        <span class="text-xs text-accent font-medium">
+                                                            {t.upstream_pool_saved()}
+                                                        </span>
+                                                    }.into_any()
+                                                } else {
+                                                    view! { <span></span> }.into_any()
+                                                }}
+                                                {move || if !pool_error.get().is_empty() {
+                                                    view! { <span class="text-xs text-error">{pool_error.get()}</span> }.into_any()
+                                                } else {
+                                                    view! { <span></span> }.into_any()
+                                                }}
+                                            </div>
+                                        </div>
+                                    }.into_any(),
                                 }}
                             </div>
-                            {move || if !test_message.get().is_empty() {
-                                let ok = test_ok.get();
+                        }.into_any()
+                    }}
+                </div>
+
+                <div class="space-y-6">
+                    <div class="glass-card space-y-4">
+                        <h3 class="text-sm font-semibold text-theme">
+                            "Connection Test"
+                        </h3>
+                        
+                        <div class="test-result-panel">
+                            {move || if let Some(res) = test_result.get() {
                                 view! {
-                                    <p class=move || if ok { "text-xs text-accent" } else { "text-xs text-error" }>
-                                        {test_message.get()}
-                                    </p>
+                                    <div class="test-result-row">
+                                        <span class="test-result-label">{t.upstream_test_status_code()}</span>
+                                        <span class=move || if res.ok { "test-result-value test-result-success font-semibold" } else { "test-result-value test-result-error font-semibold" }>
+                                            {if res.ok { "✓ Success" } else { "✗ Failed" }}
+                                        </span>
+                                    </div>
+                                    <div class="test-result-row">
+                                        <span class="test-result-label">{t.upstream_test_latency()}</span>
+                                        <span class="test-result-value test-result-value-mono">{format!("{} ms", res.latency_ms)}</span>
+                                    </div>
+                                    <div class="test-result-row">
+                                        <span class="test-result-label">{t.upstream_test_models_found()}</span>
+                                        <span class="test-result-value test-result-value-mono">{res.model_count.unwrap_or(0)}</span>
+                                    </div>
+                                    {res.error.map(|err| view! {
+                                        <div class="text-xs text-error mt-2 p-2 bg-error/5 rounded border border-error/10">
+                                            {err}
+                                        </div>
+                                    })}
+                                }.into_any()
+                            } else if !test_error.get().is_empty() {
+                                view! {
+                                    <div class="text-xs text-error p-2 bg-error/5 rounded border border-error/10 font-mono">
+                                        {test_error.get()}
+                                    </div>
                                 }.into_any()
                             } else {
-                                view! { <span></span> }.into_any()
+                                view! {
+                                    <p class="text-xs text-theme-muted text-center py-4">
+                                        "No connection test performed yet."
+                                    </p>
+                                }.into_any()
                             }}
                         </div>
-                    }.into_any()
-                }
-            }}
+
+                        <button
+                            type="button"
+                            on:click=on_test
+                            disabled=move || testing.get()
+                            class="btn btn-secondary w-full text-xs"
+                        >
+                            {move || if testing.get() { t.upstream_testing() } else { t.upstream_test_btn() }}
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             {move || sync_result.get().map(|r| view! { <SyncResultCard result=r /> })}
 
-            <div class="glass-card space-y-4 mt-6">
-                <div>
-                    <h2 class="text-lg font-semibold text-theme">
-                        {move || t.upstream_pool_title_for(&active_profile.get())}
-                    </h2>
-                    <p class="text-sm text-theme-muted mt-1">{move || t.upstream_pool_desc()}</p>
-                    {move || (active_profile.get() == "deepseek").then(|| view! {
-                        <p class="text-xs text-theme-muted mt-2">
-                            {use_translations().upstream_pool_deepseek_hint()}
-                        </p>
-                    })}
-                    {move || (active_profile.get() != "deepseek").then(|| view! {
-                        <p class="text-xs text-theme-muted mt-2">
-                            {use_translations().upstream_pool_patch_deepseek_only()}
-                        </p>
-                    })}
-                </div>
-
-                {move || match key_pool.get() {
-                    None => view! { <Spinner /> }.into_any(),
-                    Some(Err(e)) => view! {
-                        <p class="text-sm text-error">{e}</p>
-                    }.into_any(),
-                    Some(Ok(pool)) => view! {
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-sm">
-                                <thead>
-                                    <tr class="text-left text-theme-muted border-b border-theme/10">
-                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_id()}</th>
-                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_preview()}</th>
-                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_account()}</th>
-                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_enabled()}</th>
-                                        <th class="py-2 pr-3">{move || t.upstream_pool_col_inflight()}</th>
-                                        <th class="py-2">{move || t.upstream_pool_col_cooldown()}</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {pool.keys.iter().map(|k| {
-                                        let id = k.id.clone();
-                                        let enabled = k.enabled;
-                                        let pid = active_profile.get();
-                                        view! {
-                                            <tr class="border-b border-theme/5">
-                                                <td class="py-2 pr-3 font-mono">{k.id.clone()}</td>
-                                                <td class="py-2 pr-3 font-mono">{k.preview.clone()}</td>
-                                                <td class="py-2 pr-3 font-mono text-xs">
-                                                    {if k.account_id.is_empty() {
-                                                        "default".to_string()
-                                                    } else {
-                                                        k.account_id.clone()
-                                                    }}
-                                                </td>
-                                                <td class="py-2 pr-3">
-                                                    <input
-                                                        type="checkbox"
-                                                        prop:checked=enabled
-                                                        on:change=move |_| {
-                                                            let id = id.clone();
-                                                            let next = !enabled;
-                                                            let pid = pid.clone();
-                                                            leptos::task::spawn_local(async move {
-                                                                let req = PatchUpstreamKeyRequest {
-                                                                    enabled: Some(next),
-                                                                    secret: None,
-                                                                };
-                                                                let _ = if pid == "deepseek" {
-                                                                    api::patch_upstream_key(&id, &req).await
-                                                                } else {
-                                                                    api::patch_upstream_profile_key(
-                                                                        &pid, &id, &req,
-                                                                    )
-                                                                    .await
-                                                                };
-                                                                load_key_pool();
-                                                            });
-                                                        }
-                                                    />
-                                                </td>
-                                                <td class="py-2 pr-3">{k.inflight}</td>
-                                                <td class="py-2">{k.cooldown_remaining_secs}</td>
-                                            </tr>
-                                        }
-                                    }).collect_view()}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-theme mb-1.5">
-                                {move || if pool_replace_mode.get() {
-                                    t.upstream_pool_replace_label()
-                                } else {
-                                    t.upstream_pool_append_label()
-                                }}
-                            </label>
-                            <label class="flex items-center gap-2 text-xs text-theme-muted mb-2">
-                                <input
-                                    type="checkbox"
-                                    prop:checked=move || pool_replace_mode.get()
-                                    on:change=move |ev| pool_replace_mode.set(event_target_checked(&ev))
-                                />
-                                {t.upstream_pool_replace_confirm()}
-                            </label>
-                            <textarea
-                                prop:value=move || pool_secrets_text.get()
-                                on:input=move |ev| pool_secrets_text.set(event_target_value(&ev))
-                                class="input font-mono text-sm h-24 resize-y"
-                                placeholder="sk-...\nacct-b:sk-...\n"
-                            ></textarea>
-                        </div>
-
-                        <div class="flex items-center gap-3">
+            {move || show_delete_confirm.get().then(|| view! {
+                <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fade-in">
+                    <div class="glass-card max-w-sm w-full space-y-4">
+                        <h4 class="text-sm font-semibold text-theme">{t.upstream_delete_profile_btn()}</h4>
+                        <p class="text-xs text-theme-muted">{t.upstream_profile_delete_confirm()}</p>
+                        <div class="flex gap-2 justify-end">
                             <button
-                                on:click=on_save_pool
-                                disabled=move || pool_saving.get()
-                                class="btn btn-primary text-sm"
+                                class="btn btn-secondary text-xs"
+                                on:click=move |_| show_delete_confirm.set(false)
                             >
-                                {move || if pool_saving.get() {
-                                    t.upstream_pool_saving()
-                                } else {
-                                    t.upstream_pool_save_btn()
-                                }}
+                                "Cancel"
                             </button>
-                            {move || if pool_saved.get() {
-                                view! {
-                                    <span class="text-xs text-accent font-medium">
-                                        {t.upstream_pool_saved()}
-                                    </span>
-                                }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }}
-                            {move || if !pool_error.get().is_empty() {
-                                view! { <span class="text-xs text-error">{pool_error.get()}</span> }.into_any()
-                            } else {
-                                view! { <span></span> }.into_any()
-                            }}
+                            <button
+                                class="btn btn-primary text-xs"
+                                on:click=on_delete_profile
+                                disabled=move || deleting.get()
+                            >
+                                {move || if deleting.get() { "Deleting..." } else { "Delete" }}
+                            </button>
                         </div>
-                    }.into_any(),
-                }}
-            </div>
+                    </div>
+                </div>
+            })}
         </div>
     }
 }

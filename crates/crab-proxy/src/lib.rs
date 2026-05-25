@@ -9,6 +9,7 @@ mod sse;
 mod stored_key;
 mod tenant;
 mod trace_logger;
+pub mod raw_capture;
 mod user_id_audit;
 mod upstream_body;
 mod upstream_headers;
@@ -51,6 +52,7 @@ pub use trace_logger::{
     CompositionDebugConfig, SanitizedLogEntry, TraceConfig, TraceLogger,
     set_composition_debug_tx, composition_debug_tx,
 };
+pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
 pub use debug_log::debug_agent_log;
 pub use upstream_pool::{
     REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,

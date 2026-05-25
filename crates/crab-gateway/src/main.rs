@@ -7,7 +7,7 @@ use crab_metrics::global_metrics;
 use crab_proxy::{
     ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy, GatewayState,
     SemanticRuntimeState, SharedSemanticRuntime,
-    RuntimeConfig, UpstreamUserIdLimiter,
+    RuntimeConfig, RawCaptureLogger, UpstreamUserIdLimiter,
 };
 use crab_reasoning::ReasoningBackend;
 use crab_state::{
@@ -349,6 +349,32 @@ fn main() -> Result<()> {
         None
     };
 
+    let raw_capture_logger = if let Some(rc_config) = &config.raw_capture {
+        if rc_config.enabled {
+            let logger = RawCaptureLogger::init(crab_proxy::RawCaptureConfig {
+                enabled: rc_config.enabled,
+                dir: rc_config.dir.clone(),
+                max_index_lines: rc_config.max_index_lines,
+                max_body_files: rc_config.max_body_files,
+                max_client_bytes: rc_config.max_client_bytes,
+                max_upstream_bytes: rc_config.max_upstream_bytes,
+                mask_api_keys: rc_config.mask_api_keys,
+                skip_paths: rc_config.skip_paths.clone(),
+            });
+            info!(
+                dir = %rc_config.dir,
+                max_index_lines = rc_config.max_index_lines,
+                max_body_files = rc_config.max_body_files,
+                "Raw capture logging enabled"
+            );
+            Some(Arc::new(logger))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let runtime = RuntimeConfig::new(
         router,
         ttl_config,
@@ -592,6 +618,7 @@ fn main() -> Result<()> {
         reasoning_config: reasoning_config_shared,
         cors_enabled: config.gateway.cors_enabled,
         trace_logger,
+        raw_capture_logger,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
         pricing: config.cache.pricing.clone().unwrap_or_default(),
         max_sse_cache_bytes: config.cache.max_sse_cache_bytes,

@@ -13,13 +13,16 @@ pub fn SystemPage() -> impl IntoView {
     let t = use_translations();
     let active_tab: RwSignal<usize> = RwSignal::new(0);
 
+    let tab_labels = vec![
+        t.tab_general().to_string(),
+        t.tab_pipeline().to_string(),
+        t.tab_reasoning().to_string(),
+    ];
+
     view! {
         <div class="page-content space-y-4">
             <SectionHeader title=t.system_title() description=t.system_desc() />
-            <TabBar
-                tabs=vec!["General", "Pipeline", "Reasoning"]
-                active=active_tab
-            />
+            <TabBar tabs=tab_labels active=active_tab />
             {move || match active_tab.get() {
                 0 => view! { <GeneralTab /> }.into_any(),
                 1 => view! { <PipelinePage /> }.into_any(),

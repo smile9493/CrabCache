@@ -1035,6 +1035,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-capture"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crab-composition"
 version = "0.1.0"
 dependencies = [
@@ -1142,6 +1150,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-cache",
+ "crab-capture",
  "crab-composition",
  "crab-control",
  "crab-metrics",

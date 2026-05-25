@@ -27,6 +27,7 @@ tokio.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
 crab-composition.workspace = true
+crab-capture.workspace = true
 sha2.workspace = true
 hex.workspace = true
 chrono.workspace = true

@@ -1,4 +1,5 @@
 use crate::TraceLogger;
+use crate::raw_capture::RawCaptureLogger;
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
 use crate::upstream_user_id_limiter::{UpstreamUserIdGuard, UpstreamUserIdLimiter};
 use crate::client_key_rate_limiter::ClientKeyRateLimiter;
@@ -385,6 +386,7 @@ pub struct GatewayState {
     pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
     pub cors_enabled: bool,
     pub trace_logger: Option<Arc<TraceLogger>>,
+    pub raw_capture_logger: Option<Arc<RawCaptureLogger>>,
     pub cache_key_namespace: Option<String>,
     pub pricing: PricingConfig,
     /// Max raw SSE bytes stored per stream cache entry (`0` = never store `sse_body`).

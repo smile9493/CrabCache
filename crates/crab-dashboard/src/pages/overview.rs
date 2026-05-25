@@ -526,7 +526,7 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
                     </span>
                 </div>
             </div>
-            <a href="/trace" class="btn btn-secondary text-xs shrink-0">
+            <a href="/cache?tab=trace" class="btn btn-secondary text-xs shrink-0">
                 {t.overview_trace_compare_link()}
             </a>
         </div>

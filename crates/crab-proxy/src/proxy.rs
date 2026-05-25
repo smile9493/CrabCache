@@ -2313,7 +2313,7 @@ impl ProxyHttp for GatewayProxy {
 
     async fn logging(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         error: Option<&pingora_core::Error>,
         ctx: &mut Self::CTX,
     ) {
@@ -2435,6 +2435,30 @@ impl ProxyHttp for GatewayProxy {
                     );
                     trace_logger.log(entry);
                 }
+            }
+        }
+
+        // ── Raw capture ──────────────────────────────────────────────
+        if let Some(raw_logger) = &self.state.raw_capture_logger {
+            let req_path = session.req_header().uri.path();
+            if !raw_logger.should_skip(req_path) {
+                let reasoning_strategy = ctx
+                    .cached_reasoning_config
+                    .missing_reasoning_strategy
+                    .as_str();
+                raw_logger.capture(
+                    &ctx.request_id,
+                    ctx.req_hash.as_deref(),
+                    &ctx.model,
+                    ctx.consumer.as_deref(),
+                    ctx.project_id.as_deref(),
+                    ctx.request_pipeline.as_ref().map(|p| p.as_str()),
+                    ctx.is_streaming,
+                    ctx.prepared_request.as_ref().map(|p| p.retired_prefix_messages),
+                    Some(reasoning_strategy),
+                    ctx.original_request_body.as_deref(),
+                    ctx.new_request_body.as_deref(),
+                );
             }
         }
 
