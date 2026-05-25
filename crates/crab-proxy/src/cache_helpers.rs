@@ -1,27 +1,11 @@
 use crab_cache::{CacheEntry, UsageInfo};
-use crab_reasoning::{strip_cursor_thinking_blocks, strip_reasoning_from_completion_value};
+use crab_reasoning::sanitize_client_completion;
 
 pub fn prepare_response_body_for_cache(body: Vec<u8>, display_reasoning: bool) -> Vec<u8> {
     let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&body) else {
         return body;
     };
-    strip_reasoning_from_completion_value(&mut value);
-    if !display_reasoning {
-        let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
-            return serde_json::to_vec(&value).unwrap_or(body);
-        };
-        for choice in choices {
-            let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) else {
-                continue;
-            };
-            if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-                msg.insert(
-                    "content".into(),
-                    serde_json::Value::String(strip_cursor_thinking_blocks(content)),
-                );
-            }
-        }
-    }
+    sanitize_client_completion(&mut value, display_reasoning, true);
     serde_json::to_vec(&value).unwrap_or(body)
 }
 

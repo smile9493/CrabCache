@@ -8,16 +8,17 @@ use axum::{
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
-    ClearReasoningCacheResponse,     CreateGatewayKeyRequest, CreateGatewayKeyResponse, DomainPolicySpec, ErrorResponse,
-    GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
-    PutBackendsRequest, PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
-    PutUpstreamRelayConfigRequest,
-    CursorModelAliasView, CursorModelsConfigView, PipelineProfileView, PipelineRuntimeConfigView,
-    ReasoningRuntimeConfigView,
-    RoutingBackendsView, StreamCacheConfig, TtlConfigView,
+    ClearReasoningCacheResponse, ConnectionRuntimeView, CreateGatewayKeyRequest,
+    CreateGatewayKeyResponse, DomainPolicySpec, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER,
+    GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PutBackendsRequest,
+    PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
+    PutUpstreamRelayConfigRequest, SemanticRuntimeView, CursorModelAliasView,
+    CursorModelsConfigView, PipelineProfileView, PipelineRuntimeConfigView,
+    ReasoningRuntimeConfigView, RoutingBackendsView, StreamCacheConfig, TtlConfigView,
     UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView,
     parse_backend_endpoints, parse_upstream_base_url,
 };
+use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_pipeline::{
     validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
 };
@@ -30,8 +31,12 @@ use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[path = "management_profiles.rs"]
+mod management_profiles;
 
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
@@ -50,6 +55,9 @@ pub struct ManagementState {
     pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
     pub invalidate_scan_timeout_secs: u64,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
+    pub upstream_key_cooldown_secs: u64,
+    pub semantic_runtime: SharedSemanticRuntime,
+    pub semantic_cache: Option<Arc<crab_semantic::SemanticCache>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -130,6 +138,14 @@ pub fn router(state: ManagementState) -> Router {
             get(get_pipeline_runtime).put(put_pipeline_runtime),
         )
         .route(
+            "/v1/runtime/semantic",
+            get(get_semantic_runtime).put(put_semantic_runtime),
+        )
+        .route(
+            "/v1/runtime/connection",
+            get(get_connection_runtime).put(put_connection_runtime),
+        )
+        .route(
             "/v1/cursor/models",
             get(get_cursor_models).put(put_cursor_models),
         )
@@ -143,6 +159,32 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/upstream/relay",
             get(get_upstream_relay).put(put_upstream_relay),
+        )
+        .route(
+            "/v1/upstream/profiles",
+            get(management_profiles::list_upstream_profiles),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}",
+            axum::routing::put(management_profiles::put_upstream_profile)
+                .delete(management_profiles::delete_upstream_profile),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys",
+            get(management_profiles::get_profile_keys)
+                .put(management_profiles::put_profile_keys),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys/{key_id}",
+            patch(management_profiles::patch_profile_key),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys/{key_id}/test",
+            post(management_profiles::test_upstream_profile_key),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/test",
+            post(management_profiles::test_upstream_profile),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
@@ -396,11 +438,7 @@ async fn get_fingerprint(
 ) -> Result<Json<FingerprintRequest>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let cfg = state
-        .runtime
-        .fingerprint
-        .read()
-        .map_err(|_| internal_error("fingerprint lock poisoned"))?;
+    let cfg = state.runtime.fingerprint.read();
 
     Ok(Json(FingerprintRequest {
         version: cfg.version,
@@ -415,11 +453,7 @@ async fn put_fingerprint(
 ) -> Result<Json<FingerprintRequest>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let mut cfg = state
-        .runtime
-        .fingerprint
-        .write()
-        .map_err(|_| internal_error("fingerprint lock poisoned"))?;
+    let mut cfg = state.runtime.fingerprint.write();
     cfg.version = req.version;
     cfg.normalize_content = req.normalize_content;
 
@@ -467,7 +501,7 @@ async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyR
     }
 }
 
-fn schedule_persist_state(state: &ManagementState) {
+pub(crate) fn schedule_persist_state(state: &ManagementState) {
     let Some(store) = state.state_store.clone() else {
         return;
     };
@@ -479,7 +513,7 @@ fn schedule_persist_state(state: &ManagementState) {
     });
 }
 
-fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
+pub(crate) fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
     let provided = headers
         .get(GATEWAY_ADMIN_KEY_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -501,20 +535,10 @@ async fn status(
     headers: HeaderMap,
 ) -> Result<Json<GatewayStatus>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let backend_count = state
-        .runtime
-        .router
-        .read()
-        .map(|r| r.backends().len())
-        .unwrap_or(0);
+    let backend_count = state.runtime.router.read().backends().len();
     let pool = state.runtime.upstream_pool();
-    let upstream_base_url = state
-        .runtime
-        .upstream_base_url
-        .read()
-        .map(|u| u.clone())
-        .ok();
-    let upstream_model = state.runtime.fallback_model.read().map(|m| m.clone()).ok();
+    let upstream_base_url = Some(state.runtime.upstream_base_url.read().clone());
+    let upstream_model = Some(state.runtime.fallback_model.read().clone());
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
@@ -528,16 +552,8 @@ async fn status(
 }
 
 fn upstream_relay_view(runtime: &RuntimeConfig) -> UpstreamRelayConfigView {
-    let base_url = runtime
-        .upstream_base_url
-        .read()
-        .map(|u| u.clone())
-        .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
-    let model = runtime
-        .fallback_model
-        .read()
-        .map(|m| m.clone())
-        .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+    let base_url = runtime.upstream_base_url.read().clone();
+    let model = runtime.fallback_model.read().clone();
     let api_key = runtime.upstream_pool().admin_secret();
     UpstreamRelayConfigView {
         base_url,
@@ -565,11 +581,7 @@ async fn put_upstream_relay(
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response())?;
 
     {
-        let mut base = state
-            .runtime
-            .upstream_base_url
-            .write()
-            .map_err(|_| internal_error("upstream_base_url lock poisoned"))?;
+        let mut base = state.runtime.upstream_base_url.write();
         *base = parsed.normalized.clone();
     }
 
@@ -583,11 +595,7 @@ async fn put_upstream_relay(
             )
                 .into_response());
         }
-        let mut fallback = state
-            .runtime
-            .fallback_model
-            .write()
-            .map_err(|_| internal_error("fallback_model lock poisoned"))?;
+        let mut fallback = state.runtime.fallback_model.write();
         *fallback = model.trim().to_string();
     }
 
@@ -610,11 +618,7 @@ async fn put_upstream_relay(
             .into_response()
     })?;
 
-    let mut router = state
-        .runtime
-        .router
-        .write()
-        .map_err(|_| internal_error("router lock poisoned"))?;
+    let mut router = state.runtime.router.write();
     router.update(&parsed_backends).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -625,7 +629,8 @@ async fn put_upstream_relay(
             .into_response()
     })?;
 
-    if let Ok(mut health) = state.runtime.backend_health.write() {
+    {
+        let mut health = state.runtime.backend_health.write();
         let keep: std::collections::HashSet<String> =
             router.backends().iter().map(|b| b.name.clone()).collect();
         health.retain(|name, _| keep.contains(name));
@@ -635,6 +640,28 @@ async fn put_upstream_relay(
         }
     }
     drop(router);
+
+    let default_id = state.runtime.default_upstream_profile_id();
+    if let Some(existing) = state.runtime.profile(&default_id) {
+        let model = state.runtime.fallback_model.read().clone();
+        let input = crab_proxy::ProfileBuildInput {
+            id: default_id.clone(),
+            provider: existing.provider.as_str().to_string(),
+            base_url: parsed.normalized.clone(),
+            fallback_model: model,
+            endpoints: endpoints.clone(),
+            tls_sni: Some(tls_sni.clone()),
+            default_weight: 1,
+        };
+        if let Ok(profile) = crab_proxy::build_profile_runtime(
+            input,
+            Vec::new(),
+            state.upstream_key_cooldown_secs,
+            Some(Arc::clone(&existing.upstream_pool)),
+        ) {
+            let _ = state.runtime.upsert_profile(profile);
+        }
+    }
 
     tracing::info!(
         base_url = %parsed.normalized,
@@ -688,14 +715,59 @@ async fn put_upstream_keys(
             id: k.id,
             secret: k.secret,
             enabled: k.enabled,
+            account_id: k.account_id,
         })
         .collect();
+
+    // 1) Build new pool for the default profile (from its current pool + incoming specs).
     let current = state.runtime.upstream_pool();
     let new_pool = match req.mode {
-        UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
-        UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
+        UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs.clone()),
+        UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs.clone()),
     };
-    state.runtime.replace_upstream_pool(new_pool);
+    let default_id = state.runtime.default_upstream_profile_id();
+    state
+        .runtime
+        .replace_profile_pool(&default_id, new_pool)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        })?;
+
+    // 2) Fan-out: sync the same specs to every other profile pool (inflight/cooldown isolated).
+    let profile_ids: Vec<String> = {
+        let profiles = state.runtime.upstream_profiles.read();
+        profiles.keys().cloned().collect()
+    };
+    let mut profiles_updated = vec![default_id.clone()];
+    for pid in &profile_ids {
+        if *pid == default_id {
+            continue;
+        }
+        if let Some(profile) = state.runtime.profile(pid) {
+            let peer_current = profile.resolve_upstream_pool();
+            let peer_pool = match req.mode {
+                UpstreamKeysPutMode::Append => {
+                    UpstreamKeyPool::merge_append(&peer_current, specs.clone())
+                }
+                UpstreamKeysPutMode::Replace => {
+                    UpstreamKeyPool::hot_replace(&peer_current, specs.clone())
+                }
+            };
+            if let Err(e) = state.runtime.replace_profile_pool(pid, peer_pool) {
+                tracing::warn!(profile_id = %pid, error = %e, "Failed to sync keys to profile");
+            } else {
+                profiles_updated.push(pid.clone());
+            }
+        }
+    }
+    tracing::info!(profiles = ?profiles_updated, "Upstream keys synced to profile pools");
+
     schedule_persist_state(&state);
     Ok(Json(upstream_keys_view(&state.runtime)))
 }
@@ -727,6 +799,21 @@ async fn patch_upstream_key(
             )
                 .into_response());
         }
+        // Fan-out: sync enabled status to all other profile pools.
+        let profile_ids: Vec<String> = {
+            let profiles = state.runtime.upstream_profiles.read();
+            profiles.keys().cloned().collect()
+        };
+        let default_id = state.runtime.default_upstream_profile_id();
+        for pid in &profile_ids {
+            if *pid == default_id {
+                continue;
+            }
+            if let Some(profile) = state.runtime.profile(pid) {
+                let peer_pool = profile.resolve_upstream_pool();
+                peer_pool.set_enabled(&id, enabled);
+            }
+        }
     }
     if req.secret.is_some() {
         return Err((
@@ -745,6 +832,7 @@ async fn patch_upstream_key(
         .map(|k| UpstreamKeyView {
             id: k.id,
             preview: k.preview,
+            account_id: k.account_id,
             enabled: k.enabled,
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
@@ -771,6 +859,7 @@ fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
             .map(|k| UpstreamKeyView {
                 id: k.id,
                 preview: k.preview,
+                account_id: k.account_id,
                 enabled: k.enabled,
                 inflight: k.inflight,
                 cooldown_remaining_secs: k.cooldown_remaining_secs,
@@ -851,6 +940,24 @@ async fn create_key(
             .into_response());
     }
 
+    let project_id = match req
+        .project_id
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        None => None,
+        Some(raw) => Some(
+            crab_proxy::sanitize_user_id(raw).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse { error: e }),
+                )
+                    .into_response()
+            })?,
+        ),
+    };
+
     let id = uuid::Uuid::new_v4().to_string();
     let max_concurrent = req.max_concurrent.unwrap_or(0);
     let stored = StoredKey {
@@ -859,7 +966,7 @@ async fn create_key(
         key_hash: token.clone(),
         enabled: req.enabled,
         domain: req.domain.clone(),
-        project_id: req.project_id.clone(),
+        project_id: project_id.clone(),
         pipeline: req.pipeline.clone(),
         upstream_profile: req.upstream_profile.clone(),
         max_concurrent,
@@ -876,7 +983,7 @@ async fn create_key(
         key_preview: key_preview(&token),
         enabled: req.enabled,
         domain: req.domain,
-        project_id: req.project_id,
+        project_id: project_id.clone(),
         pipeline: req.pipeline,
         upstream_profile: req.upstream_profile,
         max_concurrent,
@@ -957,7 +1064,8 @@ async fn delete_domain_policy(
     Path(domain): Path<String>,
 ) -> Result<StatusCode, Response> {
     authorize(&headers, &state.admin_key)?;
-    if let Ok(mut guard) = state.runtime.domain_policies.write() {
+    {
+        let mut guard = state.runtime.domain_policies.write();
         if guard.remove(&domain).is_some() {
             schedule_persist_state(&state);
             return Ok(StatusCode::NO_CONTENT);
@@ -999,7 +1107,20 @@ async fn patch_key(
         entry.domain = Some(domain);
     }
     if let Some(project_id) = req.project_id {
-        entry.project_id = Some(project_id);
+        let pid = project_id.trim();
+        if pid.is_empty() {
+            entry.project_id = None;
+        } else {
+            entry.project_id = Some(
+                crab_proxy::sanitize_user_id(pid).map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse { error: e }),
+                    )
+                        .into_response()
+                })?,
+            );
+        }
     }
     if let Some(pipeline) = req.pipeline {
         entry.pipeline = Some(pipeline);
@@ -1027,11 +1148,7 @@ async fn get_ttl(
     headers: HeaderMap,
 ) -> Result<Json<TtlConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let cfg = state
-        .runtime
-        .ttl
-        .read()
-        .map_err(|_| internal_error("TTL lock poisoned"))?;
+    let cfg = state.runtime.ttl.read();
     Ok(Json(TtlConfigView {
         default_ttl_secs: cfg.default_ttl_secs,
         model_overrides: cfg.model_overrides.clone(),
@@ -1045,11 +1162,7 @@ async fn put_ttl(
     Json(req): Json<PutTtlConfigRequest>,
 ) -> Result<Json<TtlConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let mut cfg = state
-        .runtime
-        .ttl
-        .write()
-        .map_err(|_| internal_error("TTL lock poisoned"))?;
+    let mut cfg = state.runtime.ttl.write();
     cfg.default_ttl_secs = req.default_ttl_secs;
     cfg.model_overrides = req.model_overrides.clone();
     cfg.consumer_overrides = req.consumer_overrides.clone();
@@ -1086,14 +1199,126 @@ async fn put_stream_cache(
     }))
 }
 
+fn connection_runtime_view(conn: &crab_proxy::ConnectionConfig) -> ConnectionRuntimeView {
+    ConnectionRuntimeView {
+        tcp_keepalive_idle_secs: conn.tcp_keepalive_idle_secs.unwrap_or(60),
+        tcp_keepalive_interval_secs: conn.tcp_keepalive_interval_secs.unwrap_or(10),
+        tcp_keepalive_count: conn.tcp_keepalive_count.unwrap_or(3),
+        idle_timeout_secs: conn.idle_timeout_secs.unwrap_or(90),
+        h2_ping_interval_secs: conn.h2_ping_interval_secs.unwrap_or(30),
+    }
+}
+
+async fn get_connection_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<ConnectionRuntimeView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let conn = state.runtime.conn_config.read();
+    Ok(Json(connection_runtime_view(&conn)))
+}
+
+async fn put_connection_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<ConnectionRuntimeView>,
+) -> Result<Json<ConnectionRuntimeView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let mut conn = state.runtime.conn_config.read().as_ref().clone();
+    conn.tcp_keepalive_idle_secs = Some(req.tcp_keepalive_idle_secs);
+    conn.tcp_keepalive_interval_secs = Some(req.tcp_keepalive_interval_secs);
+    conn.tcp_keepalive_count = Some(req.tcp_keepalive_count);
+    conn.idle_timeout_secs = Some(req.idle_timeout_secs);
+    conn.h2_ping_interval_secs = Some(req.h2_ping_interval_secs);
+    *state.runtime.conn_config.write() = Arc::new(conn);
+    Ok(Json(req))
+}
+
+fn semantic_runtime_view(state: &SemanticRuntimeState) -> SemanticRuntimeView {
+    SemanticRuntimeView {
+        enabled: state.enabled,
+        similarity_threshold: state.threshold as f64,
+        min_query_chars: state.gate.min_query_chars,
+        max_query_chars: state.gate.max_query_chars,
+        embed_only_on_exact_miss: state.gate.embed_only_on_exact_miss,
+    }
+}
+
+async fn get_semantic_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<SemanticRuntimeView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let runtime = state.semantic_runtime.read();
+    Ok(Json(semantic_runtime_view(&runtime)))
+}
+
+async fn put_semantic_runtime(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<SemanticRuntimeView>,
+) -> Result<Json<SemanticRuntimeView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    if req.enabled && state.semantic_cache.is_none() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "semantic cache is not enabled at gateway startup ([semantic].enabled); restart gateway to enable L2"
+                    .to_string(),
+            }),
+        )
+            .into_response());
+    }
+    if !(0.0..=1.0).contains(&req.similarity_threshold) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "similarity_threshold must be between 0 and 1".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    {
+        let mut runtime = state.semantic_runtime.write();
+        runtime.enabled = req.enabled;
+        runtime.threshold = req.similarity_threshold as f32;
+        runtime.gate = crab_semantic::SemanticGateConfig {
+            min_query_chars: req.min_query_chars,
+            max_query_chars: req.max_query_chars,
+            embed_only_on_exact_miss: req.embed_only_on_exact_miss,
+        };
+    }
+    if let Some(cache) = &state.semantic_cache {
+        cache.set_threshold(req.similarity_threshold as f32);
+    }
+    Ok(Json(SemanticRuntimeView {
+        enabled: req.enabled,
+        similarity_threshold: req.similarity_threshold,
+        min_query_chars: req.min_query_chars,
+        max_query_chars: req.max_query_chars,
+        embed_only_on_exact_miss: req.embed_only_on_exact_miss,
+    }))
+}
+
 fn pipeline_runtime_view(runtime: &RuntimeConfig) -> PipelineRuntimeConfigView {
     let globals = runtime.pipeline_globals();
     let profiles = runtime
         .profile_descriptors()
         .into_iter()
-        .map(|d| PipelineProfileView {
-            id: d.id,
-            provider: d.provider.as_str().to_string(),
+        .map(|d| {
+            let detail = runtime.profile(&d.id);
+            PipelineProfileView {
+                id: d.id,
+                provider: d.provider.as_str().to_string(),
+                base_url: detail
+                    .as_ref()
+                    .map(|p| p.base_url.clone())
+                    .unwrap_or_default(),
+                fallback_model: detail
+                    .as_ref()
+                    .map(|p| p.fallback_model.clone())
+                    .unwrap_or_default(),
+            }
         })
         .collect();
     PipelineRuntimeConfigView {
@@ -1236,6 +1461,19 @@ async fn put_cursor_models(
     Ok(Json(cursor_models_view(&state.runtime)))
 }
 
+fn mask_redis_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(at) = trimmed.find('@') {
+        let scheme_end = trimmed.find("://").map(|i| i + 3).unwrap_or(0);
+        format!("{}***@{}", &trimmed[..scheme_end], &trimmed[at + 1..])
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigView {
     ReasoningRuntimeConfigView {
         thinking_mode: config.thinking_mode.clone(),
@@ -1244,6 +1482,13 @@ fn reasoning_runtime_view(config: &ReasoningConfig) -> ReasoningRuntimeConfigVie
         display_reasoning: config.display_reasoning,
         collapsible_reasoning: config.collapsible_reasoning,
         cache_invalidate_recommended: false,
+        storage_backend: Some(config.backend.clone()),
+        cache_db_path: Some(config.cache_db_path.clone()),
+        redis_url_masked: config
+            .redis_url
+            .as_ref()
+            .map(|u| mask_redis_url(u))
+            .filter(|s| !s.is_empty()),
     }
 }
 
@@ -1252,10 +1497,7 @@ async fn get_reasoning_runtime(
     headers: HeaderMap,
 ) -> Result<Json<ReasoningRuntimeConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let cfg = state
-        .reasoning_config
-        .read()
-        .map_err(|_| internal_error("reasoning config lock poisoned"))?;
+    let cfg = state.reasoning_config.read();
     Ok(Json(reasoning_runtime_view(&cfg)))
 }
 
@@ -1266,15 +1508,23 @@ async fn put_reasoning_runtime(
 ) -> Result<Json<ReasoningRuntimeConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    if req.thinking_mode != "enabled" && req.thinking_mode != "disabled" {
+    if req.thinking_mode != "enabled"
+        && req.thinking_mode != "disabled"
+        && req.thinking_mode != "auto"
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: "thinking_mode must be \"enabled\" or \"disabled\"".to_string(),
+                error: "thinking_mode must be \"auto\", \"enabled\", or \"disabled\"".to_string(),
             }),
         )
             .into_response());
     }
+    let thinking_mode = if req.thinking_mode == "auto" {
+        "enabled".to_string()
+    } else {
+        req.thinking_mode.clone()
+    };
     if req.missing_reasoning_strategy != "recover" && req.missing_reasoning_strategy != "reject" {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1286,12 +1536,9 @@ async fn put_reasoning_runtime(
             .into_response());
     }
 
-    let mut cfg = state
-        .reasoning_config
-        .write()
-        .map_err(|_| internal_error("reasoning config lock poisoned"))?;
+    let mut cfg = state.reasoning_config.write();
     let display_reasoning_changed = cfg.display_reasoning != req.display_reasoning;
-    cfg.thinking_mode = req.thinking_mode;
+    cfg.thinking_mode = thinking_mode;
     cfg.reasoning_effort = req.reasoning_effort;
     cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
     cfg.display_reasoning = req.display_reasoning;
@@ -1353,16 +1600,8 @@ async fn get_backends(
     headers: HeaderMap,
 ) -> Result<Json<RoutingBackendsView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let router = state
-        .runtime
-        .router
-        .read()
-        .map_err(|_| internal_error("router lock poisoned"))?;
-    let health = state
-        .runtime
-        .backend_health
-        .read()
-        .map_err(|_| internal_error("health lock poisoned"))?;
+    let router = state.runtime.router.read();
+    let health = state.runtime.backend_health.read();
     let backends = router
         .backends()
         .iter()
@@ -1389,11 +1628,7 @@ async fn put_backends(
                 .into_response()
         })?;
 
-    let mut router = state
-        .runtime
-        .router
-        .write()
-        .map_err(|_| internal_error("router lock poisoned"))?;
+    let mut router = state.runtime.router.write();
     router.update(&parsed).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -1404,7 +1639,8 @@ async fn put_backends(
             .into_response()
     })?;
 
-    if let Ok(mut health) = state.runtime.backend_health.write() {
+    {
+        let mut health = state.runtime.backend_health.write();
         let keep: std::collections::HashSet<String> =
             router.backends().iter().map(|b| b.name.clone()).collect();
         health.retain(|name, _| keep.contains(name));
@@ -1442,7 +1678,7 @@ async fn restart_gateway_handler(
     Ok(Json(serde_json::json!({"status": "restarting"})))
 }
 
-fn internal_error(msg: &str) -> Response {
+pub(crate) fn internal_error(msg: &str) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {

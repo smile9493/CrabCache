@@ -5,18 +5,21 @@ mod infra;
 mod overview;
 mod suggestions;
 mod trace_summary;
+mod trace_user_id_audit;
 mod network;
 mod openresty;
 mod persist;
 mod trace_log;
 mod live_metrics;
 mod composition;
+mod raw_capture;
 mod routes;
 mod state;
 mod static_cache;
 mod types;
 mod update;
 mod upstream;
+mod upstream_profiles;
 
 use axum::{middleware, Router};
 use state::AppState;
@@ -185,7 +188,8 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or(3600);
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
-                match crate::upstream::detect_models_internal(&bg).await {
+                let profile_id = bg.default_profile_id();
+                match crate::upstream::detect_models_internal(&bg, &profile_id).await {
                     Ok(diff) if !diff.to_add.is_empty() || !diff.to_remove.is_empty() => {
                         tracing::info!(
                             add = diff.to_add.len(),
@@ -211,7 +215,27 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = prefetch.fetch_gateway_metrics().await {
                 tracing::warn!(error = %e, "Initial gateway metrics prefetch failed");
             }
+            if let Err(e) = crate::overview::refresh_overview_core_cache(&prefetch).await {
+                tracing::debug!(error = %e, "Initial overview core cache warm failed");
+            }
         });
+    }
+
+    {
+        let bg = Arc::clone(&state);
+        let interval = crate::overview::overview_core_background_interval();
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) = crate::overview::refresh_overview_core_cache(&bg).await {
+                    tracing::debug!(error = %e, "Overview core background refresh failed");
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+        info!(
+            interval_secs = interval.as_secs(),
+            "Overview core cache refresh started"
+        );
     }
 
     match state.gateway.list_keys().await {

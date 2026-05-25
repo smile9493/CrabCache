@@ -101,6 +101,16 @@ PromQL 按 consumer 聚合：
 sum by (consumer) (gateway_client_key_inflight)
 ```
 
+### DeepSeek per-`user_id` 并发软限（可选）
+
+在 `gateway.toml` 启用 `[upstream.deepseek_user_concurrency]` 后，带 `project_id` 的 DeepSeek v4 请求受进程内 in-flight 限制（`v4_pro_per_user_id` / `v4_flash_per_user_id`）。超限时网关返回 **429**，`code: deepseek_user_concurrency_exceeded`（非上游 429，也不会触发同账号 Key 轮换）。
+
+| 指标 | 说明 |
+|------|------|
+| `gateway_deepseek_user_id_concurrency_rejected_total{tier}` | 按 pro/flash 分桶的网关拒绝次数 |
+| `gateway_deepseek_user_id_inflight{tier}` | 各 tier 聚合 in-flight（低基数，不含 project_id） |
+| `gateway_rejected_requests_total{reason="deepseek_user_concurrency_exceeded"}` | 与其它拒绝原因统一计数 |
+
 单 Key 精确查询（`key_id` 为 Management API 返回的 `id` 字段）：
 
 ```promql
@@ -120,6 +130,20 @@ max_files = 5
 ```
 
 每行是一个 `SanitizedLogEntry`（不含原始 body）。包含 `consumer`（API Key name）、`cache_tier`、`prompt_cache_hit_ratio`，以及（当前网关构建版本）`upstream_latency_ms`、`ttft_ms`、`input_tokens`、`output_tokens`。
+
+### DeepSeek `user_id` 隔离审计字段
+
+无需开启 `max_payload_bytes` 即可验收 `project_id` → 上游 `user_id` 注入：
+
+| 字段 | 说明 |
+|------|------|
+| `project_id` | 网关解析的租户 ID（来自 `sk-cc-*` 绑定或匹配的 `X-Project-Id`） |
+| `client_body_user_id` | 客户端原始 body 中的 `user_id`（若有） |
+| `upstream_user_id` | **实际上游**请求体中的 `user_id`（权威） |
+| `user_id_audit` | `injected` / `absent` / `stripped_client` / `mismatch` / `not_applicable` |
+| `upstream_profile_id` / `pipeline` / `upstream_model` | 路由上下文 |
+
+Admin Dashboard **Trace 分析**（`GET /api/admin/trace/analysis`）返回 `deepseek_user_id` 汇总：注入率、缺失 `project_id` 计数、`top_project_ids` 等。`isolation_ok=true` 表示近期 DeepSeek 请求基本均已正确注入。
 
 当 `crab-composition` crate 启用时，每条日志条目还包含 `composition` 字段：
 
@@ -333,6 +357,86 @@ max_files = 3
 | `gateway_composition_requests_total` | Counter | `project_id`, `pipeline`, `has_tools`, `msg_bucket` | 按项目、管线、工具状态和消息桶计数的请求组成统计 |
 | `gateway_composition_component_total` | Counter | `component`, `present` | Cursor 组件检测计数（rules / skills / mcp / subagent） |
 | `gateway_composition_tool_count` | Histogram | — | 每次请求的工具数量分布（桶：0, 1, 5, 10, 20, 50） |
+
+## 原始请求捕获（Raw Capture）
+
+独立于影子日志和组成分析的**抓包级**通道，记录完整 client/upstream JSON body 供离线结构对比分析。
+
+### 配置
+
+```toml
+[raw_capture]
+enabled = false
+dir = "/var/log/crabcache/raw_capture"
+max_index_lines = 5000
+max_body_files = 5000
+max_client_bytes = 0    # 0 = 仅受网关 64 MiB 限制
+max_upstream_bytes = 0
+mask_api_keys = false   # true = 脱敏 sk-* token
+skip_paths = ["/health", "/healthz", "/ready"]
+```
+
+环境变量覆盖：`CRABCACHE_RAW_CAPTURE_DIR`。
+
+### 存储布局
+
+```
+raw_capture/
+  index.jsonl          # 每行一个 RawCaptureEntry（元数据 + 结构摘要 + body 文件路径）
+  bodies/
+    {request_id}.client.json
+    {request_id}.upstream.json  # 仅当 upstream body != client body 时写入
+```
+
+- **index.jsonl** 自动轮转（`max_index_lines`），保留结构摘要用于列表和统计
+- **bodies/** 目录超过 `max_body_files` 时自动删除最旧文件
+- 不做额外截断（`max_client_bytes = 0`），受网关 `limits.max_request_body_bytes` 约束
+
+### 安全警告
+
+**Raw capture 默认关闭**，且不脱敏。启用前请注意：
+
+1. **API Key 泄漏**：body 中包含 Bearer Token。`mask_api_keys = true` 可部分脱敏
+2. **Prompt 内容**：完整对话历史包含敏感业务数据
+3. **磁盘占用**：每个请求写入 ~2x body 大小。64 MiB body = ~128 MiB 磁盘
+4. **部署建议**：仅在受控内网环境启用；目录权限设为 `chmod 600`；不暴露公网
+
+### Admin API
+
+| 方法 | 路径 | 行为 |
+|------|------|------|
+| GET | `/api/admin/capture/list?hours=&limit=&consumer=&project_id=&request_hash=` | 读 index.jsonl，返回摘要列表 |
+| GET | `/api/admin/capture/{request_id}` | 读 index + 加载 bodies/*.json，返回 client/upstream 全文 + 结构 diff |
+| GET | `/api/admin/capture/stats?hours=` | 聚合：平均 delta、reasoning 注入率、message_count P99、thinking 标记率 |
+
+Dashboard **请求页 → 包捕获 Tab** 提供图形化访问。
+
+### 思考模式上下文膨胀排查
+
+1. 打开 Dashboard → Requests → Capture Tab
+2. 查看 **Delta** 列：正数表示 upstream body 比 client 大
+3. 查看 **Reasoning** 列：`Yes` 表示 upstream 获得了 reasoning_content
+4. 点击行打开详情：
+   - **Structure Table**：逐项对比 messages 字符数、reasoning 字符数、tool_calls 数
+   - **Client/Upstream JSON**：左右分栏对比完整 body
+5. 典型膨胀模式：
+   - `delta_reasoning_chars` 远大于 0 → 思考链被注入到 assistant message
+   - `delta_message_count` > 0 → upstream 多出 recovery 消息
+   - `thinking_markup = Yes` → 内容包含 `<thinking>` 标签
+
+### Docker 卷挂载
+
+```yaml
+# docker-compose.yml
+services:
+  admin:
+    volumes:
+      - gateway-logs:/var/log/crabcache:ro
+volumes:
+  gateway-logs:
+```
+
+Admin 以只读方式访问 raw_capture 目录（与 trace.jsonl 同卷）。
 
 ## Prometheus / Grafana（可选）
 

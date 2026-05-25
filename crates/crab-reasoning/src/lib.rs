@@ -23,6 +23,9 @@ pub use streaming::{
     CursorReasoningDisplayAdapter, StreamAccumulator, fold_reasoning_into_content,
 };
 pub use transform::{
-    RecoveryNoticeContent, record_response_reasoning, rewrite_response_body, rewrite_sse_chunk,
+    RecoveryNoticeContent, completion_message_content_has_thinking_markup,
+    record_response_reasoning, response_body_has_thinking_markup, rewrite_response_body,
+    rewrite_sse_chunk, sanitize_client_completion, sanitize_client_message_content,
     strip_reasoning_delta_for_client, strip_reasoning_from_completion_value,
+    strip_silent_sse_chunk_for_client,
 };

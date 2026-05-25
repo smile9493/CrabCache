@@ -17,6 +17,8 @@ members = [
     "crates/crab-control",
     "crates/crab-state",
     "crates/crab-composition",
+    "crates/crab-admin-types",
+    "crates/crab-capture",
 ]
 
 [workspace.package]
@@ -57,6 +59,7 @@ prometheus = "0.13"
 tracing-appender = "0.2"
 
 # -- Utilities --
+parking_lot    = "0.12"
 bytes          = "1"
 anyhow         = "1"
 thiserror      = "2"
@@ -83,6 +86,8 @@ crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
 crab-state      = { path = "crates/crab-state" }
 crab-composition = { path = "crates/crab-composition" }
+crab-capture    = { path = "crates/crab-capture" }
+crab-admin-types = { path = "crates/crab-admin-types" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
 unicode-normalization = "0.1"

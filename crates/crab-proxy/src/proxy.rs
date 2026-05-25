@@ -1,7 +1,17 @@
 use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
-use crate::error_jsons::client_concurrency_exceeded_error_json;
-use crate::tenant::{ProjectResolveError, effective_cache_namespace, resolve_project_id};
+use crate::send_helpers::{send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok};
+use crate::error_jsons::{
+    client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
+    upstream_pool_exhausted_error_details,
+};
+use crate::upstream_user_id_limiter::{
+    DeepSeekUserIdLimitError, classify_deepseek_v4_tier,
+};
+use crate::tenant::{
+    ProjectResolveError, derive_project_id_from_client_key, effective_cache_namespace,
+    resolve_project_id,
+};
 use crate::runtime::RuntimeConfig;
 use crate::debug_agent_log;
 use crate::upstream_body::apply_prepared_upstream_body;
@@ -13,6 +23,7 @@ use pingora_core::upstreams::peer::ALPN;
 use crate::sse::{UsageData, parse_sse_chunk};
 use crate::trace_logger::SanitizedLogEntry;
 use crate::trace_logger::composition_debug_tx;
+use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_cache::CoalesceError;
 use crab_composition::{
     extract_composition, extract_system_text, extract_tools_json, CompositionDebugEntry,
@@ -20,20 +31,22 @@ use crab_composition::{
 };
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::{
-    PipelineOverride, PipelineRequestContext, RequestPipeline, select_request_pipeline,
-    validate_pipeline_override,
+    PipelineOverride, PipelineRequestContext, RequestPipeline, UpstreamProvider,
+    select_request_pipeline, validate_pipeline_override,
 };
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator,
-    fold_reasoning_into_content, prepare_generic_request, prepare_light_request,
-    prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
-    strip_reasoning_from_completion_value,
+    prepare_generic_request, prepare_light_request, prepare_upstream_request,
+    rewrite_response_body, rewrite_sse_chunk, sanitize_client_completion,
 };
 use crate::cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
 };
-use crate::cache_response::send_cached_response;
+use crate::cache_response::{
+    completion_json_has_visible_client_content, send_cached_response,
+};
+use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
@@ -122,11 +135,7 @@ impl GatewayProxy {
     }
 
     fn reasoning_config(&self) -> ReasoningConfig {
-        self.state
-            .reasoning_config
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.state.reasoning_config.read().clone()
     }
 
     fn authorize_client(
@@ -168,8 +177,8 @@ impl GatewayProxy {
             .runtime
             .domain_policies
             .read()
-            .ok()
-            .and_then(|m| m.get(label).cloned())
+            .get(label)
+            .cloned()
             .map(|p| (p.pipeline.clone(), p.upstream_profile.clone()))
             .unwrap_or((None, None))
     }
@@ -188,13 +197,7 @@ impl GatewayProxy {
     ) -> HttpPeer {
         ctx.upstream.host = Some(backend.tls_sni.clone());
         let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
-        let conn_config = self
-            .state
-            .runtime
-            .conn_config
-            .read()
-            .map(|c| c.clone())
-            .unwrap_or_default();
+        let conn_config = self.state.runtime.conn_config.read().clone();
         apply_connection_options(&conn_config, &mut peer.options);
         peer
     }
@@ -225,6 +228,13 @@ impl GatewayProxy {
         ctx: &mut GatewayContext,
         cache_key_body: &[u8],
     ) -> bool {
+        let gate = {
+            let runtime = self.state.semantic_runtime.read();
+            if !runtime.enabled {
+                return false;
+            }
+            runtime.gate.clone()
+        };
         let Some(semantic_cache) = &self.state.semantic_cache else {
             return false;
         };
@@ -240,7 +250,7 @@ impl GatewayProxy {
 
         // Apply semantic gate before L2 search
         let gate_decision = evaluate_semantic_gate(
-            &self.state.semantic_gate,
+            &gate,
             &query_text,
             ctx.cache_hit.is_some(),
         );
@@ -297,50 +307,52 @@ impl GatewayProxy {
             "Semantic cache hit, returning cached response"
         );
 
-        ctx.cache_tier = Some(CacheTier::L2Semantic);
-        ctx.cache_hit = Some(entry.clone());
-        ctx.tokens.last_input = entry.usage.prompt_tokens;
-        ctx.tokens.last_output = entry.usage.completion_tokens;
-        global_metrics().record_cache_hit(
-            CacheTier::L2Semantic,
-            &ctx.model,
-            ctx.consumer.as_deref(),
-            ctx.domain.as_deref(),
-        );
-        global_metrics().record_latency(
-            crab_metrics::LatencyKind::CacheFetch,
-            ctx.request_start.elapsed(),
-            &ctx.model,
-            Some(CacheTier::L2Semantic),
-        );
-
-        let cost = self.state.pricing.cost_saved_usd(
-            &ctx.model,
-            entry.usage.prompt_tokens,
-            entry.usage.completion_tokens,
-        );
-        global_metrics().record_cost_saved(
-            &ctx.model,
-            ctx.consumer.as_deref(),
-            ctx.domain.as_deref(),
-            CacheTier::L2Semantic,
-            cost,
-        );
-
-        if !send_cached_response(
+        if send_cached_response(
             session,
             &entry,
             &ctx.model,
             ctx.is_streaming,
             CacheTier::L2Semantic,
-            self.reasoning_config().display_reasoning,
+            ctx.cached_reasoning_config.display_reasoning,
         )
         .await
         {
-            let _ = session.respond_error(500).await;
+            ctx.cache_tier = Some(CacheTier::L2Semantic);
+            ctx.cache_hit = Some(entry.clone());
+            ctx.tokens.last_input = entry.usage.prompt_tokens;
+            ctx.tokens.last_output = entry.usage.completion_tokens;
+            global_metrics().record_cache_hit(
+                CacheTier::L2Semantic,
+                &ctx.model,
+                ctx.consumer.as_deref(),
+                ctx.domain.as_deref(),
+            );
+            global_metrics().record_latency(
+                crab_metrics::LatencyKind::CacheFetch,
+                ctx.request_start.elapsed(),
+                &ctx.model,
+                Some(CacheTier::L2Semantic),
+            );
+            let cost = self.state.pricing.cost_saved_usd(
+                &ctx.model,
+                entry.usage.prompt_tokens,
+                entry.usage.completion_tokens,
+            );
+            global_metrics().record_cost_saved(
+                &ctx.model,
+                ctx.consumer.as_deref(),
+                ctx.domain.as_deref(),
+                CacheTier::L2Semantic,
+                cost,
+            );
+            return true;
         }
 
-        true
+        debug!(
+            request_id = %ctx.request_id,
+            "Semantic cache hit refused (hollow payload); continuing as miss"
+        );
+        false
     }
 }
 
@@ -394,7 +406,14 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if req_path == "/ready" {
-            let status = if self.state.tiered_cache.ping().await {
+            let redis_ok = self.state.tiered_cache.ping().await;
+            // Readiness includes upstream key availability: if all keys are exhausted
+            // (e.g. rate-limited or disabled), the gateway cannot serve requests.
+            // This intentionally reports 503 so load balancers route traffic elsewhere.
+            let default_profile = self.state.runtime.default_profile();
+            let pool = default_profile.resolve_upstream_pool();
+            let keys_available = pool.available_count() > 0;
+            let status = if redis_ok && keys_available {
                 200
             } else {
                 503
@@ -503,7 +522,35 @@ impl ProxyHttp for GatewayProxy {
             .and_then(|v| v.to_str().ok());
 
         match resolve_project_id(key_project_id.as_deref(), project_id_header) {
-            Ok(project_id) => ctx.project_id = project_id,
+            Ok(mut project_id) => {
+                if project_id.is_none()
+                    && self.state.runtime.auto_project_id_from_client_key
+                    && !provided_key.is_empty()
+                {
+                    match derive_project_id_from_client_key(&provided_key) {
+                        Ok(derived) => {
+                            debug_agent_log(
+                                "H-UID",
+                                "proxy.rs:request_filter",
+                                "auto project_id from client key",
+                                serde_json::json!({
+                                    "request_id": ctx.request_id,
+                                    "project_id_prefix": derived.chars().take(12).collect::<String>(),
+                                }),
+                            );
+                            project_id = Some(derived);
+                        }
+                        Err(e) => {
+                            warn!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                "auto_project_id_from_client_key failed"
+                            );
+                        }
+                    }
+                }
+                ctx.project_id = project_id;
+            }
             Err(ProjectResolveError::Mismatch) => {
                 let body = serde_json::json!({
                     "error": {
@@ -697,6 +744,7 @@ impl ProxyHttp for GatewayProxy {
         let upstream_base_url = active_profile.base_url.clone();
         let profile_fallback = active_profile.fallback_model.clone();
         let reasoning_cfg = self.reasoning_config();
+        ctx.cached_reasoning_config = reasoning_cfg.clone();
 
         // Stable ReasoningStore scope (deepseek-cursor-proxy style): header id > client sk-cc > req hash.
         let client_session = client_session_from_authorization(ctx.authorization.as_deref());
@@ -777,6 +825,38 @@ impl ProxyHttp for GatewayProxy {
                 let generic = prepare_generic_request(&payload);
                 upstream_model_log = generic.model.clone();
                 ctx.new_request_body = Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
+            }
+        }
+        ctx.upstream_model = Some(upstream_model_log.clone());
+
+        if selection.provider == UpstreamProvider::Deepseek {
+            if let Some(user_id) = ctx.project_id.as_deref() {
+                if let Some(tier) = classify_deepseek_v4_tier(&upstream_model_log) {
+                    match self
+                        .state
+                        .deepseek_user_id_limiter
+                        .try_acquire(user_id, tier)
+                    {
+                        Ok(guard) => ctx.deepseek_user_id_guard = Some(guard),
+                        Err(DeepSeekUserIdLimitError::Exceeded) => {
+                            global_metrics()
+                                .record_deepseek_user_id_concurrency_rejected(tier.as_str());
+                            global_metrics()
+                                .record_rejected("deepseek_user_concurrency_exceeded");
+                            let body = deepseek_user_concurrency_exceeded_error_json();
+                            if !send_json_error(
+                                session,
+                                http::StatusCode::TOO_MANY_REQUESTS,
+                                body.as_slice(),
+                            )
+                            .await
+                            {
+                                let _ = session.respond_error(429).await;
+                            }
+                            return Ok(true);
+                        }
+                    }
+                }
             }
         }
 
@@ -886,7 +966,7 @@ impl ProxyHttp for GatewayProxy {
                         .map(|p| p.as_str().to_string())
                         .unwrap_or_default(),
                     user_agent: None,
-                    upstream_model: None,
+                    upstream_model: ctx.upstream_model.clone(),
                 };
                 ctx.request_composition = Some(extract_composition(&payload, &hints));
                 if let Some(ref comp) = ctx.request_composition {
@@ -989,13 +1069,7 @@ impl ProxyHttp for GatewayProxy {
         }
         // #endregion
 
-        let fingerprint = self
-            .state
-            .runtime
-            .fingerprint
-            .read()
-            .map(|f| f.clone())
-            .unwrap_or_default();
+        let fingerprint = self.state.runtime.fingerprint.read().clone();
         let cache_key_body = ctx
             .original_request_body
             .as_deref()
@@ -1028,30 +1102,6 @@ impl ProxyHttp for GatewayProxy {
                         tier = ?tier,
                         "Cache hit, returning cached response"
                     );
-                    ctx.cache_tier = Some(tier);
-                    ctx.cache_hit = Some(entry.clone());
-                    ctx.tokens.last_input = entry.usage.prompt_tokens;
-                    ctx.tokens.last_output = entry.usage.completion_tokens;
-                    global_metrics().record_latency(
-                        crab_metrics::LatencyKind::CacheFetch,
-                        ctx.request_start.elapsed(),
-                        &ctx.model,
-                        Some(tier),
-                    );
-
-                    let cost = self.state.pricing.cost_saved_usd(
-                        &ctx.model,
-                        entry.usage.prompt_tokens,
-                        entry.usage.completion_tokens,
-                    );
-                    global_metrics().record_cost_saved(
-                        &ctx.model,
-                        ctx.consumer.as_deref(),
-                        ctx.domain.as_deref(),
-                        tier,
-                        cost,
-                    );
-
                     // #region agent log
                     let req_hash_short = ctx
                         .req_hash
@@ -1080,7 +1130,7 @@ impl ProxyHttp for GatewayProxy {
                         &ctx.model,
                         ctx.is_streaming,
                         tier,
-                        self.reasoning_config().display_reasoning,
+                        ctx.cached_reasoning_config.display_reasoning,
                     )
                     .await;
 
@@ -1098,11 +1148,50 @@ impl ProxyHttp for GatewayProxy {
                     );
                     // #endregion
 
-                    if !sent_ok {
-                        let _ = session.respond_error(500).await;
+                    if sent_ok {
+                        ctx.cache_tier = Some(tier);
+                        ctx.cache_hit = Some(entry.clone());
+                        ctx.tokens.last_input = entry.usage.prompt_tokens;
+                        ctx.tokens.last_output = entry.usage.completion_tokens;
+                        global_metrics().record_latency(
+                            crab_metrics::LatencyKind::CacheFetch,
+                            ctx.request_start.elapsed(),
+                            &ctx.model,
+                            Some(tier),
+                        );
+                        let cost = self.state.pricing.cost_saved_usd(
+                            &ctx.model,
+                            entry.usage.prompt_tokens,
+                            entry.usage.completion_tokens,
+                        );
+                        global_metrics().record_cost_saved(
+                            &ctx.model,
+                            ctx.consumer.as_deref(),
+                            ctx.domain.as_deref(),
+                            tier,
+                            cost,
+                        );
+                        return Ok(true);
                     }
 
-                    return Ok(true);
+                    warn!(
+                        request_id = %ctx.request_id,
+                        cache_key = %cache_key,
+                        tier = ?tier,
+                        "Hollow cache entry (no client-visible content); treating as miss"
+                    );
+                    // #region agent log
+                    debug_agent_log(
+                        "H1",
+                        "proxy.rs:request_filter",
+                        "hollow cache fallthrough to upstream",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "req_hash": req_hash_short,
+                            "tier": tier.as_str(),
+                        }),
+                    );
+                    // #endregion
                 } else {
                     // #region agent log
                     debug_agent_log(
@@ -1195,45 +1284,48 @@ impl ProxyHttp for GatewayProxy {
                             );
                             // #endregion
 
-                            ctx.cache_tier = Some(tier);
-                            ctx.cache_hit = Some(entry.clone());
-                            ctx.tokens.last_input = entry.usage.prompt_tokens;
-                            ctx.tokens.last_output = entry.usage.completion_tokens;
-                            global_metrics().record_coalesced_request();
-                            global_metrics().record_latency(
-                                crab_metrics::LatencyKind::CacheFetch,
-                                ctx.request_start.elapsed(),
-                                &ctx.model,
-                                Some(tier),
-                            );
-
-                            let cost = self.state.pricing.cost_saved_usd(
-                                &ctx.model,
-                                entry.usage.prompt_tokens,
-                                entry.usage.completion_tokens,
-                            );
-                            global_metrics().record_cost_saved(
-                                &ctx.model,
-                                ctx.consumer.as_deref(),
-                                ctx.domain.as_deref(),
-                                tier,
-                                cost,
-                            );
-
-                            if !send_cached_response(
+                            let sent_ok = send_cached_response(
                                 session,
                                 &entry,
                                 &ctx.model,
                                 ctx.is_streaming,
                                 tier,
-                                self.reasoning_config().display_reasoning,
+                                ctx.cached_reasoning_config.display_reasoning,
                             )
-                            .await
-                            {
-                                let _ = session.respond_error(500).await;
+                            .await;
+
+                            if sent_ok {
+                                ctx.cache_tier = Some(tier);
+                                ctx.cache_hit = Some(entry.clone());
+                                ctx.tokens.last_input = entry.usage.prompt_tokens;
+                                ctx.tokens.last_output = entry.usage.completion_tokens;
+                                global_metrics().record_coalesced_request();
+                                global_metrics().record_latency(
+                                    crab_metrics::LatencyKind::CacheFetch,
+                                    ctx.request_start.elapsed(),
+                                    &ctx.model,
+                                    Some(tier),
+                                );
+                                let cost = self.state.pricing.cost_saved_usd(
+                                    &ctx.model,
+                                    entry.usage.prompt_tokens,
+                                    entry.usage.completion_tokens,
+                                );
+                                global_metrics().record_cost_saved(
+                                    &ctx.model,
+                                    ctx.consumer.as_deref(),
+                                    ctx.domain.as_deref(),
+                                    tier,
+                                    cost,
+                                );
+                                return Ok(true);
                             }
 
-                            return Ok(true);
+                            warn!(
+                                request_id = %ctx.request_id,
+                                cache_key = %cache_key,
+                                "Follower hollow cache entry; waiting for upstream path"
+                            );
                             }
                         } else if guard.leader_failed() {
                             warn!(
@@ -1249,6 +1341,17 @@ impl ProxyHttp for GatewayProxy {
                             }
                             return Ok(true);
                         } else {
+                            // #region agent log
+                            debug_agent_log(
+                                "H-F",
+                                "proxy.rs:request_filter",
+                                "follower no cache entry, falling through to upstream",
+                                serde_json::json!({
+                                    "request_id": ctx.request_id,
+                                    "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
+                                }),
+                            );
+                            // #endregion
                             warn!(
                                 request_id = %ctx.request_id,
                                 cache_key = %cache_key,
@@ -1275,14 +1378,50 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if !self.try_acquire_upstream_key(ctx) {
-            let body = upstream_pool_exhausted_error_json();
-            if !send_json_error_with_retry_after(session, http::StatusCode::SERVICE_UNAVAILABLE, &body, 60)
+            let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
+            let failure = pool.diagnose_acquire_failure();
+            let (body, error_code, retry_after) = upstream_pool_exhausted_error_details(failure);
+            // #region agent log
+            debug_agent_log(
+                "H-K",
+                "proxy.rs:request_filter",
+                "upstream key pool exhausted",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
+                    "upstream_profile": ctx.upstream_profile_id,
+                    "pool_total": pool.len(),
+                    "pool_available": pool.available_count(),
+                    "failure_reason": format!("{:?}", failure),
+                    "error_code": error_code,
+                    "retry_after_secs": retry_after,
+                    "project_id_set": ctx.project_id.is_some(),
+                }),
+            );
+            // #endregion
+            if !send_json_error_with_retry_after(session, http::StatusCode::SERVICE_UNAVAILABLE, &body, retry_after)
                 .await
             {
                 let _ = session.respond_error(503).await;
             }
             return Ok(true);
         }
+
+        // #region agent log
+        debug_agent_log(
+            "H-OUT",
+            "proxy.rs:request_filter",
+            "request_filter returning false (proxy upstream)",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
+                "pipeline": ctx.request_pipeline.map(|p| p.as_str()),
+                "has_prepared": ctx.prepared_request.is_some(),
+                "new_body_len": ctx.new_request_body.as_ref().map(|b| b.len()),
+                "outbound_bytes": ctx.upstream_outbound_body_len,
+            }),
+        );
+        // #endregion
 
         Ok(false)
     }
@@ -1303,13 +1442,7 @@ impl ProxyHttp for GatewayProxy {
             ctx.upstream.backend_name = Some(backend.name.clone());
             ctx.upstream.host = Some(backend.tls_sni.clone());
             let peer = self.create_upstream_peer(backend, ctx);
-            let conn_config = self
-                .state
-                .runtime
-                .conn_config
-                .read()
-                .map(|c| c.clone())
-                .unwrap_or_default();
+            let conn_config = self.state.runtime.conn_config.read().clone();
             // #region agent log
             debug_agent_log(
                 "H1",
@@ -1351,23 +1484,13 @@ impl ProxyHttp for GatewayProxy {
         // Transition timed-out open circuits to half-open before backend selection.
         // Read-first: only acquire write lock if there are open circuits.
         let has_open = {
-            let health = self
-                .state
-                .runtime
-                .backend_health
-                .read()
-                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let health = self.state.runtime.backend_health.read();
             health
                 .values()
                 .any(|h| matches!(h.circuit_state, CircuitState::Open))
         };
         if has_open {
-            let mut health = self
-                .state
-                .runtime
-                .backend_health
-                .write()
-                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let mut health = self.state.runtime.backend_health.write();
             let circuit_cfg = &self.state.runtime.circuit_breaker_config;
             for h in health.values_mut() {
                 h.check_open_circuit(circuit_cfg);
@@ -1376,12 +1499,7 @@ impl ProxyHttp for GatewayProxy {
 
         // Check if we have health information to filter by
         let backend = {
-            let health = self
-                .state
-                .runtime
-                .backend_health
-                .read()
-                .map_err(|_| Error::new(ErrorType::InternalError))?;
+            let health = self.state.runtime.backend_health.read();
             router
                 .select_healthy(affinity_key.as_bytes(), |name| {
                     health.get(name).map(|h| h.healthy).unwrap_or(true)
@@ -1400,13 +1518,7 @@ impl ProxyHttp for GatewayProxy {
         ctx.upstream.backend_name = Some(backend.name.clone());
         ctx.upstream.host = Some(backend.tls_sni.clone());
         let peer = self.create_upstream_peer(&backend, ctx);
-        let conn_config = self
-            .state
-            .runtime
-            .conn_config
-            .read()
-            .map(|c| c.clone())
-            .unwrap_or_default();
+        let conn_config = self.state.runtime.conn_config.read().clone();
         // #region agent log
         debug_agent_log(
             "H1",
@@ -1465,13 +1577,7 @@ impl ProxyHttp for GatewayProxy {
             let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
         }
 
-        let conn_config = self
-            .state
-            .runtime
-            .conn_config
-            .read()
-            .map_err(|_| Error::new(ErrorType::InternalError))?
-            .clone();
+        let conn_config = self.state.runtime.conn_config.read().clone();
         if conn_config.upstream_disable_keepalive {
             ctx.upstream.connection_close = true;
             let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
@@ -1553,6 +1659,19 @@ impl ProxyHttp for GatewayProxy {
     ) -> Result<()> {
         let status = upstream_response.status.as_u16();
         ctx.upstream.http_status = Some(status);
+        // #region agent log
+        debug_agent_log(
+            "UP-SEEN",
+            "proxy.rs:response_filter",
+            "upstream response header received",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "status": status,
+                "is_streaming": ctx.is_streaming,
+                "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
+            }),
+        );
+        // #endregion
         if status >= 400 {
             // #region agent log
             debug_agent_log(
@@ -1568,7 +1687,7 @@ impl ProxyHttp for GatewayProxy {
             );
             // #endregion
         }
-        let pool = self.state.runtime.upstream_pool();
+        let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
         let key_id = ctx
             .upstream.key_guard
             .as_ref()
@@ -1576,6 +1695,7 @@ impl ProxyHttp for GatewayProxy {
 
         if status == 429 {
             if let Some(ref id) = key_id {
+                // Set cooldown for the 429'd key exactly once.
                 pool.report_rate_limited(id);
                 global_metrics().record_upstream_key_request(id, "rate_limited");
 
@@ -1589,8 +1709,20 @@ impl ProxyHttp for GatewayProxy {
 
                 if ctx.upstream.retry_budget > 0 {
                     ctx.upstream.retry_budget -= 1;
+                    // Try a key from a different account_id (cooldown already set above).
                     if let Some(new_guard) =
-                        UpstreamKeyPool::rotate_after_rate_limit(&pool, id)
+                        pool.acquire_excluding_account(
+                            ctx.upstream
+                                .key_guard
+                                .as_ref()
+                                .and_then(|g| {
+                                    pool.list_status()
+                                        .into_iter()
+                                        .find(|s| s.id == g.key_id())
+                                        .map(|s| s.account_id)
+                                })
+                                .as_deref(),
+                        )
                     {
                         ctx.upstream.key_guard = Some(new_guard);
                         global_metrics().record_upstream_key_retry("rate_limited_rotate");
@@ -1635,10 +1767,9 @@ impl ProxyHttp for GatewayProxy {
             }
             if status >= 500 {
                 if let Some(ref backend_name) = ctx.upstream.backend_name {
-                    if let Ok(mut health) = self.state.runtime.backend_health.write() {
-                        if let Some(h) = health.get_mut(backend_name) {
-                            h.record_failure(&self.state.runtime.circuit_breaker_config);
-                        }
+                    let mut health = self.state.runtime.backend_health.write();
+                    if let Some(h) = health.get_mut(backend_name) {
+                        h.record_failure(&self.state.runtime.circuit_breaker_config);
                     }
                 }
             }
@@ -1649,10 +1780,9 @@ impl ProxyHttp for GatewayProxy {
         let _ = upstream_response.insert_header("x-cache-status", "miss");
 
         if let Some(ref backend_name) = ctx.upstream.backend_name {
-            if let Ok(mut health) = self.state.runtime.backend_health.write() {
-                if let Some(h) = health.get_mut(backend_name) {
-                    h.record_success(&self.state.runtime.circuit_breaker_config);
-                }
+            let mut health = self.state.runtime.backend_health.write();
+            if let Some(h) = health.get_mut(backend_name) {
+                h.record_success(&self.state.runtime.circuit_breaker_config);
             }
         }
 
@@ -1700,8 +1830,29 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if let Some(data) = body.take() {
+            // #region agent log
+            if !ctx.upstream.first_body_chunk_logged {
+                ctx.upstream.first_body_chunk_logged = true;
+                debug_agent_log(
+                    "UP-BODY",
+                    "proxy.rs:upstream_response_body_filter",
+                    "first upstream body chunk",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "chunk_len": data.len(),
+                        "upstream_status": ctx.upstream.http_status,
+                        "is_streaming": ctx.is_streaming,
+                        "end_of_stream": end_of_stream,
+                        "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
+                        "pipeline": ctx.request_pipeline.map(|p| p.as_str()),
+                        "has_prepared": ctx.prepared_request.is_some(),
+                    }),
+                );
+            }
+            // #endregion
             if !ctx.is_streaming {
                 ctx.accumulated_body.extend_from_slice(&data);
+                ctx.response_body_preview.extend_from_slice(&data);
             }
 
             if ctx.is_streaming {
@@ -1728,7 +1879,7 @@ impl ProxyHttp for GatewayProxy {
                         &mut ctx.stream.sse_remainder,
                         prepared,
                         accumulator,
-                        self.reasoning_config().display_reasoning,
+                        ctx.cached_reasoning_config.display_reasoning,
                         &mut ctx.stream.display_adapter,
                         &mut ctx.stream.pending_recovery_notice,
                         &self.state.reasoning_store,
@@ -1746,9 +1897,24 @@ impl ProxyHttp for GatewayProxy {
                         Some(bytes::Bytes::from(rewritten))
                     }
                 } else {
-                    ctx.stream.client_sse_body.extend_from_slice(&data);
+                    let client_bytes = if ctx.request_pipeline
+                        == Some(RequestPipeline::CursorDeepSeekV4)
+                        && !ctx.cached_reasoning_config.display_reasoning
+                    {
+                        if !ctx.stream.reasoning_bypass_warned {
+                            ctx.stream.reasoning_bypass_warned = true;
+                            warn!(
+                                request_id = %ctx.request_id,
+                                "CursorDeepSeekV4 stream without prepared_request; applying silent reasoning strip"
+                            );
+                        }
+                        apply_silent_strip_to_sse_chunk(&data)
+                    } else {
+                        data.to_vec()
+                    };
+                    ctx.stream.client_sse_body.extend_from_slice(&client_bytes);
                     ctx.accumulated_body.extend_from_slice(&data);
-                    Some(data.clone())
+                    Some(bytes::Bytes::from(client_bytes))
                 };
 
                 let parse_src = downstream_chunk.as_ref().unwrap_or(&data);
@@ -1799,13 +1965,16 @@ impl ProxyHttp for GatewayProxy {
                 );
             }
 
-            if let (Some(prepared), Some(accumulator)) =
-                (&ctx.prepared_request, &mut ctx.stream.accumulator)
-            {
-                if let Some(store_reasoning) = Some(&self.state.reasoning_store) {
+            // Non-streaming: reasoning is stored inside rewrite_response_body via
+            // record_response_reasoning. The accumulator is not populated for
+            // non-streaming responses, so skip the redundant store call.
+            if ctx.is_streaming {
+                if let (Some(prepared), Some(accumulator)) =
+                    (&ctx.prepared_request, &mut ctx.stream.accumulator)
+                {
                     for (scope, prior_messages) in &prepared.record_response_contexts {
                         accumulator.store_reasoning(
-                            store_reasoning,
+                            &self.state.reasoning_store,
                             scope,
                             &prepared.cache_namespace,
                             prior_messages,
@@ -1823,8 +1992,8 @@ impl ProxyHttp for GatewayProxy {
                     &prepared.cache_namespace,
                     ctx.stream.pending_recovery_notice.as_deref(),
                     &prepared.record_response_contexts,
-                    self.reasoning_config().display_reasoning,
-                    self.reasoning_config().collapsible_reasoning,
+                    ctx.cached_reasoning_config.display_reasoning,
+                    ctx.cached_reasoning_config.collapsible_reasoning,
                 ) {
                     Some(rewritten) => {
                         *body = Some(bytes::Bytes::from(rewritten.clone()));
@@ -1876,7 +2045,7 @@ impl ProxyHttp for GatewayProxy {
                         .state
                         .tiered_cache
                         .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
-                    let display_reasoning = self.reasoning_config().display_reasoning;
+                    let display_reasoning = ctx.cached_reasoning_config.display_reasoning;
 
                     let cache_body =
                         prepare_response_body_for_cache(client_body.clone(), display_reasoning);
@@ -1954,7 +2123,7 @@ impl ProxyHttp for GatewayProxy {
                     &mut ctx.stream.sse_remainder,
                     prepared,
                     accumulator,
-                    self.reasoning_config().display_reasoning,
+                    ctx.cached_reasoning_config.display_reasoning,
                     &mut ctx.stream.display_adapter,
                     &mut ctx.stream.pending_recovery_notice,
                     &self.state.reasoning_store,
@@ -1988,7 +2157,7 @@ impl ProxyHttp for GatewayProxy {
             {
                 let messages = accumulator.messages();
                 if !messages.is_empty() {
-                    let reasoning_cfg = self.reasoning_config();
+                    let reasoning_cfg = &ctx.cached_reasoning_config;
                     let mut response_value = serde_json::json!({
                         "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
                         "object": "chat.completion",
@@ -2010,27 +2179,29 @@ impl ProxyHttp for GatewayProxy {
                             "total_tokens": 0
                         }
                     });
-                    if reasoning_cfg.display_reasoning {
-                        fold_reasoning_into_content(
-                            &mut response_value,
-                            reasoning_cfg.collapsible_reasoning,
-                        );
-                    }
-                    strip_reasoning_from_completion_value(&mut response_value);
-                    let response_json = serde_json::to_string(&response_value).unwrap_or_default();
+                    sanitize_client_completion(
+                        &mut response_value,
+                        reasoning_cfg.display_reasoning,
+                        reasoning_cfg.collapsible_reasoning,
+                    );
+                    let response_bytes =
+                        serde_json::to_vec(&response_value).unwrap_or_default();
+                    // Store synthesized completion JSON as response preview for trace logging.
+                    ctx.response_body_preview = response_bytes.clone();
 
-                    if self.state.runtime.stream_cache_enabled() {
-                        let ttl_secs = self
-                            .state
-                            .tiered_cache
-                            .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
+                    let ttl_secs = self
+                        .state
+                        .tiered_cache
+                        .resolve_ttl(&ctx.model, ctx.consumer.as_deref());
 
+                    if self.state.runtime.stream_cache_enabled()
+                        && completion_json_has_visible_client_content(
+                            &response_bytes,
+                            reasoning_cfg.display_reasoning,
+                        )
+                    {
                         let sse_body = ctx.stream.client_sse_body.clone();
                         let max_sse = self.state.max_sse_cache_bytes;
-                        let response_bytes = prepare_response_body_for_cache(
-                            response_json.clone().into_bytes(),
-                            reasoning_cfg.display_reasoning,
-                        );
                         let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                             build_cache_entry_with_sse(
                                 response_bytes.clone(),
@@ -2048,7 +2219,7 @@ impl ProxyHttp for GatewayProxy {
                             );
                             global_metrics().record_stream_cache_sse_omitted("over_limit");
                             build_cache_entry(
-                                response_bytes,
+                                response_bytes.clone(),
                                 ctx.model.clone(),
                                 ttl_secs,
                                 true,
@@ -2068,6 +2239,31 @@ impl ProxyHttp for GatewayProxy {
                             }
                         });
 
+                    } else if self.state.runtime.stream_cache_enabled() {
+                        warn!(
+                            request_id = %ctx.request_id,
+                            cache_key = ?ctx.cache_key,
+                            "Skipping stream cache write: no client-visible content after sanitize"
+                        );
+                        // #region agent log
+                        debug_agent_log(
+                            "H1",
+                            "proxy.rs:upstream_response_body_filter",
+                            "skipped hollow stream cache write",
+                            serde_json::json!({
+                                "request_id": ctx.request_id,
+                                "response_body_len": response_bytes.len(),
+                                "client_sse_len": ctx.stream.client_sse_body.len(),
+                                "display_reasoning": reasoning_cfg.display_reasoning,
+                            }),
+                        );
+                        // #endregion
+                    }
+
+                    if completion_json_has_visible_client_content(
+                        &response_bytes,
+                        reasoning_cfg.display_reasoning,
+                    ) {
                         if let Some(semantic_cache) = &self.state.semantic_cache {
                             if let Some(original_body) = &ctx.original_request_body {
                                 if let Ok(payload) =
@@ -2081,10 +2277,7 @@ impl ProxyHttp for GatewayProxy {
                                         {
                                             let semantic_cache = semantic_cache.clone();
                                             let entry_for_semantic = build_cache_entry(
-                                                prepare_response_body_for_cache(
-                                                    response_json.into_bytes(),
-                                                    reasoning_cfg.display_reasoning,
-                                                ),
+                                                response_bytes.clone(),
                                                 ctx.model.clone(),
                                                 ttl_secs,
                                                 true,
@@ -2120,7 +2313,7 @@ impl ProxyHttp for GatewayProxy {
 
     async fn logging(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         error: Option<&pingora_core::Error>,
         ctx: &mut Self::CTX,
     ) {
@@ -2167,6 +2360,11 @@ impl ProxyHttp for GatewayProxy {
                     "upstream_status": ctx.upstream.http_status,
                     "cache_tier": ctx.cache_tier.map(|t| t.as_str()),
                     "is_streaming": ctx.is_streaming,
+                    "total_tokens": ctx.tokens.total,
+                    "client_sse_bytes": ctx.stream.client_sse_body.len(),
+                    "accumulated_body_bytes": ctx.accumulated_body.len(),
+                    "has_prepared": ctx.prepared_request.is_some(),
+                    "ttft_ms": ctx.ttft.map(|d| d.as_millis()),
                 }),
             );
             // #endregion
@@ -2186,6 +2384,8 @@ impl ProxyHttp for GatewayProxy {
                 "Request completed"
             );
             if let Some(trace_logger) = &self.state.trace_logger {
+                let max_payload = trace_logger.max_payload_bytes();
+                let max_resp = trace_logger.max_response_preview_bytes();
                 if let Some(body) = &ctx.original_request_body {
                     let mut entry = SanitizedLogEntry::from_request(
                         body,
@@ -2199,12 +2399,13 @@ impl ProxyHttp for GatewayProxy {
                         ctx.cache_tier.is_some(),
                         ctx.cache_tier.map(|t| t.as_str().to_string()),
                         ctx.request_composition.clone(),
+                        max_payload,
                     );
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                     }
                     entry.reasoning_strategy =
-                        Some(self.reasoning_config().missing_reasoning_strategy.clone());
+                        Some(ctx.cached_reasoning_config.missing_reasoning_strategy.clone());
                     let hit = ctx.tokens.last_prompt_cache_hit;
                     let miss = ctx.tokens.last_prompt_cache_miss;
                     if hit + miss > 0 {
@@ -2219,8 +2420,45 @@ impl ProxyHttp for GatewayProxy {
                             .tokens.last_input
                             .saturating_add(ctx.tokens.last_output) as usize;
                     }
+                    // Populate response_preview from best available source
+                    if max_resp > 0 {
+                        entry.response_preview = build_response_preview(ctx, max_resp);
+                    }
+                    apply_user_id_audit_to_entry(
+                        &mut entry,
+                        ctx.request_pipeline,
+                        ctx.upstream_profile_id.as_deref(),
+                        ctx.upstream_model.as_deref(),
+                        ctx.project_id.as_deref(),
+                        ctx.original_request_body.as_deref(),
+                        ctx.new_request_body.as_deref(),
+                    );
                     trace_logger.log(entry);
                 }
+            }
+        }
+
+        // ── Raw capture ──────────────────────────────────────────────
+        if let Some(raw_logger) = &self.state.raw_capture_logger {
+            let req_path = session.req_header().uri.path();
+            if !raw_logger.should_skip(req_path) {
+                let reasoning_strategy = ctx
+                    .cached_reasoning_config
+                    .missing_reasoning_strategy
+                    .as_str();
+                raw_logger.capture(
+                    &ctx.request_id,
+                    ctx.req_hash.as_deref(),
+                    &ctx.model,
+                    ctx.consumer.as_deref(),
+                    ctx.project_id.as_deref(),
+                    ctx.request_pipeline.as_ref().map(|p| p.as_str()),
+                    ctx.is_streaming,
+                    ctx.prepared_request.as_ref().map(|p| p.retired_prefix_messages),
+                    Some(reasoning_strategy),
+                    ctx.original_request_body.as_deref(),
+                    ctx.new_request_body.as_deref(),
+                );
             }
         }
 
@@ -2337,74 +2575,37 @@ fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
     serde_json::to_vec(&body).unwrap_or_default()
 }
 
-async fn send_json_error_with_retry_after(
-    session: &mut Session,
-    status: http::StatusCode,
-    body: &[u8],
-    retry_after_secs: u64,
-) -> bool {
-    send_json_error_inner(session, status, body, Some(retry_after_secs)).await
-}
-
-async fn send_json_error(session: &mut Session, status: http::StatusCode, body: &[u8]) -> bool {
-    send_json_error_inner(session, status, body, None).await
-}
-
-async fn send_json_ok(session: &mut Session, body: &[u8]) -> bool {
-    send_json_error_inner(session, http::StatusCode::OK, body, None).await
-}
-
-async fn send_json_error_inner(
-    session: &mut Session,
-    status: http::StatusCode,
-    body: &[u8],
-    retry_after_secs: Option<u64>,
-) -> bool {
-    use pingora_http::ResponseHeader;
-    let mut header = match ResponseHeader::build(status, Some(8)) {
-        Ok(h) => h,
-        Err(_) => return false,
+/// Build a response preview string from the best available source in the context.
+///
+/// Priority:
+/// 1. Cache hit → `entry.response_body`
+/// 2. Non-streaming accumulated body → `ctx.response_body_preview`
+/// 3. Streaming SSE body → `ctx.stream.client_sse_body`
+///
+/// Returns `None` when no data is available or all sources are empty.
+fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> Option<String> {
+    let source: &[u8] = if let Some(ref cache_entry) = ctx.cache_hit {
+        &cache_entry.response_body
+    } else if !ctx.response_body_preview.is_empty() {
+        &ctx.response_body_preview
+    } else if ctx.is_streaming && !ctx.stream.client_sse_body.is_empty() {
+        &ctx.stream.client_sse_body
+    } else {
+        return None;
     };
-    let _ = header.insert_header("content-type", "application/json");
-    let _ = header.insert_header("content-length", body.len().to_string());
-    let _ = header.insert_header("connection", "close");
-    if let Some(secs) = retry_after_secs {
-        let _ = header.insert_header("retry-after", secs.to_string());
-    }
-    if session
-        .downstream_session
-        .write_response_header(Box::new(header))
-        .await
-        .is_err()
-    {
-        return false;
-    }
-    session
-        .downstream_session
-        .write_response_body(bytes::Bytes::copy_from_slice(body), true)
-        .await
-        .is_ok()
-}
 
-async fn send_cors_preflight(session: &mut Session) -> bool {
-    use pingora_http::ResponseHeader;
-    let mut header = match ResponseHeader::build(http::StatusCode::NO_CONTENT, Some(8)) {
-        Ok(h) => h,
-        Err(_) => return false,
+    if source.is_empty() {
+        return None;
+    }
+
+    let raw = String::from_utf8_lossy(source);
+    let truncated = if raw.len() > max_bytes {
+        format!("{}...<truncated {}>", &raw[..max_bytes], raw.len() - max_bytes)
+    } else {
+        raw.to_string()
     };
-    let _ = header.insert_header("access-control-allow-origin", "*");
-    let _ = header.insert_header("access-control-allow-methods", "GET, POST, OPTIONS");
-    let _ = header.insert_header(
-        "access-control-allow-headers",
-        "Authorization, Content-Type, X-Request-Id, X-Conversation-Id, X-Consumer, X-Project-Id",
-    );
-    let _ = header.insert_header("access-control-max-age", "86400");
-    let _ = header.insert_header("content-length", "0");
-    session
-        .downstream_session
-        .write_response_header(Box::new(header))
-        .await
-        .is_ok()
+
+    Some(truncated)
 }
 
 fn record_usage_metrics(

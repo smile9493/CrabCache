@@ -1,7 +1,8 @@
 use crate::upstream_pool::UpstreamKeyPool;
 use crab_pipeline::UpstreamProvider;
 use crab_route::AffinityRouter;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 pub struct UpstreamProfileRuntime {
     pub id: String,
@@ -16,10 +17,7 @@ pub struct UpstreamProfileRuntime {
 
 impl UpstreamProfileRuntime {
     pub fn resolve_upstream_pool(&self) -> Arc<UpstreamKeyPool> {
-        self.upstream_pool
-            .read()
-            .map(|p| Arc::clone(&p))
-            .unwrap_or_else(|_| panic!("upstream_pool lock poisoned"))
+        Arc::clone(&self.upstream_pool.read())
     }
 
     pub fn profile_descriptor(&self) -> crab_pipeline::ProfileDescriptor {

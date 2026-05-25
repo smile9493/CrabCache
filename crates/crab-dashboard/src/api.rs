@@ -364,10 +364,18 @@ pub async fn test_upstream_connection(
     post_json(&format!("{}/upstream/test", API_BASE), body).await
 }
 
-pub async fn detect_models() -> Result<ModelDetectResponse, String> {
+pub async fn detect_models(profile_id: &str) -> Result<ModelDetectResponse, String> {
     #[derive(serde::Serialize)]
     struct EmptyBody {}
-    post_json(&format!("{}/models/detect", API_BASE), &EmptyBody {}).await
+    post_json(
+        &format!(
+            "{}/models/detect?profile_id={}",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        &EmptyBody {},
+    )
+    .await
 }
 
 pub async fn apply_models(body: &ModelApplyBody) -> Result<SyncResult, String> {
@@ -389,12 +397,91 @@ pub async fn patch_upstream_key(
     patch_json(&format!("{}/upstream/keys/{id}", API_BASE), req).await
 }
 
-pub async fn fetch_models() -> Result<ModelListResponse, String> {
-    fetch_json(&format!("{}/models", API_BASE)).await
+pub async fn fetch_models(profile_id: Option<&str>) -> Result<ModelListResponse, String> {
+    let url = match profile_id {
+        Some(id) => format!(
+            "{}/models?profile_id={}",
+            API_BASE,
+            urlencoding::encode(id)
+        ),
+        None => format!("{}/models", API_BASE),
+    };
+    fetch_json(&url).await
 }
 
-pub async fn sync_models() -> Result<SyncResult, String> {
-    let (builder, epoch) = apply_admin_auth(Request::post(&format!("{}/models", API_BASE)));
+pub async fn fetch_upstream_profiles() -> Result<crate::types::UpstreamProfilesAdminResponse, String> {
+    fetch_json(&format!("{}/upstream/profiles", API_BASE)).await
+}
+
+pub async fn put_upstream_profile(
+    id: &str,
+    req: &crate::types::PutUpstreamProfileAdminRequest,
+) -> Result<crate::types::UpstreamProfileAdminView, String> {
+    put_json(&format!("{}/upstream/profiles/{id}", API_BASE), req).await
+}
+
+pub async fn delete_upstream_profile(id: &str) -> Result<(), String> {
+    delete_json(&format!("{}/upstream/profiles/{id}", API_BASE)).await
+}
+
+
+pub async fn test_upstream_profile(id: &str) -> Result<UpstreamTestResult, String> {
+    #[derive(serde::Serialize)]
+    struct EmptyBody {}
+    post_json(
+        &format!("{}/upstream/profiles/{id}/test", API_BASE),
+        &EmptyBody {},
+    )
+    .await
+}
+
+pub async fn test_upstream_profile_key(
+    profile_id: &str,
+    key_id: &str,
+) -> Result<UpstreamTestResult, String> {
+    #[derive(serde::Serialize)]
+    struct EmptyBody {}
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{profile_id}/keys/{key_id}/test",
+            API_BASE
+        ),
+        &EmptyBody {},
+    )
+    .await
+}
+
+pub async fn fetch_upstream_profile_keys(
+    id: &str,
+) -> Result<crate::types::UpstreamProfileKeysAdminView, String> {
+    fetch_json(&format!("{}/upstream/profiles/{id}/keys", API_BASE)).await
+}
+
+pub async fn put_upstream_profile_keys(
+    id: &str,
+    req: &PutUpstreamKeysRequest,
+) -> Result<crate::types::UpstreamProfileKeysAdminView, String> {
+    put_json(&format!("{}/upstream/profiles/{id}/keys", API_BASE), req).await
+}
+
+pub async fn patch_upstream_profile_key(
+    profile_id: &str,
+    key_id: &str,
+    req: &PatchUpstreamKeyRequest,
+) -> Result<UpstreamKeyView, String> {
+    patch_json(
+        &format!("{}/upstream/profiles/{profile_id}/keys/{key_id}", API_BASE),
+        req,
+    )
+    .await
+}
+
+pub async fn sync_models(profile_id: &str) -> Result<SyncResult, String> {
+    let (builder, epoch) = apply_admin_auth(Request::post(&format!(
+        "{}/models?profile_id={}",
+        API_BASE,
+        urlencoding::encode(profile_id)
+    )));
     let resp = builder
         .send()
         .await
@@ -413,17 +500,38 @@ pub async fn fetch_routing_status() -> Result<RoutingStatus, String> {
     fetch_json(&format!("{}/routing/status", API_BASE)).await
 }
 
-pub async fn fetch_logs(
-    limit: Option<usize>,
-    cursor: Option<&str>,
-) -> Result<LogsPageResponse, String> {
+pub async fn fetch_logs(query: &crate::types::LogsFilterQuery) -> Result<LogsPageResponse, String> {
     let mut path = format!("{}/logs", API_BASE);
     let mut params = Vec::new();
-    if let Some(l) = limit {
+    if let Some(l) = query.limit {
         params.push(format!("limit={}", l));
     }
-    if let Some(c) = cursor.filter(|s| !s.is_empty()) {
-        params.push(format!("cursor={}", c));
+    if let Some(c) = query.cursor.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("cursor={}", percent_encode_query(c)));
+    }
+    if let Some(m) = query.model.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("model={}", percent_encode_query(m)));
+    }
+    if let Some(c) = query.consumer.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("consumer={}", percent_encode_query(c)));
+    }
+    if let Some(t) = query.cache_tier.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("cache_tier={}", percent_encode_query(t)));
+    }
+    if let Some(h) = query.request_hash.as_deref().filter(|s| !s.is_empty()) {
+        params.push(format!("request_hash={}", percent_encode_query(h)));
+    }
+    if let Some(v) = query.latency_min {
+        params.push(format!("latency_min={}", v));
+    }
+    if let Some(v) = query.latency_max {
+        params.push(format!("latency_max={}", v));
+    }
+    if let Some(v) = query.token_min {
+        params.push(format!("token_min={}", v));
+    }
+    if let Some(v) = query.token_max {
+        params.push(format!("token_max={}", v));
     }
     if !params.is_empty() {
         path.push('?');
@@ -612,4 +720,41 @@ pub async fn post_infra_speed_test_upload(
         return Err(http_error(resp, epoch).await);
     }
     Ok(())
+}
+
+// ── Raw Capture API ──────────────────────────────────────────────
+
+pub async fn fetch_capture_list(
+    hours: u32,
+    limit: Option<usize>,
+    consumer: Option<&str>,
+    project_id: Option<&str>,
+    request_hash: Option<&str>,
+) -> Result<crate::types::CaptureListResponse, String> {
+    let mut path = format!("{}/capture/list?hours={}", API_BASE, hours);
+    if let Some(l) = limit {
+        path.push_str(&format!("&limit={}", l));
+    }
+    if let Some(c) = consumer.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&consumer={}", percent_encode_query(c)));
+    }
+    if let Some(pid) = project_id.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&project_id={}", percent_encode_query(pid)));
+    }
+    if let Some(rh) = request_hash.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&request_hash={}", percent_encode_query(rh)));
+    }
+    fetch_json(&path).await
+}
+
+pub async fn fetch_capture_detail(
+    request_id: &str,
+) -> Result<crate::types::CaptureDetailResponse, String> {
+    fetch_json(&format!("{}/capture/{}", API_BASE, request_id)).await
+}
+
+pub async fn fetch_capture_stats(
+    hours: u32,
+) -> Result<crate::types::CaptureStatsResponse, String> {
+    fetch_json(&format!("{}/capture/stats?hours={}", API_BASE, hours)).await
 }

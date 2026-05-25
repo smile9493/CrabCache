@@ -1,5 +1,7 @@
 use crate::TraceLogger;
+use crate::raw_capture::RawCaptureLogger;
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
+use crate::upstream_user_id_limiter::{UpstreamUserIdGuard, UpstreamUserIdLimiter};
 use crate::client_key_rate_limiter::ClientKeyRateLimiter;
 use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::UpstreamKeyGuard;
@@ -10,10 +12,11 @@ use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
-use crab_semantic::{SemanticCache, SemanticGateConfig};
+use crate::semantic_runtime::SharedSemanticRuntime;
+use crab_semantic::SemanticCache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -217,6 +220,8 @@ pub struct UpstreamState {
     pub retry_buffer_truncated: bool,
     /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
     pub error_body_logged: bool,
+    /// Whether the first upstream body chunk was logged for debug.
+    pub first_body_chunk_logged: bool,
 }
 
 impl UpstreamState {
@@ -239,6 +244,7 @@ impl Default for UpstreamState {
             connection_close: false,
             retry_buffer_truncated: false,
             error_body_logged: false,
+            first_body_chunk_logged: false,
         }
     }
 }
@@ -254,6 +260,8 @@ pub struct StreamState {
     /// Client-shaped SSE bytes accumulated for L0/L1 `sse_body` (not upstream raw).
     pub client_sse_body: Vec<u8>,
     pub pending_recovery_notice: Option<String>,
+    /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
+    pub reasoning_bypass_warned: bool,
 }
 
 impl Default for StreamState {
@@ -265,6 +273,7 @@ impl Default for StreamState {
             sse_remainder: Vec::new(),
             client_sse_body: Vec::new(),
             pending_recovery_notice: None,
+            reasoning_bypass_warned: false,
         }
     }
 }
@@ -282,6 +291,8 @@ pub struct GatewayContext {
     pub request_pipeline: Option<RequestPipeline>,
     pub pipeline_reason: Option<PipelineSelectionReason>,
     pub upstream_profile_id: Option<String>,
+    /// Model name after pipeline prepare (upstream-bound).
+    pub upstream_model: Option<String>,
     pub request_start: Instant,
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
@@ -300,6 +311,7 @@ pub struct GatewayContext {
     pub prompt_cache_key: Option<String>,
     pub request_permit: Option<OwnedSemaphorePermit>,
     pub client_key_guard: Option<ClientKeyGuard>,
+    pub deepseek_user_id_guard: Option<UpstreamUserIdGuard>,
     /// Serialized upstream JSON body length after reasoning prepare (for diagnostics).
     pub upstream_outbound_body_len: usize,
     /// Set in `upstream_request_filter` before Pingora writes upstream headers.
@@ -312,6 +324,11 @@ pub struct GatewayContext {
     pub upstream: UpstreamState,
     /// Streaming response processing state.
     pub stream: StreamState,
+    /// Accumulated response body for trace logging (non-streaming / streaming).
+    /// Only populated when `trace_logging.max_response_preview_bytes > 0`.
+    pub response_body_preview: Vec<u8>,
+    /// Per-request cached reasoning config snapshot (avoids repeated RwLock reads).
+    pub cached_reasoning_config: ReasoningConfig,
 }
 
 impl GatewayContext {
@@ -329,6 +346,7 @@ impl GatewayContext {
             request_pipeline: None,
             pipeline_reason: None,
             upstream_profile_id: None,
+            upstream_model: None,
             request_start: Instant::now(),
             ttft: None,
             accumulated_body: Vec::new(),
@@ -345,12 +363,15 @@ impl GatewayContext {
             prompt_cache_key: None,
             request_permit: None,
             client_key_guard: None,
+            deepseek_user_id_guard: None,
             upstream_outbound_body_len: 0,
             upstream_headers_prepared_at: None,
             request_composition: None,
             tokens: TokenStats::default(),
             upstream: UpstreamState::default(),
             stream: StreamState::default(),
+            response_body_preview: Vec::new(),
+            cached_reasoning_config: ReasoningConfig::default(),
         }
     }
 }
@@ -359,12 +380,13 @@ pub struct GatewayState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
     pub semantic_cache: Option<Arc<SemanticCache>>,
-    pub semantic_gate: SemanticGateConfig,
+    pub semantic_runtime: SharedSemanticRuntime,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningBackend>,
-    pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
+    pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
     pub cors_enabled: bool,
     pub trace_logger: Option<Arc<TraceLogger>>,
+    pub raw_capture_logger: Option<Arc<RawCaptureLogger>>,
     pub cache_key_namespace: Option<String>,
     pub pricing: PricingConfig,
     /// Max raw SSE bytes stored per stream cache entry (`0` = never store `sse_body`).
@@ -373,4 +395,5 @@ pub struct GatewayState {
     pub request_semaphore: Arc<Semaphore>,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
+    pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
 }

@@ -48,6 +48,8 @@ bb8.workspace = true
 bb8-redis.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
+parking_lot.workspace = true
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemallocator = { version = "0.5", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }

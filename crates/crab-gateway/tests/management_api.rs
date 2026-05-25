@@ -1,5 +1,7 @@
 //! Integration tests for the gateway management HTTP API.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use crab_cache::{FingerprintConfig, L0Config, TieredCache, TtlConfig};
@@ -9,58 +11,19 @@ use crab_control::{
 use crab_gateway::management::{ManagementState, router};
 use crab_pipeline::{PipelineGlobals, PipelineMode, UpstreamProvider};
 use crab_proxy::{
-    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool,
-    UpstreamProfileRuntime,
+    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, SemanticRuntimeState,
+    UpstreamKeyPool, UpstreamProfileRuntime,
 };
+use crab_semantic::SemanticGateConfig;
 use crab_reasoning::ReasoningBackend;
+use parking_lot::RwLock as ParkingRwLock;
 use std::collections::HashMap;
 use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use crab_route::AffinityRouter;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
-
-fn test_runtime() -> Arc<RuntimeConfig> {
-    let backends = crab_control::parse_backend_endpoints(
-        &["127.0.0.1:443".to_string()],
-        1,
-        "api.deepseek.com",
-    )
-    .unwrap();
-    let router = AffinityRouter::new(&backends).unwrap();
-    let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
-    let pool_handle = Arc::new(RwLock::new(upstream_pool));
-    let mut profiles = HashMap::new();
-    profiles.insert(
-        "deepseek".to_string(),
-        Arc::new(UpstreamProfileRuntime {
-            id: "deepseek".to_string(),
-            provider: UpstreamProvider::Deepseek,
-            base_url: "https://api.deepseek.com".to_string(),
-            fallback_model: "deepseek-v4-pro".to_string(),
-            tls_sni: "api.deepseek.com".to_string(),
-            router: AffinityRouter::new(&backends).unwrap(),
-            upstream_pool: pool_handle.clone(),
-        }),
-    );
-    RuntimeConfig::new(
-        router,
-        ttl,
-        ConnectionConfig::default(),
-        true,
-        FingerprintConfig::default(),
-        "https://api.deepseek.com".to_string(),
-        "deepseek-v4-pro".to_string(),
-        pool_handle,
-        profiles,
-        "deepseek".to_string(),
-        PipelineGlobals::default(),
-        false,
-        std::collections::HashSet::new(),
-    )
-}
 
 async fn test_management_state() -> Option<ManagementState> {
     let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
@@ -83,7 +46,7 @@ async fn test_management_state() -> Option<ManagementState> {
     );
 
     Some(ManagementState {
-        runtime: test_runtime(),
+        runtime: common::test_runtime(),
         tiered_cache,
         reasoning_store,
         reasoning_config: Arc::new(RwLock::new(ReasoningConfig::default())),
@@ -96,6 +59,13 @@ async fn test_management_state() -> Option<ManagementState> {
         )),
         invalidate_scan_timeout_secs: 300,
         client_key_limiter: ClientKeyLimiter::new(),
+        upstream_key_cooldown_secs: 60,
+        semantic_runtime: Arc::new(ParkingRwLock::new(SemanticRuntimeState::new(
+            false,
+            0.95,
+            SemanticGateConfig::default(),
+        ))),
+        semantic_cache: None,
     })
 }
 
@@ -704,7 +674,7 @@ async fn client_key_persisted_in_redis_state() {
         "created key should be in Redis control plane"
     );
 
-    let runtime_b = test_runtime();
+    let runtime_b = common::test_runtime();
     runtime_b.keys.clear();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
     assert!(
@@ -772,7 +742,7 @@ async fn domain_policies_persisted_in_redis_state() {
         500_000
     );
 
-    let runtime_b = test_runtime();
+    let runtime_b = common::test_runtime();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
     let policies = runtime_b.list_domain_policies();
     assert!(
@@ -783,7 +753,7 @@ async fn domain_policies_persisted_in_redis_state() {
 
 #[test]
 fn pipeline_runtime_set_and_read() {
-    let runtime = test_runtime();
+    let runtime = common::test_runtime();
     assert_eq!(
         runtime.pipeline_globals().pipeline_mode,
         PipelineMode::Auto
@@ -903,4 +873,293 @@ async fn cursor_models_http_roundtrip() {
     let view: crab_control::CursorModelsConfigView = serde_json::from_slice(&body).unwrap();
     assert!(view.aliases.contains_key("gpt-4o"));
     assert_eq!(view.aliases["gpt-4o"].upstream, "deepseek-v4-pro");
+}
+
+#[tokio::test]
+async fn upstream_profiles_list_and_upsert() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+
+    let put_body = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let keys_body = serde_json::json!({
+        "keys": [{ "id": "m1", "secret": "sk-mimo-test-key-12345678", "enabled": true }],
+        "mode": "replace"
+    });
+    let keys_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(keys_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(keys_resp.status(), StatusCode::OK);
+
+    let patch_body = serde_json::json!({ "enabled": false });
+    let patch_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/v1/upstream/profiles/mimo/keys/m1")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(patch_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+    let patch_bytes = axum::body::to_bytes(patch_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patch_json: serde_json::Value = serde_json::from_slice(&patch_bytes).unwrap();
+    assert_eq!(patch_json["enabled"], false);
+
+    let get_keys_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles/mimo/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_keys_resp.status(), StatusCode::OK);
+    let get_bytes = axum::body::to_bytes(get_keys_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let get_json: serde_json::Value = serde_json::from_slice(&get_bytes).unwrap();
+    assert_eq!(get_json["keys"][0]["enabled"], false);
+}
+
+#[tokio::test]
+async fn runtime_reasoning_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/reasoning")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body: crab_control::ReasoningRuntimeConfigView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "thinking_mode": "auto",
+        "reasoning_effort": get_body.reasoning_effort,
+        "missing_reasoning_strategy": "recover",
+        "display_reasoning": !get_body.display_reasoning,
+        "collapsible_reasoning": get_body.collapsible_reasoning,
+        "cache_invalidate_recommended": false
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/reasoning")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_view: crab_control::ReasoningRuntimeConfigView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(put_view.thinking_mode, "enabled");
+    assert!(!put_view.display_reasoning);
+}
+
+#[tokio::test]
+async fn runtime_semantic_threshold_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let before: crab_control::SemanticRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "enabled": before.enabled,
+        "similarity_threshold": 0.88,
+        "min_query_chars": before.min_query_chars,
+        "max_query_chars": before.max_query_chars,
+        "embed_only_on_exact_miss": before.embed_only_on_exact_miss
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let after: crab_control::SemanticRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert!((after.similarity_threshold - 0.88).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn runtime_semantic_enable_without_cache_returns_409() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_body = serde_json::json!({
+        "enabled": true,
+        "similarity_threshold": 0.95,
+        "min_query_chars": 8,
+        "max_query_chars": 4096,
+        "embed_only_on_exact_miss": true
+    });
+    let put_resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn runtime_connection_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/connection")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let before: crab_control::ConnectionRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "tcp_keepalive_idle_secs": before.tcp_keepalive_idle_secs + 1,
+        "tcp_keepalive_interval_secs": before.tcp_keepalive_interval_secs,
+        "tcp_keepalive_count": before.tcp_keepalive_count,
+        "idle_timeout_secs": before.idle_timeout_secs,
+        "h2_ping_interval_secs": before.h2_ping_interval_secs
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/connection")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let after: crab_control::ConnectionRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(
+        after.tcp_keepalive_idle_secs,
+        before.tcp_keepalive_idle_secs + 1
+    );
 }

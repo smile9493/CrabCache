@@ -27,7 +27,7 @@ services:
       - "127.0.0.1:9080:9080"
       - "127.0.0.1:9090:9090"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/ready"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9080/v1/ready"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -85,6 +85,8 @@ services:
       - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-admin}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
       - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:-}
+      # Raw capture directory (must match gateway [raw_capture].dir)
+      - CRABCACHE_RAW_CAPTURE_DIR=${CRABCACHE_RAW_CAPTURE_DIR:-/app/logs/raw_capture}
       # Infra container monitoring
       - CRABCACHE_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME:-crabcache}
       - CRABCACHE_INFRA_CACHE_TTL_SECS=5

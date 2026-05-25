@@ -14,6 +14,21 @@ pub enum ProjectResolveError {
     InvalidHeader(String),
 }
 
+impl std::fmt::Display for ProjectResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mismatch => write!(f, "project id mismatch"),
+            Self::InvalidHeader(e) => write!(f, "invalid project id: {e}"),
+        }
+    }
+}
+
+impl From<String> for ProjectResolveError {
+    fn from(e: String) -> Self {
+        Self::InvalidHeader(e)
+    }
+}
+
 /// Validate and return a DeepSeek-compatible `user_id` / `project_id` string.
 pub fn sanitize_user_id(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
@@ -70,6 +85,17 @@ pub fn effective_cache_namespace(global: Option<&str>, project: Option<&str>) ->
         (Some(g), None) => Some(g.to_string()),
         (None, None) => None,
     }
+}
+
+/// Derive a stable `project_id` from a client API key (sk-cc-*).
+/// Format: `client_{sha256_hex_16}` — conforms to `sanitize_user_id` regex.
+pub fn derive_project_id_from_client_key(client_key: &str) -> Result<String, ProjectResolveError> {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(client_key.as_bytes());
+    let hex16 = hex::encode(hash)[..16].to_string();
+    let derived = format!("client_{hex16}");
+    sanitize_user_id(&derived).map_err(ProjectResolveError::InvalidHeader)?;
+    Ok(derived)
 }
 
 #[cfg(test)]

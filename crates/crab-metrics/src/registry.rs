@@ -78,6 +78,8 @@ pub struct GatewayMetrics {
     pub composition_requests: IntCounterVec,
     pub composition_component: IntCounterVec,
     pub composition_tool_count: HistogramVec,
+    pub deepseek_user_id_concurrency_rejected: IntCounterVec,
+    pub deepseek_user_id_inflight: IntGaugeVec,
 }
 
 impl GatewayMetrics {
@@ -306,6 +308,22 @@ impl GatewayMetrics {
             &[],
         )?;
 
+        let deepseek_user_id_concurrency_rejected = IntCounterVec::new(
+            Opts::new(
+                "gateway_deepseek_user_id_concurrency_rejected_total",
+                "Gateway-side rejections when per-user_id DeepSeek v4 concurrency soft limit is exceeded",
+            ),
+            &["tier"],
+        )?;
+
+        let deepseek_user_id_inflight = IntGaugeVec::new(
+            Opts::new(
+                "gateway_deepseek_user_id_inflight",
+                "Aggregate in-flight upstream chat requests counted against per-user_id limits (by model tier)",
+            ),
+            &["tier"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -336,6 +354,8 @@ impl GatewayMetrics {
             composition_requests,
             composition_component,
             composition_tool_count,
+            deepseek_user_id_concurrency_rejected,
+            deepseek_user_id_inflight,
         })
     }
 
@@ -369,7 +389,21 @@ impl GatewayMetrics {
         registry.register(Box::new(self.composition_requests.clone()))?;
         registry.register(Box::new(self.composition_component.clone()))?;
         registry.register(Box::new(self.composition_tool_count.clone()))?;
+        registry.register(Box::new(self.deepseek_user_id_concurrency_rejected.clone()))?;
+        registry.register(Box::new(self.deepseek_user_id_inflight.clone()))?;
         Ok(())
+    }
+
+    pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {
+        self.deepseek_user_id_concurrency_rejected
+            .with_label_values(&[tier])
+            .inc();
+    }
+
+    pub fn set_deepseek_user_id_inflight(&self, tier: &str, value: i64) {
+        self.deepseek_user_id_inflight
+            .with_label_values(&[tier])
+            .set(value);
     }
 
     pub fn record_pipeline_selected(&self, pipeline: &str, profile: &str, reason: &str) {

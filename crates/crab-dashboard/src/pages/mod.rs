@@ -1,6 +1,6 @@
-pub mod cache_ops;
+pub mod cache;
+pub mod capture;
 pub mod composition;
-pub mod cursor_models;
 pub mod domains;
 pub mod infra;
 pub mod keys;
@@ -9,8 +9,8 @@ pub mod logs;
 pub mod models;
 pub mod overview;
 pub mod pipeline;
+pub mod requests;
 pub mod reasoning;
-pub mod routing;
 pub mod system;
-pub mod trace;
 pub mod upstream;
+

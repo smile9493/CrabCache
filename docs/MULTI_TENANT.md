@@ -71,11 +71,31 @@ POST /v1/keys
 
 不要信任客户端提供的 JSON body 中的 `user_id`；当 `project_id` 解析后网关会替换它。生产环境中应将租户绑定到 API 密钥上。
 
-## 范围外
+## per-`user_id` 并发软限（可选）
 
-网关侧按 `user_id` 的速率限制**未实现**；DeepSeek 在上游执行账户级和按 `user_id` 的限制。请使用 `UpstreamKeyPool` 管理多个上游 API Key 和 429 冷却。
+在 `gateway.toml` 中启用 `[upstream.deepseek_user_concurrency]`（默认 `enabled = false`）后，网关对带 `project_id` 的 DeepSeek v4 请求做进程内 in-flight 计数：`deepseek-v4-pro` 与 `deepseek-v4-flash` 分别使用 `v4_pro_per_user_id` / `v4_flash_per_user_id`（默认 500 / 2500）。超限时返回网关 **429**（`deepseek_user_concurrency_exceeded`），区别于上游 429 与 Key 池轮换。无 `project_id` 时不施加该限制。
+
+## DeepSeek 上游 Key 池（勿与并发混淆）
+
+官方文档：**并发按 DeepSeek 账号计，与 API Key 数量无关**。同一账号下配置多个 Key **不会**提高并发额度。
+
+| 场景 | 建议 |
+|------|------|
+| 提高总并发 | 多个 **DeepSeek 账号**（或向官方申请账号扩容） |
+| 租户隔离 / per-user 并发槽 | 为每个 `sk-cc-*` 配置 **`project_id`**（映射为上游 `user_id`） |
+| 单账号 Key 轮换 | 仅用于密钥吊销、401、运维切换；**不能**靠同账号多 Key 缓解并发 429 |
+| 多账号 429 轮换 | 为每个 Key 设置 **`account_id`**（Management PUT 或 Dashboard 行格式 `account_id:sk-...`）；HTTP 429 时仅在**不同** `account_id` 间切换 |
+
+未设置 `account_id` 的 Key 归入内部桶 `default`（视为同一账号，429 后不互相轮换）。
+
+`UpstreamKeyPool` 按 **upstream profile** 管理凭证（Dashboard「上游配置」页可分别维护 `deepseek` / `mimo` 等池）。
+
+## 验收：影子日志 user_id 审计
+
+启用 `[trace_logging]` 后，Admin **Trace 分析**页展示 **DeepSeek user_id 隔离审计**（`user_id_audit=injected` 表示 `project_id` 已写入上游 body）。详见 [OBSERVABILITY.md](./OBSERVABILITY.md)。
 
 ## 相关文档
 
 - [DEEPSEEK_PREFIX_CACHE.md](./DEEPSEEK_PREFIX_CACHE.md) — L3 粘滞与前缀缓存实践
 - [CURSOR_SETUP.md](./CURSOR_SETUP.md) — Cursor 客户端配置
+- [OBSERVABILITY.md](./OBSERVABILITY.md) — 影子日志与 user_id 审计字段

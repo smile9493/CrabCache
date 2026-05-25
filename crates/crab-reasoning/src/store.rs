@@ -70,7 +70,6 @@ impl ReasoningStore {
         );
 
         let _ = self.prune_locked(&conn);
-        let _ = conn.execute_batch("COMMIT");
     }
 
     pub fn get(&self, key: &str) -> Option<String> {

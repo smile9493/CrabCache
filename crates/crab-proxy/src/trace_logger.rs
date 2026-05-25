@@ -44,9 +44,41 @@ pub struct SanitizedLogEntry {
     pub prompt_cache_hit_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub composition: Option<RequestComposition>,
+    /// Truncated + sanitized request body (UTF-8 lossy). Only populated when
+    /// `max_payload_bytes > 0` in TraceConfig.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_messages_snapshot: Option<String>,
+    /// Truncated response preview (non-streaming accumulated body / streaming
+    /// accumulated SSE body / cache-hit response body). Only populated when
+    /// `max_response_preview_bytes > 0` in TraceConfig.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_preview: Option<String>,
+    /// Selected upstream profile for this request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_profile_id: Option<String>,
+    /// Request pipeline id (e.g. `cursor_deepseek_v4`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    /// Model name sent upstream after prepare.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+    /// `user_id` from the client request body before gateway overwrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_body_user_id: Option<String>,
+    /// `user_id` in the serialized upstream request body (authoritative).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_user_id: Option<String>,
+    /// DeepSeek isolation audit: `injected` | `absent` | `stripped_client` | `mismatch` | `not_applicable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id_audit: Option<String>,
 }
 
 impl SanitizedLogEntry {
+    /// Build a sanitised log entry from a request body.
+    ///
+    /// When `max_payload_bytes > 0`, a truncated + sanitised UTF-8 copy of the
+    /// request body is stored in `request_messages_snapshot`.  Empty trailing
+    /// whitespace and `sk-` / `sk-cc-` bearer tokens are lightly masked.
     pub fn from_request(
         body: &[u8],
         conversation_id: Option<String>,
@@ -59,6 +91,7 @@ impl SanitizedLogEntry {
         cache_hit: bool,
         cache_tier: Option<String>,
         composition: Option<RequestComposition>,
+        max_payload_bytes: usize,
     ) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(body);
@@ -74,6 +107,18 @@ impl SanitizedLogEntry {
             u32::from_str_radix(&full_hash[..8], 16).unwrap_or(0) % 100
         } else {
             0
+        };
+
+        let request_messages_snapshot = if max_payload_bytes > 0 && !body.is_empty() {
+            let raw = String::from_utf8_lossy(body);
+            let raw = if raw.len() > max_payload_bytes {
+                format!("{}...<truncated>", &raw[..max_payload_bytes])
+            } else {
+                raw.to_string()
+            };
+            Some(mask_snapshot_sensitive(&raw))
+        } else {
+            None
         };
 
         Self {
@@ -101,8 +146,49 @@ impl SanitizedLogEntry {
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
             composition,
+            request_messages_snapshot,
+            response_preview: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            upstream_user_id: None,
+            user_id_audit: None,
         }
     }
+}
+
+/// Light masking for sensitive patterns in snapshot text.
+/// Currently masks `sk-` / `sk-cc-` bearer tokens (partial reveal of last 4 chars).
+fn mask_snapshot_sensitive(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        // Look for "sk-" pattern
+        if i + 2 < len && bytes[i] == b's' && bytes[i + 1] == b'k' && bytes[i + 2] == b'-' {
+            // Find the end of the token (non-alphanumeric or end)
+            let start = i;
+            i += 3; // skip "sk-"
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_') {
+                i += 1;
+            }
+            let token = &text[start..i];
+            if token.len() > 8 {
+                result.push_str(&token[..4]);
+                result.push_str("...");
+                result.push_str(&token[token.len()-4..]);
+            } else {
+                result.push_str(&token[..1]);
+                result.push_str("***");
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
 }
 
 /// Configuration for the debug composition JSONL log file.
@@ -134,6 +220,10 @@ pub struct TraceConfig {
     pub max_lines: usize,
     pub max_files: usize,
     pub composition_debug: Option<CompositionDebugConfig>,
+    /// Max bytes to capture for `request_messages_snapshot`. `0` = disabled (default).
+    pub max_payload_bytes: usize,
+    /// Max bytes to capture for `response_preview`. `0` = disabled (default).
+    pub max_response_preview_bytes: usize,
 }
 
 impl Default for TraceConfig {
@@ -144,6 +234,8 @@ impl Default for TraceConfig {
             max_lines: 10000,
             max_files: 5,
             composition_debug: None,
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
         }
     }
 }
@@ -194,7 +286,7 @@ impl LogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().unwrap().to_str().unwrap(),
+            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -211,8 +303,8 @@ impl LogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().unwrap();
-        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+        let parent = self.path.parent().expect("path has parent — validated at init");
+        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())
@@ -282,7 +374,7 @@ impl DebugLogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().unwrap().to_str().unwrap(),
+            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -299,8 +391,8 @@ impl DebugLogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().unwrap();
-        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+        let parent = self.path.parent().expect("path has parent — validated at init");
+        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())
@@ -344,10 +436,14 @@ pub fn composition_debug_tx() -> Option<mpsc::Sender<CompositionDebugEntry>> {
 pub struct TraceLogger {
     sender: mpsc::Sender<SanitizedLogEntry>,
     debug_sender: Option<mpsc::Sender<CompositionDebugEntry>>,
+    max_payload_bytes: usize,
+    max_response_preview_bytes: usize,
 }
 
 impl TraceLogger {
     pub fn init(config: TraceConfig) -> Self {
+        let max_payload_bytes = config.max_payload_bytes;
+        let max_response_preview_bytes = config.max_response_preview_bytes;
         let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
 
         let debug_sender = if let Some(ref debug_config) = config.composition_debug {
@@ -408,11 +504,23 @@ impl TraceLogger {
         Self {
             sender: tx,
             debug_sender,
+            max_payload_bytes,
+            max_response_preview_bytes,
         }
     }
 
     pub fn log(&self, entry: SanitizedLogEntry) {
         let _ = self.sender.send(entry);
+    }
+
+    /// Maximum request payload bytes configured for the snapshot field.
+    pub fn max_payload_bytes(&self) -> usize {
+        self.max_payload_bytes
+    }
+
+    /// Maximum response preview bytes configured.
+    pub fn max_response_preview_bytes(&self) -> usize {
+        self.max_response_preview_bytes
     }
 
     /// Returns a clone of the debug sender for use by proxy.rs via the global static.
@@ -440,6 +548,7 @@ mod tests {
             false,
             None,
             None,
+            0,
         );
 
         assert_eq!(entry.content_length, 17);
@@ -455,10 +564,10 @@ mod tests {
     fn test_hash_consistency() {
         let body = b"identical request";
         let entry1 = SanitizedLogEntry::from_request(
-            body, None, None, None, None, "model", 0, 0.0, false, None, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None, 0,
         );
         let entry2 = SanitizedLogEntry::from_request(
-            body, None, None, None, None, "model", 0, 0.0, false, None, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None, 0,
         );
 
         assert_eq!(entry1.request_hash, entry2.request_hash);
@@ -472,5 +581,80 @@ mod tests {
         assert_eq!(cfg.path, "/var/log/crabcache/trace-debug.jsonl");
         assert_eq!(cfg.max_lines, 5000);
         assert_eq!(cfg.max_files, 3);
+    }
+
+    #[test]
+    fn test_snapshot_disabled_by_default() {
+        let body = b"test request body";
+        let entry = SanitizedLogEntry::from_request(
+            body,
+            None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            0, // max_payload_bytes = 0 → no snapshot
+        );
+        assert!(entry.request_messages_snapshot.is_none());
+        assert!(entry.response_preview.is_none());
+    }
+
+    #[test]
+    fn test_snapshot_with_payload() {
+        let body = b"Hello, this is a test request body";
+        let entry = SanitizedLogEntry::from_request(
+            body,
+            None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            100, // max_payload_bytes = 100
+        );
+        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
+        assert!(snap.contains("Hello"));
+        assert!(snap.len() <= 100 + 15); // allow "...<truncated>" suffix
+    }
+
+    #[test]
+    fn test_snapshot_truncation() {
+        let body = vec![b'A'; 200];
+        let entry = SanitizedLogEntry::from_request(
+            &body,
+            None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            50, // truncate to 50 bytes
+        );
+        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
+        assert!(snap.contains("<truncated>"), "should indicate truncation: {snap}");
+        // Original AAAA... should be truncated
+        assert!(snap.len() < 120, "snapshot too long: {}", snap.len());
+    }
+
+    #[test]
+    fn test_snapshot_sk_masking() {
+        let body = b"api_key=sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2";
+        let entry = SanitizedLogEntry::from_request(
+            body,
+            None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            200,
+        );
+        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
+        assert!(!snap.contains("sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2"), "key should be masked: {snap}");
+        assert!(snap.contains("sk-c"), "partial reveal expected: {snap}");
+    }
+
+    #[test]
+    fn test_hash_consistent_with_snapshot() {
+        let body = b"test body for hash consistency";
+        // Same body, same hash regardless of max_payload_bytes
+        let entry1 = SanitizedLogEntry::from_request(
+            body, None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            0,
+        );
+        let entry2 = SanitizedLogEntry::from_request(
+            body, None, None, None, None,
+            "model", 0, 0.0, false, None, None,
+            50,
+        );
+        assert_eq!(entry1.request_hash, entry2.request_hash);
+        assert!(!entry2.request_messages_snapshot.is_none());
+        assert_eq!(entry1.content_length, entry2.content_length);
     }
 }

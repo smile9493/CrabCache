@@ -12,16 +12,13 @@ use axum::{
 use serde::Deserialize;
 use crab_control::{
     CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
-    PutTtlConfigRequest, PutUpstreamKeysRequest,
-    UpstreamKeyInput, UpstreamKeysPutMode, parse_upstream_base_url, validate_deepseek_key,
-    CursorModelsConfigView,
+    PutTtlConfigRequest, parse_upstream_base_url, validate_deepseek_key, CursorModelsConfigView,
 };
 use crate::metrics_history::{
     domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
 };
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::hash::Hasher;
 
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
 async fn admin_auth(
@@ -140,6 +137,31 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/upstream/keys/{id}",
             patch(patch_upstream_key_pool),
         )
+        .route(
+            "/api/admin/upstream/profiles",
+            get(crate::upstream_profiles::list_profiles_json),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}",
+            axum::routing::put(put_upstream_profile)
+                .delete(delete_upstream_profile),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/keys",
+            get(get_upstream_profile_keys).put(put_upstream_profile_keys),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/keys/{key_id}",
+            patch(patch_upstream_profile_key),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/keys/{key_id}/test",
+            post(post_upstream_profile_key_test),
+        )
+        .route(
+            "/api/admin/upstream/profiles/{id}/test",
+            post(post_upstream_profile_test),
+        )
         .route("/api/admin/models", get(get_models).post(sync_models))
         .route("/api/admin/models/detect", post(post_models_detect))
         .route("/api/admin/models/apply", post(post_models_apply))
@@ -166,6 +188,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/admin/composition/debug",
             get(crate::composition::get_composition_debug),
+        )
+        // ── Raw Capture ──
+        .route(
+            "/api/admin/capture/list",
+            get(crate::raw_capture::get_capture_list),
+        )
+        .route(
+            "/api/admin/capture/stats",
+            get(crate::raw_capture::get_capture_stats),
+        )
+        .route(
+            "/api/admin/capture/{request_id}",
+            get(crate::raw_capture::get_capture_detail),
         )
         // ── Infra (container / host monitoring) ──
         .route("/api/admin/infra/snapshot", get(get_infra_snapshot))
@@ -501,18 +536,12 @@ async fn get_overview_core(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let core = crate::overview::build_overview_core(&state)
+    let (core, etag_val) = crate::overview::get_overview_core_cached(&state)
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "Failed to build overview core");
             StatusCode::SERVICE_UNAVAILABLE
         })?;
-
-    // Compute ETag from serialized body using DefaultHasher (fast, non-cryptographic).
-    let json_bytes = serde_json::to_vec(&core).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&json_bytes, &mut hasher);
-    let etag_val = format!("\"{:x}\"", hasher.finish());
 
     // If-None-Match → 304 when content unchanged.
     if let Some(if_none_match) = headers
@@ -1230,10 +1259,26 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
     Ok(Json(keys))
 }
 
+fn normalize_optional_project_id(
+    project_id: &Option<String>,
+) -> Result<Option<String>, (StatusCode, String)> {
+    match project_id.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(raw) => crab_proxy::sanitize_user_id(raw)
+            .map(Some)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e)),
+    }
+}
+
 async fn create_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<Json<ApiKey>, StatusCode> {
+    let project_id = match normalize_optional_project_id(&req.project_id) {
+        Ok(v) => v,
+        Err((code, _)) => return Err(code),
+    };
+
     let created = state
         .gateway
         .create_key(&CreateGatewayKeyRequest {
@@ -1241,7 +1286,7 @@ async fn create_key(
             enabled: true,
             token: None,
             domain: req.domain.clone(),
-            project_id: req.project_id.clone(),
+            project_id: project_id.clone(),
             pipeline: req.pipeline.clone(),
             upstream_profile: req.upstream_profile.clone(),
             max_concurrent: req.max_concurrent,
@@ -1578,6 +1623,8 @@ async fn get_pipeline_runtime(
             .map(|p| PipelineProfileView {
                 id: p.id,
                 provider: p.provider,
+                base_url: p.base_url,
+                fallback_model: p.fallback_model,
             })
             .collect(),
     }))
@@ -1598,6 +1645,8 @@ async fn put_pipeline_runtime(
                 .map(|p| crab_control::PipelineProfileView {
                     id: p.id,
                     provider: p.provider,
+                    base_url: p.base_url,
+                    fallback_model: p.fallback_model,
                 })
                 .collect(),
         })
@@ -1612,6 +1661,8 @@ async fn put_pipeline_runtime(
             .map(|p| PipelineProfileView {
                 id: p.id,
                 provider: p.provider,
+                base_url: p.base_url,
+                fallback_model: p.fallback_model,
             })
             .collect(),
     }))
@@ -1839,8 +1890,19 @@ async fn get_logs(
     let memory_logs = state.request_logs.read().clone();
     let trace_path = crate::trace_log::trace_log_path();
 
-    // If we have memory logs and no archive query, use memory.
-    if !memory_logs.is_empty() && query.cursor.is_none() && query.from_ms.is_none() && query.to_ms.is_none() && query.consumer.is_none() {
+    // If we have memory logs and no archive/filter query, use memory.
+    let uses_trace_archive = query.cursor.is_some()
+        || query.from_ms.is_some()
+        || query.to_ms.is_some()
+        || query.consumer.as_ref().is_some_and(|s| !s.is_empty())
+        || query.model.as_ref().is_some_and(|s| !s.is_empty())
+        || query.cache_tier.as_ref().is_some_and(|s| !s.is_empty())
+        || query.request_hash.as_ref().is_some_and(|s| !s.is_empty())
+        || query.latency_min.is_some()
+        || query.latency_max.is_some()
+        || query.token_min.is_some()
+        || query.token_max.is_some();
+    if !memory_logs.is_empty() && !uses_trace_archive {
         let items: Vec<RequestLog> = memory_logs
             .into_iter()
             .map(|log| {
@@ -1855,6 +1917,14 @@ async fn get_logs(
                     request_payload: serde_json::to_string_pretty(&log.request_payload)
                         .unwrap_or_default(),
                     response_preview: log.response_body.chars().take(200).collect(),
+                    input_tokens: Some(log.input_tokens as u64),
+                    output_tokens: Some(log.output_tokens as u64),
+                    ttft_ms: None,
+                    content_length: None,
+                    request_hash: None,
+                    project_id: None,
+                    upstream_user_id: None,
+                    user_id_audit: None,
                 }
             })
             .collect();
@@ -1871,6 +1941,13 @@ async fn get_logs(
         from_ms: query.from_ms,
         to_ms: query.to_ms,
         consumer: query.consumer,
+        model: query.model,
+        cache_tier: query.cache_tier,
+        request_hash: query.request_hash,
+        latency_min: query.latency_min,
+        latency_max: query.latency_max,
+        token_min: query.token_min,
+        token_max: query.token_max,
         limit: limit + 1, // fetch +1 to determine has_more
         cursor: query.cursor,
     };
@@ -1887,44 +1964,62 @@ async fn get_logs(
         None
     };
 
-    let items: Vec<RequestLog> = entries
-        .into_iter()
-        .take(limit)
-        .map(|e| {
-            let datetime =
-                crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
-            let consumer = e
-                .consumer
-                .clone()
-                .filter(|s| !s.is_empty())
-                .or_else(|| {
-                    e.conversation_id
-                        .clone()
-                        .filter(|s| !s.is_empty())
-                })
-                .unwrap_or_else(|| "—".to_string());
-            let summary = serde_json::json!({
-                "request_hash": e.request_hash,
-                "content_length": e.content_length,
-                "semantic_cluster": e.semantic_cluster,
-                "input_tokens": e.resolved_input_tokens(),
-                "output_tokens": e.resolved_output_tokens(),
-                "cache_hit": e.cache_hit,
-                "cache_tier": e.cache_tier,
-            });
-            RequestLog {
-                id: e.id(),
-                timestamp: datetime,
-                model: e.model.clone(),
-                consumer,
-                latency_ms: e.latency_ms.round() as u64,
-                total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
-                cache_status: e.cache_status_label(),
-                request_payload: serde_json::to_string_pretty(&summary).unwrap_or_default(),
-                response_preview: String::new(),
-            }
-        })
-        .collect();
+        let items: Vec<RequestLog> = entries
+            .into_iter()
+            .take(limit)
+            .map(|e| {
+                let datetime =
+                    crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
+                let consumer = e
+                    .consumer
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        e.conversation_id
+                            .clone()
+                            .filter(|s| !s.is_empty())
+                    })
+                    .unwrap_or_else(|| "—".to_string());
+                let request_payload = e
+                    .request_messages_snapshot
+                    .clone()
+                    .unwrap_or_else(|| {
+                        let summary = serde_json::json!({
+                            "request_hash": e.request_hash,
+                            "content_length": e.content_length,
+                            "semantic_cluster": e.semantic_cluster,
+                            "input_tokens": e.resolved_input_tokens(),
+                            "output_tokens": e.resolved_output_tokens(),
+                            "cache_hit": e.cache_hit,
+                            "cache_tier": e.cache_tier,
+                        });
+                        serde_json::to_string_pretty(&summary).unwrap_or_default()
+                    });
+                let response_preview = e
+                    .response_preview
+                    .clone()
+                    .unwrap_or_else(String::new);
+                RequestLog {
+                    id: e.id(),
+                    timestamp: datetime,
+                    model: e.model.clone(),
+                    consumer,
+                    latency_ms: e.latency_ms.round() as u64,
+                    total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
+                    cache_status: e.cache_status_label(),
+                    request_payload,
+                    response_preview,
+                    input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
+                    output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
+                    ttft_ms: e.ttft_ms,
+                    content_length: Some(e.content_length),
+                    request_hash: Some(e.request_hash.clone()),
+                    project_id: e.project_id.clone(),
+                    upstream_user_id: e.upstream_user_id.clone(),
+                    user_id_audit: e.user_id_audit.clone(),
+                }
+            })
+            .collect();
 
     Json(crate::types::LogsPageResponse {
         items,
@@ -1945,6 +2040,12 @@ async fn get_log_detail(
             request_payload: serde_json::to_string_pretty(&log.request_payload).unwrap_or_default(),
             response_body: log.response_body.clone(),
             route_backend: log.route_backend.clone(),
+            upstream_latency_ms: None,
+            ttft_ms: None,
+            input_tokens: None,
+            output_tokens: None,
+            request_hash: None,
+            semantic_cluster: None,
         }));
     }
 
@@ -1958,22 +2059,38 @@ async fn get_log_detail(
         } else {
             "upstream".to_string()
         };
-        let payload = serde_json::json!({
-            "request_hash": entry.request_hash,
-            "content_length": entry.content_length,
-            "semantic_cluster": entry.semantic_cluster,
-            "conversation_id": entry.conversation_id,
-            "model": entry.model,
-            "prompt_tokens": entry.prompt_tokens,
-            "latency_ms": entry.latency_ms,
-            "cache_hit": entry.cache_hit,
-            "cache_tier": entry.cache_tier,
-        });
+        let request_payload = entry
+            .request_messages_snapshot
+            .clone()
+            .unwrap_or_else(|| {
+                let payload = serde_json::json!({
+                    "request_hash": entry.request_hash,
+                    "content_length": entry.content_length,
+                    "semantic_cluster": entry.semantic_cluster,
+                    "conversation_id": entry.conversation_id,
+                    "model": entry.model,
+                    "prompt_tokens": entry.prompt_tokens,
+                    "latency_ms": entry.latency_ms,
+                    "cache_hit": entry.cache_hit,
+                    "cache_tier": entry.cache_tier,
+                });
+                serde_json::to_string_pretty(&payload).unwrap_or_default()
+            });
+        let response_body = entry
+            .response_preview
+            .clone()
+            .unwrap_or_else(|| "(未启用 body 采集)".to_string());
         return Ok(Json(RequestDetail {
             cache_path,
-            request_payload: serde_json::to_string_pretty(&payload).unwrap_or_default(),
-            response_body: "(影子日志不含响应正文；仅记录脱敏元数据)".to_string(),
+            request_payload,
+            response_body,
             route_backend: "—".to_string(),
+            upstream_latency_ms: entry.upstream_latency_ms,
+            ttft_ms: entry.ttft_ms,
+            input_tokens: entry.input_tokens,
+            output_tokens: entry.output_tokens,
+            request_hash: Some(entry.request_hash.clone()),
+            semantic_cluster: Some(entry.semantic_cluster),
         }));
     }
 
@@ -1991,12 +2108,18 @@ async fn get_connection_config(State(state): State<Arc<AppState>>) -> Json<Conne
     })
 }
 
-async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListResponse> {
+async fn get_models(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelsQuery>,
+) -> Json<ModelListResponse> {
     let stored = state.models.read();
+    let profile_filter = query.profile_id.as_deref();
     let models: Vec<ModelInfo> = stored
         .models
         .iter()
+        .filter(|m| profile_filter.is_none_or(|p| m.profile_id == p))
         .map(|m| ModelInfo {
+            profile_id: m.profile_id.clone(),
             id: m.id.clone(),
             owned_by: m.owned_by.clone(),
             context_length: m.context_length,
@@ -2006,17 +2129,28 @@ async fn get_models(State(state): State<Arc<AppState>>) -> Json<ModelListRespons
         })
         .collect();
     let total = models.len();
+    let synced_at = profile_filter
+        .and_then(|p| stored.synced_at_by_profile.get(p).cloned())
+        .or_else(|| {
+            if profile_filter.is_none() {
+                stored.synced_at_by_profile.values().next().cloned()
+            } else {
+                None
+            }
+        });
     Json(ModelListResponse {
         models,
         total,
-        synced_at: stored.synced_at.clone(),
+        profile_id: query.profile_id,
+        synced_at,
     })
 }
 
 async fn sync_models(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelSyncQuery>,
 ) -> Result<Json<SyncResult>, (StatusCode, String)> {
-    crate::upstream::sync_models_internal(&state)
+    crate::upstream::sync_models_internal(&state, &query.profile_id)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
@@ -2024,8 +2158,9 @@ async fn sync_models(
 
 async fn post_models_detect(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<crate::types::ModelSyncQuery>,
 ) -> Result<Json<crate::types::ModelDetectResponse>, (StatusCode, String)> {
-    crate::upstream::detect_models_internal(&state)
+    crate::upstream::detect_models_internal(&state, &query.profile_id)
         .await
         .map(Json)
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
@@ -2035,14 +2170,95 @@ async fn post_models_apply(
     State(state): State<Arc<AppState>>,
     Json(body): Json<crate::types::ModelApplyBody>,
 ) -> Result<Json<SyncResult>, StatusCode> {
-    let result = crate::upstream::apply_models_internal(&state, body.add, body.remove);
+    state.refresh_profile_providers().await;
+    let result = crate::upstream::apply_models_internal(
+        &state,
+        &body.profile_id,
+        body.add,
+        body.remove,
+    );
+    Ok(Json(result))
+}
+
+async fn put_upstream_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<crate::types::PutUpstreamProfileAdminRequest>,
+) -> Result<Json<crate::types::UpstreamProfileAdminView>, (StatusCode, String)> {
+    crate::upstream_profiles::put_profile(&state, &id, body)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn delete_upstream_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    crate::upstream_profiles::delete_profile(&state, &id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn get_upstream_profile_keys(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crate::types::UpstreamProfileKeysAdminView>, (StatusCode, String)> {
+    crate::upstream_profiles::get_profile_keys(&state, &id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn put_upstream_profile_keys(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<PutUpstreamKeysRequest>,
+) -> Result<Json<crate::types::UpstreamProfileKeysAdminView>, (StatusCode, String)> {
+    let keys = body.keys.clone();
+    let replace = matches!(body.mode, UpstreamKeysPutMode::Replace);
+    crate::upstream_profiles::put_profile_keys(&state, &id, keys, replace)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn patch_upstream_profile_key(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, key_id)): axum::extract::Path<(String, String)>,
+    Json(req): Json<PatchUpstreamKeyRequest>,
+) -> Result<Json<crate::types::UpstreamKeyPoolEntry>, (StatusCode, String)> {
+    crate::upstream_profiles::patch_profile_key(&state, &id, &key_id, req)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
+async fn post_upstream_profile_test(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
+    let result = crate::upstream_profiles::test_profile(&state, &id)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(result))
+}
+
+async fn post_upstream_profile_key_test(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, key_id)): axum::extract::Path<(String, String)>,
+) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
+    let result = crate::upstream_profiles::test_profile_key(&state, &id, &key_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(result))
 }
 
 async fn post_upstream_test(
     State(state): State<Arc<AppState>>,
     Json(body): Json<crate::types::UpstreamTestBody>,
-) -> Json<crab_control::UpstreamTestResult> {
+) -> Json<UpstreamTestResult> {
     let result = crate::upstream::test_upstream_connection(&body.base_url, &body.api_key).await;
     *state.last_upstream_test.write() = Some(result.clone());
     state.flush_persist();
@@ -2091,6 +2307,7 @@ async fn get_upstream_keys_pool(
         .gateway
         .get_upstream_keys()
         .await
+        .map(crate::types::upstream_keys_view_from_control)
         .map(Json)
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
@@ -2105,8 +2322,14 @@ async fn put_upstream_keys_pool(
         }
     }
 
+    let ctrl_keys: Vec<crab_control::UpstreamKeyInput> = req
+        .keys
+        .iter()
+        .map(crate::types::upstream_key_input_to_control)
+        .collect();
+
     if req.mode == UpstreamKeysPutMode::Replace {
-        state.replace_upstream_pool_secrets(&req.keys);
+        state.replace_upstream_pool_secrets(&ctrl_keys);
     } else {
         let mut merged = state.upstream_pool_secrets.read().clone();
         let mut seen: std::collections::HashSet<String> =
@@ -2133,18 +2356,23 @@ async fn put_upstream_keys_pool(
                 id: s.id.clone(),
                 secret: s.secret.clone(),
                 enabled: s.enabled,
+                account_id: String::new(),
             })
             .collect();
-        state.replace_upstream_pool_secrets(&inputs);
+        let append_ctrl: Vec<crab_control::UpstreamKeyInput> = inputs
+            .iter()
+            .map(crate::types::upstream_key_input_to_control)
+            .collect();
+        state.replace_upstream_pool_secrets(&append_ctrl);
     }
 
     let view = state
         .gateway
-        .put_upstream_keys(&req)
+        .put_upstream_keys(&crate::types::put_upstream_keys_to_control(&req))
         .await
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
     state.flush_persist();
-    Ok(Json(view))
+    Ok(Json(crate::types::upstream_keys_view_from_control(view)))
 }
 
 async fn patch_upstream_key_pool(
@@ -2154,8 +2382,9 @@ async fn patch_upstream_key_pool(
 ) -> Result<Json<UpstreamKeyView>, (StatusCode, String)> {
     state
         .gateway
-        .patch_upstream_key(&id, &req)
+        .patch_upstream_key(&id, &crate::types::patch_upstream_key_to_control(&req))
         .await
+        .map(crate::types::upstream_key_view_from_control)
         .map(Json)
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
 }
@@ -2254,6 +2483,7 @@ async fn update_upstream_config(
                 id: format!("key-{}", i + 1),
                 secret,
                 enabled: true,
+                account_id: String::new(),
             })
             .collect();
         let put_req = PutUpstreamKeysRequest {
@@ -2284,10 +2514,18 @@ async fn update_upstream_config(
                 id: s.id.clone(),
                 secret: s.secret.clone(),
                 enabled: s.enabled,
+                account_id: String::new(),
             })
             .collect();
-        state.replace_upstream_pool_secrets(&merged_inputs);
-        let _ = state.gateway.put_upstream_keys(&put_req).await;
+        let merged_ctrl: Vec<crab_control::UpstreamKeyInput> = merged_inputs
+            .iter()
+            .map(crate::types::upstream_key_input_to_control)
+            .collect();
+        state.replace_upstream_pool_secrets(&merged_ctrl);
+        let _ = state
+            .gateway
+            .put_upstream_keys(&crate::types::put_upstream_keys_to_control(&put_req))
+            .await;
     }
 
     {
@@ -2309,8 +2547,9 @@ async fn update_upstream_config(
 
     *state.gateway_reachable.write() = true;
 
-    let sync = if state.pick_sync_api_key().is_some() {
-        match crate::upstream::sync_models_internal(&state).await {
+    let default_profile = state.default_profile_id();
+    let sync = if state.pick_sync_api_key(&default_profile).is_some() {
+        match crate::upstream::sync_models_internal(&state, &default_profile).await {
             Ok(s) => Some(s),
             Err(e) => {
                 tracing::warn!(error = %e, "Auto model sync after upstream save failed");
@@ -2352,6 +2591,7 @@ fn empty_trace_analysis() -> TraceAnalysis {
         cache_hit_ratio: 0.0,
         top_models: vec![],
         cluster_distribution: vec![],
+        deepseek_user_id: None,
     }
 }
 
@@ -2524,6 +2764,10 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
     cluster_distribution.sort_by(|a, b| b.count.cmp(&a.count));
     cluster_distribution.truncate(10);
 
+    let deepseek_user_id = Some(crate::trace_user_id_audit::compute_deepseek_user_id_audit(
+        &entries,
+    ));
+
     Json(TraceAnalysis {
         total_requests,
         unique_requests,
@@ -2536,6 +2780,7 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
         cache_hit_ratio,
         top_models,
         cluster_distribution,
+        deepseek_user_id,
     })
 }
 

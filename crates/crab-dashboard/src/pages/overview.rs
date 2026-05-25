@@ -126,13 +126,31 @@ pub fn OverviewPage() -> impl IntoView {
         });
     };
 
+    let deferred_loaded = RwSignal::new(false);
+
     load_core();
-    load_trace();
-    load_timeseries();
+
+    Effect::new({
+        let load_trace = load_trace;
+        let load_timeseries = load_timeseries;
+        move |_| {
+            if deferred_loaded.get() {
+                return;
+            }
+            if matches!(overview_core.get(), Some(Ok(_))) {
+                deferred_loaded.set(true);
+                load_trace();
+                load_timeseries();
+            }
+        }
+    });
 
     Effect::new({
         let load_timeseries = load_timeseries;
         move |_| {
+            if !deferred_loaded.get() {
+                return;
+            }
             let _ = ts_window.get();
             load_timeseries();
         }
@@ -215,6 +233,7 @@ fn OverviewContent(
     ts_window: RwSignal<String>,
 ) -> impl IntoView {
     let t = use_translations();
+    let selected_domain: RwSignal<Option<String>> = RwSignal::new(None);
 
     // Memo for metrics snapshot — only changes when derived value differs.
     let metrics_memo = Memo::new(move |_| {
@@ -335,9 +354,15 @@ fn OverviewContent(
             {move || metrics_memo.get().map(|m| view! {
                 <ConsumerHitTable metrics=m.clone() />
             })}
-            {move || metrics_memo.get().map(|m| view! {
-                <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() />
+            {move || metrics_memo.get().map(|m| {
+                let cb = Callback::new(move |domain: String| {
+                    selected_domain.set(Some(domain));
+                });
+                view! {
+                    <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
+                }
             })}
+            <crate::pages::domains::DomainDetailDrawer domain=selected_domain />
             {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
                 <div class="bento-grid-3">
                     <div class="bento-cell">
@@ -501,7 +526,7 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
                     </span>
                 </div>
             </div>
-            <a href="/trace" class="btn btn-secondary text-xs shrink-0">
+            <a href="/cache?tab=trace" class="btn btn-secondary text-xs shrink-0">
                 {t.overview_trace_compare_link()}
             </a>
         </div>

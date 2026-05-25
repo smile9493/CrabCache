@@ -60,12 +60,23 @@ default_weight = 1
 # keys = ["sk-ds-account-1", "sk-ds-account-2"]
 # Cooldown seconds after HTTP 429 before reusing a key (default 60)
 # key_cooldown_secs = 60
+# Per-key account_id (via Management API / Dashboard as account_id:sk-...) groups keys for
+# 429 rotation: only keys with a different account_id are tried after rate limit.
+
+# Optional per-project_id (upstream user_id) concurrency soft limits for DeepSeek v4 models.
+# Disabled by default; enable when using expanded per-user_id quotas (v4-pro 500 / v4-flash 2500).
+# [upstream.deepseek_user_concurrency]
+# enabled = false
+# v4_pro_per_user_id = 500
+# v4_flash_per_user_id = 2500
 
 # Ketama peer addresses (host:port). When omitted, derived from base_url host (port 443/80).
 deepseek_endpoints = ["api.deepseek.com:443"]
 
 # Optional multi-vendor upstream profiles (each has its own key pool and router).
 # When omitted, a single `deepseek` profile is built from [upstream] above.
+# Profiles can also be created/updated at runtime via Management API or Admin Dashboard
+# (Upstream page); changes are persisted to the control-plane Redis snapshot.
 # [[upstream.profiles]]
 # id = "deepseek"
 # provider = "deepseek"
@@ -225,16 +236,24 @@ upstream_connection_timeout_secs = 60
 [trace_logging]
 enabled = true
 # Trace log file path. Each line is a JSON-serialized SanitizedLogEntry.
-# When the crab-composition crate is enabled, each entry automatically includes
-# a `composition` field with a structural fingerprint of the request (model,
-# tool usage, message counts, Cursor component detection, etc.).
-# See docs/OBSERVABILITY.md → "请求组成分析（Request Composition）".
+# Includes DeepSeek user_id audit fields: upstream_user_id, client_body_user_id,
+# user_id_audit (injected/absent/...), upstream_profile_id, pipeline, upstream_model.
+# Dashboard Trace page shows deepseek_user_id isolation summary (no max_payload_bytes required).
+# When the crab-composition crate is enabled, each entry also includes `composition`.
+# See docs/OBSERVABILITY.md.
 path = "/var/log/crabcache/trace.jsonl"
 # Production: raise max_lines (e.g. 50000) and max_files (e.g. 10) under sustained Cursor traffic.
 # max_lines = 50000
 # max_files = 10
 max_lines = 10000
 max_files = 5
+
+# Max bytes to capture for request body snapshot in trace logs (`0` = disabled).
+# Enable cautiously: each line grows from ~200 B to KB-scale. Suggested production
+# values: request 512–2048, response 256–1024. Requires sufficient disk headroom
+# when combined with max_lines × max_files.
+# max_payload_bytes = 1024
+# max_response_preview_bytes = 512
 
 # Optional: debug composition logging (full system/tools text for analysis)
 # When enabled, writes full (unhashed) system prompts and tool definitions
@@ -245,3 +264,30 @@ max_files = 5
 # path = "/var/log/crabcache/trace-debug.jsonl"
 # max_lines = 5000
 # max_files = 3
+
+# ── Raw Capture (packet-level request analysis) ─────────────────
+# Captures full client + upstream JSON bodies per request for offline
+# packet structure analysis. Designed for diagnosing DeepSeek V4
+# thinking mode context explosion and downstream client issues.
+#
+# SECURITY: Raw bodies contain API keys and full prompts.
+#   - Default is OFF. Only enable in controlled/internal environments.
+#   - Set file permissions to 600 on the capture directory.
+#   - Do NOT expose the capture directory to the public internet.
+#
+# DISK: Each capture stores ~2x body size. For 64 MiB bodies, a single
+#   request can write up to 128 MiB. Monitor disk usage and adjust
+#   max_body_files to cap storage.
+#
+# Admin API: GET /api/admin/capture/list, /capture/{id}, /capture/stats
+# Dashboard: Requests page → Capture tab (client/upstream comparison)
+#
+# [raw_capture]
+# enabled = false
+# dir = "/var/log/crabcache/raw_capture"
+# max_index_lines = 5000
+# max_body_files = 5000
+# max_client_bytes = 0   # 0 = no limit (64 MiB gateway limit applies)
+# max_upstream_bytes = 0
+# mask_api_keys = false  # true = mask sk-* tokens in captured bodies
+# skip_paths = ["/health", "/healthz", "/ready"]

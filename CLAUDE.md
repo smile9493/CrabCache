@@ -334,6 +334,12 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | PUT | `/v1/cursor/models` | 热更新 Cursor 模型别名（`gpt-4o` → `deepseek-v4-pro` 等） |
 | GET | `/v1/routing/backends` | 获取后端路由列表 |
 | PUT | `/v1/routing/backends` | 热更新后端路由端点 |
+| GET | `/v1/upstream/profiles` | 列出多厂商上游 Profile（脱敏） |
+| PUT | `/v1/upstream/profiles/{id}` | 创建/更新 Profile（base_url、model、endpoints） |
+| DELETE | `/v1/upstream/profiles/{id}` | 删除 Profile（保护 default/唯一项） |
+| GET/PUT | `/v1/upstream/profiles/{id}/keys` | Profile 独立 API Key 池（`account_id` 可选，429 仅跨账号轮换） |
+| PATCH | `/v1/upstream/profiles/{id}/keys/{key_id}` | 更新 Profile Key（仅 `enabled`） |
+| POST | `/v1/upstream/profiles/{id}/test` | 探测 `GET {base_url}/v1/models` |
 
 ### Admin Dashboard
 
@@ -345,8 +351,8 @@ Admin Dashboard 分为后端（`crab-admin`，Axum HTTP 服务器）和前端（
 - 缓存配置：L0/L1 TTL 动态调整
 - 语义缓存配置：相似度阈值调整
 - 连接参数配置：TCP keepalive、H2 ping
-- 上游配置：Base URL、API Key、端点列表
-- 模型同步：从上游 DeepSeek API 同步模型列表
+- 上游配置：多 Profile（DeepSeek / MiMo 等）Base URL、Provider、API Key 池、端点列表（热更新至网关）
+- 模型同步：按 Profile 从各厂商 `GET /v1/models` 同步模型目录（`admin-state.json` 带 `profile_id`）
 - Trace 分析：请求分布、Zipf 参数估计、命中率预测
 - 请求日志查看
 

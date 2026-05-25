@@ -3,13 +3,14 @@ use crab_pipeline::{
     validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode,
     PipelineOverride, UpstreamProvider,
 };
-use crab_proxy::{UpstreamKeyPool, UpstreamProfileRuntime};
+use crab_proxy::{RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::AffinityRouter;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 pub use crab_state::StateBackendConfig;
@@ -97,6 +98,7 @@ pub struct GatewayConfig {
     pub connection: Option<ConnectionConfig>,
     pub reasoning: Option<ReasoningConfig>,
     pub trace_logging: Option<TraceConfig>,
+    pub raw_capture: Option<RawCaptureConfig>,
     pub management: Option<ManagementConfig>,
     #[serde(default)]
     pub limits: LimitsConfig,
@@ -123,6 +125,9 @@ pub struct GatewaySection {
     /// Cursor-visible model aliases (e.g. `gpt-4o` → `deepseek-v4-pro`).
     #[serde(default)]
     pub cursor_models: GatewayCursorModelsConfig,
+    /// When true, client keys without `project_id` get a stable derived DeepSeek `user_id` (`client:{hash}`).
+    #[serde(default)]
+    pub auto_project_id_from_client_key: bool,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -251,6 +256,12 @@ pub struct TraceConfig {
     pub max_files: usize,
     #[serde(default)]
     pub composition_debug: Option<crab_proxy::CompositionDebugConfig>,
+    /// Max bytes to capture for request body snapshot. `0` = disabled.
+    #[serde(default)]
+    pub max_payload_bytes: usize,
+    /// Max bytes to capture for response body preview. `0` = disabled.
+    #[serde(default)]
+    pub max_response_preview_bytes: usize,
 }
 
 fn default_max_lines() -> usize {
@@ -269,6 +280,8 @@ impl Default for TraceConfig {
             max_lines: 10000,
             max_files: 5,
             composition_debug: None,
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
         }
     }
 }
@@ -313,6 +326,8 @@ pub struct UpstreamConfig {
     /// Multi-vendor upstream profiles. When empty, a single `deepseek` profile is synthesized from legacy fields.
     #[serde(default)]
     pub profiles: Vec<UpstreamProfileConfig>,
+    #[serde(default)]
+    pub deepseek_user_concurrency: crab_proxy::DeepSeekUserConcurrencyConfig,
 }
 
 fn default_upstream_key_cooldown_secs() -> u64 {
@@ -709,6 +724,17 @@ impl GatewayConfig {
                         i + 1
                     ));
                 }
+            }
+        }
+
+        // Validate each profile can resolve at least one key (explicit or fallback to global).
+        for profile in self.resolved_upstream_profiles() {
+            let resolved = self.profile_key_secrets(&profile);
+            if resolved.is_empty() {
+                errors.push(format!(
+                    "upstream profile '{}' has no API keys and global fallback is also empty",
+                    profile.id
+                ));
             }
         }
 

@@ -969,8 +969,11 @@ dependencies = [
  "bollard",
  "bytes",
  "chrono",
+ "crab-admin-types",
+ "crab-capture",
  "crab-composition",
  "crab-control",
+ "crab-proxy",
  "dashmap",
  "futures",
  "hex",
@@ -997,6 +1000,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-admin-types"
+version = "0.1.0"
+dependencies = [
+ "crab-capture",
+ "crab-composition",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crab-cache"
 version = "0.1.0"
 dependencies = [
@@ -1011,6 +1024,7 @@ dependencies = [
  "hex",
  "md5",
  "moka",
+ "parking_lot",
  "rand 0.8.6",
  "redis",
  "serde",
@@ -1020,6 +1034,14 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-normalization",
+]
+
+[[package]]
+name = "crab-capture"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1050,6 +1072,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
+ "crab-admin-types",
  "futures",
  "gloo-net",
  "gloo-timers",
@@ -1059,6 +1082,7 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde_json",
+ "urlencoding",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -1083,10 +1107,12 @@ dependencies = [
  "crab-state",
  "dashmap",
  "jemallocator",
+ "parking_lot",
  "pingora",
  "pingora-core",
  "pingora-proxy",
  "prometheus",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -1126,7 +1152,9 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-cache",
+ "crab-capture",
  "crab-composition",
+ "crab-control",
  "crab-metrics",
  "crab-pipeline",
  "crab-reasoning",
@@ -1135,6 +1163,7 @@ dependencies = [
  "dashmap",
  "hex",
  "http",
+ "parking_lot",
  "pingora",
  "pingora-core",
  "pingora-http",

@@ -1,0 +1,132 @@
+# CrabCache dependency audit configuration
+#
+# Run: cargo deny check
+
+[graph]
+# Use a feature depth of 1 to only see direct dependencies
+# in the output. Can be increased to see full transitive graph.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "wasm32-unknown-unknown" },
+]
+# Skip dev dependencies for license checks (they're not shipped)
+exclude-dev = true
+
+[advisories]
+# Enable security advisory database. Uses RustSec Advisory Database.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+ignore = [
+    # rustls-pemfile is no longer maintained, but all its dependents (tonic, qdrant-client,
+    # axum-server) have not yet migrated to rustls-pki-types directly.
+    "RUSTSEC-2025-0134",
+    # Unmaintained transitive dependencies of pingora / leptos. No direct dependency.
+    "RUSTSEC-2024-0388",  # derivative
+    "RUSTSEC-2024-0436",  # unmaintained anova/nom dep
+    "RUSTSEC-2024-0437",  # unmaintained anova/nom dep
+    "RUSTSEC-2025-0069",  # daemonize
+    "RUSTSEC-2025-0119",  # number_prefix
+]
+
+[licenses]
+# Allow these licenses. Use SPDX 2.1 identifiers.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+
+# Clarify licenses for project crates (no `license` field in Cargo.toml)
+[[licenses.clarify]]
+name = "crab-cache"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-gateway"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-metrics"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-pipeline"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-proxy"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-reasoning"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-route"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-semantic"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-state"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-control"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-admin"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "crab-dashboard"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[bans]
+# Multiple versions of the same crate can cause bloat and confusion.
+# deny = ["duplicates"] would fail on any duplicates.
+multiple-versions = "warn"
+# Wildcard dependencies are not allowed
+wildcards = "warn"
+# Highlighted crates to deny explicitly
+deny = []
+# Skip these crates even if they appear multiple times
+skip = [
+    # reqwest pulls in multiple versions of some deps
+    { name = "hyper", version = "0.14" },
+    { name = "http", version = "0.2" },
+]
+skip-tree = [
+    # tokio-util / tokio-stream may pull alternative versions of tokio
+    { name = "tokio-util" },
+    { name = "tokio-stream" },
+]
+
+[sources]
+# Restrict allowed source locations
+allow-git = []
+# Deny all unknown registries
+unknown-registry = "deny"
+unknown-git = "deny"

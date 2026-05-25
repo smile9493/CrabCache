@@ -169,6 +169,65 @@ pub fn ConfigRangeF64(
     }
 }
 
+/// Set `active` from `?tab=` when the value matches a `(name, index)` pair.
+pub fn init_tab_from_query(active: RwSignal<usize>, tabs: &[(&str, usize)]) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(search) = window.location().search() else {
+        return;
+    };
+    let query = search.trim_start_matches('?');
+    let tab_value = query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == "tab").then_some(v)
+    });
+    let Some(value) = tab_value else {
+        return;
+    };
+    for (name, index) in tabs {
+        if *name == value {
+            active.set(*index);
+            return;
+        }
+    }
+}
+
+/// Horizontal tab bar. `active` is the index of the selected tab.
+#[component]
+pub fn TabBar(
+    tabs: Vec<String>,
+    active: RwSignal<usize>,
+) -> impl IntoView {
+    view! {
+        <div
+            class="flex flex-wrap gap-0.5 border-b border-theme-border px-1 mb-4"
+            role="tablist"
+        >
+            {tabs.into_iter().enumerate().map(|(i, label)| {
+                let is_active = move || active.get() == i;
+                view! {
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || is_active()
+                        class=move || {
+                            if is_active() {
+                                "px-4 py-2 text-sm font-semibold border-b-2 border-[var(--cc-accent)] text-[var(--cc-accent-bright)] bg-transparent cursor-pointer"
+                            } else {
+                                "px-4 py-2 text-sm font-medium text-theme-muted hover:text-theme bg-transparent border-b-2 border-transparent cursor-pointer"
+                            }
+                        }
+                        on:click=move |_| active.set(i)
+                    >
+                        {label}
+                    </button>
+                }
+            }).collect_view()}
+        </div>
+    }
+}
+
 #[component]
 pub fn Alert(variant: &'static str, message: Signal<String>) -> impl IntoView {
     let class = match variant {

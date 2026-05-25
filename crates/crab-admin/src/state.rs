@@ -1,14 +1,16 @@
 use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
-use crate::types::{DomainPolicy, ReasoningConfig, TraceSummary};
+use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, TraceSummary};
 use std::collections::HashMap;
 use std::time::Instant;
-use crab_control::{GatewayAdminClient, GatewayStatus, UpstreamTestResult};
+use crate::types::UpstreamTestResult;
+use crab_control::{GatewayAdminClient, GatewayStatus};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex as AsyncMutex;
 
 /// Extended metadata for an API key (quota/UI fields not stored on the gateway).
 #[derive(Debug, Clone)]
@@ -53,8 +55,12 @@ pub struct AppState {
     pub current_version: String,
     pub admin_key: Arc<RwLock<String>>,
     pub upstream_api_key: String,
-    /// Secrets last pushed to the gateway key pool (used by sync_models).
+    /// Secrets last pushed to the gateway key pool (default profile legacy).
     pub upstream_pool_secrets: RwLock<Vec<UpstreamPoolSecret>>,
+    /// Per-profile upstream API keys for model sync (admin-side cache).
+    pub upstream_profile_secrets: RwLock<HashMap<String, Vec<UpstreamPoolSecret>>>,
+    /// profile_id → provider string (from gateway; used for model metadata).
+    pub upstream_profile_providers: RwLock<HashMap<String, String>>,
     pub upstream_notes: RwLock<Option<String>>,
     pub last_upstream_test: RwLock<Option<UpstreamTestResult>>,
     pub gateway_reachable: RwLock<bool>,
@@ -81,6 +87,9 @@ pub struct AppState {
     /// Last successful upstream reconcile from gateway Management API.
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
     pub gateway_probe_cache: RwLock<Option<(Instant, GatewayProbe)>>,
+    /// Cached `OverviewCore` + ETag for `/api/admin/overview/core` (background refresh).
+    pub overview_core_cache: RwLock<Option<(Instant, OverviewCore, String)>>,
+    pub overview_core_build_lock: AsyncMutex<()>,
     pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (incremental tail, configurable TTL via CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
@@ -183,6 +192,7 @@ pub struct StoredConnectionConfig {
 
 #[derive(Debug, Clone)]
 pub struct StoredModel {
+    pub profile_id: String,
     pub id: String,
     pub owned_by: String,
     pub context_length: Option<u64>,
@@ -191,10 +201,11 @@ pub struct StoredModel {
     pub available: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StoredModelList {
     pub models: Vec<StoredModel>,
-    pub synced_at: Option<String>,
+    /// Per-profile last sync timestamp (UTC string).
+    pub synced_at_by_profile: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +354,8 @@ impl AppState {
             admin_key: Arc::new(RwLock::new(Self::load_or_init_admin_key())),
             upstream_api_key,
             upstream_pool_secrets: RwLock::new(pool_secrets),
+            upstream_profile_secrets: RwLock::new(loaded.upstream_profile_secrets.into()),
+            upstream_profile_providers: RwLock::new(HashMap::new()),
             upstream_notes: RwLock::new(loaded.upstream_notes),
             last_upstream_test: RwLock::new(loaded.last_upstream_test),
             gateway_reachable: RwLock::new(false),
@@ -384,9 +397,16 @@ impl AppState {
             reasoning_config: RwLock::new(ReasoningConfig {
                 thinking_mode: "auto".to_string(),
                 reasoning_effort: "medium".to_string(),
-                reasoning_recovery: true,
+                missing_reasoning_strategy: "recover".to_string(),
+                display_reasoning: true,
+                collapsible_reasoning: true,
+                cache_invalidate_recommended: None,
+                storage_backend: String::new(),
+                cache_db_path: String::new(),
+                redis_url_masked: None,
                 sqlite_cache_enabled: true,
                 sqlite_cache_path: None,
+                reasoning_recovery: Some(true),
             }),
             upstream_config: RwLock::new(upstream_cfg),
             models: RwLock::new(models),
@@ -398,6 +418,8 @@ impl AppState {
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
+            overview_core_cache: RwLock::new(None),
+            overview_core_build_lock: AsyncMutex::new(()),
             gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             key_usage_last_synced: parking_lot::Mutex::new(0),
@@ -490,6 +512,8 @@ impl AppState {
                 upstream_profile: p.upstream_profile.clone(),
             })
             .collect();
+        let profile_secrets: persist::PersistedProfileSecrets =
+            (&*self.upstream_profile_secrets.read()).into();
         let file = persist::build_state_file(
             &self.models.read(),
             &self.upstream_config.read(),
@@ -497,8 +521,25 @@ impl AppState {
             self.upstream_notes.read().clone(),
             &keys_meta,
             &domain_policies,
+            &profile_secrets,
         );
         self.persist.save_debounced(file);
+    }
+
+    /// Refresh cached profile_id → provider map from the gateway.
+    pub async fn refresh_profile_providers(&self) {
+        match self.gateway.list_upstream_profiles().await {
+            Ok(resp) => {
+                let mut map = HashMap::new();
+                for p in resp.profiles {
+                    map.insert(p.id, p.provider);
+                }
+                *self.upstream_profile_providers.write() = map;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Could not refresh upstream profile providers");
+            }
+        }
     }
 
     pub fn upstream_reconcile_interval_secs() -> u64 {
@@ -552,6 +593,8 @@ impl AppState {
         if let Ok(keys) = self.gateway.get_upstream_keys().await {
             self.replace_upstream_pool_from_views(&keys.keys);
         }
+
+        self.refresh_profile_providers().await;
     }
 
     fn replace_upstream_pool_from_views(&self, views: &[crab_control::UpstreamKeyView]) {
@@ -568,20 +611,41 @@ impl AppState {
         );
     }
 
-    /// Pick a DeepSeek API key for upstream model list sync.
-    pub fn pick_sync_api_key(&self) -> Option<String> {
-        let pool = self.upstream_pool_secrets.read();
-        if let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty()) {
-            return Some(s.secret.clone());
+    /// Pick an API key for upstream model list sync (profile-specific or default).
+    pub fn pick_sync_api_key(&self, profile_id: &str) -> Option<String> {
+        let profiles = self.upstream_profile_secrets.read();
+        if let Some(pool) = profiles.get(profile_id) {
+            if let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty()) {
+                return Some(s.secret.clone());
+            }
         }
-        drop(pool);
-        let cfg = self.upstream_config.read();
-        if !cfg.api_key.is_empty() && !cfg.api_key.contains("****") {
-            return Some(cfg.api_key.clone());
-        }
-        if !self.upstream_api_key.is_empty() {
-            return Some(self.upstream_api_key.clone());
+        drop(profiles);
+        if profile_id == "deepseek" || self.default_profile_id() == profile_id {
+            let pool = self.upstream_pool_secrets.read();
+            if let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty()) {
+                return Some(s.secret.clone());
+            }
+            drop(pool);
+            let cfg = self.upstream_config.read();
+            if !cfg.api_key.is_empty() && !cfg.api_key.contains("****") {
+                return Some(cfg.api_key.clone());
+            }
+            if !self.upstream_api_key.is_empty() {
+                return Some(self.upstream_api_key.clone());
+            }
         }
         None
+    }
+
+    pub fn default_profile_id(&self) -> String {
+        "deepseek".to_string()
+    }
+
+    pub fn profile_provider(&self, profile_id: &str) -> String {
+        self.upstream_profile_providers
+            .read()
+            .get(profile_id)
+            .cloned()
+            .unwrap_or_else(|| profile_id.to_string())
     }
 }

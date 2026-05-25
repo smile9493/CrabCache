@@ -6,9 +6,10 @@ use crab_cache::{FingerprintConfig, TtlConfig};
 use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode};
 use crab_route::{AffinityRouter, BackendHealth, CircuitBreakerConfig};
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -45,6 +46,8 @@ pub struct RuntimeConfig {
     pub pipeline_globals: RwLock<PipelineGlobals>,
     /// When true, tokens in `legacy_client_tokens` may authenticate as clients.
     pub legacy_api_key_as_client_auth: bool,
+    /// When true and the client key has no `project_id`, derive one from `sk-cc-*` (see `tenant::derive_project_id_from_client_key`).
+    pub auto_project_id_from_client_key: bool,
     pub legacy_client_tokens: HashSet<String>,
     pub domain_policies: Arc<RwLock<HashMap<String, DomainPolicy>>>,
     domain_usage: Mutex<HashMap<String, DomainUsage>>,
@@ -68,6 +71,7 @@ impl RuntimeConfig {
         pipeline_globals: PipelineGlobals,
         legacy_api_key_as_client_auth: bool,
         legacy_client_tokens: HashSet<String>,
+        auto_project_id_from_client_key: bool,
     ) -> Arc<Self> {
         let backends = router
             .backends()
@@ -89,6 +93,7 @@ impl RuntimeConfig {
             default_upstream_profile_id: RwLock::new(default_upstream_profile_id),
             pipeline_globals: RwLock::new(pipeline_globals),
             legacy_api_key_as_client_auth,
+            auto_project_id_from_client_key,
             legacy_client_tokens,
             domain_policies: Arc::new(RwLock::new(HashMap::new())),
             domain_usage: Mutex::new(HashMap::new()),
@@ -103,24 +108,20 @@ impl RuntimeConfig {
     }
 
     pub fn replace_domain_policies(&self, policies: HashMap<String, DomainPolicy>) {
-        if let Ok(mut guard) = self.domain_policies.write() {
-            *guard = policies;
-        }
+        *self.domain_policies.write() = policies;
     }
 
     pub fn list_domain_policies(&self) -> Vec<(String, DomainPolicy)> {
         self.domain_policies
             .read()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     pub fn domain_within_quota(&self, domain: Option<&str>) -> bool {
         let label = Self::effective_domain_label(domain);
-        let policy = match self.domain_policies.read() {
-            Ok(guard) => guard.get(label).cloned(),
-            Err(_) => return true,
-        };
+        let policy = self.domain_policies.read().get(label).cloned();
         let Some(policy) = policy else {
             return true;
         };
@@ -156,16 +157,11 @@ impl RuntimeConfig {
     }
 
     pub fn upstream_pool(&self) -> Arc<UpstreamKeyPool> {
-        self.upstream_pool
-            .read()
-            .map(|p| Arc::clone(&p))
-            .unwrap_or_else(|_| panic!("upstream_pool lock poisoned"))
+        Arc::clone(&self.upstream_pool.read())
     }
 
     pub fn replace_upstream_pool(&self, pool: Arc<UpstreamKeyPool>) {
-        if let Ok(mut guard) = self.upstream_pool.write() {
-            *guard = pool;
-        }
+        *self.upstream_pool.write() = pool;
     }
 
     pub fn is_legacy_client_token(&self, token: &str, full_auth: &str) -> bool {
@@ -192,52 +188,36 @@ impl RuntimeConfig {
     }
 
     pub fn profile(&self, id: &str) -> Option<Arc<UpstreamProfileRuntime>> {
-        self.upstream_profiles
-            .read()
-            .ok()
-            .and_then(|profiles| profiles.get(id).cloned())
+        self.upstream_profiles.read().get(id).cloned()
     }
 
     pub fn default_profile(&self) -> Arc<UpstreamProfileRuntime> {
-        let id = self
-            .default_upstream_profile_id
-            .read()
-            .map(|id| id.clone())
-            .unwrap_or_else(|_| "deepseek".to_string());
+        let id = self.default_upstream_profile_id.read().clone();
         self.profile(&id)
             .or_else(|| {
                 self.upstream_profiles
                     .read()
-                    .ok()
-                    .and_then(|profiles| profiles.values().next().cloned())
+                    .values()
+                    .next()
+                    .cloned()
             })
             .expect("at least one upstream profile required")
     }
 
     pub fn default_upstream_profile_id(&self) -> String {
-        self.default_upstream_profile_id
-            .read()
-            .map(|id| id.clone())
-            .unwrap_or_else(|_| "deepseek".to_string())
+        self.default_upstream_profile_id.read().clone()
     }
 
     pub fn profile_descriptors(&self) -> Vec<crab_pipeline::ProfileDescriptor> {
         self.upstream_profiles
             .read()
-            .map(|profiles| {
-                profiles
-                    .values()
-                    .map(|p| p.profile_descriptor())
-                    .collect()
-            })
-            .unwrap_or_default()
+            .values()
+            .map(|p| p.profile_descriptor())
+            .collect()
     }
 
     pub fn pipeline_globals(&self) -> PipelineGlobals {
-        self.pipeline_globals
-            .read()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.pipeline_globals.read().clone()
     }
 
     pub fn set_pipeline_runtime(
@@ -245,35 +225,23 @@ impl RuntimeConfig {
         pipeline_mode: PipelineMode,
         default_upstream_profile: &str,
     ) -> Result<(), &'static str> {
-        let profiles = self
-            .upstream_profiles
-            .read()
-            .map_err(|_| "upstream profiles lock poisoned")?;
+        let profiles = self.upstream_profiles.read();
         if !profiles.contains_key(default_upstream_profile) {
             return Err("unknown upstream profile");
         }
-        let mut globals = self
-            .pipeline_globals
-            .write()
-            .map_err(|_| "pipeline globals lock poisoned")?;
+        let mut globals = self.pipeline_globals.write();
         globals.pipeline_mode = pipeline_mode;
         globals.default_upstream_profile = default_upstream_profile.to_string();
         let mut ids: Vec<String> = profiles.keys().cloned().collect();
         ids.sort();
         globals.known_profile_ids = ids;
-        if let Ok(mut id) = self.default_upstream_profile_id.write() {
-            *id = default_upstream_profile.to_string();
-        }
+        *self.default_upstream_profile_id.write() = default_upstream_profile.to_string();
         Ok(())
     }
 
     pub fn set_cursor_models(&self, cursor_models: CursorModelsConfig) -> Result<(), String> {
         crab_pipeline::validate_cursor_models(&cursor_models)?;
-        let mut globals = self
-            .pipeline_globals
-            .write()
-            .map_err(|_| "pipeline globals lock poisoned".to_string())?;
-        globals.cursor_models = cursor_models;
+        self.pipeline_globals.write().cursor_models = cursor_models;
         Ok(())
     }
 
@@ -281,5 +249,112 @@ impl RuntimeConfig {
         self.pipeline_globals()
             .cursor_models
             .clone()
+    }
+
+    fn refresh_known_profile_ids(&self) {
+        let mut globals = self.pipeline_globals.write();
+        let mut ids: Vec<String> = self
+            .upstream_profiles
+            .read()
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        globals.known_profile_ids = ids;
+    }
+
+    /// Insert or replace a profile and refresh pipeline globals.
+    pub fn upsert_profile(&self, profile: Arc<UpstreamProfileRuntime>) -> Result<(), String> {
+        let id = profile.id.clone();
+        {
+            let mut profiles = self.upstream_profiles.write();
+            profiles.insert(id.clone(), profile);
+        }
+        self.refresh_known_profile_ids();
+        if id == self.default_upstream_profile_id() {
+            self.sync_legacy_from_profile_id(&id)?;
+        }
+        Ok(())
+    }
+
+    /// Remove a profile. Fails if default or last profile.
+    pub fn remove_profile(&self, id: &str) -> Result<(), String> {
+        let default_id = self.default_upstream_profile_id();
+        if id == default_id {
+            return Err("cannot remove default upstream profile".to_string());
+        }
+        let mut profiles = self.upstream_profiles.write();
+        if profiles.len() <= 1 {
+            return Err("cannot remove the only upstream profile".to_string());
+        }
+        if profiles.remove(id).is_none() {
+            return Err("unknown upstream profile".to_string());
+        }
+        drop(profiles);
+        self.refresh_known_profile_ids();
+        Ok(())
+    }
+
+    pub fn replace_profile_pool(
+        &self,
+        profile_id: &str,
+        pool: Arc<UpstreamKeyPool>,
+    ) -> Result<(), String> {
+        let profiles = self.upstream_profiles.read();
+        let profile = profiles
+            .get(profile_id)
+            .ok_or_else(|| "unknown upstream profile".to_string())?
+            .clone();
+        drop(profiles);
+        *profile.upstream_pool.write() = pool;
+        if profile_id == self.default_upstream_profile_id() {
+            self.replace_upstream_pool(profile.upstream_pool.read().clone());
+        }
+        Ok(())
+    }
+
+    /// Copy default profile relay fields into legacy `RuntimeConfig` fields.
+    pub fn sync_legacy_from_profile_id(&self, profile_id: &str) -> Result<(), String> {
+        let profile = self
+            .profile(profile_id)
+            .ok_or_else(|| "unknown upstream profile".to_string())?;
+        *self.upstream_base_url.write() = profile.base_url.clone();
+        *self.fallback_model.write() = profile.fallback_model.clone();
+        let backends: Vec<crab_route::Backend> = profile
+            .router
+            .backends()
+            .iter()
+            .map(|b| (**b).clone())
+            .collect();
+        self.router
+            .write()
+            .update(&backends)
+            .map_err(|e| e.to_string())?;
+        let pool = profile.resolve_upstream_pool();
+        self.replace_upstream_pool(pool);
+        {
+            let mut health = self.backend_health.write();
+            let keep: std::collections::HashSet<String> =
+                backends.iter().map(|b| b.name.clone()).collect();
+            health.retain(|name, _| keep.contains(name));
+            for b in &backends {
+                health
+                    .entry(b.name.clone())
+                    .or_insert_with(crab_route::BackendHealth::new_healthy);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn profile_endpoints(&self, profile_id: &str) -> Vec<String> {
+        self.profile(profile_id)
+            .map(|p| {
+                p.router
+                    .backends()
+                    .iter()
+                    .map(|b| b.addr.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

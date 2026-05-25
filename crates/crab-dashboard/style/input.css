@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "./design-tokens.css";
 
+/* Scan Leptos views so utility classes in .rs files are not purged. */
+@source "../src/**/*.rs";
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
@@ -321,6 +324,30 @@ body {
 .sidebar-footer { padding: 0.5rem 0.75rem; border-top: 1px solid var(--border-light); font-size: 0.6875rem; color: var(--text-muted); }
 
 /* ==============================================================
+   TAB BAR
+   ============================================================== */
+.tab-bar {
+  display: flex; gap: 0.125rem;
+  border-bottom: 1px solid var(--border-light);
+  padding: 0 0.25rem;
+  margin-bottom: 1rem;
+}
+.tab-item {
+  padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 500;
+  color: var(--text-secondary); background: transparent;
+  border: none; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-speed) var(--transition-curve),
+              border-color var(--transition-speed) var(--transition-curve);
+}
+.tab-item:hover { color: var(--text-primary); }
+.tab-item-active {
+  color: var(--cc-accent-bright);
+  border-bottom-color: var(--cc-accent);
+  font-weight: 600;
+}
+
+/* ==============================================================
    MAIN CONTENT
    ============================================================== */
 
@@ -603,6 +630,51 @@ body {
 .logs-detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-light); }
 .logs-detail-meta   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem 1rem; margin-bottom: 1.25rem; }
 
+/* Skeleton loading animation */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.15; }
+}
+.skeleton-line {
+  background: var(--bg-tertiary);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+.skeleton-line:empty::before { content: "\200b"; }
+
+.logs-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-light);
+  align-items: flex-end;
+}
+.logs-filter-bar .input,
+.logs-filter-bar select.input {
+  min-width: 6rem;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.5rem;
+}
+.logs-filter-bar .logs-filter-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+.logs-hash-link {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 0.15rem;
+  word-break: break-all;
+}
+.logs-hash-link:hover { color: var(--accent-primary); }
+
 .detail-field-label { font-size: 0.625rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .detail-field-value { font-size: 0.8125rem; font-family: var(--font-mono); color: var(--text-primary); margin-top: 0.15rem; word-break: break-all; }
 
@@ -700,3 +772,68 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Upstream Page Split Layout & Design System v3 additions */
+.upstream-split {
+  display: grid;
+  grid-template-columns: 1fr minmax(320px, 420px);
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 1024px) {
+  .upstream-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.profile-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-left: 0.35rem;
+}
+.tab-item-active .profile-tab-badge {
+  background: var(--cc-accent-muted);
+  color: var(--cc-accent-bright);
+}
+
+.test-result-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.test-result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 0.8125rem;
+}
+.test-result-row:last-child {
+  border-bottom: none;
+}
+.test-result-label {
+  color: var(--text-muted);
+}
+.test-result-value {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.test-result-value-mono {
+  font-family: var(--font-mono);
+}
+
+.test-result-success {
+  color: var(--cc-success);
+}
+.test-result-error {
+  color: var(--cc-error);
+}
+

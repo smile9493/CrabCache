@@ -69,6 +69,8 @@ impl RedisStateStore {
         let keys_json: Option<String> = conn.get(self.key("keys")).await?;
         let runtime_json: Option<String> = conn.get(self.key("runtime")).await?;
         let upstream_json: Option<String> = conn.get(self.key("upstream_keys")).await?;
+        let upstream_profiles_json: Option<String> =
+            conn.get(self.key("upstream_profiles")).await?;
         let domain_json: Option<String> = conn.get(self.key("domain_policies")).await?;
 
         let keys = keys_json
@@ -86,6 +88,11 @@ impl RedisStateStore {
             .map(serde_json::from_str)
             .transpose()?;
 
+        let upstream_profiles = upstream_profiles_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?;
+
         let domain_policies = domain_json
             .as_deref()
             .map(serde_json::from_str)
@@ -98,6 +105,7 @@ impl RedisStateStore {
                 keys,
                 runtime,
                 upstream_keys,
+                upstream_profiles,
                 domain_policies,
             },
         ))
@@ -116,6 +124,14 @@ impl RedisStateStore {
                 .set(
                     self.key("upstream_keys"),
                     serde_json::to_string(upstream)?,
+                )
+                .await?;
+        }
+        if let Some(profiles) = &snap.upstream_profiles {
+            let _: () = conn
+                .set(
+                    self.key("upstream_profiles"),
+                    serde_json::to_string(profiles)?,
                 )
                 .await?;
         }

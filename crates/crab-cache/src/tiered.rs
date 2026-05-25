@@ -4,8 +4,9 @@ use bb8_redis::RedisConnectionManager;
 use crab_metrics::{CacheTier, global_metrics};
 use moka::future::Cache;
 use moka::policy::Expiry;
+use parking_lot::RwLock;
 use redis::{AsyncCommands, cmd};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -28,10 +29,7 @@ impl DynamicTtlExpiry {
             Err(_) => return None,
         };
         if cache.1.elapsed() > Duration::from_secs(1) {
-            *cache = match self.ttl_config.read() {
-                Ok(cfg) => (cfg.clone(), Instant::now()),
-                Err(_) => return None,
-            };
+            *cache = (self.ttl_config.read().clone(), Instant::now());
         }
         Some(Duration::from_secs(cache.0.resolve(model, None)))
     }
@@ -115,12 +113,7 @@ impl TieredCache {
             .max_capacity(l0_config.max_capacity)
             .expire_after(DynamicTtlExpiry {
                 ttl_config: ttl_config.clone(),
-                cached: Mutex::new(
-                    ttl_config
-                        .read()
-                        .map(|cfg| (cfg.clone(), Instant::now()))
-                        .unwrap_or((TtlConfig::new(3600), Instant::now())),
-                ),
+                cached: Mutex::new((ttl_config.read().clone(), Instant::now())),
             })
             .support_invalidation_closures()
             .build();
@@ -211,11 +204,7 @@ impl TieredCache {
         model: &str,
         consumer: Option<&str>,
     ) -> Result<(), CacheError> {
-        let ttl = self
-            .ttl_config
-            .read()
-            .map_err(|e| CacheError::Operation(format!("TTL config lock poisoned: {e}")))?
-            .resolve(model, consumer);
+        let ttl = self.ttl_config.read().resolve(model, consumer);
 
         self.l0.insert(key.to_string(), entry.clone()).await;
 
@@ -254,13 +243,10 @@ impl TieredCache {
     }
 
     pub fn resolve_ttl(&self, model: &str, consumer: Option<&str>) -> u64 {
-        self.ttl_config
-            .read()
-            .map(|c| c.resolve(model, consumer))
-            .unwrap_or(3600)
+        self.ttl_config.read().resolve(model, consumer)
     }
 
-    pub fn ttl_config(&self) -> Arc<RwLock<TtlConfig>> {
+    pub fn ttl_config(&self) -> Arc<parking_lot::RwLock<TtlConfig>> {
         self.ttl_config.clone()
     }
 

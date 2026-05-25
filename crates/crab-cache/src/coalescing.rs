@@ -64,6 +64,9 @@ impl RequestCoalescer {
                     });
                 }
 
+                // Yield to avoid tight spin when notify fired but completion flag
+                // isn't visible yet (Acquire/Release ordering race).
+                tokio::task::yield_now().await;
                 continue;
             }
 

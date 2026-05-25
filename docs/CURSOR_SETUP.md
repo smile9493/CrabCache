@@ -71,7 +71,7 @@ curl -s -X POST "http://127.0.0.1:9080/v1/keys" \
 | `missing_reasoning_strategy = "recover"` | **默认（与 deepseek-cursor-proxy 一致）**；`client_key`/`x-conversation-id` 下就地补 reasoning，不截断 tool 历史 |
 | `missing_reasoning_strategy = "reject"` | 无法恢复时 **HTTP 409**（与 proxy `--missing-reasoning-strategy reject` 一致） |
 | `display_reasoning = true` | 非流式：可折叠 `<details>` Thinking；**流式**：思考 mirror 到 `delta.content`，不下发 `reasoning_content` 字段 |
-| `display_reasoning = false` | **静默模式**（对齐 [dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy) 响应剥离）：思考仅存 ReasoningStore，Cursor 上下文仅见 answer / `tool_calls`；长会话推荐。切换后见 [DSV4_CC_PROXY_REFERENCE.md](DSV4_CC_PROXY_REFERENCE.md) 清 L0/L1 |
+| `display_reasoning = false` | **静默模式**（默认，`gateway.toml` / `gateway.docker.toml`）：思考仅存 ReasoningStore；下发 Cursor 前统一 `sanitize_client_completion`（剥 `reasoning_content` 与 `<details>Thinking` 块）。缓存命中在静默模式下也会 regen 带 Thinking 标记的旧 `sse_body`。切换后见 [DSV4_CC_PROXY_REFERENCE.md](DSV4_CC_PROXY_REFERENCE.md) 清 L0/L1 |
 | `stream_cache_enabled`（`[cache]`） | 流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning |
 
 公网域名+端口部署时 Base URL 须包含端口，例如 `https://v4.example.com:18000/v1`（不是无端口 URL）。

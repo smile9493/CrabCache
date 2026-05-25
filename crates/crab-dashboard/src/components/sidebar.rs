@@ -88,23 +88,14 @@ pub fn Sidebar() -> impl IntoView {
                 <NavItem href="/" label=move || use_translations().sidebar_overview() icon="◉" on_navigate=close_on_nav />
                 <NavItem href="/infra" label=move || use_translations().sidebar_infra() icon="⊞" on_navigate=close_on_nav />
                 <NavItem href="/live" label=move || use_translations().sidebar_live() icon="◔" on_navigate=close_on_nav />
-                <NavItem href="/domains" label=move || use_translations().sidebar_domains() icon="◫" on_navigate=close_on_nav />
-                <NavItem href="/composition" label=move || use_translations().sidebar_composition() icon="⊞" on_navigate=close_on_nav />
-                <NavItem href="/logs" label=move || use_translations().sidebar_logs() icon="▣" on_navigate=close_on_nav />
+                <NavItem href="/requests" label=move || use_translations().sidebar_requests() icon="▣" on_navigate=close_on_nav />
 
                 <div class="nav-group-label">{move || use_translations().sidebar_group_config()}</div>
                 <NavItem href="/keys" label=move || use_translations().sidebar_keys() icon="◆" on_navigate=close_on_nav />
                 <NavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon="⬡" on_navigate=close_on_nav />
                 <NavItem href="/models" label=move || use_translations().sidebar_models() icon="◇" on_navigate=close_on_nav />
-                <NavItem href="/cursor-models" label=move || use_translations().sidebar_cursor_models() icon="⊡" on_navigate=close_on_nav />
-                <NavItem href="/reasoning" label=move || use_translations().sidebar_reasoning() icon="⊚" on_navigate=close_on_nav />
-                <NavItem href="/routing" label=move || use_translations().sidebar_routing() icon="◈" on_navigate=close_on_nav />
-                <NavItem href="/pipeline" label=move || use_translations().sidebar_pipeline() icon="⬢" on_navigate=close_on_nav />
+                <NavItem href="/cache" label=move || use_translations().sidebar_cache() icon="◈" on_navigate=close_on_nav />
                 <NavItem href="/system" label=move || use_translations().sidebar_system() icon="⚙" on_navigate=close_on_nav />
-
-                <div class="nav-group-label">{move || use_translations().sidebar_group_ops()}</div>
-                <NavItem href="/cache" label=move || use_translations().sidebar_cache_ops() icon="◎" on_navigate=close_on_nav />
-                <NavItem href="/trace" label=move || use_translations().sidebar_trace() icon="◐" on_navigate=close_on_nav />
             </nav>
 
             <div class="sidebar-footer">
