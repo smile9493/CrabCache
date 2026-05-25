@@ -1,34 +1,34 @@
+mod composition;
+mod infra;
+mod key_usage_sync;
+mod live_metrics;
+mod log_management;
 mod metrics_history;
 mod metrics_store;
-mod key_usage_sync;
-mod infra;
-mod overview;
-mod suggestions;
-mod trace_summary;
-mod trace_user_id_audit;
 mod network;
 mod openresty;
+mod overview;
 mod persist;
-mod trace_log;
-mod live_metrics;
-mod composition;
-mod log_management;
 mod raw_capture;
 mod routes;
 mod state;
 mod static_cache;
+mod suggestions;
+mod trace_log;
+mod trace_summary;
+mod trace_user_id_audit;
 mod types;
 mod update;
 mod upstream;
 mod upstream_profiles;
 
-use axum::{middleware, Router};
+use axum::{Router, middleware};
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
-use tower_http::services::{ServeDir, ServeFile};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -160,10 +160,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
             }
         });
-        info!(
-            interval_secs,
-            "Metrics history sampler started"
-        );
+        info!(interval_secs, "Metrics history sampler started");
     }
 
     {

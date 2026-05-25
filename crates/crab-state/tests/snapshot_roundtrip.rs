@@ -2,13 +2,13 @@
 
 use crab_cache::{FingerprintConfig, TtlConfig};
 use crab_pipeline::{PipelineGlobals, UpstreamProvider};
-use crab_proxy::{ConnectionConfig, DomainPolicy, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime};
-use crab_route::AffinityRouter;
-use crab_state::{
-    apply_snapshot_to_runtime, build_snapshot_from_runtime, ControlPlaneSnapshot,
+use crab_proxy::{
+    ConnectionConfig, DomainPolicy, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime,
 };
-use std::collections::HashMap;
+use crab_route::AffinityRouter;
+use crab_state::{ControlPlaneSnapshot, apply_snapshot_to_runtime, build_snapshot_from_runtime};
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn test_runtime() -> Arc<RuntimeConfig> {
@@ -20,8 +20,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     .unwrap();
     let router = AffinityRouter::new(&backends).unwrap();
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
+    let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
     let mut profiles = HashMap::new();
     profiles.insert(
@@ -113,7 +112,9 @@ fn replace_upstream_pool_updates_default_profile() {
 
     assert!(runtime.upstream_pool().acquire().is_some());
     let profile_after = runtime.default_profile().resolve_upstream_pool();
-    let guard = profile_after.acquire().expect("profile pool should see hot-replaced keys");
+    let guard = profile_after
+        .acquire()
+        .expect("profile pool should see hot-replaced keys");
     assert_eq!(guard.key_id(), "key-1");
     assert_eq!(guard.bearer_secret(), "sk-replaced-upstream-key");
 }

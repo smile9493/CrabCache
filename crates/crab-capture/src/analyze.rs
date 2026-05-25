@@ -129,12 +129,16 @@ pub fn analyze_packet(payload: &Value) -> PacketStructureSummary {
 }
 
 /// Compute structural diff between client and upstream packet summaries.
-pub fn diff_structure(client: &PacketStructureSummary, upstream: &PacketStructureSummary) -> StructureDiff {
+pub fn diff_structure(
+    client: &PacketStructureSummary,
+    upstream: &PacketStructureSummary,
+) -> StructureDiff {
     StructureDiff {
         client: client.clone(),
         upstream: upstream.clone(),
         delta_message_count: upstream.message_count as i32 - client.message_count as i32,
-        delta_content_chars: upstream.total_content_chars as i64 - client.total_content_chars as i64,
+        delta_content_chars: upstream.total_content_chars as i64
+            - client.total_content_chars as i64,
         delta_reasoning_chars: upstream.total_reasoning_content_chars as i64
             - client.total_reasoning_content_chars as i64,
         delta_system_chars: upstream.system_chars as i64 - client.system_chars as i64,

@@ -1,7 +1,7 @@
-use crab_metrics::global_metrics;
 use crate::context::PricingConfig;
 use crate::runtime::RuntimeConfig;
 use crate::sse::UsageData;
+use crab_metrics::global_metrics;
 
 pub fn record_usage_metrics(
     usage: &UsageData,

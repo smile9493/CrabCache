@@ -5,23 +5,23 @@ use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
 use crab_proxy::{
-    ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy, GatewayState,
-    SemanticRuntimeState, SharedSemanticRuntime,
-    RuntimeConfig, RawCaptureLogger, UpstreamUserIdLimiter,
+    ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy,
+    GatewayState, RawCaptureLogger, RuntimeConfig, SemanticRuntimeState, SharedSemanticRuntime,
+    UpstreamUserIdLimiter,
 };
 use crab_reasoning::ReasoningBackend;
+use crab_route::AffinityRouter;
+use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
     spawn_state_refresh_task,
 };
-use crab_route::AffinityRouter;
-use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
+use parking_lot::RwLock;
 use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
 use std::sync::atomic::AtomicBool;
-use parking_lot::RwLock;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::info;
@@ -324,7 +324,7 @@ fn main() -> Result<()> {
                 max_payload_bytes: trace_config.max_payload_bytes,
                 max_response_preview_bytes: trace_config.max_response_preview_bytes,
             });
-            
+
             info!(
                 path = %trace_config.path,
                 max_lines = trace_config.max_lines,
@@ -403,14 +403,13 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| config.cache.l1_redis_url.clone());
 
     let state_store: Option<Arc<RedisStateStore>> = if config.state.is_redis() {
-        let store = rt
-            .block_on(async {
-                RedisStateStore::connect(&RedisStateConfig::new(
-                    state_redis_url.clone(),
-                    config.state.key_prefix.clone(),
-                ))
-                .await
-            })?;
+        let store = rt.block_on(async {
+            RedisStateStore::connect(&RedisStateConfig::new(
+                state_redis_url.clone(),
+                config.state.key_prefix.clone(),
+            ))
+            .await
+        })?;
         let store = Arc::new(store);
         let empty = rt.block_on(store.is_empty())?;
         if empty {
@@ -558,15 +557,16 @@ fn main() -> Result<()> {
     let client_key_rate_limiter = ClientKeyRateLimiter::new();
 
     let semantic_threshold = config.semantic.similarity_threshold.unwrap_or(0.95);
-    let semantic_runtime: SharedSemanticRuntime = Arc::new(parking_lot::RwLock::new(SemanticRuntimeState::new(
-        config.semantic.enabled && semantic_cache.is_some(),
-        semantic_threshold,
-        SemanticGateConfig {
-            min_query_chars: config.semantic.min_query_chars,
-            max_query_chars: config.semantic.max_query_chars,
-            embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
-        },
-    )));
+    let semantic_runtime: SharedSemanticRuntime =
+        Arc::new(parking_lot::RwLock::new(SemanticRuntimeState::new(
+            config.semantic.enabled && semantic_cache.is_some(),
+            semantic_threshold,
+            SemanticGateConfig {
+                min_query_chars: config.semantic.min_query_chars,
+                max_query_chars: config.semantic.max_query_chars,
+                embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
+            },
+        )));
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -601,8 +601,7 @@ fn main() -> Result<()> {
 
     let deepseek_user_concurrency: DeepSeekUserConcurrencyConfig =
         config.upstream.deepseek_user_concurrency.clone();
-    let deepseek_user_id_limiter =
-        UpstreamUserIdLimiter::new(deepseek_user_concurrency.clone());
+    let deepseek_user_id_limiter = UpstreamUserIdLimiter::new(deepseek_user_concurrency.clone());
 
     let state = Arc::new(GatewayState {
         runtime,

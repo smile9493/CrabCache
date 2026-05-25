@@ -98,8 +98,7 @@ pub struct UpstreamUserIdGuard {
 
 impl Drop for UpstreamUserIdGuard {
     fn drop(&mut self) {
-        self.limiter
-            .release(&self.slot_key, self.tier, &self.slot);
+        self.limiter.release(&self.slot_key, self.tier, &self.slot);
     }
 }
 
@@ -142,13 +141,12 @@ impl UpstreamUserIdLimiter {
                 e.get().max.store(max, Ordering::Relaxed);
                 e.get().clone()
             }
-            dashmap::mapref::entry::Entry::Vacant(e) => {
-                e.insert(Arc::new(TierSlot {
+            dashmap::mapref::entry::Entry::Vacant(e) => e
+                .insert(Arc::new(TierSlot {
                     inflight: AtomicUsize::new(0),
                     max: AtomicU32::new(max),
                 }))
-                .clone()
-            }
+                .clone(),
         }
     }
 
@@ -220,9 +218,7 @@ impl UpstreamUserIdLimiter {
         }
         // Only clean up empty slots when enabled, and only if the slot in the map
         // is still the same Arc we're releasing (avoids TOCTOU clobber of fresh slots).
-        if self.enabled.load(Ordering::Relaxed)
-            && slot.inflight.load(Ordering::Relaxed) == 0
-        {
+        if self.enabled.load(Ordering::Relaxed) && slot.inflight.load(Ordering::Relaxed) == 0 {
             if let Some(entry) = self.slots.get(slot_key) {
                 if Arc::ptr_eq(entry.value(), slot) {
                     drop(entry); // release read guard before remove

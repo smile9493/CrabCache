@@ -1,10 +1,10 @@
 use crate::infra::rates::{compute_bps, compute_cpu_percent};
 use crate::infra::types::*;
+use bollard::Docker;
 use bollard::container::ListContainersOptions;
 use bollard::container::StatsOptions;
-use bollard::volume::ListVolumesOptions;
-use bollard::Docker;
 use bollard::models::ContainerSummary;
+use bollard::volume::ListVolumesOptions;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,9 +15,7 @@ const BOLLARD_TIMEOUT: u64 = 120;
 const STATS_CONCURRENCY: usize = 4;
 
 fn socket_path(docker_host: &str) -> &str {
-    docker_host
-        .strip_prefix("unix://")
-        .unwrap_or(docker_host)
+    docker_host.strip_prefix("unix://").unwrap_or(docker_host)
 }
 
 fn docker_tcp_allowed() -> bool {
@@ -66,10 +64,7 @@ struct ContainerMeta {
 fn container_meta(c: &ContainerSummary) -> Option<ContainerMeta> {
     let id = c.id.as_deref()?.to_string();
     let names = c.names.as_deref().unwrap_or(&[]);
-    let raw = names
-        .first()
-        .cloned()
-        .unwrap_or_else(|| id.clone());
+    let raw = names.first().cloned().unwrap_or_else(|| id.clone());
     let name = raw.strip_prefix('/').unwrap_or(&raw).to_string();
     let status = c.status.as_deref().unwrap_or("unknown").to_string();
     Some(ContainerMeta { id, name, status })

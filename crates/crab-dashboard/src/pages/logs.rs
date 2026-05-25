@@ -42,19 +42,11 @@ impl LogsFilterForm {
         }
         fn parse_f64(s: &str) -> Option<f64> {
             let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                t.parse().ok()
-            }
+            if t.is_empty() { None } else { t.parse().ok() }
         }
         fn parse_u64(s: &str) -> Option<u64> {
             let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                t.parse().ok()
-            }
+            if t.is_empty() { None } else { t.parse().ok() }
         }
         LogsFilterQuery {
             limit: Some(limit),
@@ -672,7 +664,8 @@ fn JsonBlock(json_str: String) -> impl IntoView {
     if is_body_not_enabled {
         return view! {
             <div class="text-xs text-theme-muted italic px-2 py-4">"(未启用 body 采集)"</div>
-        }.into_any();
+        }
+        .into_any();
     }
 
     // Try to parse as JSON
@@ -700,7 +693,8 @@ fn JsonBlock(json_str: String) -> impl IntoView {
             // Not JSON, render as plain text
             view! {
                 <pre class="logs-pre text-xs">{json_str.clone()}</pre>
-            }.into_any()
+            }
+            .into_any()
         }
     }
 }
@@ -714,9 +708,7 @@ fn render_json_highlighted(value: serde_json::Value, depth: usize) -> impl IntoV
     }
 
     match value {
-        serde_json::Value::Null => {
-            view! { <span class="json-null">"null"</span> }.into_any()
-        }
+        serde_json::Value::Null => view! { <span class="json-null">"null"</span> }.into_any(),
         serde_json::Value::Bool(b) => {
             if b {
                 view! { <span class="json-boolean-true">"true"</span> }.into_any()
@@ -753,7 +745,8 @@ fn render_json_highlighted(value: serde_json::Value, depth: usize) -> impl IntoV
                     <div class="json-indent">{items}</div>
                     <span class="json-bracket">"]"</span>
                 </div>
-            }.into_any()
+            }
+            .into_any()
         }
         serde_json::Value::Object(obj) => {
             if obj.is_empty() {
@@ -780,14 +773,18 @@ fn render_json_highlighted(value: serde_json::Value, depth: usize) -> impl IntoV
                     <div class="json-indent">{entries}</div>
                     <span class="json-bracket">"}"</span>
                 </div>
-            }.into_any()
+            }
+            .into_any()
         }
     }
 }
 
 /// Render a chat completion request with foldable messages by role.
 fn render_chat_request(val: serde_json::Value) -> impl IntoView {
-    let model = val.get("model").and_then(|m| m.as_str()).map(|s| s.to_string());
+    let model = val
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string());
     let stream = val.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
     let has_tools = val.get("tools").is_some() || val.get("functions").is_some();
     let messages: Vec<(String, String)> = val
@@ -796,7 +793,10 @@ fn render_chat_request(val: serde_json::Value) -> impl IntoView {
         .map(|arr| {
             arr.iter()
                 .filter_map(|msg| {
-                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+                    let role = msg
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("unknown");
                     let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     if role.is_empty() && content.is_empty() {
                         None
@@ -841,12 +841,17 @@ fn render_chat_request(val: serde_json::Value) -> impl IntoView {
 
 /// Render a chat completion response with choices.
 fn render_chat_response(val: serde_json::Value) -> impl IntoView {
-    let model = val.get("model").and_then(|m| m.as_str()).map(|s| s.to_string());
+    let model = val
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string());
     let usage_str = val.get("usage").map(|u| {
         format!(
             "{} in / {} out / {} total",
             u.get("prompt_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
-            u.get("completion_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
+            u.get("completion_tokens")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0),
             u.get("total_tokens").and_then(|t| t.as_u64()).unwrap_or(0),
         )
     });
@@ -922,10 +927,13 @@ fn render_chat_response(val: serde_json::Value) -> impl IntoView {
 
 /// Export button that downloads the full detail as a JSON file.
 #[component]
-fn ExportButton(summary: RequestLog, detail: RwSignal<Option<Result<RequestDetail, String>>>) -> impl IntoView {
+fn ExportButton(
+    summary: RequestLog,
+    detail: RwSignal<Option<Result<RequestDetail, String>>>,
+) -> impl IntoView {
     let handle_export = move |_| {
-        use wasm_bindgen::JsValue;
         use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
         let detail_val = detail.get();
         if let Some(Ok(ref d)) = detail_val {
             let export = serde_json::json!({
@@ -954,7 +962,9 @@ fn ExportButton(summary: RequestLog, detail: RwSignal<Option<Result<RequestDetai
                 let a = doc.create_element("a").expect("a");
                 let html_a: web_sys::HtmlElement = a.unchecked_into();
                 html_a.set_attribute("href", &url).ok();
-                html_a.set_attribute("download", &format!("request-{}.json", summary.id)).ok();
+                html_a
+                    .set_attribute("download", &format!("request-{}.json", summary.id))
+                    .ok();
                 html_a.set_attribute("style", "display:none").ok();
                 doc.body().unwrap().append_child(&html_a).ok();
                 html_a.click();

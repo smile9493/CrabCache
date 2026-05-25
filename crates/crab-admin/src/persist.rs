@@ -146,8 +146,7 @@ impl PersistHandle {
     pub fn load(&self) -> AdminStateFile {
         match std::fs::read_to_string(&self.path) {
             Ok(content) => {
-                let mut file: AdminStateFile =
-                    serde_json::from_str(&content).unwrap_or_default();
+                let mut file: AdminStateFile = serde_json::from_str(&content).unwrap_or_default();
                 file.migrate_v4();
                 file
             }
@@ -363,7 +362,9 @@ pub fn build_state_file(
 impl From<&std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>>
     for PersistedProfileSecrets
 {
-    fn from(map: &std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>) -> Self {
+    fn from(
+        map: &std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecret>>,
+    ) -> Self {
         PersistedProfileSecrets {
             by_profile: map
                 .iter()
@@ -404,7 +405,7 @@ impl From<PersistedProfileSecrets>
                         .collect(),
                 )
             })
-                .collect()
+            .collect()
     }
 }
 

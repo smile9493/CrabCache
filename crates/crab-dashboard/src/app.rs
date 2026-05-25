@@ -4,8 +4,8 @@ use leptos_router::path;
 
 use crate::auth::{is_authenticated, provide_admin_auth};
 use crate::components::auth_gate::AuthGate;
+use crate::components::toast::{ToastContainer, provide_toast};
 use crate::components::topnav::TopNav;
-use crate::components::toast::{provide_toast, ToastContainer};
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache::CachePage;
 use crate::pages::infra::InfraPage;

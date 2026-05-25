@@ -195,10 +195,7 @@ pub fn init_tab_from_query(active: RwSignal<usize>, tabs: &[(&str, usize)]) {
 
 /// Horizontal tab bar. `active` is the index of the selected tab.
 #[component]
-pub fn TabBar(
-    tabs: Vec<String>,
-    active: RwSignal<usize>,
-) -> impl IntoView {
+pub fn TabBar(tabs: Vec<String>, active: RwSignal<usize>) -> impl IntoView {
     view! {
         <div
             class="flex flex-wrap gap-0.5 border-b border-theme-border px-1 mb-4"

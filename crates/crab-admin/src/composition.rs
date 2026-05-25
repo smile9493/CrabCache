@@ -33,7 +33,11 @@ async fn load_debug_entries_async(path: &str, hours: u32) -> Vec<CompositionDebu
 
         let read_len = len.min(32 * 1024 * 1024);
         let truncated = len > read_len;
-        let start = if truncated { len.saturating_sub(read_len) } else { 0 };
+        let start = if truncated {
+            len.saturating_sub(read_len)
+        } else {
+            0
+        };
         if start > 0 {
             if file.seek(SeekFrom::Start(start as u64)).is_err() {
                 return Vec::new();
@@ -176,10 +180,7 @@ pub async fn get_composition_trends(
         })
         .collect();
 
-    Json(CompositionTrendsResponse {
-        hours: 24,
-        points,
-    })
+    Json(CompositionTrendsResponse { hours: 24, points })
 }
 
 // ── Composition Debug ────────────────────────────────────────────

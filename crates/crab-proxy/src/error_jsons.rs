@@ -56,7 +56,11 @@ pub fn upstream_pool_exhausted_error_details(
             "code": code,
         }
     });
-    (serde_json::to_vec(&body).unwrap_or_default(), code, retry_after)
+    (
+        serde_json::to_vec(&body).unwrap_or_default(),
+        code,
+        retry_after,
+    )
 }
 
 pub fn deepseek_user_concurrency_exceeded_error_json() -> Vec<u8> {

@@ -9,8 +9,8 @@ pub mod pages;
 pub mod theme;
 pub mod types;
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 fn remove_boot_shell() {
     if let Some(el) = web_sys::window()

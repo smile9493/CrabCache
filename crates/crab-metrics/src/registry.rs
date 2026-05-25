@@ -416,10 +416,15 @@ impl GatewayMetrics {
         let project_id = comp.project_id.as_deref().unwrap_or("none");
         let has_tools = if comp.has_tools { "true" } else { "false" };
         let mc = comp.message_count;
-        let msg_bucket = if mc <= 10 { "0-10" }
-            else if mc <= 50 { "11-50" }
-            else if mc <= 100 { "51-100" }
-            else { "100+" };
+        let msg_bucket = if mc <= 10 {
+            "0-10"
+        } else if mc <= 50 {
+            "11-50"
+        } else if mc <= 100 {
+            "51-100"
+        } else {
+            "100+"
+        };
 
         self.composition_requests
             .with_label_values(&[project_id, &comp.pipeline, has_tools, msg_bucket])

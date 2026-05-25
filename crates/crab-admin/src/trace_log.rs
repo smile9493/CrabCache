@@ -4,11 +4,11 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 
 /// China Standard Time (UTC+8), no DST.
 fn beijing_offset() -> FixedOffset {
@@ -87,8 +87,7 @@ pub struct TraceLogEntry {
 
 impl TraceLogEntry {
     pub fn resolved_input_tokens(&self) -> u64 {
-        self.input_tokens
-            .unwrap_or(self.prompt_tokens as u64)
+        self.input_tokens.unwrap_or(self.prompt_tokens as u64)
     }
 
     pub fn resolved_output_tokens(&self) -> u64 {
@@ -305,7 +304,9 @@ pub fn load_live_trace_entries_cached(
             let fresh = at.elapsed() < live_trace_cache_ttl();
             let same_window = guard.window_secs == window_secs;
             #[cfg(unix)]
-            let same_file = guard.file_mtime == mtime && guard.file_len == file_len && guard.file_inode == inode;
+            let same_file = guard.file_mtime == mtime
+                && guard.file_len == file_len
+                && guard.file_inode == inode;
             #[cfg(not(unix))]
             let same_file = guard.file_mtime == mtime && guard.file_len == file_len;
             if fresh && same_window && same_file {
@@ -515,7 +516,9 @@ pub struct TraceSource {
 /// The default glob is `{dir}/trace.jsonl*` to catch the active file plus
 /// all rotated archives (e.g. `trace.jsonl.20250522_120000`).
 pub fn list_trace_sources(base_path: &str) -> Vec<TraceSource> {
-    let dir = std::path::Path::new(base_path).parent().unwrap_or(std::path::Path::new("."));
+    let dir = std::path::Path::new(base_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
     let base_name = std::path::Path::new(base_path)
         .file_name()
         .and_then(|n| n.to_str())
@@ -592,7 +595,12 @@ fn parse_cursor(cursor: &str) -> (u64, String) {
 /// 1. Lists all sources via `list_trace_sources`.
 /// 2. Reads the newest one (active) with `load_trace_bytes`.
 /// 3. (Future) could walk older sources for cursor pagination.
-fn entry_matches_opts(e: &TraceLogEntry, opts: &TraceLoadOpts, cursor_ts: u64, cursor_hash: &str) -> bool {
+fn entry_matches_opts(
+    e: &TraceLogEntry,
+    opts: &TraceLoadOpts,
+    cursor_ts: u64,
+    cursor_hash: &str,
+) -> bool {
     if let Some(from) = opts.from_ms {
         if e.timestamp_ms < from {
             return false;
@@ -955,7 +963,11 @@ mod tests {
 
         // Second call: should be incremental, only parse new lines.
         let entries2 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
-        assert_eq!(entries2.len(), 5, "all five entries after incremental append");
+        assert_eq!(
+            entries2.len(),
+            5,
+            "all five entries after incremental append"
+        );
 
         let consumers2 = live_distinct_consumers(&cache);
         assert!(consumers2.contains(&"alpha".to_string()));
@@ -991,9 +1003,17 @@ mod tests {
         std::fs::write(&path, &rotated).unwrap();
 
         let entries = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
-        assert_eq!(entries.len(), 1, "rotation should cause full rebuild (shorter file)");
+        assert_eq!(
+            entries.len(),
+            1,
+            "rotation should cause full rebuild (shorter file)"
+        );
         assert_eq!(entries[0].timestamp_ms, now_ms - 1000, "gamma's timestamp");
-        assert_eq!(entries[0].consumer.as_deref(), Some("gamma"), "consumer is gamma");
+        assert_eq!(
+            entries[0].consumer.as_deref(),
+            Some("gamma"),
+            "consumer is gamma"
+        );
 
         let consumers = live_distinct_consumers(&cache);
         assert!(consumers.contains(&"gamma".to_string()));
@@ -1031,33 +1051,51 @@ mod tests {
         );
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(partial.as_bytes()).unwrap();
         }
-        assert!(path.metadata().unwrap().len() > f1, "file grew with partial line");
+        assert!(
+            path.metadata().unwrap().len() > f1,
+            "file grew with partial line"
+        );
 
         // Second read: incremental, partial line stored but not parsed.
         let entries2 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
-        assert_eq!(entries2.len(), 1, "only original entry — partial line buffered");
-        assert!(!cache.read().partial_line.is_empty(), "partial_line should be non-empty");
+        assert_eq!(
+            entries2.len(),
+            1,
+            "only original entry — partial line buffered"
+        );
+        assert!(
+            !cache.read().partial_line.is_empty(),
+            "partial_line should be non-empty"
+        );
 
         // Stage 3: complete the partial line + append another complete line.
         // The completion continues from after `"input_tokens":10` and closes the JSON object,
         // then puts gamma_line on its own line (must be separate from the completed beta JSON).
-        let completion = format!(
-            r#","output_tokens":5,"cache_hit":false,"cache_tier":null}}"#,
-        );
+        let completion = format!(r#","output_tokens":5,"cache_hit":false,"cache_tier":null}}"#,);
         let gamma_line = make_jsonl_line(now_ms - 1000, "gamma");
         let stage3_bytes = [completion.as_bytes(), b"\n", gamma_line.as_bytes()].concat();
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(&stage3_bytes).unwrap();
         }
 
         // Third read: combines partial_line + new bytes → parses beta and gamma.
         let entries3 = load_live_trace_entries_cached(&cache, path.to_str().unwrap(), 300, 65536);
-        assert_eq!(entries3.len(), 3, "all three entries after partial resolved");
+        assert_eq!(
+            entries3.len(),
+            3,
+            "all three entries after partial resolved"
+        );
 
         let consumers = live_distinct_consumers(&cache);
         assert!(consumers.contains(&"alpha".to_string()));
@@ -1090,7 +1128,11 @@ mod tests {
 
         // Both should contain the same data and Arc should be shared.
         assert_eq!(entries1.len(), entries2.len());
-        assert_eq!(entries1.as_ptr(), entries2.as_ptr(), "cache hit should return same Arc");
+        assert_eq!(
+            entries1.as_ptr(),
+            entries2.as_ptr(),
+            "cache hit should return same Arc"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1099,8 +1141,7 @@ mod tests {
 pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
     // First check the active file.
     if Path::new(path).exists() {
-        if let Some(e) = load_trace_entries(path).into_iter().find(|e| e.id() == id)
-        {
+        if let Some(e) = load_trace_entries(path).into_iter().find(|e| e.id() == id) {
             return Some(e);
         }
     }

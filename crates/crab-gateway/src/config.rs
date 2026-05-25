@@ -1,15 +1,15 @@
 use crab_control::parse_upstream_base_url;
 use crab_pipeline::{
-    validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode,
-    PipelineOverride, UpstreamProvider,
+    CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode, PipelineOverride,
+    UpstreamProvider, validate_cursor_models,
 };
 use crab_proxy::{RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::AffinityRouter;
+use parking_lot::RwLock;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use parking_lot::RwLock;
 use std::sync::Arc;
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
@@ -568,10 +568,7 @@ impl GatewayConfig {
         if endpoints.is_empty() {
             endpoints.push(parsed.endpoint);
         }
-        let tls_sni = profile
-            .tls_sni
-            .clone()
-            .unwrap_or(parsed.tls_sni);
+        let tls_sni = profile.tls_sni.clone().unwrap_or(parsed.tls_sni);
         let weight = self.upstream.default_weight.unwrap_or(1);
         let mut backends = Vec::new();
         let mut errors = Vec::new();

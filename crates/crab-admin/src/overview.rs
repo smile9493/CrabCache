@@ -1,8 +1,8 @@
 //! Aggregated overview payload for the dashboard (single poll endpoint).
 
 use crate::metrics_history::{
-    self, avg_prometheus_histogram_ms, build_prefix_cache_snapshot, consumer_token_buckets,
-    domain_token_buckets, scrape_gateway_counters, scrape_ops_metrics, WINDOW_5M_SECS,
+    self, WINDOW_5M_SECS, avg_prometheus_histogram_ms, build_prefix_cache_snapshot,
+    consumer_token_buckets, domain_token_buckets, scrape_gateway_counters, scrape_ops_metrics,
 };
 use crate::state::{AppState, GatewayProbe};
 use crate::suggestions::build_overview_suggestions;
@@ -537,10 +537,7 @@ fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
     }
     match &probe.status {
         Some(s) => gateway_health_from_status(s.clone(), probe.status_error.clone()),
-        None => gateway_health_from_status(
-            empty_gateway_status(),
-            probe.status_error.clone(),
-        ),
+        None => gateway_health_from_status(empty_gateway_status(), probe.status_error.clone()),
     }
 }
 
@@ -594,7 +591,7 @@ mod tests {
     use crate::state::GatewayProbe;
     use crate::types::{
         MetricsHistoryMeta, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics, SemanticConfig,
-        TimeSeriesPoint, TierDeltas5m,
+        TierDeltas5m, TimeSeriesPoint,
     };
 
     fn empty_core() -> MetricsSnapshotCore {

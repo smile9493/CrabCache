@@ -108,7 +108,10 @@ fn GeneralTab() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::change_admin_key(&old, &new_clone).await {
                 Ok(val) => {
-                    let success = val.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let success = val
+                        .get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     if success {
                         key_message.set(Some(t.system_key_changed().to_string()));
                         key_error.set(false);

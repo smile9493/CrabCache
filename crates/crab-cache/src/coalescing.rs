@@ -182,11 +182,9 @@ impl CoalesceGuard {
 
     /// True when the leader marked failure before followers resumed.
     pub fn leader_failed(&self) -> bool {
-        self.entry.as_ref().is_some_and(|entry| {
-            entry
-                .failed
-                .load(std::sync::atomic::Ordering::Acquire)
-        })
+        self.entry
+            .as_ref()
+            .is_some_and(|entry| entry.failed.load(std::sync::atomic::Ordering::Acquire))
     }
 }
 

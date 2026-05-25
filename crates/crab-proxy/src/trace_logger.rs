@@ -4,8 +4,8 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -171,14 +171,16 @@ fn mask_snapshot_sensitive(text: &str) -> String {
             // Find the end of the token (non-alphanumeric or end)
             let start = i;
             i += 3; // skip "sk-"
-            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_') {
+            while i < len
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')
+            {
                 i += 1;
             }
             let token = &text[start..i];
             if token.len() > 8 {
                 result.push_str(&token[..4]);
                 result.push_str("...");
-                result.push_str(&token[token.len()-4..]);
+                result.push_str(&token[token.len() - 4..]);
             } else {
                 result.push_str(&token[..1]);
                 result.push_str("***");
@@ -286,7 +288,11 @@ impl LogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
+            self.path
+                .file_name()
+                .expect("path has file_name — validated at init")
+                .to_str()
+                .expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -303,8 +309,16 @@ impl LogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().expect("path has parent — validated at init");
-        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
+        let parent = self
+            .path
+            .parent()
+            .expect("path has parent — validated at init");
+        let file_name = self
+            .path
+            .file_name()
+            .expect("path has file_name — validated at init")
+            .to_str()
+            .expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())
@@ -374,7 +388,11 @@ impl DebugLogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
+            self.path
+                .file_name()
+                .expect("path has file_name — validated at init")
+                .to_str()
+                .expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -391,8 +409,16 @@ impl DebugLogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().expect("path has parent — validated at init");
-        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
+        let parent = self
+            .path
+            .parent()
+            .expect("path has parent — validated at init");
+        let file_name = self
+            .path
+            .file_name()
+            .expect("path has file_name — validated at init")
+            .to_str()
+            .expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())
@@ -587,9 +613,7 @@ mod tests {
     fn test_snapshot_disabled_by_default() {
         let body = b"test request body";
         let entry = SanitizedLogEntry::from_request(
-            body,
-            None, None, None, None,
-            "model", 0, 0.0, false, None, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None,
             0, // max_payload_bytes = 0 → no snapshot
         );
         assert!(entry.request_messages_snapshot.is_none());
@@ -600,12 +624,12 @@ mod tests {
     fn test_snapshot_with_payload() {
         let body = b"Hello, this is a test request body";
         let entry = SanitizedLogEntry::from_request(
-            body,
-            None, None, None, None,
-            "model", 0, 0.0, false, None, None,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None,
             100, // max_payload_bytes = 100
         );
-        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
+        let snap = entry
+            .request_messages_snapshot
+            .expect("snapshot should be present");
         assert!(snap.contains("Hello"));
         assert!(snap.len() <= 100 + 15); // allow "...<truncated>" suffix
     }
@@ -614,13 +638,16 @@ mod tests {
     fn test_snapshot_truncation() {
         let body = vec![b'A'; 200];
         let entry = SanitizedLogEntry::from_request(
-            &body,
-            None, None, None, None,
-            "model", 0, 0.0, false, None, None,
+            &body, None, None, None, None, "model", 0, 0.0, false, None, None,
             50, // truncate to 50 bytes
         );
-        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
-        assert!(snap.contains("<truncated>"), "should indicate truncation: {snap}");
+        let snap = entry
+            .request_messages_snapshot
+            .expect("snapshot should be present");
+        assert!(
+            snap.contains("<truncated>"),
+            "should indicate truncation: {snap}"
+        );
         // Original AAAA... should be truncated
         assert!(snap.len() < 120, "snapshot too long: {}", snap.len());
     }
@@ -629,13 +656,15 @@ mod tests {
     fn test_snapshot_sk_masking() {
         let body = b"api_key=sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2";
         let entry = SanitizedLogEntry::from_request(
-            body,
-            None, None, None, None,
-            "model", 0, 0.0, false, None, None,
-            200,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None, 200,
         );
-        let snap = entry.request_messages_snapshot.expect("snapshot should be present");
-        assert!(!snap.contains("sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2"), "key should be masked: {snap}");
+        let snap = entry
+            .request_messages_snapshot
+            .expect("snapshot should be present");
+        assert!(
+            !snap.contains("sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2"),
+            "key should be masked: {snap}"
+        );
         assert!(snap.contains("sk-c"), "partial reveal expected: {snap}");
     }
 
@@ -644,14 +673,10 @@ mod tests {
         let body = b"test body for hash consistency";
         // Same body, same hash regardless of max_payload_bytes
         let entry1 = SanitizedLogEntry::from_request(
-            body, None, None, None, None,
-            "model", 0, 0.0, false, None, None,
-            0,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None, 0,
         );
         let entry2 = SanitizedLogEntry::from_request(
-            body, None, None, None, None,
-            "model", 0, 0.0, false, None, None,
-            50,
+            body, None, None, None, None, "model", 0, 0.0, false, None, None, 50,
         );
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert!(!entry2.request_messages_snapshot.is_none());

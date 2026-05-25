@@ -194,13 +194,7 @@ impl RuntimeConfig {
     pub fn default_profile(&self) -> Arc<UpstreamProfileRuntime> {
         let id = self.default_upstream_profile_id.read().clone();
         self.profile(&id)
-            .or_else(|| {
-                self.upstream_profiles
-                    .read()
-                    .values()
-                    .next()
-                    .cloned()
-            })
+            .or_else(|| self.upstream_profiles.read().values().next().cloned())
             .expect("at least one upstream profile required")
     }
 
@@ -246,19 +240,12 @@ impl RuntimeConfig {
     }
 
     pub fn cursor_models(&self) -> CursorModelsConfig {
-        self.pipeline_globals()
-            .cursor_models
-            .clone()
+        self.pipeline_globals().cursor_models.clone()
     }
 
     fn refresh_known_profile_ids(&self) {
         let mut globals = self.pipeline_globals.write();
-        let mut ids: Vec<String> = self
-            .upstream_profiles
-            .read()
-            .keys()
-            .cloned()
-            .collect();
+        let mut ids: Vec<String> = self.upstream_profiles.read().keys().cloned().collect();
         ids.sort();
         globals.known_profile_ids = ids;
     }

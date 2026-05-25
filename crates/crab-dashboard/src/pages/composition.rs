@@ -1,8 +1,6 @@
 use crate::api::{fetch_composition_debug, fetch_composition_summary, fetch_composition_trends};
-use crate::locale::{use_locale, use_translations, Locale};
-use crate::types::{
-    CompositionDebugEntry, CompositionSummary, CompositionTrendsResponse,
-};
+use crate::locale::{Locale, use_locale, use_translations};
+use crate::types::{CompositionDebugEntry, CompositionSummary, CompositionTrendsResponse};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -43,12 +41,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 
 /// A simple horizontal bar with a label, value, and percentage bar.
 #[component]
-fn StatBar(
-    label: String,
-    value: String,
-    pct_val: f64,
-    max_pct: f64,
-) -> impl IntoView {
+fn StatBar(label: String, value: String, pct_val: f64, max_pct: f64) -> impl IntoView {
     let bar_width = if max_pct > 0.0 {
         format!("{:.1}%", (pct_val / max_pct) * 100.0)
     } else {
@@ -71,11 +64,7 @@ fn StatBar(
 
 /// A simple vertical bar chart component.
 #[component]
-fn VerticalBarChart(
-    title: String,
-    bars: Vec<(String, usize)>,
-    max_count: usize,
-) -> impl IntoView {
+fn VerticalBarChart(title: String, bars: Vec<(String, usize)>, max_count: usize) -> impl IntoView {
     let max_h = 120.0;
     view! {
         <div class="chart-card glass-card">
@@ -109,11 +98,7 @@ fn VerticalBarChart(
 
 /// A component rate bar (component name, present count, rate).
 #[component]
-fn ComponentRateBar(
-    component: String,
-    present_count: usize,
-    rate: f64,
-) -> impl IntoView {
+fn ComponentRateBar(component: String, present_count: usize, rate: f64) -> impl IntoView {
     let bar_width = format!("{:.1}%", rate * 100.0);
     view! {
         <div class="flex items-center gap-2 mb-2">
@@ -132,10 +117,7 @@ fn ComponentRateBar(
 
 /// A simple line chart for trends using a canvas element.
 #[component]
-fn TrendLineChart(
-    title: String,
-    points: Vec<(String, u32)>,
-) -> impl IntoView {
+fn TrendLineChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     let max_v = points.iter().map(|(_, v)| *v).max().unwrap_or(1).max(1);
     let svg_width = points.len().max(2) * 12;
     let svg_height = 120;
@@ -144,8 +126,11 @@ fn TrendLineChart(
         .iter()
         .enumerate()
         .map(|(i, (_, v))| {
-            let x = (i as f64 / (points.len().saturating_sub(1) as f64).max(1.0)) * (svg_width as f64 - 20.0) + 10.0;
-            let y = svg_height as f64 - 20.0 - (*v as f64 / max_v as f64) * (svg_height as f64 - 40.0);
+            let x = (i as f64 / (points.len().saturating_sub(1) as f64).max(1.0))
+                * (svg_width as f64 - 20.0)
+                + 10.0;
+            let y =
+                svg_height as f64 - 20.0 - (*v as f64 / max_v as f64) * (svg_height as f64 - 40.0);
             format!("{:.1},{:.1}", x, y)
         })
         .collect::<Vec<_>>()
@@ -185,11 +170,7 @@ fn TrendLineChart(
 
 /// Summary card component.
 #[component]
-fn SummaryCard(
-    label: String,
-    value: String,
-    subtitle: String,
-) -> impl IntoView {
+fn SummaryCard(label: String, value: String, subtitle: String) -> impl IntoView {
     view! {
         <div class="summary-card glass-card text-center p-3 min-w-28">
             <div class="text-lg font-bold text-[var(--text-primary)]">{value}</div>
@@ -203,9 +184,7 @@ fn SummaryCard(
 
 /// Drawer panel showing full composition debug text (system/tools).
 #[component]
-fn CompositionDebugDrawer(
-    debug_state: RwSignal<DebugState>,
-) -> impl IntoView {
+fn CompositionDebugDrawer(debug_state: RwSignal<DebugState>) -> impl IntoView {
     let entry = Signal::derive(move || debug_state.get().selected_entry);
     let visible = move || entry.get().is_some();
     let locale = use_locale();
@@ -371,7 +350,11 @@ pub fn CompositionPage() -> impl IntoView {
                     h,
                     Some(20),
                     if hash.is_empty() { None } else { Some(&hash) },
-                    if consumer.is_empty() { None } else { Some(&consumer) },
+                    if consumer.is_empty() {
+                        None
+                    } else {
+                        Some(&consumer)
+                    },
                 )
                 .await
                 {

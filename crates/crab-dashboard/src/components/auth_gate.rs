@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::brand_logo::BrandLogo;
 use crate::auth::{complete_login, use_admin_key};
+use crate::components::brand_logo::BrandLogo;
 use crate::locale::{Translations, use_translations};
 
 #[component]

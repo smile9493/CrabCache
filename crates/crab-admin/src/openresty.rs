@@ -107,7 +107,10 @@ fn parse_listen(block: &str) -> Option<ListenInfo> {
         if !trimmed.starts_with("listen ") {
             continue;
         }
-        let rest = trimmed.strip_prefix("listen ")?.trim().trim_end_matches(';');
+        let rest = trimmed
+            .strip_prefix("listen ")?
+            .trim()
+            .trim_end_matches(';');
         let ssl = rest.contains("ssl");
         let port_token = rest
             .split_whitespace()
@@ -124,7 +127,11 @@ fn parse_server_name(block: &str) -> Option<String> {
     for line in block.lines() {
         let trimmed = line.trim();
         if let Some(name) = trimmed.strip_prefix("server_name ") {
-            let name = name.trim().trim_end_matches(';').split_whitespace().next()?;
+            let name = name
+                .trim()
+                .trim_end_matches(';')
+                .split_whitespace()
+                .next()?;
             if name != "_" && name != "localhost" {
                 return Some(name.to_string());
             }
@@ -157,7 +164,10 @@ server {
     #[test]
     fn parses_api_server_not_admin() {
         let urls = parse_conf_content(SAMPLE, DEFAULT_GATEWAY_UPSTREAM);
-        assert_eq!(urls, vec!["https://v4.wumingaicg.website:18000".to_string()]);
+        assert_eq!(
+            urls,
+            vec!["https://v4.wumingaicg.website:18000".to_string()]
+        );
     }
 
     #[test]
@@ -175,7 +185,10 @@ server {
 }
 "#;
         let urls = parse_conf_content(conf, DEFAULT_GATEWAY_UPSTREAM);
-        assert_eq!(urls, vec!["https://v4.wumingaicg.website:18000".to_string()]);
+        assert_eq!(
+            urls,
+            vec!["https://v4.wumingaicg.website:18000".to_string()]
+        );
     }
 
     #[test]

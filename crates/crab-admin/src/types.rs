@@ -88,7 +88,11 @@ pub fn upstream_key_view_from_control(k: crab_control::UpstreamKeyView) -> Upstr
 
 pub fn upstream_keys_view_from_control(v: crab_control::UpstreamKeysView) -> UpstreamKeysView {
     UpstreamKeysView {
-        keys: v.keys.into_iter().map(upstream_key_view_from_control).collect(),
+        keys: v
+            .keys
+            .into_iter()
+            .map(upstream_key_view_from_control)
+            .collect(),
     }
 }
 
@@ -112,7 +116,9 @@ pub fn upstream_test_from_control(t: crab_control::UpstreamTestResult) -> Upstre
     }
 }
 
-fn upstream_keys_put_mode_to_control(mode: UpstreamKeysPutMode) -> crab_control::UpstreamKeysPutMode {
+fn upstream_keys_put_mode_to_control(
+    mode: UpstreamKeysPutMode,
+) -> crab_control::UpstreamKeysPutMode {
     match mode {
         UpstreamKeysPutMode::Replace => crab_control::UpstreamKeysPutMode::Replace,
         UpstreamKeysPutMode::Append => crab_control::UpstreamKeysPutMode::Append,

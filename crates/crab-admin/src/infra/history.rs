@@ -137,7 +137,12 @@ pub fn sample_interval_secs() -> u64 {
 pub fn to_timeseries(
     points: &[InfraSamplePoint],
     container_id: &str,
-) -> (Vec<ChartPoint>, Vec<ChartPoint>, Vec<ChartPoint>, Vec<ChartPoint>) {
+) -> (
+    Vec<ChartPoint>,
+    Vec<ChartPoint>,
+    Vec<ChartPoint>,
+    Vec<ChartPoint>,
+) {
     let mut cpu_series = Vec::new();
     let mut mem_series = Vec::new();
     let mut rx_series = Vec::new();

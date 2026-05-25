@@ -7,9 +7,9 @@ pub mod speed_test;
 pub mod types;
 
 use crate::infra::types::*;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use parking_lot::RwLock;
 
 /// Collect an infrastructure snapshot (containers + host disks + volumes).
 pub async fn collect_snapshot(

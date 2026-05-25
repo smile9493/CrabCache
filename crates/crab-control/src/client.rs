@@ -1,6 +1,6 @@
+use crate::UpstreamTestResult;
 use crate::error::ControlError;
 use crate::types::*;
-use crate::UpstreamTestResult;
 use reqwest::Client;
 
 #[derive(Clone)]
@@ -427,9 +427,7 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn list_upstream_profiles(
-        &self,
-    ) -> Result<UpstreamProfilesResponse, ControlError> {
+    pub async fn list_upstream_profiles(&self) -> Result<UpstreamProfilesResponse, ControlError> {
         let resp = self
             .authed(reqwest::Method::GET, "/v1/upstream/profiles")
             .send()
@@ -454,7 +452,10 @@ impl GatewayAdminClient {
 
     pub async fn delete_upstream_profile(&self, id: &str) -> Result<(), ControlError> {
         let resp = self
-            .authed(reqwest::Method::DELETE, &format!("/v1/upstream/profiles/{id}"))
+            .authed(
+                reqwest::Method::DELETE,
+                &format!("/v1/upstream/profiles/{id}"),
+            )
             .send()
             .await?;
         Self::check(resp).await?;

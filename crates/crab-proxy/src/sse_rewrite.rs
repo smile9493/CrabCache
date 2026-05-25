@@ -1,8 +1,8 @@
+use crab_reasoning::PreparedRequest;
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, rewrite_sse_chunk,
     strip_silent_sse_chunk_for_client,
 };
-use crab_reasoning::PreparedRequest;
 use serde_json::Value;
 
 /// Best-effort silent strip when streaming bypasses `prepare_upstream_request` (no accumulator).

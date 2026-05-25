@@ -4,7 +4,7 @@
 //! here so that restarting `crab-admin` does not clear the Dashboard curves.
 
 use crate::metrics_history::MetricsCounterSnapshot;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 use tracing::warn;
@@ -60,8 +60,7 @@ impl MetricsStore {
     }
 
     pub fn db_path() -> String {
-        std::env::var(DB_PATH_ENV)
-            .unwrap_or_else(|_| "data/metrics.sqlite".to_string())
+        std::env::var(DB_PATH_ENV).unwrap_or_else(|_| "data/metrics.sqlite".to_string())
     }
 
     pub fn retention_secs() -> u64 {
@@ -73,11 +72,7 @@ impl MetricsStore {
 
     /// Insert a single snapshot.  If `sampled_at` already exists the row is
     /// replaced (idempotent).
-    pub fn insert_snapshot(
-        &self,
-        snapshot: &MetricsCounterSnapshot,
-        gateway_uptime_secs: u64,
-    ) {
+    pub fn insert_snapshot(&self, snapshot: &MetricsCounterSnapshot, gateway_uptime_secs: u64) {
         let payload = match serde_json::to_string(snapshot) {
             Ok(s) => s,
             Err(e) => {
@@ -95,17 +90,18 @@ impl MetricsStore {
         if let Err(e) = conn.execute(
             "INSERT OR REPLACE INTO metrics_snapshots(sampled_at, gateway_uptime_secs, payload)
              VALUES (?1, ?2, ?3)",
-            params![snapshot.sampled_at as i64, gateway_uptime_secs as i64, payload],
+            params![
+                snapshot.sampled_at as i64,
+                gateway_uptime_secs as i64,
+                payload
+            ],
         ) {
             warn!(error = %e, "Failed to persist metrics snapshot");
         }
     }
 
     /// Load all snapshots with `sampled_at >= cutoff_ts`, ordered ascending.
-    pub fn load_snapshots_since(
-        &self,
-        cutoff_ts: u64,
-    ) -> Vec<MetricsCounterSnapshot> {
+    pub fn load_snapshots_since(&self, cutoff_ts: u64) -> Vec<MetricsCounterSnapshot> {
         let conn = match self.conn.lock() {
             Ok(c) => c,
             Err(e) => {
@@ -132,13 +128,11 @@ impl MetricsStore {
                 return Vec::new();
             }
         };
-        rows.filter_map(|r| {
-            match r {
-                Ok(payload) => serde_json::from_str(&payload).ok(),
-                Err(e) => {
-                    warn!(error = %e, "Error reading snapshot row");
-                    None
-                }
+        rows.filter_map(|r| match r {
+            Ok(payload) => serde_json::from_str(&payload).ok(),
+            Err(e) => {
+                warn!(error = %e, "Error reading snapshot row");
+                None
             }
         })
         .collect()

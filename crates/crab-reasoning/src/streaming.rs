@@ -326,7 +326,10 @@ impl CursorReasoningDisplayAdapter {
                         if existing_content.is_empty() {
                             obj.insert("content".into(), Value::String(reasoning_content));
                         } else {
-                            obj.insert("content".into(), Value::String(format!("{reasoning_content}{existing_content}")));
+                            obj.insert(
+                                "content".into(),
+                                Value::String(format!("{reasoning_content}{existing_content}")),
+                            );
                         }
                     } else if obj.get("role").is_some() && !obj.contains_key("content") {
                         obj.insert("content".into(), Value::String(String::new()));
@@ -339,8 +342,8 @@ impl CursorReasoningDisplayAdapter {
                         obj.insert("content".into(), Value::String(String::new()));
                     }
 
-                    let should_close = self.open_choices.contains_key(&index)
-                        && (has_tool_calls || has_finish);
+                    let should_close =
+                        self.open_choices.contains_key(&index) && (has_tool_calls || has_finish);
                     if should_close {
                         self.open_choices.remove(&index);
                     }
@@ -499,7 +502,10 @@ mod tests {
         });
         adapter.rewrite_chunk(&mut chunk);
         let delta = &chunk["choices"][0]["delta"];
-        assert!(delta.get("reasoning_content").is_none(), "reasoning_content must be removed");
+        assert!(
+            delta.get("reasoning_content").is_none(),
+            "reasoning_content must be removed"
+        );
         assert_eq!(
             delta.get("content").and_then(|c| c.as_str()),
             Some("thinking...actual answer"),

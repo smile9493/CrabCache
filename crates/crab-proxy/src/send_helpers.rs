@@ -1,5 +1,5 @@
-use pingora_proxy::Session;
 use pingora_http::ResponseHeader;
+use pingora_proxy::Session;
 
 pub(crate) async fn send_json_error_with_retry_after(
     session: &mut Session,
@@ -10,7 +10,11 @@ pub(crate) async fn send_json_error_with_retry_after(
     send_json_error_inner(session, status, body, Some(retry_after_secs)).await
 }
 
-pub(crate) async fn send_json_error(session: &mut Session, status: http::StatusCode, body: &[u8]) -> bool {
+pub(crate) async fn send_json_error(
+    session: &mut Session,
+    status: http::StatusCode,
+    body: &[u8],
+) -> bool {
     send_json_error_inner(session, status, body, None).await
 }
 

@@ -40,7 +40,8 @@ pub fn build_overview_suggestions(bundle: &OverviewBundle) -> Vec<OverviewSugges
     }
 
     if !semantic.enabled {
-        let total_tier = m.tier_deltas_5m.l0 + m.tier_deltas_5m.l1 + m.tier_deltas_5m.l2 + m.tier_deltas_5m.miss;
+        let total_tier =
+            m.tier_deltas_5m.l0 + m.tier_deltas_5m.l1 + m.tier_deltas_5m.l2 + m.tier_deltas_5m.miss;
         if total_tier > 0 && m.tier_deltas_5m.miss as f64 / total_tier as f64 > 0.5 {
             out.push(OverviewSuggestion {
                 severity: "action".into(),
@@ -58,7 +59,9 @@ pub fn build_overview_suggestions(bundle: &OverviewBundle) -> Vec<OverviewSugges
         });
     }
 
-    if m.prefix_cache_hit_ratio < 0.3 && m.prefix_cache_hit_tokens + m.prefix_cache_miss_tokens > 1000 {
+    if m.prefix_cache_hit_ratio < 0.3
+        && m.prefix_cache_hit_tokens + m.prefix_cache_miss_tokens > 1000
+    {
         out.push(OverviewSuggestion {
             severity: "warn".into(),
             target: "l3".into(),
@@ -190,7 +193,10 @@ mod tests {
             suggestions: vec![],
         };
         let s = build_overview_suggestions(&bundle);
-        assert!(s.iter().any(|x| x.target == "hit_rate" && x.severity == "info"));
+        assert!(
+            s.iter()
+                .any(|x| x.target == "hit_rate" && x.severity == "info")
+        );
         assert!(s.iter().any(|x| x.target == "timeseries"));
     }
 }

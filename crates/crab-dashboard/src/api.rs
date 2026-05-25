@@ -178,10 +178,7 @@ pub async fn fetch_overview_core(current_etag: &str) -> Result<OverviewCoreResul
         .await
         .map_err(|e| format!("Network error: {}", e))?;
 
-    let new_etag = resp
-        .headers()
-        .get("etag")
-        .unwrap_or_default();
+    let new_etag = resp.headers().get("etag").unwrap_or_default();
 
     if resp.status() == 304 {
         return Ok(OverviewCoreResult {
@@ -204,8 +201,14 @@ pub async fn fetch_overview_core(current_etag: &str) -> Result<OverviewCoreResul
     })
 }
 
-pub async fn fetch_overview_timeseries(window: &str) -> Result<crate::types::OverviewTimeseriesResponse, String> {
-    fetch_json(&format!("{}/overview/timeseries?window={}", API_BASE, window)).await
+pub async fn fetch_overview_timeseries(
+    window: &str,
+) -> Result<crate::types::OverviewTimeseriesResponse, String> {
+    fetch_json(&format!(
+        "{}/overview/timeseries?window={}",
+        API_BASE, window
+    ))
+    .await
 }
 
 pub async fn fetch_overview_trace() -> Result<crate::types::TraceSummary, String> {
@@ -289,13 +292,10 @@ pub async fn fetch_live_metrics(
 }
 
 /// Fetch available consumers from the lightweight live-metrics/consumers endpoint.
-pub async fn fetch_live_consumers(
-    window_secs: u32,
-) -> Result<serde_json::Value, String> {
+pub async fn fetch_live_consumers(window_secs: u32) -> Result<serde_json::Value, String> {
     let url = format!(
         "{}/live-metrics/consumers?window_secs={}",
-        API_BASE,
-        window_secs
+        API_BASE, window_secs
     );
     fetch_json(&url).await
 }
@@ -399,17 +399,14 @@ pub async fn patch_upstream_key(
 
 pub async fn fetch_models(profile_id: Option<&str>) -> Result<ModelListResponse, String> {
     let url = match profile_id {
-        Some(id) => format!(
-            "{}/models?profile_id={}",
-            API_BASE,
-            urlencoding::encode(id)
-        ),
+        Some(id) => format!("{}/models?profile_id={}", API_BASE, urlencoding::encode(id)),
         None => format!("{}/models", API_BASE),
     };
     fetch_json(&url).await
 }
 
-pub async fn fetch_upstream_profiles() -> Result<crate::types::UpstreamProfilesAdminResponse, String> {
+pub async fn fetch_upstream_profiles() -> Result<crate::types::UpstreamProfilesAdminResponse, String>
+{
     fetch_json(&format!("{}/upstream/profiles", API_BASE)).await
 }
 
@@ -423,7 +420,6 @@ pub async fn put_upstream_profile(
 pub async fn delete_upstream_profile(id: &str) -> Result<(), String> {
     delete_json(&format!("{}/upstream/profiles/{id}", API_BASE)).await
 }
-
 
 pub async fn test_upstream_profile(id: &str) -> Result<UpstreamTestResult, String> {
     #[derive(serde::Serialize)]
@@ -603,17 +599,22 @@ pub async fn fetch_system_version() -> Result<SystemVersion, String> {
 }
 
 pub async fn check_for_updates() -> Result<UpdateCheckResult, String> {
-    post_json(&format!("{}/system/check-update", API_BASE), &serde_json::json!({})).await
+    post_json(
+        &format!("{}/system/check-update", API_BASE),
+        &serde_json::json!({}),
+    )
+    .await
 }
 
 pub async fn trigger_system_update() -> Result<SystemUpdateResult, String> {
-    post_json(&format!("{}/system/update", API_BASE), &serde_json::json!({})).await
+    post_json(
+        &format!("{}/system/update", API_BASE),
+        &serde_json::json!({}),
+    )
+    .await
 }
 
-pub async fn change_admin_key(
-    old_key: &str,
-    new_key: &str,
-) -> Result<serde_json::Value, String> {
+pub async fn change_admin_key(old_key: &str, new_key: &str) -> Result<serde_json::Value, String> {
     let body = serde_json::json!({
         "old_key": old_key,
         "new_key": new_key,
@@ -753,9 +754,7 @@ pub async fn fetch_capture_detail(
     fetch_json(&format!("{}/capture/{}", API_BASE, request_id)).await
 }
 
-pub async fn fetch_capture_stats(
-    hours: u32,
-) -> Result<crate::types::CaptureStatsResponse, String> {
+pub async fn fetch_capture_stats(hours: u32) -> Result<crate::types::CaptureStatsResponse, String> {
     fetch_json(&format!("{}/capture/stats?hours={}", API_BASE, hours)).await
 }
 

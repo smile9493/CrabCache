@@ -1,14 +1,14 @@
 //! Admin API proxy for gateway upstream profiles.
 
 use crate::state::{AppState, UpstreamPoolSecret};
+use crate::types::upstream_test_from_control;
 use crate::types::{
-    patch_upstream_key_to_control, put_upstream_profile_keys_to_control,
-    upstream_key_view_from_control, PutUpstreamProfileAdminRequest, UpstreamKeyInput,
-    UpstreamKeyPoolEntry, UpstreamProfileAdminView, UpstreamProfileKeysAdminView,
-    UpstreamProfilesAdminResponse, PatchUpstreamKeyRequest, UpstreamKeysPutMode,
+    PatchUpstreamKeyRequest, PutUpstreamProfileAdminRequest, UpstreamKeyInput,
+    UpstreamKeyPoolEntry, UpstreamKeysPutMode, UpstreamProfileAdminView,
+    UpstreamProfileKeysAdminView, UpstreamProfilesAdminResponse, patch_upstream_key_to_control,
+    put_upstream_profile_keys_to_control, upstream_key_view_from_control,
 };
 use axum::Json;
-use crate::types::upstream_test_from_control;
 use crab_control::{PutUpstreamProfileRequest, UpstreamProfileView, UpstreamProfilesResponse};
 use std::sync::Arc;
 
@@ -25,9 +25,7 @@ fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
     }
 }
 
-pub async fn list_profiles(
-    state: &Arc<AppState>,
-) -> Result<UpstreamProfilesAdminResponse, String> {
+pub async fn list_profiles(state: &Arc<AppState>) -> Result<UpstreamProfilesAdminResponse, String> {
     let resp: UpstreamProfilesResponse = state
         .gateway
         .list_upstream_profiles()

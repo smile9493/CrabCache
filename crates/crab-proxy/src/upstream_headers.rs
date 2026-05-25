@@ -40,10 +40,7 @@ pub fn smooth_upstream_client_headers(req: &mut RequestHeader, is_streaming: boo
 
 /// Header field names present on the upstream request (for debug logging only).
 pub fn upstream_header_names(req: &RequestHeader) -> Vec<String> {
-    req.headers
-        .keys()
-        .map(|k| k.as_str().to_string())
-        .collect()
+    req.headers.keys().map(|k| k.as_str().to_string()).collect()
 }
 
 #[cfg(test)]
@@ -55,7 +52,8 @@ mod tests {
     fn sample_req() -> RequestHeader {
         let mut req = RequestHeader::build("POST", b"/v1/chat/completions", None).unwrap();
         req.set_version(Version::HTTP_11);
-        req.insert_header(header::TRANSFER_ENCODING, "chunked").unwrap();
+        req.insert_header(header::TRANSFER_ENCODING, "chunked")
+            .unwrap();
         req.insert_header(header::CONTENT_LENGTH, "99999").unwrap();
         req.insert_header(header::CONTENT_ENCODING, "gzip").unwrap();
         req.insert_header(header::EXPECT, "100-continue").unwrap();
@@ -87,10 +85,13 @@ mod tests {
     fn smooth_sets_curl_like_headers() {
         let mut req = sample_req();
         req.insert_header(header::USER_AGENT, "Cursor/1.0").unwrap();
-        req.insert_header(header::ACCEPT_ENCODING, "gzip, deflate, br").unwrap();
+        req.insert_header(header::ACCEPT_ENCODING, "gzip, deflate, br")
+            .unwrap();
         smooth_upstream_client_headers(&mut req, true);
         assert_eq!(
-            req.headers.get(header::USER_AGENT).map(|v| v.to_str().unwrap()),
+            req.headers
+                .get(header::USER_AGENT)
+                .map(|v| v.to_str().unwrap()),
             Some(UPSTREAM_USER_AGENT)
         );
         assert_eq!(

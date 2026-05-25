@@ -1,7 +1,9 @@
 //! DeepSeek `user_id` isolation audit from shadow trace logs.
 
 use crate::trace_log::TraceLogEntry;
-use crate::types::{DeepSeekUserIdAudit, UserIdAuditBreakdown, UserIdModelCount, UserIdProjectCount};
+use crate::types::{
+    DeepSeekUserIdAudit, UserIdAuditBreakdown, UserIdModelCount, UserIdProjectCount,
+};
 use std::collections::HashMap;
 
 const TOP_PROJECT_LIMIT: usize = 10;
@@ -61,10 +63,7 @@ pub fn compute_deepseek_user_id_audit(entries: &[TraceLogEntry]) -> DeepSeekUser
     let mut project_counts: HashMap<String, usize> = HashMap::new();
 
     for e in &deepseek {
-        let has_upstream = e
-            .upstream_user_id
-            .as_deref()
-            .is_some_and(|s| !s.is_empty());
+        let has_upstream = e.upstream_user_id.as_deref().is_some_and(|s| !s.is_empty());
         if has_upstream {
             with_upstream += 1;
             if let Some(pid) = e.upstream_user_id.as_deref().filter(|s| !s.is_empty()) {

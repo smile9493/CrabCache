@@ -47,7 +47,11 @@ pub struct ComponentRate {
 
 /// Aggregate `RequestComposition` entries into a summary for admin API display.
 pub fn aggregate_composition(
-    entries: &[(RequestComposition, /* latency_ms */ f64, /* total_tokens */ u64)],
+    entries: &[(
+        RequestComposition,
+        /* latency_ms */ f64,
+        /* total_tokens */ u64,
+    )],
 ) -> CompositionSummary {
     if entries.is_empty() {
         return CompositionSummary::default();
@@ -57,8 +61,10 @@ pub fn aggregate_composition(
     let mut model_counts: HashMap<String, usize> = HashMap::new();
     let mut project_counts: HashMap<String, usize> = HashMap::new();
     let mut consumer_counts: HashMap<String, usize> = HashMap::new();
-    let mut tool_count_hist: BucketCounter = BucketCounter::new(&["0", "1", "2-5", "6-10", "11-20", "20+"]);
-    let mut msg_count_hist: BucketCounter = BucketCounter::new(&["0-10", "11-50", "51-100", "100+"]);
+    let mut tool_count_hist: BucketCounter =
+        BucketCounter::new(&["0", "1", "2-5", "6-10", "11-20", "20+"]);
+    let mut msg_count_hist: BucketCounter =
+        BucketCounter::new(&["0-10", "11-50", "51-100", "100+"]);
     let mut total_latency_ms = 0.0f64;
     let mut total_tokens: u64 = 0;
 
@@ -76,29 +82,49 @@ pub fn aggregate_composition(
 
         // Tool count histogram
         let tc = comp.tool_count;
-        let tool_bucket = if tc == 0 { "0" }
-        else if tc == 1 { "1" }
-        else if tc <= 5 { "2-5" }
-        else if tc <= 10 { "6-10" }
-        else if tc <= 20 { "11-20" }
-        else { "20+" };
+        let tool_bucket = if tc == 0 {
+            "0"
+        } else if tc == 1 {
+            "1"
+        } else if tc <= 5 {
+            "2-5"
+        } else if tc <= 10 {
+            "6-10"
+        } else if tc <= 20 {
+            "11-20"
+        } else {
+            "20+"
+        };
         tool_count_hist.add(tool_bucket);
 
         // Message count histogram
         let mc = comp.message_count;
-        let msg_bucket = if mc <= 10 { "0-10" }
-        else if mc <= 50 { "11-50" }
-        else if mc <= 100 { "51-100" }
-        else { "100+" };
+        let msg_bucket = if mc <= 10 {
+            "0-10"
+        } else if mc <= 50 {
+            "11-50"
+        } else if mc <= 100 {
+            "51-100"
+        } else {
+            "100+"
+        };
         msg_count_hist.add(msg_bucket);
 
         total_latency_ms += lat;
         total_tokens += tokens;
 
-        if comp.components.rules.present { rules_count += 1; }
-        if comp.components.skills.present { skills_count += 1; }
-        if comp.components.mcp.present { mcp_count += 1; }
-        if comp.components.subagent.present { subagent_count += 1; }
+        if comp.components.rules.present {
+            rules_count += 1;
+        }
+        if comp.components.skills.present {
+            skills_count += 1;
+        }
+        if comp.components.mcp.present {
+            mcp_count += 1;
+        }
+        if comp.components.subagent.present {
+            subagent_count += 1;
+        }
     }
 
     fn top_n<K: ToString>(map: &HashMap<K, usize>, n: usize) -> Vec<NamedCount> {
@@ -115,12 +141,20 @@ pub fn aggregate_composition(
     }
 
     fn rate(count: usize, total: usize) -> f64 {
-        if total == 0 { 0.0 } else { count as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            count as f64 / total as f64
+        }
     }
 
     CompositionSummary {
         total_entries: total,
-        tenant_count: if project_counts.is_empty() { 0 } else { project_counts.len() },
+        tenant_count: if project_counts.is_empty() {
+            0
+        } else {
+            project_counts.len()
+        },
         consumer_count: consumer_counts.len(),
         model_distribution: top_n(&model_counts, 10),
         project_distribution: top_n(&project_counts, 10),
@@ -128,10 +162,26 @@ pub fn aggregate_composition(
         tool_count_histogram: tool_count_hist.into_vec(),
         message_count_histogram: msg_count_hist.into_vec(),
         component_rates: vec![
-            ComponentRate { component: "rules".into(), present_count: rules_count, rate: rate(rules_count, total) },
-            ComponentRate { component: "skills".into(), present_count: skills_count, rate: rate(skills_count, total) },
-            ComponentRate { component: "mcp".into(), present_count: mcp_count, rate: rate(mcp_count, total) },
-            ComponentRate { component: "subagent".into(), present_count: subagent_count, rate: rate(subagent_count, total) },
+            ComponentRate {
+                component: "rules".into(),
+                present_count: rules_count,
+                rate: rate(rules_count, total),
+            },
+            ComponentRate {
+                component: "skills".into(),
+                present_count: skills_count,
+                rate: rate(skills_count, total),
+            },
+            ComponentRate {
+                component: "mcp".into(),
+                present_count: mcp_count,
+                rate: rate(mcp_count, total),
+            },
+            ComponentRate {
+                component: "subagent".into(),
+                present_count: subagent_count,
+                rate: rate(subagent_count, total),
+            },
         ],
         avg_latency_ms: total_latency_ms / total as f64,
         avg_total_tokens: total_tokens / total as u64,
@@ -169,7 +219,7 @@ impl BucketCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extract::{extract_composition, CompositionHints};
+    use crate::extract::{CompositionHints, extract_composition};
     use serde_json::json;
 
     #[test]
@@ -184,11 +234,14 @@ mod tests {
             "model": "deepseek-v4-pro",
             "messages": [{"role": "user", "content": "Hi"}]
         });
-        let comp = extract_composition(&payload, &CompositionHints {
-            consumer: "test".into(),
-            domain: "default".into(),
-            ..Default::default()
-        });
+        let comp = extract_composition(
+            &payload,
+            &CompositionHints {
+                consumer: "test".into(),
+                domain: "default".into(),
+                ..Default::default()
+            },
+        );
         let summary = aggregate_composition(&[(comp, 100.0, 50)]);
         assert_eq!(summary.total_entries, 1);
         assert_eq!(summary.model_distribution.len(), 1);
@@ -212,11 +265,14 @@ mod tests {
                     .collect();
                 payload["tools"] = json!(tools);
             }
-            let comp = extract_composition(&payload, &CompositionHints {
-                consumer: "t".into(),
-                domain: "d".into(),
-                ..Default::default()
-            });
+            let comp = extract_composition(
+                &payload,
+                &CompositionHints {
+                    consumer: "t".into(),
+                    domain: "d".into(),
+                    ..Default::default()
+                },
+            );
             entries.push((comp, 10.0, 5));
         }
         let summary = aggregate_composition(&entries);
@@ -224,6 +280,9 @@ mod tests {
         assert!(hist.iter().any(|b| b.bucket_label == "0" && b.count == 2));
         assert!(hist.iter().any(|b| b.bucket_label == "1" && b.count == 1));
         assert!(hist.iter().any(|b| b.bucket_label == "2-5" && b.count == 1));
-        assert!(hist.iter().any(|b| b.bucket_label == "11-20" && b.count == 1));
+        assert!(
+            hist.iter()
+                .any(|b| b.bucket_label == "11-20" && b.count == 1)
+        );
     }
 }

@@ -34,7 +34,14 @@ fn value_segments_indexed(values: &[Option<f64>]) -> Vec<(usize, Vec<f64>)> {
     segments
 }
 
-fn scale_segment(values: &[f64], ymin: f64, ymax: f64, height: f64, x_offset: f64, x_step: f64) -> String {
+fn scale_segment(
+    values: &[f64],
+    ymin: f64,
+    ymax: f64,
+    height: f64,
+    x_offset: f64,
+    x_step: f64,
+) -> String {
     if values.is_empty() {
         return String::new();
     }

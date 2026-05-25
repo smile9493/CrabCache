@@ -491,8 +491,12 @@ impl Translations {
     }
     pub fn live_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "按 Consumer 查看端到端与上游 API 延迟、TTFT 及 Token 消耗（基于影子日志，约 5 秒粒度）",
-            Locale::EnUS => "Per-consumer e2e vs upstream latency, TTFT, and token usage from shadow log (~5s buckets)",
+            Locale::ZhCN => {
+                "按 Consumer 查看端到端与上游 API 延迟、TTFT 及 Token 消耗（基于影子日志，约 5 秒粒度）"
+            }
+            Locale::EnUS => {
+                "Per-consumer e2e vs upstream latency, TTFT, and token usage from shadow log (~5s buckets)"
+            }
         }
     }
     pub fn live_auto_refresh(self) -> &'static str {
@@ -539,8 +543,12 @@ impl Translations {
     }
     pub fn live_trace_unavailable(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "影子日志不可用。请在 gateway.toml 启用 trace_logging，并确保 Admin 能读取 trace.jsonl（Docker 需共享 gateway_logs 卷）。",
-            Locale::EnUS => "Shadow log unavailable. Enable trace_logging in gateway.toml and mount trace.jsonl for Admin (gateway_logs volume in Docker).",
+            Locale::ZhCN => {
+                "影子日志不可用。请在 gateway.toml 启用 trace_logging，并确保 Admin 能读取 trace.jsonl（Docker 需共享 gateway_logs 卷）。"
+            }
+            Locale::EnUS => {
+                "Shadow log unavailable. Enable trace_logging in gateway.toml and mount trace.jsonl for Admin (gateway_logs volume in Docker)."
+            }
         }
     }
     pub fn live_no_data(self) -> &'static str {
@@ -641,8 +649,12 @@ impl Translations {
     }
     pub fn infra_docker_unavailable(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "Docker 不可用。请在 docker-compose.yml 中将 /var/run/docker.sock 挂载到 admin 容器，并设置 CRABCACHE_COMPOSE_PROJECT 环境变量。",
-            Locale::EnUS => "Docker unavailable. Mount /var/run/docker.sock into the admin container and set CRABCACHE_COMPOSE_PROJECT.",
+            Locale::ZhCN => {
+                "Docker 不可用。请在 docker-compose.yml 中将 /var/run/docker.sock 挂载到 admin 容器，并设置 CRABCACHE_COMPOSE_PROJECT 环境变量。"
+            }
+            Locale::EnUS => {
+                "Docker unavailable. Mount /var/run/docker.sock into the admin container and set CRABCACHE_COMPOSE_PROJECT."
+            }
         }
     }
     pub fn infra_volumes(self) -> &'static str {
@@ -803,8 +815,12 @@ impl Translations {
     }
     pub fn live_upstream_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "上游延迟仅统计缓存未命中且已记录上游耗时的请求；缓存命中仅显示端到端延迟。流式 miss 下 E2E ≈ 上游属预期；可查看 TTFT 判断首字响应速度。",
-            Locale::EnUS => "Upstream latency applies to cache misses with upstream timing; hits show e2e only. When streaming, e2e ≈ upstream is expected. Use TTFT to judge first-token responsiveness.",
+            Locale::ZhCN => {
+                "上游延迟仅统计缓存未命中且已记录上游耗时的请求；缓存命中仅显示端到端延迟。流式 miss 下 E2E ≈ 上游属预期；可查看 TTFT 判断首字响应速度。"
+            }
+            Locale::EnUS => {
+                "Upstream latency applies to cache misses with upstream timing; hits show e2e only. When streaming, e2e ≈ upstream is expected. Use TTFT to judge first-token responsiveness."
+            }
         }
     }
     pub fn live_token_chart(self) -> &'static str {
@@ -1131,7 +1147,9 @@ impl Translations {
     pub fn keys_rpm_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "0 表示不限速（推荐）。非 0 时网关按 sk-cc-* 每分钟请求数限流。",
-            Locale::EnUS => "0 = unlimited (recommended). Non-zero enforces per-key RPM on the gateway.",
+            Locale::EnUS => {
+                "0 = unlimited (recommended). Non-zero enforces per-key RPM on the gateway."
+            }
         }
     }
     pub fn keys_budget_label(self) -> &'static str {
@@ -1360,7 +1378,9 @@ impl Translations {
     pub fn pipeline_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "全局管道模式、默认上游 profile；Key 可单独覆盖 pipeline / profile",
-            Locale::EnUS => "Global pipeline mode and default upstream profile; keys can override per client.",
+            Locale::EnUS => {
+                "Global pipeline mode and default upstream profile; keys can override per client."
+            }
         }
     }
     pub fn sidebar_system(self) -> &'static str {
@@ -1414,7 +1434,9 @@ impl Translations {
     pub fn system_update_confirm(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "确认要更新到最新版本吗？更新过程中服务会短暂重启。",
-            Locale::EnUS => "Are you sure you want to update? Services will restart briefly during the process.",
+            Locale::EnUS => {
+                "Are you sure you want to update? Services will restart briefly during the process."
+            }
         }
     }
     pub fn system_update_available(self) -> &'static str {
@@ -1528,7 +1550,9 @@ impl Translations {
     pub fn pipeline_mode_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "紧急调试：所有聊天走 V4 reasoning 管道；生产建议保持自动",
-            Locale::EnUS => "Emergency override: all chat uses V4 reasoning pipeline; use Auto in production.",
+            Locale::EnUS => {
+                "Emergency override: all chat uses V4 reasoning pipeline; use Auto in production."
+            }
         }
     }
     pub fn pipeline_default_profile(self) -> &'static str {
@@ -1905,7 +1929,9 @@ impl Translations {
     pub fn domains_policies_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "按域名设置配额、命中率门槛，以及管道 / 上游 profile 覆盖",
-            Locale::EnUS => "Per-domain quotas, hit-rate gates, and pipeline / upstream profile overrides.",
+            Locale::EnUS => {
+                "Per-domain quotas, hit-rate gates, and pipeline / upstream profile overrides."
+            }
         }
     }
     pub fn domains_policy_edit_title(self) -> &'static str {
@@ -2152,9 +2178,9 @@ impl Translations {
     }
     pub fn overview_history_meta(self, samples: usize, oldest_secs: u64) -> String {
         match self.locale {
-            Locale::ZhCN => format!(
-                "指标环：{samples} 个采样点，最早约 {oldest_secs}s 前（已持久化到 SQLite）"
-            ),
+            Locale::ZhCN => {
+                format!("指标环：{samples} 个采样点，最早约 {oldest_secs}s 前（已持久化到 SQLite）")
+            }
             Locale::EnUS => format!(
                 "Metrics ring: {samples} samples, oldest ~{oldest_secs}s ago (persisted via SQLite)"
             ),
@@ -2163,7 +2189,9 @@ impl Translations {
     pub fn overview_gateway_reset(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "⚠ 检测到网关最近重启过，累计计数器已归零；历史曲线不受影响。",
-            Locale::EnUS => "⚠ Gateway was recently restarted; cumulative counters have reset but history curves are preserved.",
+            Locale::EnUS => {
+                "⚠ Gateway was recently restarted; cumulative counters have reset but history curves are preserved."
+            }
         }
     }
     pub fn overview_l3_input_ratio(self) -> &'static str {
@@ -2327,7 +2355,9 @@ impl Translations {
     pub fn keys_batch_revoke_body(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "确定批量吊销所选密钥？此操作不可撤销。",
-            Locale::EnUS => "Are you sure you want to revoke the selected keys? This action cannot be undone.",
+            Locale::EnUS => {
+                "Are you sure you want to revoke the selected keys? This action cannot be undone."
+            }
         }
     }
     pub fn keys_batch_revoke_title(self) -> &'static str {
@@ -2339,7 +2369,9 @@ impl Translations {
     pub fn keys_confirm_revoke_body(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "确定吊销此密钥？此操作不可撤销。",
-            Locale::EnUS => "Are you sure you want to revoke this key? This action cannot be undone.",
+            Locale::EnUS => {
+                "Are you sure you want to revoke this key? This action cannot be undone."
+            }
         }
     }
     pub fn cache_ops_semantic_enabled(self) -> &'static str {
@@ -3271,7 +3303,9 @@ impl Translations {
     pub fn composition_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "分析请求的组成结构：模型分布、工具使用、Cursor 组件检测与消息数量",
-            Locale::EnUS => "Analyze request composition: model distribution, tool usage, Cursor component detection, and message counts",
+            Locale::EnUS => {
+                "Analyze request composition: model distribution, tool usage, Cursor component detection, and message counts"
+            }
         }
     }
 
@@ -3354,8 +3388,12 @@ impl Translations {
 
     pub fn composition_no_data(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "暂无请求组成数据。请确认已启用 trace_logging 且存在带 composition 字段的日志条目。",
-            Locale::EnUS => "No composition data yet. Ensure trace_logging is enabled and log entries contain composition fields.",
+            Locale::ZhCN => {
+                "暂无请求组成数据。请确认已启用 trace_logging 且存在带 composition 字段的日志条目。"
+            }
+            Locale::EnUS => {
+                "No composition data yet. Ensure trace_logging is enabled and log entries contain composition fields."
+            }
         }
     }
 
@@ -3537,8 +3575,12 @@ impl Translations {
     }
     pub fn upstream_pool_patch_deepseek_only(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "仅默认 deepseek Profile 支持勾选启用；其它 Profile 请通过保存 Key 池更新。",
-            Locale::EnUS => "Enable toggle only on the default deepseek profile; other profiles update via Save key pool.",
+            Locale::ZhCN => {
+                "仅默认 deepseek Profile 支持勾选启用；其它 Profile 请通过保存 Key 池更新。"
+            }
+            Locale::EnUS => {
+                "Enable toggle only on the default deepseek profile; other profiles update via Save key pool."
+            }
         }
     }
     pub fn upstream_pool_empty_keys_error(self) -> &'static str {
@@ -3670,7 +3712,9 @@ impl Translations {
     pub fn upstream_profile_delete_confirm(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "确定要删除此上游 Profile 吗？删除后其关联的 Key 池也会被吊销。",
-            Locale::EnUS => "Are you sure you want to delete this upstream profile? Its associated key pool will also be revoked.",
+            Locale::EnUS => {
+                "Are you sure you want to delete this upstream profile? Its associated key pool will also be revoked."
+            }
         }
     }
     pub fn upstream_test_latency(self) -> &'static str {
@@ -3949,8 +3993,12 @@ impl Translations {
     }
     pub fn keys_upstream_profile_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "留空则按模型自动选择上游 Profile；DeepSeek 场景请同时配置 project_id。",
-            Locale::EnUS => "Leave empty for auto profile by model; for DeepSeek also set project_id.",
+            Locale::ZhCN => {
+                "留空则按模型自动选择上游 Profile；DeepSeek 场景请同时配置 project_id。"
+            }
+            Locale::EnUS => {
+                "Leave empty for auto profile by model; for DeepSeek also set project_id."
+            }
         }
     }
     pub fn keys_edit_btn(self) -> &'static str {

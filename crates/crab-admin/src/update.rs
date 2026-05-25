@@ -143,18 +143,14 @@ pub async fn verify_checksum(
         .await
         .map_err(|e| format!("Failed to read checksum: {e}"))?;
 
-    let expected_hex = checksum_text
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim();
+    let expected_hex = checksum_text.split_whitespace().next().unwrap_or("").trim();
 
     if expected_hex.is_empty() {
         return Err("Checksum file is empty or malformed".to_string());
     }
 
-    let file_bytes = std::fs::read(file_path)
-        .map_err(|e| format!("Failed to read file for checksum: {e}"))?;
+    let file_bytes =
+        std::fs::read(file_path).map_err(|e| format!("Failed to read file for checksum: {e}"))?;
 
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -167,10 +163,7 @@ pub async fn verify_checksum(
         ));
     }
 
-    tracing::info!(
-        asset = asset_name,
-        "Checksum verified successfully"
-    );
+    tracing::info!(asset = asset_name, "Checksum verified successfully");
 
     Ok(())
 }
@@ -218,7 +211,10 @@ pub async fn restart_gateway(gateway_control_url: &str, admin_key: &str) -> Resu
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    let url = format!("{}/v1/system/restart", gateway_control_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/v1/system/restart",
+        gateway_control_url.trim_end_matches('/')
+    );
     let response = client
         .post(&url)
         .header("x-gateway-admin-key", admin_key)
@@ -227,7 +223,10 @@ pub async fn restart_gateway(gateway_control_url: &str, admin_key: &str) -> Resu
         .map_err(|e| format!("Gateway restart request failed: {e}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("Gateway restart returned HTTP {}", response.status()));
+        return Err(format!(
+            "Gateway restart returned HTTP {}",
+            response.status()
+        ));
     }
 
     tracing::info!("Gateway restart triggered successfully");
@@ -253,9 +252,7 @@ pub fn self_update_and_restart(new_binary: &std::path::Path) -> Result<(), Strin
         current_exe.display()
     ));
     script.push_str(&format!("chmod +x {}\n", current_exe.display()));
-    script.push_str(&format!(
-        "echo 'Starting updated CrabCache admin...'\n"
-    ));
+    script.push_str(&format!("echo 'Starting updated CrabCache admin...'\n"));
     script.push_str(&format!(
         "exec {} {}\n",
         current_exe.display(),

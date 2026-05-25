@@ -40,7 +40,10 @@ pub fn aggregate_live_metrics(
         if entry.timestamp_ms < start_ms {
             continue;
         }
-        if latest.map(|l| l.timestamp_ms < entry.timestamp_ms).unwrap_or(true) {
+        if latest
+            .map(|l| l.timestamp_ms < entry.timestamp_ms)
+            .unwrap_or(true)
+        {
             latest = Some(entry);
         }
 
@@ -348,9 +351,17 @@ mod tests {
         // E2E: (500*1000 + 200*1) / 1001 ≈ 499.7
         assert!((s.avg_e2e_latency_ms - 499.7).abs() < 0.1);
         // Upstream: (100*1000 + 10*1) / 1001 ≈ 99.9 (NOT (100+10)/2 = 55)
-        assert!((s.avg_upstream_latency_ms - 99.9).abs() < 0.1, "upstream={}", s.avg_upstream_latency_ms);
+        assert!(
+            (s.avg_upstream_latency_ms - 99.9).abs() < 0.1,
+            "upstream={}",
+            s.avg_upstream_latency_ms
+        );
         // TTFT: (50*1000 + 5*1) / 1001 ≈ 49.95
-        assert!((s.avg_ttft_ms - 49.95).abs() < 0.1, "ttft={}", s.avg_ttft_ms);
+        assert!(
+            (s.avg_ttft_ms - 49.95).abs() < 0.1,
+            "ttft={}",
+            s.avg_ttft_ms
+        );
         assert_eq!(s.request_count, 1001);
         assert_eq!(s.input_tokens, 10010);
         assert_eq!(s.output_tokens, 5005);

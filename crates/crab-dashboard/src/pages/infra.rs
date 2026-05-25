@@ -8,8 +8,7 @@ use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::page_visible::page_visible;
 use crate::types::{
-    ContainerStats, HostDisk, InfraSnapshot, InfraTimeseriesResponse, SpeedTestJobView,
-    VolumeDisk,
+    ContainerStats, HostDisk, InfraSnapshot, InfraTimeseriesResponse, SpeedTestJobView, VolumeDisk,
 };
 
 fn format_bytes(bytes: u64) -> String {
@@ -360,21 +359,19 @@ pub fn InfraPage() -> impl IntoView {
             let dir = direction.to_string();
             leptos::task::spawn_local(async move {
                 match api::post_infra_speed_test(&dir).await {
-                    Ok(accepted) => {
-                        match poll_speed_job(&accepted.job_id, &dir, 120).await {
-                            Ok(job) => {
-                                speed_job.set(Some(job));
-                                speed_message.set(String::new());
-                            }
-                            Err(e) => {
-                                speed_message.set(if e == "timeout" {
-                                    t.infra_speed_test_timeout().to_string()
-                                } else {
-                                    e
-                                });
-                            }
+                    Ok(accepted) => match poll_speed_job(&accepted.job_id, &dir, 120).await {
+                        Ok(job) => {
+                            speed_job.set(Some(job));
+                            speed_message.set(String::new());
                         }
-                    }
+                        Err(e) => {
+                            speed_message.set(if e == "timeout" {
+                                t.infra_speed_test_timeout().to_string()
+                            } else {
+                                e
+                            });
+                        }
+                    },
                     Err(e) => speed_message.set(e),
                 }
                 speed_testing.set(false);

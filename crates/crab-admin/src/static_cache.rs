@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    http::{header, Request, Response, StatusCode},
+    http::{Request, Response, StatusCode, header},
     middleware::Next,
     response::IntoResponse,
 };
@@ -35,7 +35,8 @@ pub async fn static_cache_headers(req: Request<Body>, next: Next) -> Response<Bo
 
     if let Some(value) = cache_value {
         if let Ok(header_value) = value.parse() {
-            res.headers_mut().insert(header::CACHE_CONTROL, header_value);
+            res.headers_mut()
+                .insert(header::CACHE_CONTROL, header_value);
         }
     }
 

@@ -1,4 +1,4 @@
-use crab_capture::{RawCaptureEntry, analyze_packet, diff_structure, PacketStructureSummary};
+use crab_capture::{PacketStructureSummary, RawCaptureEntry, analyze_packet, diff_structure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -86,9 +86,9 @@ impl IndexWriter {
     }
 
     fn write_entry(&mut self, entry: &RawCaptureEntry) -> std::io::Result<()> {
-        let line = serde_json::to_string(entry).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })? + "\n";
+        let line = serde_json::to_string(entry)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+            + "\n";
         self.file.write_all(line.as_bytes())?;
         self.file.flush()?;
         self.line_count += 1;
@@ -133,9 +133,7 @@ fn cleanup_body_files(dir: &str, max_files: usize) {
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
-        })
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .map(|e| e.path())
         .collect();
 
@@ -205,7 +203,8 @@ impl RawCaptureLogger {
                         }
                     }
                     if let Some(body) = &msg.upstream_body {
-                        let path = bodies_dir.join(format!("{}.upstream.json", msg.entry.request_id));
+                        let path =
+                            bodies_dir.join(format!("{}.upstream.json", msg.entry.request_id));
                         if let Err(e) = fs::write(&path, body) {
                             warn!("Failed to write upstream body file: {}", e);
                         }
@@ -237,7 +236,9 @@ impl RawCaptureLogger {
 
     /// Returns true if the given path should be skipped.
     pub fn should_skip(&self, path: &str) -> bool {
-        self.skip_paths.iter().any(|sp| path == sp || path.starts_with(sp))
+        self.skip_paths
+            .iter()
+            .any(|sp| path == sp || path.starts_with(sp))
     }
 
     /// Directory where raw capture data is written.
@@ -286,19 +287,18 @@ impl RawCaptureLogger {
         let delta_bytes = upstream_body_bytes as i64 - client_body_bytes as i64;
 
         // Build body file contents (optionally masked).
-        let client_file_body = client_body.map(|b| {
-            apply_body_limit(b, self.max_client_bytes, self.mask_api_keys)
-        });
-        let upstream_file_body = upstream_body.map(|b| {
-            apply_body_limit(b, self.max_upstream_bytes, self.mask_api_keys)
-        });
+        let client_file_body =
+            client_body.map(|b| apply_body_limit(b, self.max_client_bytes, self.mask_api_keys));
+        let upstream_file_body =
+            upstream_body.map(|b| apply_body_limit(b, self.max_upstream_bytes, self.mask_api_keys));
 
         // Determine whether upstream body differs from client (compare file-body bytes).
-        let upstream_path = if upstream_file_body.is_some() && upstream_file_body != client_file_body {
-            Some(format!("{}.upstream.json", request_id))
-        } else {
-            None
-        };
+        let upstream_path =
+            if upstream_file_body.is_some() && upstream_file_body != client_file_body {
+                Some(format!("{}.upstream.json", request_id))
+            } else {
+                None
+            };
         let client_path = if client_body.is_some() {
             Some(format!("{}.client.json", request_id))
         } else {

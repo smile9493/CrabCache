@@ -9,29 +9,28 @@ use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
     ClearReasoningCacheResponse, ConnectionRuntimeView, CreateGatewayKeyRequest,
-    CreateGatewayKeyResponse, DomainPolicySpec, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER,
-    GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PutBackendsRequest,
+    CreateGatewayKeyResponse, CursorModelAliasView, CursorModelsConfigView, DomainPolicySpec,
+    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest,
+    PatchUpstreamKeyRequest, PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest,
     PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
-    PutUpstreamRelayConfigRequest, SemanticRuntimeView, CursorModelAliasView,
-    CursorModelsConfigView, PipelineProfileView, PipelineRuntimeConfigView,
-    ReasoningRuntimeConfigView, RoutingBackendsView, StreamCacheConfig, TtlConfigView,
-    UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView,
-    parse_backend_endpoints, parse_upstream_base_url,
+    PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
+    SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode,
+    UpstreamKeysView, UpstreamRelayConfigView, parse_backend_endpoints, parse_upstream_base_url,
 };
-use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_pipeline::{
-    validate_cursor_models, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
+    CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
 };
 use crab_proxy::{
     ClientKeyLimiter, DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool,
     UpstreamKeySpec,
 };
-use std::collections::HashMap;
+use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
+use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use parking_lot::RwLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -175,8 +174,7 @@ pub fn router(state: ManagementState) -> Router {
         )
         .route(
             "/v1/upstream/profiles/{id}/keys",
-            get(management_profiles::get_profile_keys)
-                .put(management_profiles::put_profile_keys),
+            get(management_profiles::get_profile_keys).put(management_profiles::put_profile_keys),
         )
         .route(
             "/v1/upstream/profiles/{id}/keys/{key_id}",
@@ -639,7 +637,8 @@ async fn put_upstream_relay(
             router.backends().iter().map(|b| b.name.clone()).collect();
         health.retain(|name, _| keep.contains(name));
         for b in router.backends() {
-            health.entry(b.name.clone())
+            health
+                .entry(b.name.clone())
                 .or_insert_with(crab_route::BackendHealth::new_healthy);
         }
     }
@@ -951,15 +950,9 @@ async fn create_key(
         .filter(|s| !s.is_empty())
     {
         None => None,
-        Some(raw) => Some(
-            crab_proxy::sanitize_user_id(raw).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse { error: e }),
-                )
-                    .into_response()
-            })?,
-        ),
+        Some(raw) => Some(crab_proxy::sanitize_user_id(raw).map_err(|e| {
+            (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response()
+        })?),
     };
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -1154,15 +1147,9 @@ async fn patch_key(
         if pid.is_empty() {
             entry.project_id = None;
         } else {
-            entry.project_id = Some(
-                crab_proxy::sanitize_user_id(pid).map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse { error: e }),
-                    )
-                        .into_response()
-                })?,
-            );
+            entry.project_id = Some(crab_proxy::sanitize_user_id(pid).map_err(|e| {
+                (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response()
+            })?);
         }
     }
     if let Some(pipeline) = req.pipeline {
@@ -1688,7 +1675,8 @@ async fn put_backends(
             router.backends().iter().map(|b| b.name.clone()).collect();
         health.retain(|name, _| keep.contains(name));
         for b in router.backends() {
-            health.entry(b.name.clone())
+            health
+                .entry(b.name.clone())
                 .or_insert_with(crab_route::BackendHealth::new_healthy);
         }
     }

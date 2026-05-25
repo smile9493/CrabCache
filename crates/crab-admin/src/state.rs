@@ -1,14 +1,14 @@
 use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
-use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceSummary};
-use std::collections::HashMap;
-use std::time::Instant;
 use crate::types::UpstreamTestResult;
+use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceSummary};
 use crab_control::{GatewayAdminClient, GatewayStatus, PutUpstreamKeysRequest, UpstreamKeyInput};
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -582,7 +582,8 @@ impl AppState {
         if !force {
             let guard = self.upstream_reconcile_at.read();
             if let Some(at) = *guard {
-                if at.elapsed() < std::time::Duration::from_secs(Self::upstream_reconcile_interval_secs())
+                if at.elapsed()
+                    < std::time::Duration::from_secs(Self::upstream_reconcile_interval_secs())
                 {
                     return;
                 }
@@ -600,7 +601,10 @@ impl AppState {
                 let mut cfg = self.upstream_config.write();
                 cfg.base_url = relay.base_url;
                 cfg.model = relay.model;
-                if let Some(key) = relay.api_key.filter(|k| !k.is_empty() && !k.contains("****")) {
+                if let Some(key) = relay
+                    .api_key
+                    .filter(|k| !k.is_empty() && !k.contains("****"))
+                {
                     cfg.api_key = key;
                 }
             }

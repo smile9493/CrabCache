@@ -48,10 +48,9 @@ impl EmbedderPool {
     ) -> Result<Self, EmbedError> {
         // Verify model file checksum if expected hash is provided (production safety).
         if let Some(expected) = expected_sha256 {
-            let model_bytes = std::fs::read(model_path)
-                .map_err(|e| EmbedError::Session(
-                    format!("Failed to read model for checksum: {e}")
-                ))?;
+            let model_bytes = std::fs::read(model_path).map_err(|e| {
+                EmbedError::Session(format!("Failed to read model for checksum: {e}"))
+            })?;
             let actual = {
                 let mut hasher = Sha256::new();
                 hasher.update(&model_bytes);
@@ -64,14 +63,11 @@ impl EmbedderPool {
                     actual_sha256 = %actual,
                     "ONNX model checksum mismatch — model may be tampered or corrupted"
                 );
-                return Err(EmbedError::Session(
-                    format!("Model checksum mismatch: expected {expected}, got {actual}")
-                ));
+                return Err(EmbedError::Session(format!(
+                    "Model checksum mismatch: expected {expected}, got {actual}"
+                )));
             }
-            info!(
-                model_path = model_path,
-                "ONNX model checksum verified"
-            );
+            info!(model_path = model_path, "ONNX model checksum verified");
         } else {
             warn!(
                 model_path = model_path,
@@ -136,9 +132,7 @@ impl EmbedderPool {
         // Clone attention_mask for the pooling loop (tensor creation consumes the input)
         let mask_for_pool = attention_mask.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<Vec<f32>, EmbedError> {
-            let mut session = session
-                .lock()
-                .map_err(|_| EmbedError::LockPoisoned)?;
+            let mut session = session.lock().map_err(|_| EmbedError::LockPoisoned)?;
 
             let shape = vec![1i64, seq_len as i64];
 
@@ -200,8 +194,12 @@ mod tests {
 
     #[test]
     fn test_embedder_pool_creation_requires_files() {
-        let result =
-            EmbedderPool::load("/nonexistent/model.onnx", "/nonexistent/tokenizer.json", 4, None);
+        let result = EmbedderPool::load(
+            "/nonexistent/model.onnx",
+            "/nonexistent/tokenizer.json",
+            4,
+            None,
+        );
         assert!(result.is_err());
     }
 

@@ -112,7 +112,10 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
     }
 }
 
-async fn fetch_upstream_models(base_url: &str, api_key: &str) -> Result<UpstreamModelsResponse, String> {
+async fn fetch_upstream_models(
+    base_url: &str,
+    api_key: &str,
+) -> Result<UpstreamModelsResponse, String> {
     let upstream_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -166,13 +169,9 @@ pub async fn sync_models_internal(
     profile_id: &str,
 ) -> Result<SyncResult, String> {
     let base_url = profile_base_url_async(state, profile_id).await?;
-    let api_key = state
-        .pick_sync_api_key(profile_id)
-        .ok_or_else(|| {
-            format!(
-                "Configure API keys for profile '{profile_id}' before syncing models."
-            )
-        })?;
+    let api_key = state.pick_sync_api_key(profile_id).ok_or_else(|| {
+        format!("Configure API keys for profile '{profile_id}' before syncing models.")
+    })?;
 
     let upstream = fetch_upstream_models(&base_url, &api_key).await?;
     let upstream_ids: Vec<String> = upstream.data.iter().map(|m| m.id.clone()).collect();
@@ -215,9 +214,7 @@ pub async fn sync_models_internal(
         .filter(|id| existing_ids.contains(id))
         .count();
 
-    stored
-        .models
-        .retain(|m| m.profile_id != profile_id);
+    stored.models.retain(|m| m.profile_id != profile_id);
 
     for m in upstream.data {
         let existing = existing_for_profile.iter().find(|e| e.id == m.id);
@@ -241,7 +238,9 @@ pub async fn sync_models_internal(
         .iter()
         .filter(|m| m.profile_id == profile_id)
         .count();
-    let synced_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let synced_at = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S UTC")
+        .to_string();
     stored
         .synced_at_by_profile
         .insert(profile_id.to_string(), synced_at);

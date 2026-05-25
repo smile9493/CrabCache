@@ -167,9 +167,7 @@ impl MetricsHistory {
         let d_hits = last
             .gateway_cache_hits()
             .saturating_sub(first.gateway_cache_hits());
-        let d_hit_tokens = last
-            .cache_hit_tokens
-            .saturating_sub(first.cache_hit_tokens);
+        let d_hit_tokens = last.cache_hit_tokens.saturating_sub(first.cache_hit_tokens);
         let d_miss_tokens = last
             .cache_miss_tokens
             .saturating_sub(first.cache_miss_tokens);
@@ -222,7 +220,12 @@ impl MetricsHistory {
         }
     }
 
-    pub fn window_float_delta(&self, window_secs: u64, now: u64, extract: fn(&MetricsCounterSnapshot) -> f64) -> f64 {
+    pub fn window_float_delta(
+        &self,
+        window_secs: u64,
+        now: u64,
+        extract: fn(&MetricsCounterSnapshot) -> f64,
+    ) -> f64 {
         let start = now.saturating_sub(window_secs);
         let in_window: Vec<&MetricsCounterSnapshot> = self
             .samples
@@ -237,7 +240,12 @@ impl MetricsHistory {
         (extract(last) - extract(first)).max(0.0)
     }
 
-    pub fn window_u64_delta(&self, window_secs: u64, now: u64, extract: fn(&MetricsCounterSnapshot) -> u64) -> u64 {
+    pub fn window_u64_delta(
+        &self,
+        window_secs: u64,
+        now: u64,
+        extract: fn(&MetricsCounterSnapshot) -> u64,
+    ) -> u64 {
         let start = now.saturating_sub(window_secs);
         let in_window: Vec<&MetricsCounterSnapshot> = self
             .samples
@@ -264,8 +272,7 @@ impl MetricsHistory {
         }
         let first = in_window.first().unwrap();
         let last = in_window.last().unwrap();
-        last.total_requests()
-            .saturating_sub(first.total_requests())
+        last.total_requests().saturating_sub(first.total_requests())
     }
 
     pub fn build_hourly_stats(&self, now: u64) -> Vec<TimeSeriesPoint> {
@@ -311,9 +318,7 @@ impl MetricsHistory {
                 }
                 let first = group.first()?;
                 let last = group.last()?;
-                let d_requests = last
-                    .total_requests()
-                    .saturating_sub(first.total_requests());
+                let d_requests = last.total_requests().saturating_sub(first.total_requests());
                 let d_tokens = last.total_tokens().saturating_sub(first.total_tokens());
                 let d_hits = last
                     .gateway_cache_hits()
@@ -473,10 +478,7 @@ async fn fetch_gateway_metrics_body_raw() -> Result<String, String> {
         match client.get(&metrics_url).send().await {
             Ok(resp) => {
                 if !resp.status().is_success() {
-                    last_err = format!(
-                        "fetch {metrics_url}: HTTP {}",
-                        resp.status().as_u16()
-                    );
+                    last_err = format!("fetch {metrics_url}: HTTP {}", resp.status().as_u16());
                     if attempt == 0 {
                         tracing::debug!(error = %last_err, "metrics fetch retry after non-success status");
                         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -536,7 +538,11 @@ pub fn scrape_gateway_counters(body: &str, sampled_at: u64) -> MetricsCounterSna
             "gateway_deepseek_input_tokens_total",
             &[("cache_status", "miss")],
         ),
-        total_output_tokens: sum_prometheus_counter(body, "gateway_deepseek_output_tokens_total", &[]),
+        total_output_tokens: sum_prometheus_counter(
+            body,
+            "gateway_deepseek_output_tokens_total",
+            &[],
+        ),
         coalesced_total: sum_prometheus_counter(body, "gateway_coalesced_requests_total", &[]),
         semantic_hits: sum_prometheus_counter(
             body,
@@ -597,11 +603,7 @@ impl MetricsHistory {
         for w in in_window.windows(2) {
             let first = w[0];
             let last = w[1];
-            let (fh, fm) = first
-                .domain_tokens
-                .get(domain)
-                .copied()
-                .unwrap_or((0, 0));
+            let (fh, fm) = first.domain_tokens.get(domain).copied().unwrap_or((0, 0));
             let (lh, lm) = last.domain_tokens.get(domain).copied().unwrap_or((0, 0));
             let dh = lh.saturating_sub(fh);
             let dm = lm.saturating_sub(fm);
@@ -640,26 +642,22 @@ impl MetricsHistory {
         }
         let first = in_window.first().unwrap();
         let last = in_window.last().unwrap();
-        let (fh, fm) = first
-            .domain_tokens
-            .get(domain)
-            .copied()
-            .unwrap_or((0, 0));
+        let (fh, fm) = first.domain_tokens.get(domain).copied().unwrap_or((0, 0));
         let (lh, lm) = last.domain_tokens.get(domain).copied().unwrap_or((0, 0));
         let delta_tokens = lh.saturating_sub(fh) + lm.saturating_sub(fm);
-        let elapsed = last
-            .sampled_at
-            .saturating_sub(first.sampled_at)
-            .max(1) as f64;
+        let elapsed = last.sampled_at.saturating_sub(first.sampled_at).max(1) as f64;
         delta_tokens as f64 / elapsed
     }
 }
 
 /// Scrape operational counters + TTFT from current metrics body (not stored in ring).
-pub fn scrape_ops_metrics(body: &str, history: &MetricsHistory, now: u64) -> crate::types::OverviewOpsMetrics {
+pub fn scrape_ops_metrics(
+    body: &str,
+    history: &MetricsHistory,
+    now: u64,
+) -> crate::types::OverviewOpsMetrics {
     let counters = scrape_gateway_counters(body, now);
-    let cost_saved_usd_5m =
-        history.window_float_delta(WINDOW_5M_SECS, now, |s| s.cost_saved_usd);
+    let cost_saved_usd_5m = history.window_float_delta(WINDOW_5M_SECS, now, |s| s.cost_saved_usd);
     let coalesced_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.coalesced_total);
     let rejected_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.rejected_total);
 
@@ -695,7 +693,9 @@ pub fn prefix_cache_by_model(body: &str) -> Vec<PrefixCacheModelBucket> {
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
         let status = label_value(labels, "status");
         let model = label_value(labels, "model").unwrap_or_else(|| "unknown".to_string());
@@ -755,7 +755,9 @@ pub fn consumer_token_buckets(body: &str, top_n: usize) -> Vec<ConsumerMetricsBu
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
         let consumer = label_value(labels, "consumer").unwrap_or_else(|| "unknown".to_string());
         let status = label_value(labels, "cache_status");
@@ -788,9 +790,7 @@ pub fn consumer_token_buckets(body: &str, top_n: usize) -> Vec<ConsumerMetricsBu
         })
         .collect();
 
-    buckets.sort_by(|a, b| {
-        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
-    });
+    buckets.sort_by(|a, b| (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens)));
     buckets.truncate(top_n);
     buckets
 }
@@ -808,7 +808,9 @@ pub fn domain_token_buckets(body: &str, top_n: usize) -> Vec<DomainMetricsBucket
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
         let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
         let status = label_value(labels, "cache_status");
@@ -845,9 +847,7 @@ pub fn domain_token_buckets(body: &str, top_n: usize) -> Vec<DomainMetricsBucket
         })
         .collect();
 
-    buckets.sort_by(|a, b| {
-        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
-    });
+    buckets.sort_by(|a, b| (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens)));
     buckets.truncate(top_n);
     buckets
 }
@@ -863,7 +863,9 @@ fn domain_cost_saved(body: &str) -> HashMap<String, f64> {
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
         let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
         let value_part = line[close + 1..].trim();
@@ -887,9 +889,12 @@ pub fn domain_consumer_buckets(body: &str, domain: &str) -> Vec<ConsumerMetricsB
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
-        let line_domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        let line_domain =
+            label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
         if line_domain != domain {
             continue;
         }
@@ -923,9 +928,7 @@ pub fn domain_consumer_buckets(body: &str, domain: &str) -> Vec<ConsumerMetricsB
             }
         })
         .collect();
-    buckets.sort_by(|a, b| {
-        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
-    });
+    buckets.sort_by(|a, b| (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens)));
     buckets
 }
 
@@ -940,9 +943,12 @@ pub fn domain_tier_deltas_5m(body: &str, domain: &str) -> TierDeltas5m {
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
-        let line_domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
+        let line_domain =
+            label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
         if line_domain != domain {
             continue;
         }
@@ -974,7 +980,9 @@ fn parse_domain_tokens_from_body(body: &str) -> HashMap<String, (u64, u64)> {
             continue;
         }
         let Some(open) = line.find('{') else { continue };
-        let Some(close) = line.find('}') else { continue };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
         let labels = &line[open + 1..close];
         let domain = label_value(labels, "domain").unwrap_or_else(|| "unclassified".to_string());
         let status = label_value(labels, "cache_status");
@@ -1114,7 +1122,13 @@ pub fn prefix_hit_ratio(hit: u64, miss: u64) -> f64 {
 mod tests {
     use super::*;
 
-    fn snap(at: u64, requests: u64, hits: u64, hit_tokens: u64, miss_tokens: u64) -> MetricsCounterSnapshot {
+    fn snap(
+        at: u64,
+        requests: u64,
+        hits: u64,
+        hit_tokens: u64,
+        miss_tokens: u64,
+    ) -> MetricsCounterSnapshot {
         MetricsCounterSnapshot {
             sampled_at: at,
             l0_hits: hits,

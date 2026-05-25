@@ -281,9 +281,8 @@ pub fn validate_download_url(url: &str) -> Result<(), String> {
         .split(':')
         .next()
         .unwrap_or("");
-    let allowlist = std::env::var("CRABCACHE_SPEED_TEST_HOST_ALLOWLIST").unwrap_or_else(|_| {
-        "speed.cloudflare.com,download.thinkbroadband.com".to_string()
-    });
+    let allowlist = std::env::var("CRABCACHE_SPEED_TEST_HOST_ALLOWLIST")
+        .unwrap_or_else(|_| "speed.cloudflare.com,download.thinkbroadband.com".to_string());
     let allowed: Vec<&str> = allowlist.split(',').map(str::trim).collect();
     if allowed
         .iter()

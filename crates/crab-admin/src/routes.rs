@@ -1,22 +1,22 @@
+use crate::metrics_history::{
+    domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
+};
 use crate::network::NetworkInfo;
 use crate::state::{AppState, KeyMetadata};
 use crate::types::*;
 use axum::{
     Json, Router,
     extract::{Path, Query, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
-use serde::Deserialize;
 use crab_control::{
-    CreateGatewayKeyRequest, FingerprintConfigRequest, InvalidateCacheRequest,
-    PutTtlConfigRequest, parse_upstream_base_url, validate_deepseek_key, CursorModelsConfigView,
+    CreateGatewayKeyRequest, CursorModelsConfigView, FingerprintConfigRequest,
+    InvalidateCacheRequest, PutTtlConfigRequest, parse_upstream_base_url, validate_deepseek_key,
 };
-use crate::metrics_history::{
-    domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
-};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -77,7 +77,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/metrics", get(get_metrics))
         .route("/api/admin/overview", get(get_overview))
         .route("/api/admin/overview/core", get(get_overview_core))
-        .route("/api/admin/overview/timeseries", get(get_overview_timeseries))
+        .route(
+            "/api/admin/overview/timeseries",
+            get(get_overview_timeseries),
+        )
         .route("/api/admin/overview/trace", get(get_overview_trace))
         .route("/api/admin/domains", get(list_domains))
         .route("/api/admin/domains/{domain}", get(get_domain_detail))
@@ -92,10 +95,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/gateway/health", get(get_gateway_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
-        .route(
-            "/api/admin/keys/{id}",
-            delete(revoke_key).patch(patch_key),
-        )
+        .route("/api/admin/keys/{id}", delete(revoke_key).patch(patch_key))
         .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
         .route(
             "/api/admin/cache/config",
@@ -143,8 +143,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/admin/upstream/profiles/{id}",
-            axum::routing::put(put_upstream_profile)
-                .delete(delete_upstream_profile),
+            axum::routing::put(put_upstream_profile).delete(delete_upstream_profile),
         )
         .route(
             "/api/admin/upstream/profiles/{id}/keys",
@@ -167,7 +166,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/models/apply", post(post_models_apply))
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/routing/backends", put(put_routing_backends))
-        .route("/api/admin/cursor/models", get(get_cursor_models).put(put_cursor_models))
+        .route(
+            "/api/admin/cursor/models",
+            get(get_cursor_models).put(put_cursor_models),
+        )
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/{id}", get(get_log_detail))
         // ── Log Management ──
@@ -349,15 +351,12 @@ async fn post_system_update(
     let _ = std::fs::create_dir_all(&download_dir);
 
     // Step 2: Download gateway binary
-    let gateway_asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == "crab-gateway");
+    let gateway_asset = release.assets.iter().find(|a| a.name == "crab-gateway");
 
     let gateway_path = download_dir.join("crab-gateway");
     if let Some(asset) = gateway_asset {
-        if let Err(e) = crate::update::download_asset(&asset.browser_download_url, &gateway_path)
-            .await
+        if let Err(e) =
+            crate::update::download_asset(&asset.browser_download_url, &gateway_path).await
         {
             return Ok(Json(serde_json::json!({
                 "success": false,
@@ -385,8 +384,8 @@ async fn post_system_update(
     let admin_asset = release.assets.iter().find(|a| a.name == "crab-admin");
     let admin_path = download_dir.join("crab-admin");
     if let Some(asset) = admin_asset {
-        if let Err(e) = crate::update::download_asset(&asset.browser_download_url, &admin_path)
-            .await
+        if let Err(e) =
+            crate::update::download_asset(&asset.browser_download_url, &admin_path).await
         {
             return Ok(Json(serde_json::json!({
                 "success": false,
@@ -395,9 +394,7 @@ async fn post_system_update(
             })));
         }
         // Verify checksum
-        if let Err(e) =
-            crate::update::verify_checksum("crab-admin", &admin_path, &release).await
-        {
+        if let Err(e) = crate::update::verify_checksum("crab-admin", &admin_path, &release).await {
             tracing::warn!(error = %e, "Admin checksum verification failed");
             let _ = std::fs::remove_file(&admin_path);
             return Ok(Json(serde_json::json!({
@@ -411,10 +408,9 @@ async fn post_system_update(
     }
 
     // Step 4: Replace gateway binary and restart it
-    let gateway_target =
-        std::env::var("CRABCACHE_GATEWAY_BINARY_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("/app/crab-gateway"));
+    let gateway_target = std::env::var("CRABCACHE_GATEWAY_BINARY_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/app/crab-gateway"));
 
     if gateway_path.exists() {
         if let Err(e) = crate::update::replace_binary(&gateway_path, &gateway_target) {
@@ -427,8 +423,8 @@ async fn post_system_update(
 
         let gateway_control_url = std::env::var("CRABCACHE_GATEWAY_CONTROL_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:9080".to_string());
-        let gateway_admin_key = std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY")
-            .unwrap_or_else(|_| String::new());
+        let gateway_admin_key =
+            std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY").unwrap_or_else(|_| String::new());
 
         if let Err(e) =
             crate::update::restart_gateway(&gateway_control_url, &gateway_admin_key).await
@@ -558,20 +554,16 @@ async fn get_overview_core(
         if if_none_match == etag_val {
             let mut resp = Response::new(axum::body::Body::empty());
             *resp.status_mut() = StatusCode::NOT_MODIFIED;
-            resp.headers_mut().insert(
-                header::ETAG,
-                HeaderValue::from_str(&etag_val).unwrap(),
-            );
+            resp.headers_mut()
+                .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
             return Ok(resp);
         }
     }
 
     // 200 with ETag header for client-side caching.
     let mut resp = Json(core).into_response();
-    resp.headers_mut().insert(
-        header::ETAG,
-        HeaderValue::from_str(&etag_val).unwrap(),
-    );
+    resp.headers_mut()
+        .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
     Ok(resp)
 }
 
@@ -685,9 +677,9 @@ async fn get_prefix_cache_metrics(
         tracing::warn!(error = %e, "Failed to fetch gateway metrics");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
-    Ok(Json(
-        crate::metrics_history::build_prefix_cache_snapshot(&body),
-    ))
+    Ok(Json(crate::metrics_history::build_prefix_cache_snapshot(
+        &body,
+    )))
 }
 
 fn prefix_hit_ratio(hit: u64, miss: u64) -> f64 {
@@ -1269,7 +1261,11 @@ async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey
 fn normalize_optional_project_id(
     project_id: &Option<String>,
 ) -> Result<Option<String>, (StatusCode, String)> {
-    match project_id.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    match project_id
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         None => Ok(None),
         Some(raw) => crab_proxy::sanitize_user_id(raw)
             .map(Some)
@@ -1437,10 +1433,7 @@ async fn patch_key(
         key_full: meta.as_ref().map(|m| m.token.clone()),
         active: updated.enabled,
         rpm_limit: updated.rpm_limit,
-        monthly_token_budget: meta
-            .as_ref()
-            .map(|m| m.monthly_token_limit)
-            .unwrap_or(0),
+        monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
         tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
         expired_at: meta.as_ref().and_then(|m| m.expired_at),
         model_limits: meta
@@ -1925,27 +1918,25 @@ async fn get_logs(
     if !memory_logs.is_empty() && !uses_trace_archive {
         let items: Vec<RequestLog> = memory_logs
             .into_iter()
-            .map(|log| {
-                RequestLog {
-                    id: log.id,
-                    timestamp: crate::trace_log::format_beijing_from_unix_secs(log.timestamp),
-                    model: log.model.clone(),
-                    consumer: log.consumer.clone(),
-                    latency_ms: log.duration_ms as u64,
-                    total_tokens: log.input_tokens + log.output_tokens,
-                    cache_status: log.cache_tier.clone(),
-                    request_payload: serde_json::to_string_pretty(&log.request_payload)
-                        .unwrap_or_default(),
-                    response_preview: log.response_body.chars().take(200).collect(),
-                    input_tokens: Some(log.input_tokens as u64),
-                    output_tokens: Some(log.output_tokens as u64),
-                    ttft_ms: None,
-                    content_length: None,
-                    request_hash: None,
-                    project_id: None,
-                    upstream_user_id: None,
-                    user_id_audit: None,
-                }
+            .map(|log| RequestLog {
+                id: log.id,
+                timestamp: crate::trace_log::format_beijing_from_unix_secs(log.timestamp),
+                model: log.model.clone(),
+                consumer: log.consumer.clone(),
+                latency_ms: log.duration_ms as u64,
+                total_tokens: log.input_tokens + log.output_tokens,
+                cache_status: log.cache_tier.clone(),
+                request_payload: serde_json::to_string_pretty(&log.request_payload)
+                    .unwrap_or_default(),
+                response_preview: log.response_body.chars().take(200).collect(),
+                input_tokens: Some(log.input_tokens as u64),
+                output_tokens: Some(log.output_tokens as u64),
+                ttft_ms: None,
+                content_length: None,
+                request_hash: None,
+                project_id: None,
+                upstream_user_id: None,
+                user_id_audit: None,
             })
             .collect();
         return Json(crate::types::LogsPageResponse {
@@ -1984,62 +1975,51 @@ async fn get_logs(
         None
     };
 
-        let items: Vec<RequestLog> = entries
-            .into_iter()
-            .take(limit)
-            .map(|e| {
-                let datetime =
-                    crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
-                let consumer = e
-                    .consumer
-                    .clone()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| {
-                        e.conversation_id
-                            .clone()
-                            .filter(|s| !s.is_empty())
-                    })
-                    .unwrap_or_else(|| "—".to_string());
-                let request_payload = e
-                    .request_messages_snapshot
-                    .clone()
-                    .unwrap_or_else(|| {
-                        let summary = serde_json::json!({
-                            "request_hash": e.request_hash,
-                            "content_length": e.content_length,
-                            "semantic_cluster": e.semantic_cluster,
-                            "input_tokens": e.resolved_input_tokens(),
-                            "output_tokens": e.resolved_output_tokens(),
-                            "cache_hit": e.cache_hit,
-                            "cache_tier": e.cache_tier,
-                        });
-                        serde_json::to_string_pretty(&summary).unwrap_or_default()
-                    });
-                let response_preview = e
-                    .response_preview
-                    .clone()
-                    .unwrap_or_else(String::new);
-                RequestLog {
-                    id: e.id(),
-                    timestamp: datetime,
-                    model: e.model.clone(),
-                    consumer,
-                    latency_ms: e.latency_ms.round() as u64,
-                    total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
-                    cache_status: e.cache_status_label(),
-                    request_payload,
-                    response_preview,
-                    input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
-                    output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
-                    ttft_ms: e.ttft_ms,
-                    content_length: Some(e.content_length),
-                    request_hash: Some(e.request_hash.clone()),
-                    project_id: e.project_id.clone(),
-                    upstream_user_id: e.upstream_user_id.clone(),
-                    user_id_audit: e.user_id_audit.clone(),
-                }
-            })
-            .collect();
+    let items: Vec<RequestLog> = entries
+        .into_iter()
+        .take(limit)
+        .map(|e| {
+            let datetime = crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
+            let consumer = e
+                .consumer
+                .clone()
+                .filter(|s| !s.is_empty())
+                .or_else(|| e.conversation_id.clone().filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| "—".to_string());
+            let request_payload = e.request_messages_snapshot.clone().unwrap_or_else(|| {
+                let summary = serde_json::json!({
+                    "request_hash": e.request_hash,
+                    "content_length": e.content_length,
+                    "semantic_cluster": e.semantic_cluster,
+                    "input_tokens": e.resolved_input_tokens(),
+                    "output_tokens": e.resolved_output_tokens(),
+                    "cache_hit": e.cache_hit,
+                    "cache_tier": e.cache_tier,
+                });
+                serde_json::to_string_pretty(&summary).unwrap_or_default()
+            });
+            let response_preview = e.response_preview.clone().unwrap_or_else(String::new);
+            RequestLog {
+                id: e.id(),
+                timestamp: datetime,
+                model: e.model.clone(),
+                consumer,
+                latency_ms: e.latency_ms.round() as u64,
+                total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
+                cache_status: e.cache_status_label(),
+                request_payload,
+                response_preview,
+                input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
+                output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
+                ttft_ms: e.ttft_ms,
+                content_length: Some(e.content_length),
+                request_hash: Some(e.request_hash.clone()),
+                project_id: e.project_id.clone(),
+                upstream_user_id: e.upstream_user_id.clone(),
+                user_id_audit: e.user_id_audit.clone(),
+            }
+        })
+        .collect();
 
     Json(crate::types::LogsPageResponse {
         items,
@@ -2079,23 +2059,20 @@ async fn get_log_detail(
         } else {
             "upstream".to_string()
         };
-        let request_payload = entry
-            .request_messages_snapshot
-            .clone()
-            .unwrap_or_else(|| {
-                let payload = serde_json::json!({
-                    "request_hash": entry.request_hash,
-                    "content_length": entry.content_length,
-                    "semantic_cluster": entry.semantic_cluster,
-                    "conversation_id": entry.conversation_id,
-                    "model": entry.model,
-                    "prompt_tokens": entry.prompt_tokens,
-                    "latency_ms": entry.latency_ms,
-                    "cache_hit": entry.cache_hit,
-                    "cache_tier": entry.cache_tier,
-                });
-                serde_json::to_string_pretty(&payload).unwrap_or_default()
+        let request_payload = entry.request_messages_snapshot.clone().unwrap_or_else(|| {
+            let payload = serde_json::json!({
+                "request_hash": entry.request_hash,
+                "content_length": entry.content_length,
+                "semantic_cluster": entry.semantic_cluster,
+                "conversation_id": entry.conversation_id,
+                "model": entry.model,
+                "prompt_tokens": entry.prompt_tokens,
+                "latency_ms": entry.latency_ms,
+                "cache_hit": entry.cache_hit,
+                "cache_tier": entry.cache_tier,
             });
+            serde_json::to_string_pretty(&payload).unwrap_or_default()
+        });
         let response_body = entry
             .response_preview
             .clone()
@@ -2241,12 +2218,8 @@ async fn post_models_apply(
     Json(body): Json<crate::types::ModelApplyBody>,
 ) -> Result<Json<SyncResult>, StatusCode> {
     state.refresh_profile_providers().await;
-    let result = crate::upstream::apply_models_internal(
-        &state,
-        &body.profile_id,
-        body.add,
-        body.remove,
-    );
+    let result =
+        crate::upstream::apply_models_internal(&state, &body.profile_id, body.add, body.remove);
     Ok(Json(result))
 }
 
@@ -2355,9 +2328,7 @@ async fn update_connection_config(
     })
 }
 
-async fn get_reasoning_config(
-    State(state): State<Arc<AppState>>,
-) -> Json<ReasoningConfig> {
+async fn get_reasoning_config(State(state): State<Arc<AppState>>) -> Json<ReasoningConfig> {
     Json(state.reasoning_config.read().clone())
 }
 
@@ -2957,8 +2928,7 @@ async fn get_infra_timeseries(
         q.container_id.clone()
     };
 
-    let (cpu, mem, rx, tx) =
-        crate::infra::history::to_timeseries(&points, &container_id);
+    let (cpu, mem, rx, tx) = crate::infra::history::to_timeseries(&points, &container_id);
 
     let map_pts = |pts: Vec<crate::infra::history::ChartPoint>| {
         pts.into_iter()
@@ -3073,9 +3043,7 @@ async fn post_infra_speed_test_upload(
 
 #[cfg(test)]
 mod metrics_tests {
-    use super::{
-        ensure_current_period_stats, generate_hourly_stats_mock, sum_prometheus_counter,
-    };
+    use super::{ensure_current_period_stats, generate_hourly_stats_mock, sum_prometheus_counter};
 
     #[test]
     fn hourly_stats_include_current_bucket_under_one_hour() {

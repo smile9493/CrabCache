@@ -53,9 +53,7 @@ impl ReasoningBackend {
             .ok()
             .unwrap_or_else(|| backend.to_string());
         if effective == "redis" {
-            let url = redis_url
-                .filter(|s| !s.is_empty())
-                .unwrap_or(l1_redis_url);
+            let url = redis_url.filter(|s| !s.is_empty()).unwrap_or(l1_redis_url);
             Self::open_redis(url, max_age_seconds, max_rows, max_entry_bytes)
         } else {
             Self::open_sqlite(cache_db_path, max_age_seconds, max_rows)

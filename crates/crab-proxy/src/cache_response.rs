@@ -143,7 +143,8 @@ pub async fn send_cached_response(
             .unwrap_or(0);
         let has_done = sse_body.windows(6).any(|w| w == b"[DONE]");
         let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
-        let json_visible = completion_json_has_visible_client_content(response_body, display_reasoning);
+        let json_visible =
+            completion_json_has_visible_client_content(response_body, display_reasoning);
         if !has_nonempty && !json_visible {
             // #region agent log
             debug_agent_log(
@@ -345,18 +346,12 @@ pub fn message_to_cursor_safe_delta(
     if let Some(role) = obj.get("role") {
         delta.insert("role".into(), role.clone());
     }
-    let content_str = obj
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
+    let content_str = obj.get("content").and_then(|c| c.as_str()).unwrap_or("");
     let reasoning_str = obj
         .get("reasoning_content")
         .and_then(|r| r.as_str())
         .unwrap_or("");
-    let effective = if display_reasoning
-        && content_str.is_empty()
-        && !reasoning_str.is_empty()
-    {
+    let effective = if display_reasoning && content_str.is_empty() && !reasoning_str.is_empty() {
         reasoning_str.to_string()
     } else {
         sanitize_client_message_content(content_str, display_reasoning)
@@ -462,12 +457,13 @@ mod tests {
 
     #[test]
     fn cached_sse_markup_detection_ignores_plain_text_mentioning_thinking() {
-        let saved = br#"data: {"choices":[{"delta":{"content":"Discuss summary Thinking in prose only"}}]}
+        let saved =
+            br#"data: {"choices":[{"delta":{"content":"Discuss summary Thinking in prose only"}}]}
 
 data: [DONE]
 
 "#
-        .to_vec();
+            .to_vec();
         assert!(!cached_sse_has_thinking_markup(&saved));
     }
 
@@ -499,7 +495,10 @@ data: [DONE]
             "content": "<details>\n<summary>Thinking</summary>\n\nthink\n</details>\n\nanswer"
         });
         let delta = message_to_cursor_safe_delta(Some(&msg), false);
-        assert_eq!(delta.get("content").and_then(|c| c.as_str()), Some("answer"));
+        assert_eq!(
+            delta.get("content").and_then(|c| c.as_str()),
+            Some("answer")
+        );
     }
 
     #[test]

@@ -20,10 +20,7 @@ pub struct CompositionHints {
 ///
 /// This function is O(n) over `messages` and O(1) over `tools`. It performs
 /// no network I/O and allocates only for the fingerprint structures and counts.
-pub fn extract_composition(
-    payload: &Value,
-    hints: &CompositionHints,
-) -> RequestComposition {
+pub fn extract_composition(payload: &Value, hints: &CompositionHints) -> RequestComposition {
     let messages = payload
         .get("messages")
         .and_then(|m| m.as_array())
@@ -102,7 +99,13 @@ pub fn extract_composition(
     let user_agent = hints
         .user_agent
         .as_ref()
-        .map(|ua| if ua.len() > 128 { &ua[..128] } else { ua.as_str() })
+        .map(|ua| {
+            if ua.len() > 128 {
+                &ua[..128]
+            } else {
+                ua.as_str()
+            }
+        })
         .map(|s| s.to_string());
 
     RequestComposition {

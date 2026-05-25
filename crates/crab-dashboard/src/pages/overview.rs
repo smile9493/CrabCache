@@ -5,9 +5,9 @@ use crate::api;
 use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
+use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
 use crate::types::TimeSeriesPoint;
-use crate::locale::{Translations, use_translations};
 use crate::types::{
     GatewayHealth, MetricsSnapshot, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics,
     OverviewSuggestion, PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
@@ -248,12 +248,8 @@ fn OverviewContent(
     });
 
     // Memo for health.
-    let health_memo = Memo::new(move |_| {
-        overview_core
-            .get()
-            .and_then(|r| r.ok())
-            .map(|c| c.health)
-    });
+    let health_memo =
+        Memo::new(move |_| overview_core.get().and_then(|r| r.ok()).map(|c| c.health));
 
     // Memo for prefix cache.
     let prefix_memo = Memo::new(move |_| {
@@ -264,20 +260,11 @@ fn OverviewContent(
     });
 
     // Memo for semantic config.
-    let semantic_memo = Memo::new(move |_| {
-        overview_core
-            .get()
-            .and_then(|r| r.ok())
-            .map(|c| c.semantic)
-    });
+    let semantic_memo =
+        Memo::new(move |_| overview_core.get().and_then(|r| r.ok()).map(|c| c.semantic));
 
     // Memo for ops.
-    let ops_memo = Memo::new(move |_| {
-        overview_core
-            .get()
-            .and_then(|r| r.ok())
-            .map(|c| c.ops)
-    });
+    let ops_memo = Memo::new(move |_| overview_core.get().and_then(|r| r.ok()).map(|c| c.ops));
 
     // Memo for suggestions.
     let suggestions_memo = Memo::new(move |_| {
@@ -398,10 +385,7 @@ fn overview_error_hint(err: &str, t: &crate::locale::Translations) -> Option<Str
 }
 
 #[component]
-fn ChartSuggestions(
-    suggestions: Vec<OverviewSuggestion>,
-    target: &'static str,
-) -> impl IntoView {
+fn ChartSuggestions(suggestions: Vec<OverviewSuggestion>, target: &'static str) -> impl IntoView {
     let filtered: Vec<_> = suggestions
         .into_iter()
         .filter(|s| s.target == target)
@@ -445,8 +429,7 @@ fn OverviewHealthStrip(health: GatewayHealth) -> impl IntoView {
     let err_msg = health.error.clone();
     let keys = format!(
         "{}/{}",
-        health.upstream_keys_available,
-        health.upstream_key_count
+        health.upstream_keys_available, health.upstream_key_count
     );
 
     view! {
@@ -868,19 +851,13 @@ fn TimeSeriesChart(
             ChartSeries {
                 label: t.overview_input_tokens().to_string(),
                 color: "var(--accent-primary)",
-                values: points
-                    .iter()
-                    .map(|p| Some(p.tokens as f64))
-                    .collect(),
+                values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
                 dashed: false,
             },
             ChartSeries {
                 label: t.overview_requests().to_string(),
                 color: "var(--info)",
-                values: points
-                    .iter()
-                    .map(|p| Some(p.requests as f64))
-                    .collect(),
+                values: points.iter().map(|p| Some(p.requests as f64)).collect(),
                 dashed: false,
             },
         ]
@@ -1200,8 +1177,8 @@ fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
 #[component]
 fn ObservabilityFooter() -> impl IntoView {
     let t = use_translations();
-    let metrics_host = option_env!("CRABCACHE_GATEWAY_METRICS_URL")
-        .unwrap_or("http://127.0.0.1:9090/metrics");
+    let metrics_host =
+        option_env!("CRABCACHE_GATEWAY_METRICS_URL").unwrap_or("http://127.0.0.1:9090/metrics");
 
     view! {
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-theme-muted pt-2 border-t border-theme">

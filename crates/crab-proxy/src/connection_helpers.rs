@@ -19,9 +19,8 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
     if !config.upstream_tls_curves.is_empty() {
         use std::sync::OnceLock;
         static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
-        let curves: &'static str = *CACHED_CURVES.get_or_init(|| {
-            Box::leak(config.upstream_tls_curves.clone().into_boxed_str())
-        });
+        let curves: &'static str = *CACHED_CURVES
+            .get_or_init(|| Box::leak(config.upstream_tls_curves.clone().into_boxed_str()));
         options.curves = Some(curves);
     }
 

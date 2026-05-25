@@ -8,9 +8,9 @@ use axum::{
 };
 use crab_control::{
     ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest,
-    PutUpstreamProfileRequest, UpstreamKeyView,
-    UpstreamKeysPutMode, UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse,
-    UpstreamTestResult, parse_upstream_base_url, validate_upstream_key,
+    PutUpstreamProfileRequest, UpstreamKeyView, UpstreamKeysPutMode, UpstreamProfileKeysView,
+    UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult, parse_upstream_base_url,
+    validate_upstream_key,
 };
 use crab_proxy::{
     ProfileBuildInput, UpstreamKeyPool, UpstreamKeySpec, build_profile_runtime,
@@ -28,7 +28,8 @@ use crate::management::{ManagementState, authorize, internal_error, schedule_per
 async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo> {
     let body: serde_json::Value = resp.json().await.ok()?;
     let parse_f64 = |v: &serde_json::Value| -> Option<f64> {
-        v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
     };
     let is_available = body.get("is_available").and_then(|v| v.as_bool());
 
@@ -49,13 +50,9 @@ async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo>
     }
 
     // Generic / new-api format: flat fields at top level or inside "data".
-    let src = body
-        .get("data")
-        .filter(|d| d.is_object())
-        .unwrap_or(&body);
-    let get_field = |field: &str| -> Option<&serde_json::Value> {
-        src.get(field).or_else(|| body.get(field))
-    };
+    let src = body.get("data").filter(|d| d.is_object()).unwrap_or(&body);
+    let get_field =
+        |field: &str| -> Option<&serde_json::Value> { src.get(field).or_else(|| body.get(field)) };
     let balance = get_field("balance").and_then(parse_f64);
     let total_granted = get_field("total_granted").and_then(parse_f64);
     let total_used = get_field("total_used").and_then(parse_f64);
@@ -243,7 +240,10 @@ pub async fn put_profile_keys(
             account_id: k.account_id,
         })
         .collect();
-    let profile = state.runtime.profile(id).expect("profile existence verified above");
+    let profile = state
+        .runtime
+        .profile(id)
+        .expect("profile existence verified above");
     let current = profile.resolve_upstream_pool();
     let new_pool = match req.mode {
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
@@ -283,7 +283,10 @@ pub async fn patch_profile_key(
             "rotating secret via PATCH is not supported; use PUT /v1/upstream/profiles/{id}/keys",
         ));
     }
-    let profile = state.runtime.profile(profile_id).expect("profile existence verified above");
+    let profile = state
+        .runtime
+        .profile(profile_id)
+        .expect("profile existence verified above");
     let pool = profile.resolve_upstream_pool();
     if let Some(enabled) = req.enabled {
         if !pool.set_enabled(key_id, enabled) {
@@ -346,10 +349,7 @@ pub async fn test_upstream_profile(
     let api_key = guard.bearer_secret().to_string();
     drop(guard);
 
-    let url = format!(
-        "{}/v1/models",
-        profile.base_url.trim_end_matches('/')
-    );
+    let url = format!("{}/v1/models", profile.base_url.trim_end_matches('/'));
     let start = std::time::Instant::now();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))

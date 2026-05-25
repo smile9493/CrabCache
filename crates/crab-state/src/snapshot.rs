@@ -2,8 +2,8 @@ use anyhow::Result;
 use crab_cache::TtlConfig;
 use crab_control::parse_backend_endpoints;
 use crab_proxy::{
-    build_profile_runtime, resolve_profile_key_specs, ConnectionConfig, DomainPolicy,
-    ProfileBuildInput, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    ConnectionConfig, DomainPolicy, ProfileBuildInput, RuntimeConfig, StoredKey, UpstreamKeyPool,
+    UpstreamKeySpec, build_profile_runtime, resolve_profile_key_specs,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -165,10 +165,8 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         })
         .collect();
 
-    let domain_policies: HashMap<String, DomainPolicy> = runtime
-        .list_domain_policies()
-        .into_iter()
-        .collect();
+    let domain_policies: HashMap<String, DomainPolicy> =
+        runtime.list_domain_policies().into_iter().collect();
 
     let upstream_profiles: Vec<UpstreamProfileSnapshot> = {
         let map = runtime.upstream_profiles.read();
@@ -277,7 +275,8 @@ pub fn apply_snapshot_to_runtime(
             let endpoints: Vec<String> = rt.backends.iter().map(|b| b.addr.clone()).collect();
             let route_backends = parse_backend_endpoints(&endpoints, 1, &tls_sni)
                 .map_err(|errors| anyhow::anyhow!("{}", errors.join("; ")))?;
-            let backend_names: Vec<String> = route_backends.iter().map(|b| b.name.clone()).collect();
+            let backend_names: Vec<String> =
+                route_backends.iter().map(|b| b.name.clone()).collect();
             runtime.router.write().update(&route_backends)?;
             {
                 let mut health = runtime.backend_health.write();
@@ -316,13 +315,9 @@ pub fn apply_snapshot_to_runtime(
             };
             // Apply key fallback: explicit -> default profile -> legacy global pool.
             let resolved_specs = resolve_profile_key_specs(specs, &runtime, &p.id);
-            let profile = build_profile_runtime(
-                input,
-                resolved_specs,
-                upstream_cooldown_secs,
-                None,
-            )
-            .map_err(|e| anyhow::anyhow!(e))?;
+            let profile =
+                build_profile_runtime(input, resolved_specs, upstream_cooldown_secs, None)
+                    .map_err(|e| anyhow::anyhow!(e))?;
             runtime
                 .upsert_profile(profile)
                 .map_err(|e| anyhow::anyhow!(e))?;
@@ -346,8 +341,12 @@ pub fn apply_snapshot_to_runtime(
                     continue;
                 }
                 match runtime.remove_profile(&id) {
-                    Ok(()) => tracing::info!(profile_id = %id, "Removed upstream profile not in control-plane snapshot"),
-                    Err(e) => tracing::warn!(profile_id = %id, error = %e, "Could not remove stale upstream profile"),
+                    Ok(()) => {
+                        tracing::info!(profile_id = %id, "Removed upstream profile not in control-plane snapshot")
+                    }
+                    Err(e) => {
+                        tracing::warn!(profile_id = %id, error = %e, "Could not remove stale upstream profile")
+                    }
                 }
             }
         }

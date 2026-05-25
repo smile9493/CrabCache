@@ -152,9 +152,8 @@ pub fn KeysPage() -> impl IntoView {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
         {
-            create_error.set(
-                "project_id must match [a-zA-Z0-9\\-_]+ and be at most 512 characters".into(),
-            );
+            create_error
+                .set("project_id must match [a-zA-Z0-9\\-_]+ and be at most 512 characters".into());
             creating.set(false);
             return;
         }
@@ -193,11 +192,7 @@ pub fn KeysPage() -> impl IntoView {
             },
             upstream_profile: {
                 let p = new_key_upstream_profile.get();
-                if p.is_empty() {
-                    None
-                } else {
-                    Some(p)
-                }
+                if p.is_empty() { None } else { Some(p) }
             },
             max_concurrent: Some(new_key_max_concurrent.get()),
         };
@@ -291,7 +286,11 @@ pub fn KeysPage() -> impl IntoView {
             },
             pipeline: {
                 let v = pipeline_val.trim().to_string();
-                if v.is_empty() || v == "auto" { None } else { Some(v) }
+                if v.is_empty() || v == "auto" {
+                    None
+                } else {
+                    Some(v)
+                }
             },
             upstream_profile: {
                 let v = upstream_profile_val.trim().to_string();
@@ -300,11 +299,7 @@ pub fn KeysPage() -> impl IntoView {
             max_concurrent: Some(max_concurrent_val),
             rpm_limit: Some(rpm_val),
             monthly_token_budget: Some(budget_val),
-            remain_quota: if unlimited_val {
-                None
-            } else {
-                Some(quota_val)
-            },
+            remain_quota: if unlimited_val { None } else { Some(quota_val) },
             unlimited_quota: Some(unlimited_val),
         };
         leptos::task::spawn_local(async move {

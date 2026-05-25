@@ -1,33 +1,38 @@
+use crate::cache_helpers::{
+    build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
+    cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
+};
+use crate::cache_response::{completion_json_has_visible_client_content, send_cached_response};
 use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
-use crate::send_helpers::{send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok};
+use crate::debug_agent_log;
 use crate::error_jsons::{
     client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
     upstream_pool_exhausted_error_details,
 };
-use crate::upstream_user_id_limiter::{
-    DeepSeekUserIdLimitError, classify_deepseek_v4_tier,
+use crate::runtime::RuntimeConfig;
+use crate::send_helpers::{
+    send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok,
 };
+use crate::sse::{UsageData, parse_sse_chunk};
+use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 use crate::tenant::{
     ProjectResolveError, derive_project_id_from_client_key, effective_cache_namespace,
     resolve_project_id,
 };
-use crate::runtime::RuntimeConfig;
-use crate::debug_agent_log;
+use crate::trace_logger::SanitizedLogEntry;
+use crate::trace_logger::composition_debug_tx;
 use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_headers::{
     normalize_replaced_body_headers, smooth_upstream_client_headers, upstream_header_names,
 };
 use crate::upstream_pool::UpstreamKeyPool;
-use pingora_core::upstreams::peer::ALPN;
-use crate::sse::{UsageData, parse_sse_chunk};
-use crate::trace_logger::SanitizedLogEntry;
-use crate::trace_logger::composition_debug_tx;
+use crate::upstream_user_id_limiter::{DeepSeekUserIdLimitError, classify_deepseek_v4_tier};
 use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_cache::CoalesceError;
 use crab_composition::{
-    extract_composition, extract_system_text, extract_tools_json, CompositionDebugEntry,
-    CompositionHints,
+    CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
+    extract_tools_json,
 };
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::{
@@ -35,23 +40,16 @@ use crab_pipeline::{
     select_request_pipeline, validate_pipeline_override,
 };
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator,
-    prepare_generic_request, prepare_light_request, prepare_upstream_request,
-    rewrite_response_body, rewrite_sse_chunk, sanitize_client_completion,
+    CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, prepare_generic_request,
+    prepare_light_request, prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
+    sanitize_client_completion,
 };
-use crate::cache_helpers::{
-    build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
-    cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
-};
-use crate::cache_response::{
-    completion_json_has_visible_client_content, send_cached_response,
-};
-use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
 use pingora_core::protocols::l4::ext::TcpKeepalive;
+use pingora_core::upstreams::peer::ALPN;
 use pingora_core::upstreams::peer::PeerOptions;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
@@ -183,7 +181,10 @@ impl GatewayProxy {
             .unwrap_or((None, None))
     }
 
-    fn active_upstream_profile(&self, ctx: &GatewayContext) -> Arc<crate::upstream_profile::UpstreamProfileRuntime> {
+    fn active_upstream_profile(
+        &self,
+        ctx: &GatewayContext,
+    ) -> Arc<crate::upstream_profile::UpstreamProfileRuntime> {
         ctx.upstream_profile_id
             .as_deref()
             .and_then(|id| self.state.runtime.profile(id))
@@ -249,11 +250,7 @@ impl GatewayProxy {
         };
 
         // Apply semantic gate before L2 search
-        let gate_decision = evaluate_semantic_gate(
-            &gate,
-            &query_text,
-            ctx.cache_hit.is_some(),
-        );
+        let gate_decision = evaluate_semantic_gate(&gate, &query_text, ctx.cache_hit.is_some());
         match gate_decision {
             GateDecision::Pass => {}
             ref reason => {
@@ -276,7 +273,10 @@ impl GatewayProxy {
             return false;
         }
 
-        let Some(entry) = semantic_cache.search(&query_text, ctx.project_id.as_deref()).await else {
+        let Some(entry) = semantic_cache
+            .search(&query_text, ctx.project_id.as_deref())
+            .await
+        else {
             return false;
         };
 
@@ -413,11 +413,7 @@ impl ProxyHttp for GatewayProxy {
             let default_profile = self.state.runtime.default_profile();
             let pool = default_profile.resolve_upstream_pool();
             let keys_available = pool.available_count() > 0;
-            let status = if redis_ok && keys_available {
-                200
-            } else {
-                503
-            };
+            let status = if redis_ok && keys_available { 200 } else { 503 };
             let _ = session.respond_error(status).await;
             return Ok(true);
         }
@@ -431,8 +427,8 @@ impl ProxyHttp for GatewayProxy {
             }
             ctx.consumer = consumer_from_key;
             ctx.domain = domain_from_key;
-            ctx.upstream_profile_id = key_profile
-                .or_else(|| Some(self.state.runtime.default_upstream_profile_id()));
+            ctx.upstream_profile_id =
+                key_profile.or_else(|| Some(self.state.runtime.default_upstream_profile_id()));
             ctx.is_models_list = true;
             let cursor_models = self.state.runtime.pipeline_globals().cursor_models;
             if cursor_models.synthetic_models_enabled && !cursor_models.aliases.is_empty() {
@@ -488,10 +484,10 @@ impl ProxyHttp for GatewayProxy {
         if let Some(stored_key) = self.state.runtime.keys.get(&provided_key) {
             let key = stored_key.value();
             if key.rpm_limit > 0
-                && !self.state.client_key_rate_limiter.check_and_consume(
-                    &provided_key,
-                    key.rpm_limit,
-                )
+                && !self
+                    .state
+                    .client_key_rate_limiter
+                    .check_and_consume(&provided_key, key.rpm_limit)
             {
                 let body = serde_json::json!({
                     "error": {
@@ -575,7 +571,8 @@ impl ProxyHttp for GatewayProxy {
                     }
                 });
                 let body_str = body.to_string();
-                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes())
+                    .await
                 {
                     let _ = session.respond_error(400).await;
                 }
@@ -584,12 +581,22 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if let Some(stored_key) = self.state.runtime.keys.get(&provided_key) {
-            match self.state.client_key_limiter.try_acquire(&provided_key, stored_key.value()) {
+            match self
+                .state
+                .client_key_limiter
+                .try_acquire(&provided_key, stored_key.value())
+            {
                 Ok(guard) => ctx.client_key_guard = Some(guard),
                 Err(ClientKeyLimitError::Exceeded) => {
                     global_metrics().record_rejected("client_concurrency_exceeded");
                     let body = client_concurrency_exceeded_error_json();
-                    if !send_json_error(session, http::StatusCode::TOO_MANY_REQUESTS, body.as_slice()).await {
+                    if !send_json_error(
+                        session,
+                        http::StatusCode::TOO_MANY_REQUESTS,
+                        body.as_slice(),
+                    )
+                    .await
+                    {
                         let _ = session.respond_error(429).await;
                     }
                     return Ok(true);
@@ -614,7 +621,11 @@ impl ProxyHttp for GatewayProxy {
         let (domain_pipeline, domain_upstream_profile) =
             self.domain_policy_fields(ctx.domain.as_deref());
 
-        if !self.state.runtime.domain_within_quota(ctx.domain.as_deref()) {
+        if !self
+            .state
+            .runtime
+            .domain_within_quota(ctx.domain.as_deref())
+        {
             global_metrics().record_rejected("domain_quota_exceeded");
             let _ = session.respond_error(429).await;
             return Ok(true);
@@ -694,13 +705,9 @@ impl ProxyHttp for GatewayProxy {
         let pipe_ctx = PipelineRequestContext {
             model: &ctx.model,
             payload: Some(&payload),
-            key_pipeline: key_pipeline
-                .as_deref()
-                .map(PipelineOverride::from_str),
+            key_pipeline: key_pipeline.as_deref().map(PipelineOverride::from_str),
             key_upstream_profile: key_upstream_profile.as_deref(),
-            domain_pipeline: domain_pipeline
-                .as_deref()
-                .map(PipelineOverride::from_str),
+            domain_pipeline: domain_pipeline.as_deref().map(PipelineOverride::from_str),
             domain_upstream_profile: domain_upstream_profile.as_deref(),
             conversation_id_header: ctx.conversation_id.as_deref(),
             user_agent: user_agent.as_deref(),
@@ -800,10 +807,12 @@ impl ProxyHttp for GatewayProxy {
                 retired_prefix = prepared.retired_prefix_messages;
                 upstream_model_log = prepared.upstream_model.clone();
                 namespace_preview = prepared.cache_namespace.chars().take(8).collect();
-                reject_missing = missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
+                reject_missing =
+                    missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
                 ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
                 ctx.prepared_request = Some(prepared.clone());
-                ctx.new_request_body = Some(serde_json::to_vec(&prepared.payload).unwrap_or_default());
+                ctx.new_request_body =
+                    Some(serde_json::to_vec(&prepared.payload).unwrap_or_default());
                 if ctx.is_streaming {
                     ctx.stream.accumulator = Some(StreamAccumulator::new());
                     ctx.stream.display_adapter = reasoning_cfg.display_reasoning.then(|| {
@@ -824,7 +833,8 @@ impl ProxyHttp for GatewayProxy {
             RequestPipeline::GenericRelay | RequestPipeline::MimoRelay => {
                 let generic = prepare_generic_request(&payload);
                 upstream_model_log = generic.model.clone();
-                ctx.new_request_body = Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
+                ctx.new_request_body =
+                    Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
             }
         }
         ctx.upstream_model = Some(upstream_model_log.clone());
@@ -841,8 +851,7 @@ impl ProxyHttp for GatewayProxy {
                         Err(DeepSeekUserIdLimitError::Exceeded) => {
                             global_metrics()
                                 .record_deepseek_user_id_concurrency_rejected(tier.as_str());
-                            global_metrics()
-                                .record_rejected("deepseek_user_concurrency_exceeded");
+                            global_metrics().record_rejected("deepseek_user_concurrency_exceeded");
                             let body = deepseek_user_concurrency_exceeded_error_json();
                             if !send_json_error(
                                 session,
@@ -1088,11 +1097,7 @@ impl ProxyHttp for GatewayProxy {
             if let Some((entry, tier)) = self
                 .state
                 .tiered_cache
-                .get(
-                    &cache_key,
-                    ctx.consumer.as_deref(),
-                    ctx.domain.as_deref(),
-                )
+                .get(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
                 .await
             {
                 if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
@@ -1218,7 +1223,10 @@ impl ProxyHttp for GatewayProxy {
 
             if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
                 let cache_key_body_owned = cache_key_body.to_vec();
-                if self.try_l2_semantic_cache(session, ctx, &cache_key_body_owned).await {
+                if self
+                    .try_l2_semantic_cache(session, ctx, &cache_key_body_owned)
+                    .await
+                {
                     return Ok(true);
                 }
             }
@@ -1244,15 +1252,11 @@ impl ProxyHttp for GatewayProxy {
                         ctx.is_coalesced_follower = true;
 
                         if let Some((entry, tier)) = self
-                .state
-                .tiered_cache
-                .get(
-                    &cache_key,
-                    ctx.consumer.as_deref(),
-                    ctx.domain.as_deref(),
-                )
-                .await
-            {
+                            .state
+                            .tiered_cache
+                            .get(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
+                            .await
+                        {
                             if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                                 debug!(
                                     request_id = %ctx.request_id,
@@ -1262,70 +1266,70 @@ impl ProxyHttp for GatewayProxy {
                                     "Follower cache hit ignored: stream mode mismatch"
                                 );
                             } else {
-                            info!(
-                                request_id = %ctx.request_id,
-                                cache_key = %cache_key,
-                                tier = ?tier,
-                                "Follower found cached response after leader completed"
-                            );
-
-                            // #region agent log
-                            debug_agent_log(
-                                "H-A",
-                                "proxy.rs:request_filter",
-                                "coalesce follower cache replay",
-                                serde_json::json!({
-                                    "request_id": ctx.request_id,
-                                    "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
-                                    "tier": tier.as_str(),
-                                    "response_body_len": entry.response_body.len(),
-                                    "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
-                                }),
-                            );
-                            // #endregion
-
-                            let sent_ok = send_cached_response(
-                                session,
-                                &entry,
-                                &ctx.model,
-                                ctx.is_streaming,
-                                tier,
-                                ctx.cached_reasoning_config.display_reasoning,
-                            )
-                            .await;
-
-                            if sent_ok {
-                                ctx.cache_tier = Some(tier);
-                                ctx.cache_hit = Some(entry.clone());
-                                ctx.tokens.last_input = entry.usage.prompt_tokens;
-                                ctx.tokens.last_output = entry.usage.completion_tokens;
-                                global_metrics().record_coalesced_request();
-                                global_metrics().record_latency(
-                                    crab_metrics::LatencyKind::CacheFetch,
-                                    ctx.request_start.elapsed(),
-                                    &ctx.model,
-                                    Some(tier),
+                                info!(
+                                    request_id = %ctx.request_id,
+                                    cache_key = %cache_key,
+                                    tier = ?tier,
+                                    "Follower found cached response after leader completed"
                                 );
-                                let cost = self.state.pricing.cost_saved_usd(
-                                    &ctx.model,
-                                    entry.usage.prompt_tokens,
-                                    entry.usage.completion_tokens,
+
+                                // #region agent log
+                                debug_agent_log(
+                                    "H-A",
+                                    "proxy.rs:request_filter",
+                                    "coalesce follower cache replay",
+                                    serde_json::json!({
+                                        "request_id": ctx.request_id,
+                                        "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
+                                        "tier": tier.as_str(),
+                                        "response_body_len": entry.response_body.len(),
+                                        "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
+                                    }),
                                 );
-                                global_metrics().record_cost_saved(
+                                // #endregion
+
+                                let sent_ok = send_cached_response(
+                                    session,
+                                    &entry,
                                     &ctx.model,
-                                    ctx.consumer.as_deref(),
-                                    ctx.domain.as_deref(),
+                                    ctx.is_streaming,
                                     tier,
-                                    cost,
-                                );
-                                return Ok(true);
-                            }
+                                    ctx.cached_reasoning_config.display_reasoning,
+                                )
+                                .await;
 
-                            warn!(
-                                request_id = %ctx.request_id,
-                                cache_key = %cache_key,
-                                "Follower hollow cache entry; waiting for upstream path"
-                            );
+                                if sent_ok {
+                                    ctx.cache_tier = Some(tier);
+                                    ctx.cache_hit = Some(entry.clone());
+                                    ctx.tokens.last_input = entry.usage.prompt_tokens;
+                                    ctx.tokens.last_output = entry.usage.completion_tokens;
+                                    global_metrics().record_coalesced_request();
+                                    global_metrics().record_latency(
+                                        crab_metrics::LatencyKind::CacheFetch,
+                                        ctx.request_start.elapsed(),
+                                        &ctx.model,
+                                        Some(tier),
+                                    );
+                                    let cost = self.state.pricing.cost_saved_usd(
+                                        &ctx.model,
+                                        entry.usage.prompt_tokens,
+                                        entry.usage.completion_tokens,
+                                    );
+                                    global_metrics().record_cost_saved(
+                                        &ctx.model,
+                                        ctx.consumer.as_deref(),
+                                        ctx.domain.as_deref(),
+                                        tier,
+                                        cost,
+                                    );
+                                    return Ok(true);
+                                }
+
+                                warn!(
+                                    request_id = %ctx.request_id,
+                                    cache_key = %cache_key,
+                                    "Follower hollow cache entry; waiting for upstream path"
+                                );
                             }
                         } else if guard.leader_failed() {
                             warn!(
@@ -1334,8 +1338,7 @@ impl ProxyHttp for GatewayProxy {
                                 "Follower: leader upstream failed, not retrying upstream"
                             );
                             let body = coalesce_leader_failed_error_json();
-                            if !send_json_error(session, http::StatusCode::BAD_GATEWAY, &body)
-                                .await
+                            if !send_json_error(session, http::StatusCode::BAD_GATEWAY, &body).await
                             {
                                 let _ = session.respond_error(502).await;
                             }
@@ -1399,8 +1402,13 @@ impl ProxyHttp for GatewayProxy {
                 }),
             );
             // #endregion
-            if !send_json_error_with_retry_after(session, http::StatusCode::SERVICE_UNAVAILABLE, &body, retry_after)
-                .await
+            if !send_json_error_with_retry_after(
+                session,
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                &body,
+                retry_after,
+            )
+            .await
             {
                 let _ = session.respond_error(503).await;
             }
@@ -1638,8 +1646,12 @@ impl ProxyHttp for GatewayProxy {
                     "Setting upstream request body"
                 );
             }
-            ctx.new_request_body =
-                apply_prepared_upstream_body(new_body, body, end_of_stream, ctx.upstream.retry_buffer_truncated);
+            ctx.new_request_body = apply_prepared_upstream_body(
+                new_body,
+                body,
+                end_of_stream,
+                ctx.upstream.retry_buffer_truncated,
+            );
         } else {
             debug!(
                 request_id = %ctx.request_id,
@@ -1689,7 +1701,8 @@ impl ProxyHttp for GatewayProxy {
         }
         let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
         let key_id = ctx
-            .upstream.key_guard
+            .upstream
+            .key_guard
             .as_ref()
             .map(|g| g.key_id().to_string());
 
@@ -1710,20 +1723,18 @@ impl ProxyHttp for GatewayProxy {
                 if ctx.upstream.retry_budget > 0 {
                     ctx.upstream.retry_budget -= 1;
                     // Try a key from a different account_id (cooldown already set above).
-                    if let Some(new_guard) =
-                        pool.acquire_excluding_account(
-                            ctx.upstream
-                                .key_guard
-                                .as_ref()
-                                .and_then(|g| {
-                                    pool.list_status()
-                                        .into_iter()
-                                        .find(|s| s.id == g.key_id())
-                                        .map(|s| s.account_id)
-                                })
-                                .as_deref(),
-                        )
-                    {
+                    if let Some(new_guard) = pool.acquire_excluding_account(
+                        ctx.upstream
+                            .key_guard
+                            .as_ref()
+                            .and_then(|g| {
+                                pool.list_status()
+                                    .into_iter()
+                                    .find(|s| s.id == g.key_id())
+                                    .map(|s| s.account_id)
+                            })
+                            .as_deref(),
+                    ) {
                         ctx.upstream.key_guard = Some(new_guard);
                         global_metrics().record_upstream_key_retry("rate_limited_rotate");
                     } else {
@@ -2184,8 +2195,7 @@ impl ProxyHttp for GatewayProxy {
                         reasoning_cfg.display_reasoning,
                         reasoning_cfg.collapsible_reasoning,
                     );
-                    let response_bytes =
-                        serde_json::to_vec(&response_value).unwrap_or_default();
+                    let response_bytes = serde_json::to_vec(&response_value).unwrap_or_default();
                     // Store synthesized completion JSON as response preview for trace logging.
                     ctx.response_body_preview = response_bytes.clone();
 
@@ -2238,7 +2248,6 @@ impl ProxyHttp for GatewayProxy {
                                 warn!(error = %e, "Failed to cache streaming response");
                             }
                         });
-
                     } else if self.state.runtime.stream_cache_enabled() {
                         warn!(
                             request_id = %ctx.request_id,
@@ -2404,8 +2413,11 @@ impl ProxyHttp for GatewayProxy {
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                     }
-                    entry.reasoning_strategy =
-                        Some(ctx.cached_reasoning_config.missing_reasoning_strategy.clone());
+                    entry.reasoning_strategy = Some(
+                        ctx.cached_reasoning_config
+                            .missing_reasoning_strategy
+                            .clone(),
+                    );
                     let hit = ctx.tokens.last_prompt_cache_hit;
                     let miss = ctx.tokens.last_prompt_cache_miss;
                     if hit + miss > 0 {
@@ -2416,9 +2428,8 @@ impl ProxyHttp for GatewayProxy {
                     if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
                         entry.input_tokens = Some(ctx.tokens.last_input);
                         entry.output_tokens = Some(ctx.tokens.last_output);
-                        entry.prompt_tokens = ctx
-                            .tokens.last_input
-                            .saturating_add(ctx.tokens.last_output) as usize;
+                        entry.prompt_tokens =
+                            ctx.tokens.last_input.saturating_add(ctx.tokens.last_output) as usize;
                     }
                     // Populate response_preview from best available source
                     if max_resp > 0 {
@@ -2454,7 +2465,9 @@ impl ProxyHttp for GatewayProxy {
                     ctx.project_id.as_deref(),
                     ctx.request_pipeline.as_ref().map(|p| p.as_str()),
                     ctx.is_streaming,
-                    ctx.prepared_request.as_ref().map(|p| p.retired_prefix_messages),
+                    ctx.prepared_request
+                        .as_ref()
+                        .map(|p| p.retired_prefix_messages),
                     Some(reasoning_strategy),
                     ctx.original_request_body.as_deref(),
                     ctx.new_request_body.as_deref(),
@@ -2600,7 +2613,11 @@ fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> Option<Stri
 
     let raw = String::from_utf8_lossy(source);
     let truncated = if raw.len() > max_bytes {
-        format!("{}...<truncated {}>", &raw[..max_bytes], raw.len() - max_bytes)
+        format!(
+            "{}...<truncated {}>",
+            &raw[..max_bytes],
+            raw.len() - max_bytes
+        )
     } else {
         raw.to_string()
     };
@@ -2735,9 +2752,8 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
     if !config.upstream_tls_curves.is_empty() {
         use std::sync::OnceLock;
         static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
-        let curves: &'static str = *CACHED_CURVES.get_or_init(|| {
-            Box::leak(config.upstream_tls_curves.clone().into_boxed_str())
-        });
+        let curves: &'static str = *CACHED_CURVES
+            .get_or_init(|| Box::leak(config.upstream_tls_curves.clone().into_boxed_str()));
         options.curves = Some(curves);
     }
 
@@ -2866,7 +2882,11 @@ mod tests {
     #[test]
     fn cache_hit_sse_with_reasoning_content_should_regenerate() {
         let bad_sse = b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n";
-        assert!(bad_sse.windows(b"reasoning_content".len()).any(|w| w == b"reasoning_content"));
+        assert!(
+            bad_sse
+                .windows(b"reasoning_content".len())
+                .any(|w| w == b"reasoning_content")
+        );
         let body = serde_json::json!({
             "choices": [{
                 "message": {"role": "assistant", "content": "ok", "reasoning_content": "hidden"},

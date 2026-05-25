@@ -75,7 +75,9 @@ async fn sync_once(state: &Arc<AppState>) -> Result<(), String> {
         for kv in state.keys_meta.iter() {
             let id = kv.key().clone();
             if !kv.value().name.is_empty() {
-                m.entry(kv.value().name.clone()).or_default().push(id.clone());
+                m.entry(kv.value().name.clone())
+                    .or_default()
+                    .push(id.clone());
             }
             if !kv.value().token.is_empty() && kv.value().token != kv.value().name {
                 m.entry(kv.value().token.clone()).or_default().push(id);

@@ -1,8 +1,7 @@
-use crate::keys::{
-    message_signature, resolve_reasoning_scope, tool_call_ids, tool_call_names,
-    tool_call_signature,
-};
 use crate::backend::ReasoningBackend;
+use crate::keys::{
+    message_signature, resolve_reasoning_scope, tool_call_ids, tool_call_names, tool_call_signature,
+};
 use crab_composition::immutable_prefix_block_hash;
 use crab_metrics::global_metrics;
 use regex::Regex;
@@ -588,8 +587,7 @@ fn normalize_message(
                 if needs_reasoning {
                     let lookup_scope =
                         resolve_reasoning_scope(stable_session_id, prior_messages, cache_namespace);
-                    let prefer_portable =
-                        stable_session_id.is_some_and(|s| !s.trim().is_empty());
+                    let prefer_portable = stable_session_id.is_some_and(|s| !s.trim().is_empty());
                     let lookup_keys = reasoning_lookup_keys(
                         &Value::Object(msg.clone()),
                         &lookup_scope,
@@ -804,8 +802,8 @@ fn recover_messages_from_missing_reasoning(
         let omitted = messages.len() - recovered.len() - 1;
         recovered.push(serde_json::json!({"role": "system", "content": RECOVERY_SYSTEM_CONTENT}));
         recovered.push(messages[lui].clone());
-        let notice = should_attach_recovery_notice(messages)
-            .then(|| RECOVERY_NOTICE_CONTENT.to_string());
+        let notice =
+            should_attach_recovery_notice(messages).then(|| RECOVERY_NOTICE_CONTENT.to_string());
         return (
             recovered,
             omitted,
@@ -836,7 +834,8 @@ fn force_latest_user_recover(messages: &[Value]) -> Option<(Vec<Value>, usize, O
     let omitted = messages.len().saturating_sub(recovered.len() + 1);
     recovered.push(serde_json::json!({"role": "system", "content": RECOVERY_SYSTEM_CONTENT}));
     recovered.push(messages[last_user_index].clone());
-    let notice = should_attach_recovery_notice(messages).then(|| RECOVERY_NOTICE_CONTENT.to_string());
+    let notice =
+        should_attach_recovery_notice(messages).then(|| RECOVERY_NOTICE_CONTENT.to_string());
     Some((recovered, omitted, notice))
 }
 
@@ -995,16 +994,14 @@ pub fn upstream_model_for(original_model: &str, fallback_model: &str) -> String 
     }
 }
 
-fn resolve_upstream_model(
-    computed: String,
-    alias_upstream: Option<&str>,
-) -> String {
-    alias_upstream
-        .map(|s| s.to_string())
-        .unwrap_or(computed)
+fn resolve_upstream_model(computed: String, alias_upstream: Option<&str>) -> String {
+    alias_upstream.map(|s| s.to_string()).unwrap_or(computed)
 }
 
-fn apply_effective_user_id(prepared: &mut serde_json::Map<String, Value>, effective_user_id: Option<&str>) {
+fn apply_effective_user_id(
+    prepared: &mut serde_json::Map<String, Value>,
+    effective_user_id: Option<&str>,
+) {
     match effective_user_id.filter(|s| !s.is_empty()) {
         Some(id) => {
             prepared.insert("user_id".into(), Value::String(id.to_string()));
@@ -1334,10 +1331,7 @@ pub fn prepare_upstream_request(
 
     // deepseek-cursor-proxy: boundary only on `recover` without stable session (see transform.py).
     // Stable session (client_key / conversation): skip boundary — preserves tool history (H-G fix).
-    if thinking_enabled
-        && missing_reasoning_strategy == "recover"
-        && stable_scope.is_none()
-    {
+    if thinking_enabled && missing_reasoning_strategy == "recover" && stable_scope.is_none() {
         if let Some((active, retired, _step)) =
             active_messages_from_recovery_boundary(&pre_repair.messages)
         {
@@ -1347,7 +1341,10 @@ pub fn prepare_upstream_request(
     }
 
     let tools_for_block = prepared.get("tools").cloned();
-    let block_hash = crab_composition::immutable_prefix_block_hash(&pre_repair.messages, tools_for_block.as_ref());
+    let block_hash = crab_composition::immutable_prefix_block_hash(
+        &pre_repair.messages,
+        tools_for_block.as_ref(),
+    );
     track_immutable_prefix_block(&record_response_scope, &block_hash);
 
     if prefix_validate {
@@ -1967,7 +1964,8 @@ mod tests {
                 serde_json::Value::String("stored chain of thought".into()),
             );
         assert!(
-            store.store_assistant_message(&assistant_with_reasoning, &scope, &namespace, &prior) > 0
+            store.store_assistant_message(&assistant_with_reasoning, &scope, &namespace, &prior)
+                > 0
         );
 
         let payload = serde_json::json!({

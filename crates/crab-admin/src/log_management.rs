@@ -309,26 +309,47 @@ pub fn enforce_retention(policy: &RetentionPolicy) -> Result<ClearLogsResponse, 
 
     // 2. File-count-based cleanup for trace files
     if policy.max_trace_files > 0 {
-        prune_rotated_by_count(&trace_base, policy.max_trace_files, &mut deleted_files, &mut freed_bytes);
-        prune_rotated_by_count(&debug_base, policy.max_trace_files, &mut deleted_files, &mut freed_bytes);
+        prune_rotated_by_count(
+            &trace_base,
+            policy.max_trace_files,
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
+        prune_rotated_by_count(
+            &debug_base,
+            policy.max_trace_files,
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
     }
 
     // 3. Disk-usage-based cleanup
     if policy.max_disk_mb > 0 {
         let max_bytes = policy.max_disk_mb as u64 * 1024 * 1024;
-        prune_by_disk_usage(&trace_base, &debug_base, &capture, max_bytes, &mut deleted_files, &mut freed_bytes);
+        prune_by_disk_usage(
+            &trace_base,
+            &debug_base,
+            &capture,
+            max_bytes,
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
     }
 
     // 4. Capture body file count limit
     if policy.max_capture_body_files > 0 {
-        prune_capture_bodies(&capture, policy.max_capture_body_files, &mut deleted_files, &mut freed_bytes);
+        prune_capture_bodies(
+            &capture,
+            policy.max_capture_body_files,
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
     }
 
     if !deleted_files.is_empty() {
         info!(
             deleted = deleted_files.len(),
-            freed_bytes,
-            "Retention enforcement cleaned up log files"
+            freed_bytes, "Retention enforcement cleaned up log files"
         );
     }
 
@@ -485,12 +506,7 @@ fn collect_capture_files_with_mtime(dir: &str, out: &mut Vec<(PathBuf, u64, Syst
 }
 
 /// Keep at most `max_files` body files, deleting the oldest.
-fn prune_capture_bodies(
-    dir: &str,
-    max_files: usize,
-    deleted: &mut Vec<String>,
-    freed: &mut u64,
-) {
+fn prune_capture_bodies(dir: &str, max_files: usize, deleted: &mut Vec<String>, freed: &mut u64) {
     let bodies_dir = Path::new(dir).join("bodies");
     if !bodies_dir.is_dir() {
         return;

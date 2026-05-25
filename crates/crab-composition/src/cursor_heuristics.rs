@@ -70,7 +70,10 @@ fn detect_component(text: &str, patterns: &[&str]) -> ComponentFingerprint {
     } else {
         None
     };
-    ComponentFingerprint { present, fingerprint }
+    ComponentFingerprint {
+        present,
+        fingerprint,
+    }
 }
 
 #[cfg(test)]
@@ -96,14 +99,16 @@ mod tests {
 
     #[test]
     fn test_detect_skills_found() {
-        let text = "Use these <available_skills> to help with coding. SKILL.md describes the patterns.";
+        let text =
+            "Use these <available_skills> to help with coding. SKILL.md describes the patterns.";
         let comp = detect_component(text, SKILLS_PATTERNS);
         assert!(comp.present);
     }
 
     #[test]
     fn test_detect_mcp_found() {
-        let text = "Configure mcpServers to access the file system. Use CallMcpTool for MCP operations.";
+        let text =
+            "Configure mcpServers to access the file system. Use CallMcpTool for MCP operations.";
         let comp = detect_component(text, MCP_PATTERNS);
         assert!(comp.present);
     }

@@ -56,9 +56,10 @@ pub fn collect_host_disks() -> Vec<HostDisk> {
     if docker_mount.exists() {
         if let Ok(disk) = get_disk_usage("/var/lib/docker") {
             // Only add if different from root
-            if !disks.iter().any(|d| {
-                d.mount_point == "/" && d.total_bytes == disk.total_bytes
-            }) {
+            if !disks
+                .iter()
+                .any(|d| d.mount_point == "/" && d.total_bytes == disk.total_bytes)
+            {
                 disks.push(disk);
             }
         }

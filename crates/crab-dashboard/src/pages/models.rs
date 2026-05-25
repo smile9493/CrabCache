@@ -4,7 +4,10 @@ use crate::api;
 use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
-use crate::types::{CursorModelAlias, CursorModelsConfig, ModelApplyBody, ModelDetectResponse, ModelListResponse, SyncResult};
+use crate::types::{
+    CursorModelAlias, CursorModelsConfig, ModelApplyBody, ModelDetectResponse, ModelListResponse,
+    SyncResult,
+};
 
 #[component]
 pub fn ModelsPage() -> impl IntoView {

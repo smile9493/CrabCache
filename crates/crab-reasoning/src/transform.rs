@@ -30,8 +30,6 @@ pub fn strip_reasoning_delta_for_client(chunk: &mut Value) {
     }
 }
 
-
-
 /// Silent-mode SSE chunk: strip `reasoning_content` and thinking markup from `delta.content`.
 pub fn strip_silent_sse_chunk_for_client(chunk: &mut Value) {
     strip_reasoning_delta_for_client(chunk);
@@ -489,7 +487,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn rewrite_response_body_silent_strips_thinking_markup() {
         let body = serde_json::json!({
@@ -637,8 +634,14 @@ mod tests {
         let mut chunk = payload.clone();
         strip_reasoning_delta_for_client(&mut chunk);
         let delta = &chunk["choices"][0]["delta"];
-        assert!(delta.get("reasoning_content").is_none(), "reasoning_content must be removed");
-        assert!(delta.get("content").is_some(), "content field must be present even for reasoning-only chunks");
+        assert!(
+            delta.get("reasoning_content").is_none(),
+            "reasoning_content must be removed"
+        );
+        assert!(
+            delta.get("content").is_some(),
+            "content field must be present even for reasoning-only chunks"
+        );
         assert_eq!(delta["content"].as_str(), Some(""));
     }
 }

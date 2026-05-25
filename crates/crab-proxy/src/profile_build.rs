@@ -6,8 +6,8 @@ use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_control::parse_upstream_base_url;
 use crab_pipeline::UpstreamProvider;
 use crab_route::{AffinityRouter, Backend};
-use std::net::{SocketAddr, ToSocketAddrs};
 use parking_lot::RwLock;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -108,7 +108,10 @@ pub fn resolve_profile_key_specs(
         );
         return legacy;
     }
-    warn!(profile_id, "No upstream keys available for profile (explicit, default, and legacy pools are all empty)");
+    warn!(
+        profile_id,
+        "No upstream keys available for profile (explicit, default, and legacy pools are all empty)"
+    );
     Vec::new()
 }
 

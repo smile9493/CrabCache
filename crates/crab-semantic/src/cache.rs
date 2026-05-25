@@ -45,10 +45,7 @@ impl SemanticCache {
         global_metrics().record_semantic_embed_latency(elapsed);
 
         let threshold = f32::from_bits(self.threshold.load(Ordering::Relaxed));
-        let result = self
-            .store
-            .search(&vector, threshold, tenant_id)
-            .await;
+        let result = self.store.search(&vector, threshold, tenant_id).await;
 
         if result.is_some() {
             global_metrics().record_semantic_cache_hit(true);

@@ -80,7 +80,8 @@ mod tests {
             force_deepseek_profile_for_aliases: true,
             synthetic_models_enabled: true,
         };
-        let body: serde_json::Value = serde_json::from_slice(&synthetic_models_list_json(&cfg)).unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&synthetic_models_list_json(&cfg)).unwrap();
         let ids: Vec<String> = body["data"]
             .as_array()
             .unwrap()

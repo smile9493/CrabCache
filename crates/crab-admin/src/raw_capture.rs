@@ -14,11 +14,7 @@ pub(crate) fn raw_capture_dir() -> String {
 }
 
 /// Load index entries from `index.jsonl` tail, filtered by time window.
-async fn load_capture_entries_async(
-    dir: &str,
-    hours: u32,
-    limit: usize,
-) -> Vec<RawCaptureEntry> {
+async fn load_capture_entries_async(dir: &str, hours: u32, limit: usize) -> Vec<RawCaptureEntry> {
     let path = format!("{}/index.jsonl", dir);
     tokio::task::spawn_blocking(move || {
         use std::fs::File;
@@ -264,7 +260,10 @@ pub async fn get_capture_stats(
         .collect();
     msg_counts.sort_unstable();
     let p99_idx = ((total as f64) * 0.99).ceil() as usize;
-    let p99 = msg_counts.get(p99_idx.saturating_sub(1)).copied().unwrap_or(0);
+    let p99 = msg_counts
+        .get(p99_idx.saturating_sub(1))
+        .copied()
+        .unwrap_or(0);
 
     Json(CaptureStatsResponse {
         hours: query.hours,

@@ -13,12 +13,12 @@ use crab_control::parse_backend_endpoints;
 use crab_metrics::CacheTier;
 use crab_pipeline::{PipelineGlobals, UpstreamProvider};
 use crab_proxy::{
-    ClientKeyRateLimiter, ConnectionConfig, RuntimeConfig,
-    StoredKey, UpstreamKeyPool, UpstreamProfileRuntime,
+    ClientKeyRateLimiter, ConnectionConfig, RuntimeConfig, StoredKey, UpstreamKeyPool,
+    UpstreamProfileRuntime,
 };
 use crab_reasoning::CursorReasoningDisplayAdapter;
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -43,8 +43,7 @@ async fn test_redis_pool() -> Option<bb8::Pool<bb8_redis::RedisConnectionManager
 
 fn test_cache_entry() -> CacheEntry {
     CacheEntry {
-        response_body: br#"{"id":"e2e-test","choices":[{"message":{"content":"hello"}}]}"#
-            .to_vec(),
+        response_body: br#"{"id":"e2e-test","choices":[{"message":{"content":"hello"}}]}"#.to_vec(),
         model: "deepseek-v4-pro".to_string(),
         usage: UsageInfo {
             prompt_tokens: 10,
@@ -106,7 +105,10 @@ async fn cache_hit_l0_returns_cached_entry() {
         .expect("cache hit");
     assert_eq!(got.response_body, entry.response_body);
     assert_eq!(got.model, entry.model);
-    assert!(matches!(tier, CacheTier::L0Moka), "expected L0 hit, got {tier:?}");
+    assert!(
+        matches!(tier, CacheTier::L0Moka),
+        "expected L0 hit, got {tier:?}"
+    );
 }
 
 #[tokio::test]
@@ -118,9 +120,7 @@ async fn cache_miss_returns_none() {
         .await
         .expect("tiered cache");
 
-    let result = cache
-        .get("nonexistent-key-e2e-12345", None, None)
-        .await;
+    let result = cache.get("nonexistent-key-e2e-12345", None, None).await;
     assert!(result.is_none(), "expected cache miss");
 }
 
@@ -132,7 +132,10 @@ async fn cache_entry_roundtrip_serde() {
     assert_eq!(roundtripped.response_body, entry.response_body);
     assert_eq!(roundtripped.model, entry.model);
     assert_eq!(roundtripped.usage.prompt_tokens, entry.usage.prompt_tokens);
-    assert_eq!(roundtripped.usage.completion_tokens, entry.usage.completion_tokens);
+    assert_eq!(
+        roundtripped.usage.completion_tokens,
+        entry.usage.completion_tokens
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +159,10 @@ async fn coalescing_leader_follower() {
 
     guard.mark_completed();
 
-    let follower_guard = follower.await.expect("follower join").expect("follower acquire");
+    let follower_guard = follower
+        .await
+        .expect("follower join")
+        .expect("follower acquire");
     assert!(!follower_guard.is_leader(), "follower should not be leader");
 }
 
@@ -176,8 +182,14 @@ async fn coalescing_leader_failure_notifies_followers() {
 
     guard.mark_failed();
 
-    let follower_guard = follower.await.expect("follower join").expect("follower acquire");
-    assert!(follower_guard.leader_failed(), "follower should see leader failure");
+    let follower_guard = follower
+        .await
+        .expect("follower join")
+        .expect("follower acquire");
+    assert!(
+        follower_guard.leader_failed(),
+        "follower should see leader failure"
+    );
 }
 
 // ---------------------------------------------------------------------------

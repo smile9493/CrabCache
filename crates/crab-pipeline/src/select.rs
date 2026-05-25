@@ -140,7 +140,10 @@ fn auto_pipeline_with_reason(
     (pipeline, reason)
 }
 
-fn auto_pipeline_legacy(ctx: &PipelineRequestContext<'_>, provider: UpstreamProvider) -> RequestPipeline {
+fn auto_pipeline_legacy(
+    ctx: &PipelineRequestContext<'_>,
+    provider: UpstreamProvider,
+) -> RequestPipeline {
     match provider {
         UpstreamProvider::Deepseek => {
             if is_deepseek_v4_model(ctx.model)

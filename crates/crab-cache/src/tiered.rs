@@ -281,7 +281,11 @@ impl TieredCache {
 
     /// Invalidate cache entries matching a prefix pattern in the cache key.
     #[tracing::instrument(skip(self, scan), fields(prefix = %prefix))]
-    pub async fn invalidate_prefix(&self, prefix: &str, scan: InvalidateScanOptions) -> Result<(), CacheError> {
+    pub async fn invalidate_prefix(
+        &self,
+        prefix: &str,
+        scan: InvalidateScanOptions,
+    ) -> Result<(), CacheError> {
         let prefix_owned = prefix.to_string();
         if let Err(e) = self
             .l0

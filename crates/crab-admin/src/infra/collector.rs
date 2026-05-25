@@ -24,12 +24,8 @@ pub fn spawn_background_collector(state: Arc<AppState>) {
 
         loop {
             let compose = infra::resolve_compose_project();
-            let snapshot = infra::collect_snapshot(
-                &state.infra_docker,
-                &compose,
-                &state.infra_prev,
-            )
-            .await;
+            let snapshot =
+                infra::collect_snapshot(&state.infra_docker, &compose, &state.infra_prev).await;
             state.infra_cache.store(snapshot.clone());
 
             if last_history.elapsed().as_secs() >= history_secs {
@@ -51,15 +47,15 @@ impl crate::infra::InfraCache {
     }
 
     pub fn latest_collected_at(&self) -> Option<u64> {
-        self.snapshot
-            .read()
-            .as_ref()
-            .map(|(s, _)| s.collected_at)
+        self.snapshot.read().as_ref().map(|(s, _)| s.collected_at)
     }
 }
 
 /// Empty placeholder before the first collector tick.
-pub fn empty_snapshot(docker_connected: bool, error: Option<String>) -> crate::infra::types::InfraSnapshot {
+pub fn empty_snapshot(
+    docker_connected: bool,
+    error: Option<String>,
+) -> crate::infra::types::InfraSnapshot {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

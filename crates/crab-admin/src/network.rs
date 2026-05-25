@@ -175,17 +175,14 @@ impl NetworkInfo {
             selected_private.map(|ip| format!("{protocol}://{ip}:{}", config.gateway_port))
         };
 
-        let gateway_url_openresty = config
-            .openresty_base_url
-            .clone()
-            .or_else(|| {
-                config.openresty_conf_dir.as_ref().and_then(|dir| {
-                    crate::openresty::detect_gateway_base_url(
-                        std::path::Path::new(dir),
-                        &config.gateway_upstream,
-                    )
-                })
-            });
+        let gateway_url_openresty = config.openresty_base_url.clone().or_else(|| {
+            config.openresty_conf_dir.as_ref().and_then(|dir| {
+                crate::openresty::detect_gateway_base_url(
+                    std::path::Path::new(dir),
+                    &config.gateway_upstream,
+                )
+            })
+        });
 
         let primary_for_flag = selected_private.map(IpAddr::V4);
 

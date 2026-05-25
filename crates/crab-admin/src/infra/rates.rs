@@ -2,9 +2,7 @@ use crate::infra::types::*;
 
 /// Compute CPU percent and network rates from a raw sample vs previous sample.
 pub fn compute_cpu_percent(current: &ContainerRawSample, prev: &ContainerRawSample) -> f64 {
-    let delta = current
-        .cpu_total_usage
-        .saturating_sub(prev.cpu_total_usage);
+    let delta = current.cpu_total_usage.saturating_sub(prev.cpu_total_usage);
     let delta_system = current
         .system_cpu_usage
         .saturating_sub(prev.system_cpu_usage);
@@ -31,13 +29,7 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    fn make_sample(
-        cpu: u64,
-        sys: u64,
-        rx: u64,
-        tx: u64,
-        online: u32,
-    ) -> ContainerRawSample {
+    fn make_sample(cpu: u64, sys: u64, rx: u64, tx: u64, online: u32) -> ContainerRawSample {
         ContainerRawSample {
             cpu_total_usage: cpu,
             system_cpu_usage: sys,

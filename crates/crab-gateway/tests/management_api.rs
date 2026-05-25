@@ -14,14 +14,14 @@ use crab_proxy::{
     ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, SemanticRuntimeState,
     UpstreamKeyPool, UpstreamProfileRuntime,
 };
-use crab_semantic::SemanticGateConfig;
 use crab_reasoning::ReasoningBackend;
-use parking_lot::RwLock as ParkingRwLock;
-use std::collections::HashMap;
-use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use crab_route::AffinityRouter;
-use std::sync::atomic::AtomicBool;
+use crab_semantic::SemanticGateConfig;
+use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
+use parking_lot::RwLock as ParkingRwLock;
 use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
@@ -200,10 +200,7 @@ async fn create_key_with_project_id_roundtrip() {
         .await
         .unwrap();
     let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(
-        created["project_id"].as_str(),
-        Some("proj_alpha")
-    );
+    assert_eq!(created["project_id"].as_str(), Some("proj_alpha"));
 
     let patch = app
         .clone()
@@ -226,10 +223,7 @@ async fn create_key_with_project_id_roundtrip() {
         .await
         .unwrap();
     let patched: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(
-        patched["project_id"].as_str(),
-        Some("proj_beta")
-    );
+    assert_eq!(patched["project_id"].as_str(), Some("proj_beta"));
 }
 
 #[tokio::test]
@@ -408,10 +402,7 @@ async fn create_key_with_domain_roundtrip() {
         .await
         .unwrap();
     let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(
-        created["domain"].as_str(),
-        Some("backend-team")
-    );
+    assert_eq!(created["domain"].as_str(), Some("backend-team"));
 
     let list = app
         .oneshot(
@@ -828,10 +819,7 @@ async fn domain_policies_persisted_in_redis_state() {
 #[test]
 fn pipeline_runtime_set_and_read() {
     let runtime = common::test_runtime();
-    assert_eq!(
-        runtime.pipeline_globals().pipeline_mode,
-        PipelineMode::Auto
-    );
+    assert_eq!(runtime.pipeline_globals().pipeline_mode, PipelineMode::Auto);
     runtime
         .set_pipeline_runtime(PipelineMode::ForceCursorV4, "deepseek")
         .expect("set pipeline");
@@ -840,9 +828,11 @@ fn pipeline_runtime_set_and_read() {
         PipelineMode::ForceCursorV4
     );
     assert_eq!(runtime.default_upstream_profile_id(), "deepseek");
-    assert!(runtime
-        .set_pipeline_runtime(PipelineMode::Auto, "unknown")
-        .is_err());
+    assert!(
+        runtime
+            .set_pipeline_runtime(PipelineMode::Auto, "unknown")
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -1070,9 +1060,12 @@ async fn runtime_reasoning_roundtrip() {
         .await
         .unwrap();
     assert_eq!(get_resp.status(), StatusCode::OK);
-    let get_body: crab_control::ReasoningRuntimeConfigView =
-        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let get_body: crab_control::ReasoningRuntimeConfigView = serde_json::from_slice(
+        &axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
 
     let put_body = serde_json::json!({
         "thinking_mode": "auto",
@@ -1096,9 +1089,12 @@ async fn runtime_reasoning_roundtrip() {
         .await
         .unwrap();
     assert_eq!(put_resp.status(), StatusCode::OK);
-    let put_view: crab_control::ReasoningRuntimeConfigView =
-        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let put_view: crab_control::ReasoningRuntimeConfigView = serde_json::from_slice(
+        &axum::body::to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(put_view.thinking_mode, "enabled");
     assert!(!put_view.display_reasoning);
 }
@@ -1123,9 +1119,12 @@ async fn runtime_semantic_threshold_roundtrip() {
         .await
         .unwrap();
     assert_eq!(get_resp.status(), StatusCode::OK);
-    let before: crab_control::SemanticRuntimeView =
-        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let before: crab_control::SemanticRuntimeView = serde_json::from_slice(
+        &axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
 
     let put_body = serde_json::json!({
         "enabled": before.enabled,
@@ -1148,9 +1147,12 @@ async fn runtime_semantic_threshold_roundtrip() {
         .await
         .unwrap();
     assert_eq!(put_resp.status(), StatusCode::OK);
-    let after: crab_control::SemanticRuntimeView =
-        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let after: crab_control::SemanticRuntimeView = serde_json::from_slice(
+        &axum::body::to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert!((after.similarity_threshold - 0.88).abs() < f64::EPSILON);
 }
 
@@ -1204,9 +1206,12 @@ async fn runtime_connection_roundtrip() {
         .await
         .unwrap();
     assert_eq!(get_resp.status(), StatusCode::OK);
-    let before: crab_control::ConnectionRuntimeView =
-        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let before: crab_control::ConnectionRuntimeView = serde_json::from_slice(
+        &axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
 
     let put_body = serde_json::json!({
         "tcp_keepalive_idle_secs": before.tcp_keepalive_idle_secs + 1,
@@ -1229,9 +1234,12 @@ async fn runtime_connection_roundtrip() {
         .await
         .unwrap();
     assert_eq!(put_resp.status(), StatusCode::OK);
-    let after: crab_control::ConnectionRuntimeView =
-        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
-            .unwrap();
+    let after: crab_control::ConnectionRuntimeView = serde_json::from_slice(
+        &axum::body::to_bytes(put_resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         after.tcp_keepalive_idle_secs,
         before.tcp_keepalive_idle_secs + 1

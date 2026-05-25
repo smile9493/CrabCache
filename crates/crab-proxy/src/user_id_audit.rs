@@ -88,9 +88,7 @@ pub fn apply_user_id_audit_to_entry(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     entry.pipeline = pipeline.map(|p| p.as_str().to_string());
-    entry.upstream_model = upstream_model
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+    entry.upstream_model = upstream_model.filter(|s| !s.is_empty()).map(str::to_string);
 
     let client_body_user_id = original_body.and_then(parse_user_id_from_json);
     let upstream_user_id = upstream_body.and_then(parse_user_id_from_json);
@@ -133,12 +131,8 @@ mod tests {
 
     #[test]
     fn absent_without_project_and_upstream_user_id() {
-        let status = compute_user_id_audit(
-            Some(RequestPipeline::CursorDeepSeekV4),
-            None,
-            None,
-            None,
-        );
+        let status =
+            compute_user_id_audit(Some(RequestPipeline::CursorDeepSeekV4), None, None, None);
         assert_eq!(status, UserIdAuditStatus::Absent);
     }
 
@@ -156,9 +150,6 @@ mod tests {
     #[test]
     fn parse_user_id_from_json_body() {
         let body = br#"{"user_id":"abc_1"}"#;
-        assert_eq!(
-            parse_user_id_from_json(body).as_deref(),
-            Some("abc_1")
-        );
+        assert_eq!(parse_user_id_from_json(body).as_deref(), Some("abc_1"));
     }
 }

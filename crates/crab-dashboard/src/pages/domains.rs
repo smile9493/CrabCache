@@ -124,11 +124,7 @@ fn DomainPolicyEditor(
                 },
                 upstream_profile: {
                     let p = upstream_profile.get();
-                    if p.is_empty() {
-                        None
-                    } else {
-                        Some(p)
-                    }
+                    if p.is_empty() { None } else { Some(p) }
                 },
             };
             let saved_msg = saved_msg.clone();
@@ -283,8 +279,7 @@ fn DomainPolicyEditor(
 #[component]
 pub fn DomainOverviewTableInline(
     metrics: crate::types::MetricsSnapshot,
-    #[prop(optional)]
-    on_domain_click: Option<Callback<String>>,
+    #[prop(optional)] on_domain_click: Option<Callback<String>>,
 ) -> impl IntoView {
     let t = use_translations();
     let buckets = metrics.domain_buckets.clone();
@@ -349,9 +344,7 @@ pub fn DomainOverviewTableInline(
 
 /// Slide-in drawer for domain detail, used in Overview page.
 #[component]
-pub fn DomainDetailDrawer(
-    domain: RwSignal<Option<String>>,
-) -> impl IntoView {
+pub fn DomainDetailDrawer(domain: RwSignal<Option<String>>) -> impl IntoView {
     let t = use_translations();
     let detail: RwSignal<Option<Result<DomainDetailBundle, String>>> = RwSignal::new(None);
     let policy_save_tick = RwSignal::new(0u32);

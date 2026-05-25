@@ -9,7 +9,7 @@ use crate::locale::use_translations;
 use crate::types::{
     KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest,
     SyncResult, UpdateUpstreamConfigRequest, UpstreamKeyInput, UpstreamKeysPutMode,
-    UpstreamKeysView, UpstreamTestBody, UpstreamProfileAdminView, UpstreamTestResult,
+    UpstreamKeysView, UpstreamProfileAdminView, UpstreamTestBody, UpstreamTestResult,
 };
 
 const OFFICIAL_BASE: &str = "https://api.deepseek.com";
@@ -69,7 +69,7 @@ fn first_key_from_text(text: &str) -> Option<String> {
 #[component]
 pub fn UpstreamPage() -> impl IntoView {
     let t = use_translations();
-    
+
     // Page state
     let profiles: RwSignal<Vec<UpstreamProfileAdminView>> = RwSignal::new(Vec::new());
     let active_profile = RwSignal::new("deepseek".to_string());
@@ -143,7 +143,7 @@ pub fn UpstreamPage() -> impl IntoView {
         save_error.set(String::new());
         saved.set(false);
         sync_result.set(None);
-        
+
         let p_list = profiles.get();
         if pid == "deepseek" {
             leptos::task::spawn_local(async move {
@@ -191,7 +191,7 @@ pub fn UpstreamPage() -> impl IntoView {
         testing.set(true);
         test_result.set(None);
         test_error.set(String::new());
-        
+
         let url = base_url.get();
         if let Some(err) = validate_base_url(&url) {
             test_error.set(err);
@@ -221,7 +221,9 @@ pub fn UpstreamPage() -> impl IntoView {
                     Err(e) => test_error.set(e),
                 }
             } else {
-                test_error.set("Please enter a key in bulk input to test this unsaved profile.".to_string());
+                test_error.set(
+                    "Please enter a key in bulk input to test this unsaved profile.".to_string(),
+                );
             }
             testing.set(false);
         });
@@ -264,7 +266,11 @@ pub fn UpstreamPage() -> impl IntoView {
         let pid = active_profile.get();
         let prov = provider.get();
         let sni_val = tls_sni.get().trim().to_string();
-        let sni = if sni_val.is_empty() { None } else { Some(sni_val) };
+        let sni = if sni_val.is_empty() {
+            None
+        } else {
+            Some(sni_val)
+        };
         let keys_to_append_clone = keys_to_append.clone();
 
         leptos::task::spawn_local(async move {
@@ -303,9 +309,7 @@ pub fn UpstreamPage() -> impl IntoView {
                         let key_err = if pid == "deepseek" {
                             api::put_upstream_keys(&key_req).await.err()
                         } else {
-                            api::put_upstream_profile_keys(&pid, &key_req)
-                                .await
-                                .err()
+                            api::put_upstream_profile_keys(&pid, &key_req).await.err()
                         };
                         if let Some(e) = key_err {
                             save_error.set(format!("Profile saved but keys failed: {e}"));
@@ -335,7 +339,11 @@ pub fn UpstreamPage() -> impl IntoView {
             .filter(|s| !s.is_empty())
             .collect();
         if secrets.is_empty() {
-            pool_error.set(use_translations().upstream_pool_empty_keys_error().to_string());
+            pool_error.set(
+                use_translations()
+                    .upstream_pool_empty_keys_error()
+                    .to_string(),
+            );
             pool_saving.set(false);
             return;
         }
@@ -373,7 +381,9 @@ pub fn UpstreamPage() -> impl IntoView {
 
     let on_delete_profile = move |_| {
         let pid = active_profile.get();
-        if pid == "deepseek" { return; }
+        if pid == "deepseek" {
+            return;
+        }
         deleting.set(true);
         leptos::task::spawn_local(async move {
             match api::delete_upstream_profile(&pid).await {
@@ -408,7 +418,11 @@ pub fn UpstreamPage() -> impl IntoView {
             return;
         }
         let sni_val = tls_sni.get().trim().to_string();
-        let sni = if sni_val.is_empty() { None } else { Some(sni_val) };
+        let sni = if sni_val.is_empty() {
+            None
+        } else {
+            Some(sni_val)
+        };
 
         saving.set(true);
         leptos::task::spawn_local(async move {
@@ -487,7 +501,7 @@ pub fn UpstreamPage() -> impl IntoView {
                         </button>
                     }
                 }).collect_view()}
-                
+
                 <button
                     type="button"
                     class=move || if is_creating.get() { "tab-item tab-item-active" } else { "tab-item" }
@@ -756,7 +770,7 @@ pub fn UpstreamPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }}
-                    
+
                     {move || if is_creating.get() {
                         view! { <span></span> }.into_any()
                     } else {
@@ -1057,7 +1071,7 @@ pub fn UpstreamPage() -> impl IntoView {
                         <h3 class="text-sm font-semibold text-theme">
                             {t.upstream_connection_test_title()}
                         </h3>
-                        
+
                         <div class="test-result-panel">
                             {move || if let Some(res) = test_result.get() {
                                 view! {
@@ -1154,8 +1168,14 @@ fn QuotaProgressBar(quota: KeyQuotaInfo) -> impl IntoView {
     };
 
     let available_icon = match quota.is_available {
-        Some(true) => view! { <span class="text-success text-xs mr-1">{t.upstream_quota_available()}</span> }.into_any(),
-        Some(false) => view! { <span class="text-error text-xs mr-1">{t.upstream_quota_exhausted()}</span> }.into_any(),
+        Some(true) => {
+            view! { <span class="text-success text-xs mr-1">{t.upstream_quota_available()}</span> }
+                .into_any()
+        }
+        Some(false) => {
+            view! { <span class="text-error text-xs mr-1">{t.upstream_quota_exhausted()}</span> }
+                .into_any()
+        }
         None => view! { <span></span> }.into_any(),
     };
 

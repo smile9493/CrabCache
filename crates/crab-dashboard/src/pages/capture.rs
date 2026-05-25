@@ -52,7 +52,11 @@ fn fmt_ts(ms: u64) -> String {
 }
 
 fn fmt_delta(v: i64) -> String {
-    if v >= 0 { format!("+{v}") } else { format!("{v}") }
+    if v >= 0 {
+        format!("+{v}")
+    } else {
+        format!("{v}")
+    }
 }
 
 fn entry_is_anomaly(e: &RawCaptureEntry) -> bool {
@@ -82,9 +86,14 @@ pub fn CapturePage() -> impl IntoView {
             let hash = f.hash_opt().map(|s| s.to_string());
             leptos::task::spawn_local(async move {
                 list_data.set(None);
-                let result =
-                    api::fetch_capture_list(24, Some(200), consumer.as_deref(), project.as_deref(), hash.as_deref())
-                        .await;
+                let result = api::fetch_capture_list(
+                    24,
+                    Some(200),
+                    consumer.as_deref(),
+                    project.as_deref(),
+                    hash.as_deref(),
+                )
+                .await;
                 list_data.set(Some(result));
             });
         }
@@ -411,7 +420,11 @@ fn CaptureDetailContent(detail: CaptureDetailResponse) -> impl IntoView {
         ().into_any()
     };
 
-    let stream_val = if e.stream { t.capture_bool_yes() } else { t.capture_bool_no() };
+    let stream_val = if e.stream {
+        t.capture_bool_yes()
+    } else {
+        t.capture_bool_no()
+    };
     let reasoning_val = e.reasoning_strategy.as_deref().unwrap_or("-");
     let client = &e.structure.client;
     let upstream = &e.structure.upstream;
@@ -592,8 +605,16 @@ fn StructRow(
     delta: String,
     warn: bool,
 ) -> impl IntoView {
-    let row_class = if warn { "capture-structure-row-warn" } else { "" };
-    let delta_class = if warn { "capture-delta-warn font-semibold" } else { "text-theme-secondary" };
+    let row_class = if warn {
+        "capture-structure-row-warn"
+    } else {
+        ""
+    };
+    let delta_class = if warn {
+        "capture-delta-warn font-semibold"
+    } else {
+        "text-theme-secondary"
+    };
     view! {
         <tr class=row_class>
             <td class="text-xs text-theme-secondary">{metric}</td>

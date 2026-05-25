@@ -113,7 +113,9 @@ impl RedisStateStore {
 
     pub async fn save_all(&self, snap: &ControlPlaneSnapshot) -> Result<u64> {
         let mut conn = self.pool.get().await?;
-        let _: () = conn.set(self.key("keys"), serde_json::to_string(&snap.keys)?).await?;
+        let _: () = conn
+            .set(self.key("keys"), serde_json::to_string(&snap.keys)?)
+            .await?;
         if let Some(rt) = &snap.runtime {
             let _: () = conn
                 .set(self.key("runtime"), serde_json::to_string(rt)?)
@@ -121,10 +123,7 @@ impl RedisStateStore {
         }
         if let Some(upstream) = &snap.upstream_keys {
             let _: () = conn
-                .set(
-                    self.key("upstream_keys"),
-                    serde_json::to_string(upstream)?,
-                )
+                .set(self.key("upstream_keys"), serde_json::to_string(upstream)?)
                 .await?;
         }
         if let Some(profiles) = &snap.upstream_profiles {
