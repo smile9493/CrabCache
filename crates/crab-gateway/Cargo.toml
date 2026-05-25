@@ -20,6 +20,9 @@ bb8-redis.workspace = true
 crab-state.workspace = true
 uuid.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 crab-proxy.workspace = true
 crab-metrics.workspace = true

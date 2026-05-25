@@ -108,10 +108,10 @@ pub fn gateway_probe_ttl() -> Duration {
 pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
     {
         let cache = state.gateway_probe_cache.read();
-        if let Some((at, probe)) = cache.as_ref() {
-            if at.elapsed() < gateway_probe_ttl() {
-                return probe.clone();
-            }
+        if let Some((at, probe)) = cache.as_ref()
+            && at.elapsed() < gateway_probe_ttl()
+        {
+            return probe.clone();
         }
     }
 
@@ -374,11 +374,7 @@ pub async fn build_metrics_snapshot_core(
             // the oldest persisted sample, the Prometheus counters have been reset.
             let g_uptime = gateway_status.map(|s| s.uptime_secs).unwrap_or(0);
             let oldest_ts = history.oldest_sample_at();
-            if g_uptime > 0 && oldest_ts > 0 && oldest_ts > now.saturating_sub(g_uptime) {
-                true
-            } else {
-                false
-            }
+            g_uptime > 0 && oldest_ts > 0 && oldest_ts > now.saturating_sub(g_uptime)
         },
     };
 
@@ -570,10 +566,11 @@ fn empty_gateway_status() -> GatewayStatus {
 async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary {
     {
         let cache = state.trace_summary_cache.read();
-        if let Some((at, summary)) = cache.as_ref() {
-            if at.elapsed() < TRACE_SUMMARY_TTL && summary.hours == hours {
-                return summary.clone();
-            }
+        if let Some((at, summary)) = cache.as_ref()
+            && at.elapsed() < TRACE_SUMMARY_TTL
+            && summary.hours == hours
+        {
+            return summary.clone();
         }
     }
 

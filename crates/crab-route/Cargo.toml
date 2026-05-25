@@ -3,6 +3,9 @@ name = "crab-route"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 pingora-ketama.workspace = true
 pingora-core.workspace = true

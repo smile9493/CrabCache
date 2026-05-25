@@ -57,10 +57,10 @@ pub fn parse_sse_chunk(chunk: &[u8]) -> Vec<SseEvent> {
                 event: None,
                 data: data.to_string(),
             });
-        } else if let Some(event) = line.strip_prefix("event: ") {
-            if let Some(last) = events.last_mut() {
-                last.event = Some(event.to_string());
-            }
+        } else if let Some(event) = line.strip_prefix("event: ")
+            && let Some(last) = events.last_mut()
+        {
+            last.event = Some(event.to_string());
         }
     }
 

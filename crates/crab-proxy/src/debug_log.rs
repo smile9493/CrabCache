@@ -35,10 +35,10 @@ pub fn debug_agent_log(
         "data": data,
         "timestamp": chrono::Utc::now().timestamp_millis(),
     });
-    if let Ok(session_id) = std::env::var("CRABCACHE_DEBUG_SESSION_ID") {
-        if !session_id.is_empty() {
-            line["sessionId"] = serde_json::Value::String(session_id);
-        }
+    if let Ok(session_id) = std::env::var("CRABCACHE_DEBUG_SESSION_ID")
+        && !session_id.is_empty()
+    {
+        line["sessionId"] = serde_json::Value::String(session_id);
     }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{line}");

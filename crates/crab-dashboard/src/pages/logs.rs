@@ -980,7 +980,7 @@ fn ExportButton(
         <button
             class="text-xs px-2 py-1 rounded border border-theme-border text-theme-muted hover:text-theme hover:border-theme transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             on:click=handle_export
-            disabled=move || disabled()
+            disabled=disabled
         >
             "⬇ "
         </button>

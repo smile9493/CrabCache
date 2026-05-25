@@ -26,7 +26,6 @@ use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_headers::{
     normalize_replaced_body_headers, smooth_upstream_client_headers, upstream_header_names,
 };
-use crate::upstream_pool::UpstreamKeyPool;
 use crate::upstream_user_id_limiter::{DeepSeekUserIdLimitError, classify_deepseek_v4_tier};
 use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_cache::CoalesceError;
@@ -365,10 +364,11 @@ impl ProxyHttp for GatewayProxy {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
-        if self.state.cors_enabled && session.req_header().method == http::Method::OPTIONS {
-            if send_cors_preflight(session).await {
-                return Ok(true);
-            }
+        if self.state.cors_enabled
+            && session.req_header().method == http::Method::OPTIONS
+            && send_cors_preflight(session).await
+        {
+            return Ok(true);
         }
 
         let req_path = session.req_header().uri.path().to_string();
@@ -780,6 +780,7 @@ impl ProxyHttp for GatewayProxy {
         let mut missing = 0usize;
         let mut recovered = 0usize;
         let mut retired_prefix = 0usize;
+        #[allow(unused_assignments)]
         let mut upstream_model_log = ctx.model.clone();
         let mut namespace_preview = String::new();
         let effective_user_id = ctx.project_id.as_deref();
@@ -839,32 +840,30 @@ impl ProxyHttp for GatewayProxy {
         }
         ctx.upstream_model = Some(upstream_model_log.clone());
 
-        if selection.provider == UpstreamProvider::Deepseek {
-            if let Some(user_id) = ctx.project_id.as_deref() {
-                if let Some(tier) = classify_deepseek_v4_tier(&upstream_model_log) {
-                    match self
-                        .state
-                        .deepseek_user_id_limiter
-                        .try_acquire(user_id, tier)
+        if selection.provider == UpstreamProvider::Deepseek
+            && let Some(user_id) = ctx.project_id.as_deref()
+            && let Some(tier) = classify_deepseek_v4_tier(&upstream_model_log)
+        {
+            match self
+                .state
+                .deepseek_user_id_limiter
+                .try_acquire(user_id, tier)
+            {
+                Ok(guard) => ctx.deepseek_user_id_guard = Some(guard),
+                Err(DeepSeekUserIdLimitError::Exceeded) => {
+                    global_metrics().record_deepseek_user_id_concurrency_rejected(tier.as_str());
+                    global_metrics().record_rejected("deepseek_user_concurrency_exceeded");
+                    let body = deepseek_user_concurrency_exceeded_error_json();
+                    if !send_json_error(
+                        session,
+                        http::StatusCode::TOO_MANY_REQUESTS,
+                        body.as_slice(),
+                    )
+                    .await
                     {
-                        Ok(guard) => ctx.deepseek_user_id_guard = Some(guard),
-                        Err(DeepSeekUserIdLimitError::Exceeded) => {
-                            global_metrics()
-                                .record_deepseek_user_id_concurrency_rejected(tier.as_str());
-                            global_metrics().record_rejected("deepseek_user_concurrency_exceeded");
-                            let body = deepseek_user_concurrency_exceeded_error_json();
-                            if !send_json_error(
-                                session,
-                                http::StatusCode::TOO_MANY_REQUESTS,
-                                body.as_slice(),
-                            )
-                            .await
-                            {
-                                let _ = session.respond_error(429).await;
-                            }
-                            return Ok(true);
-                        }
+                        let _ = session.respond_error(429).await;
                     }
+                    return Ok(true);
                 }
             }
         }
@@ -964,50 +963,50 @@ impl ProxyHttp for GatewayProxy {
         // #endregion
 
         // ---- Extract request composition for trace analysis ----
-        if let Some(body) = &ctx.original_request_body {
-            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body) {
-                let hints = CompositionHints {
-                    consumer: ctx.consumer.clone().unwrap_or_default(),
-                    domain: ctx.domain.clone().unwrap_or_default(),
-                    project_id: ctx.project_id.clone(),
-                    pipeline: ctx
-                        .request_pipeline
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_default(),
-                    user_agent: None,
-                    upstream_model: ctx.upstream_model.clone(),
-                };
-                ctx.request_composition = Some(extract_composition(&payload, &hints));
-                if let Some(ref comp) = ctx.request_composition {
-                    global_metrics().record_composition_metrics(comp);
-                }
+        if let Some(body) = &ctx.original_request_body
+            && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body)
+        {
+            let hints = CompositionHints {
+                consumer: ctx.consumer.clone().unwrap_or_default(),
+                domain: ctx.domain.clone().unwrap_or_default(),
+                project_id: ctx.project_id.clone(),
+                pipeline: ctx
+                    .request_pipeline
+                    .map(|p| p.as_str().to_string())
+                    .unwrap_or_default(),
+                user_agent: None,
+                upstream_model: ctx.upstream_model.clone(),
+            };
+            ctx.request_composition = Some(extract_composition(&payload, &hints));
+            if let Some(ref comp) = ctx.request_composition {
+                global_metrics().record_composition_metrics(comp);
+            }
 
-                // ---- Write composition debug entry if debug logging is enabled ----
-                if let Some(debug_tx) = composition_debug_tx() {
-                    let request_hash = ctx.req_hash.clone().unwrap_or_else(|| {
-                        let mut hasher = sha2::Sha256::new();
-                        hasher.update(body);
-                        let h = hex::encode(hasher.finalize());
-                        h[..h.len().min(16)].to_string()
-                    });
-                    let system_text = extract_system_text(&payload, 100_000);
-                    let tools_json = extract_tools_json(&payload, 100_000);
-                    if system_text.is_some() || tools_json.is_some() {
-                        let debug_entry = CompositionDebugEntry {
-                            timestamp_ms: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64,
-                            request_hash,
-                            consumer: ctx.consumer.clone().unwrap_or_default(),
-                            domain: ctx.domain.clone().unwrap_or_default(),
-                            project_id: ctx.project_id.clone(),
-                            model: ctx.model.clone(),
-                            system_text,
-                            tools_json,
-                        };
-                        debug_tx.send(debug_entry).ok();
-                    }
+            // ---- Write composition debug entry if debug logging is enabled ----
+            if let Some(debug_tx) = composition_debug_tx() {
+                let request_hash = ctx.req_hash.clone().unwrap_or_else(|| {
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(body);
+                    let h = hex::encode(hasher.finalize());
+                    h[..h.len().min(16)].to_string()
+                });
+                let system_text = extract_system_text(&payload, 100_000);
+                let tools_json = extract_tools_json(&payload, 100_000);
+                if system_text.is_some() || tools_json.is_some() {
+                    let debug_entry = CompositionDebugEntry {
+                        timestamp_ms: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
+                        request_hash,
+                        consumer: ctx.consumer.clone().unwrap_or_default(),
+                        domain: ctx.domain.clone().unwrap_or_default(),
+                        project_id: ctx.project_id.clone(),
+                        model: ctx.model.clone(),
+                        system_text,
+                        tools_json,
+                    };
+                    debug_tx.send(debug_entry).ok();
                 }
             }
         }
@@ -1742,10 +1741,10 @@ impl ProxyHttp for GatewayProxy {
                     }
                 }
             }
-            if let Some(guard) = &ctx.coalesce_guard {
-                if guard.is_leader() {
-                    guard.mark_failed();
-                }
+            if let Some(guard) = &ctx.coalesce_guard
+                && guard.is_leader()
+            {
+                guard.mark_failed();
             }
             return Ok(());
         }
@@ -1771,17 +1770,17 @@ impl ProxyHttp for GatewayProxy {
             if let Some(ref id) = key_id {
                 global_metrics().record_upstream_key_request(id, "error");
             }
-            if let Some(guard) = &ctx.coalesce_guard {
-                if guard.is_leader() {
-                    guard.mark_failed();
-                }
+            if let Some(guard) = &ctx.coalesce_guard
+                && guard.is_leader()
+            {
+                guard.mark_failed();
             }
-            if status >= 500 {
-                if let Some(ref backend_name) = ctx.upstream.backend_name {
-                    let mut health = self.state.runtime.backend_health.write();
-                    if let Some(h) = health.get_mut(backend_name) {
-                        h.record_failure(&self.state.runtime.circuit_breaker_config);
-                    }
+            if status >= 500
+                && let Some(ref backend_name) = ctx.upstream.backend_name
+            {
+                let mut health = self.state.runtime.backend_health.write();
+                if let Some(h) = health.get_mut(backend_name) {
+                    h.record_failure(&self.state.runtime.circuit_breaker_config);
                 }
             }
             return Ok(());
@@ -1813,31 +1812,29 @@ impl ProxyHttp for GatewayProxy {
             return Ok(None);
         }
 
-        if !ctx.upstream.error_body_logged {
-            if let Some(status) = ctx.upstream.http_status {
-                if status >= 400 {
-                    if let Some(chunk) = body.as_ref() {
-                        let preview = upstream_error_preview(chunk.as_ref());
-                        let has_reasoning_err = preview.contains("reasoning_content");
-                        // #region agent log
-                        debug_agent_log(
-                            "UP4B",
-                            "proxy.rs:upstream_response_body_filter",
-                            "upstream error body preview",
-                            serde_json::json!({
-                                "request_id": ctx.request_id,
-                                "status": status,
-                                "preview": preview,
-                                "has_reasoning_content_msg": has_reasoning_err,
-                                "body_len": chunk.len(),
-                                "end_of_stream": end_of_stream,
-                            }),
-                        );
-                        // #endregion
-                        ctx.upstream.error_body_logged = true;
-                    }
-                }
-            }
+        if !ctx.upstream.error_body_logged
+            && let Some(status) = ctx.upstream.http_status
+            && status >= 400
+            && let Some(chunk) = body.as_ref()
+        {
+            let preview = upstream_error_preview(chunk.as_ref());
+            let has_reasoning_err = preview.contains("reasoning_content");
+            // #region agent log
+            debug_agent_log(
+                "UP4B",
+                "proxy.rs:upstream_response_body_filter",
+                "upstream error body preview",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "status": status,
+                    "preview": preview,
+                    "has_reasoning_content_msg": has_reasoning_err,
+                    "body_len": chunk.len(),
+                    "end_of_stream": end_of_stream,
+                }),
+            );
+            // #endregion
+            ctx.upstream.error_body_logged = true;
         }
 
         if let Some(data) = body.take() {
@@ -1867,17 +1864,17 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if ctx.is_streaming {
-                if ctx.ttft.is_none() {
-                    if let Some(upstream_start) = ctx.upstream.start {
-                        ctx.ttft = Some(upstream_start.elapsed());
-                        if let Some(ttft) = ctx.ttft {
-                            global_metrics().record_latency(
-                                crab_metrics::LatencyKind::TTFT,
-                                ttft,
-                                &ctx.model,
-                                Some(crab_metrics::CacheTier::Miss),
-                            );
-                        }
+                if ctx.ttft.is_none()
+                    && let Some(upstream_start) = ctx.upstream.start
+                {
+                    ctx.ttft = Some(upstream_start.elapsed());
+                    if let Some(ttft) = ctx.ttft {
+                        global_metrics().record_latency(
+                            crab_metrics::LatencyKind::TTFT,
+                            ttft,
+                            &ctx.model,
+                            Some(crab_metrics::CacheTier::Miss),
+                        );
                     }
                 }
 
@@ -1979,18 +1976,17 @@ impl ProxyHttp for GatewayProxy {
             // Non-streaming: reasoning is stored inside rewrite_response_body via
             // record_response_reasoning. The accumulator is not populated for
             // non-streaming responses, so skip the redundant store call.
-            if ctx.is_streaming {
-                if let (Some(prepared), Some(accumulator)) =
+            if ctx.is_streaming
+                && let (Some(prepared), Some(accumulator)) =
                     (&ctx.prepared_request, &mut ctx.stream.accumulator)
-                {
-                    for (scope, prior_messages) in &prepared.record_response_contexts {
-                        accumulator.store_reasoning(
-                            &self.state.reasoning_store,
-                            scope,
-                            &prepared.cache_namespace,
-                            prior_messages,
-                        );
-                    }
+            {
+                for (scope, prior_messages) in &prepared.record_response_contexts {
+                    accumulator.store_reasoning(
+                        &self.state.reasoning_store,
+                        scope,
+                        &prepared.cache_namespace,
+                        prior_messages,
+                    );
                 }
             }
 
@@ -2081,44 +2077,31 @@ impl ProxyHttp for GatewayProxy {
                         }
                     });
 
-                    if let Some(semantic_cache) = &self.state.semantic_cache {
-                        if let Some(original_body) = &ctx.original_request_body {
-                            if let Ok(payload) =
-                                serde_json::from_slice::<serde_json::Value>(original_body)
-                            {
-                                if let Some(messages) =
-                                    payload.get("messages").and_then(|m| m.as_array())
-                                {
-                                    if let Some(query_text) = build_semantic_query_text(messages) {
-                                        let semantic_cache = semantic_cache.clone();
-                                        let entry_clone = build_cache_entry(
-                                            prepare_response_body_for_cache(
-                                                client_body.clone(),
-                                                display_reasoning,
-                                            ),
-                                            ctx.model.clone(),
-                                            ttl_secs,
-                                            ctx.is_streaming,
-                                            display_reasoning,
-                                        );
+                    if let Some(semantic_cache) = &self.state.semantic_cache
+                        && let Some(original_body) = &ctx.original_request_body
+                        && let Ok(payload) =
+                            serde_json::from_slice::<serde_json::Value>(original_body)
+                        && let Some(messages) = payload.get("messages").and_then(|m| m.as_array())
+                        && let Some(query_text) = build_semantic_query_text(messages)
+                    {
+                        let semantic_cache = semantic_cache.clone();
+                        let entry_clone = build_cache_entry(
+                            prepare_response_body_for_cache(client_body.clone(), display_reasoning),
+                            ctx.model.clone(),
+                            ttl_secs,
+                            ctx.is_streaming,
+                            display_reasoning,
+                        );
 
-                                        let project_id = ctx.project_id.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = semantic_cache
-                                                .insert(
-                                                    &query_text,
-                                                    &entry_clone,
-                                                    project_id.as_deref(),
-                                                )
-                                                .await
-                                            {
-                                                warn!(error = %e, "Failed to insert into semantic cache");
-                                            }
-                                        });
-                                    }
-                                }
+                        let project_id = ctx.project_id.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = semantic_cache
+                                .insert(&query_text, &entry_clone, project_id.as_deref())
+                                .await
+                            {
+                                warn!(error = %e, "Failed to insert into semantic cache");
                             }
-                        }
+                        });
                     }
                 }
             }
@@ -2272,46 +2255,32 @@ impl ProxyHttp for GatewayProxy {
                     if completion_json_has_visible_client_content(
                         &response_bytes,
                         reasoning_cfg.display_reasoning,
-                    ) {
-                        if let Some(semantic_cache) = &self.state.semantic_cache {
-                            if let Some(original_body) = &ctx.original_request_body {
-                                if let Ok(payload) =
-                                    serde_json::from_slice::<serde_json::Value>(original_body)
-                                {
-                                    if let Some(messages) =
-                                        payload.get("messages").and_then(|m| m.as_array())
-                                    {
-                                        if let Some(query_text) =
-                                            build_semantic_query_text(messages)
-                                        {
-                                            let semantic_cache = semantic_cache.clone();
-                                            let entry_for_semantic = build_cache_entry(
-                                                response_bytes.clone(),
-                                                ctx.model.clone(),
-                                                ttl_secs,
-                                                true,
-                                                reasoning_cfg.display_reasoning,
-                                            );
-                                            let query_text = query_text.to_string();
-                                            let project_id = ctx.project_id.clone();
+                    ) && let Some(semantic_cache) = &self.state.semantic_cache
+                        && let Some(original_body) = &ctx.original_request_body
+                        && let Ok(payload) =
+                            serde_json::from_slice::<serde_json::Value>(original_body)
+                        && let Some(messages) = payload.get("messages").and_then(|m| m.as_array())
+                        && let Some(query_text) = build_semantic_query_text(messages)
+                    {
+                        let semantic_cache = semantic_cache.clone();
+                        let entry_for_semantic = build_cache_entry(
+                            response_bytes.clone(),
+                            ctx.model.clone(),
+                            ttl_secs,
+                            true,
+                            reasoning_cfg.display_reasoning,
+                        );
+                        let query_text = query_text.to_string();
+                        let project_id = ctx.project_id.clone();
 
-                                            tokio::spawn(async move {
-                                                if let Err(e) = semantic_cache
-                                                    .insert(
-                                                        &query_text,
-                                                        &entry_for_semantic,
-                                                        project_id.as_deref(),
-                                                    )
-                                                    .await
-                                                {
-                                                    warn!(error = %e, "Failed to insert streaming response into semantic cache");
-                                                }
-                                            });
-                                        }
-                                    }
-                                }
+                        tokio::spawn(async move {
+                            if let Err(e) = semantic_cache
+                                .insert(&query_text, &entry_for_semantic, project_id.as_deref())
+                                .await
+                            {
+                                warn!(error = %e, "Failed to insert streaming response into semantic cache");
                             }
-                        }
+                        });
                     }
                 }
             }
@@ -2337,10 +2306,10 @@ impl ProxyHttp for GatewayProxy {
                 model = %ctx.model,
                 "Request failed"
             );
-            if let Some(guard) = &ctx.coalesce_guard {
-                if guard.is_leader() {
-                    guard.mark_failed();
-                }
+            if let Some(guard) = &ctx.coalesce_guard
+                && guard.is_leader()
+            {
+                guard.mark_failed();
             }
             // #region agent log
             debug_agent_log(
@@ -2483,14 +2452,14 @@ impl ProxyHttp for GatewayProxy {
             );
         }
 
-        if let Some(cache_key) = &ctx.cache_key {
-            if ctx.cache_hit.is_none() {
-                debug!(
-                    request_id = %ctx.request_id,
-                    cache_key = %cache_key,
-                    "Cache miss for request"
-                );
-            }
+        if let Some(cache_key) = &ctx.cache_key
+            && ctx.cache_hit.is_none()
+        {
+            debug!(
+                request_id = %ctx.request_id,
+                cache_key = %cache_key,
+                "Cache miss for request"
+            );
         }
 
         if ctx.is_streaming && !ctx.stream.reasoning_finalized {
@@ -2752,7 +2721,7 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
     if !config.upstream_tls_curves.is_empty() {
         use std::sync::OnceLock;
         static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
-        let curves: &'static str = *CACHED_CURVES
+        let curves: &'static str = CACHED_CURVES
             .get_or_init(|| Box::leak(config.upstream_tls_curves.clone().into_boxed_str()));
         options.curves = Some(curves);
     }
@@ -2776,22 +2745,22 @@ fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions
         options.idle_timeout = Some(Duration::from_secs(idle_secs));
     }
 
-    if let Some(secs) = config.upstream_connection_timeout_secs {
-        if secs > 0 {
-            options.connection_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_connection_timeout_secs
+        && secs > 0
+    {
+        options.connection_timeout = Some(Duration::from_secs(secs));
     }
 
-    if let Some(secs) = config.upstream_write_timeout_secs {
-        if secs > 0 {
-            options.write_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_write_timeout_secs
+        && secs > 0
+    {
+        options.write_timeout = Some(Duration::from_secs(secs));
     }
 
-    if let Some(secs) = config.upstream_request_timeout_secs {
-        if secs > 0 {
-            options.read_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_request_timeout_secs
+        && secs > 0
+    {
+        options.read_timeout = Some(Duration::from_secs(secs));
     }
 }
 

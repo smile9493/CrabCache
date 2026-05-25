@@ -28,6 +28,7 @@ impl From<ort::Error> for EmbedError {
 }
 
 pub struct EmbedderPool {
+    #[allow(dead_code)]
     model_path: String,
     tokenizer: Tokenizer,
     session: Arc<Mutex<Session>>,
@@ -162,14 +163,14 @@ impl EmbedderPool {
                 }
             }
 
-            for h in 0..hidden_size {
-                mean_pool[h] /= count;
+            for val in mean_pool.iter_mut() {
+                *val /= count;
             }
 
             let norm: f32 = mean_pool.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm > 0.0 {
-                for h in 0..hidden_size {
-                    mean_pool[h] /= norm;
+                for val in mean_pool.iter_mut() {
+                    *val /= norm;
                 }
             }
 

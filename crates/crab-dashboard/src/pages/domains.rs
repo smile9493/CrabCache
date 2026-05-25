@@ -314,7 +314,7 @@ pub fn DomainOverviewTableInline(
                                     };
                                     let has_click = on_domain_click.is_some();
                                     let domain_for_click = domain_name.clone();
-                                    let cb = on_domain_click.clone();
+                                    let cb = on_domain_click;
                                     view! {
                                         <tr
                                             class=if has_click { "border-b border-theme/50 cursor-pointer hover:bg-theme-hover" } else { "border-b border-theme/50" }

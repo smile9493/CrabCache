@@ -6,10 +6,11 @@ pub fn get_local_ip_addresses() -> Vec<(String, IpAddr)> {
 
     if let Ok(network_interfaces) = list_afinet_netifas() {
         for (name, ip) in network_interfaces {
-            if let IpAddr::V4(ipv4) = ip {
-                if !ipv4.is_loopback() && !ipv4.is_link_local() {
-                    addresses.push((name, IpAddr::V4(ipv4)));
-                }
+            if let IpAddr::V4(ipv4) = ip
+                && !ipv4.is_loopback()
+                && !ipv4.is_link_local()
+            {
+                addresses.push((name, IpAddr::V4(ipv4)));
             }
         }
     }

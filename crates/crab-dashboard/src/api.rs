@@ -23,10 +23,10 @@ async fn http_error(resp: Response, request_epoch: u64) -> String {
     }
 
     let body = resp.text().await.unwrap_or_default();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(msg) = value.get("error").and_then(|v| v.as_str()) {
-            return msg.to_string();
-        }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body)
+        && let Some(msg) = value.get("error").and_then(|v| v.as_str())
+    {
+        return msg.to_string();
     }
     if !body.is_empty() {
         return body;

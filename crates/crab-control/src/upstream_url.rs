@@ -104,13 +104,14 @@ fn parse_authority(authority: &str, use_tls: bool) -> Result<(String, u16), Stri
         return Ok((host, port));
     }
 
-    if let Some((host, port_str)) = authority.rsplit_once(':') {
-        if !host.is_empty() && port_str.chars().all(|c| c.is_ascii_digit()) {
-            let port = port_str
-                .parse::<u16>()
-                .map_err(|_| format!("invalid port in base_url: {authority}"))?;
-            return Ok((host.to_string(), port));
-        }
+    if let Some((host, port_str)) = authority.rsplit_once(':')
+        && !host.is_empty()
+        && port_str.chars().all(|c| c.is_ascii_digit())
+    {
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|_| format!("invalid port in base_url: {authority}"))?;
+        return Ok((host.to_string(), port));
     }
 
     Ok((authority.to_string(), default_port(use_tls)))

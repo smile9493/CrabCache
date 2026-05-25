@@ -396,10 +396,10 @@ pub fn cached_sse_has_thinking_markup(sse: &[u8]) -> bool {
                         .and_then(|m| m.get("content"))
                         .and_then(|c| c.as_str())
                 });
-            if let Some(text) = content {
-                if completion_message_content_has_thinking_markup(text) {
-                    return true;
-                }
+            if let Some(text) = content
+                && completion_message_content_has_thinking_markup(text)
+            {
+                return true;
             }
         }
     }
@@ -427,10 +427,9 @@ pub fn cached_sse_has_nonempty_content(sse: &[u8]) -> bool {
                 .get("delta")
                 .and_then(|d| d.get("content"))
                 .and_then(|c| c.as_str())
+                && !content.is_empty()
             {
-                if !content.is_empty() {
-                    return true;
-                }
+                return true;
             }
         }
     }
@@ -554,7 +553,7 @@ data: [DONE]
 "#
         .to_vec();
         let entry = sample_entry(true, Some(saved));
-        let regen = if entry.client_display_reasoning != false {
+        let regen = if entry.client_display_reasoning {
             json_to_sse_stream(&entry.response_body, "deepseek-v4-pro", false)
         } else {
             entry.sse_body.clone().unwrap()

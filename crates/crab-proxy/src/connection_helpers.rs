@@ -19,7 +19,7 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
     if !config.upstream_tls_curves.is_empty() {
         use std::sync::OnceLock;
         static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
-        let curves: &'static str = *CACHED_CURVES
+        let curves: &'static str = CACHED_CURVES
             .get_or_init(|| Box::leak(config.upstream_tls_curves.clone().into_boxed_str()));
         options.curves = Some(curves);
     }
@@ -43,21 +43,21 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
         options.idle_timeout = Some(Duration::from_secs(idle_secs));
     }
 
-    if let Some(secs) = config.upstream_connection_timeout_secs {
-        if secs > 0 {
-            options.connection_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_connection_timeout_secs
+        && secs > 0
+    {
+        options.connection_timeout = Some(Duration::from_secs(secs));
     }
 
-    if let Some(secs) = config.upstream_write_timeout_secs {
-        if secs > 0 {
-            options.write_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_write_timeout_secs
+        && secs > 0
+    {
+        options.write_timeout = Some(Duration::from_secs(secs));
     }
 
-    if let Some(secs) = config.upstream_request_timeout_secs {
-        if secs > 0 {
-            options.read_timeout = Some(Duration::from_secs(secs));
-        }
+    if let Some(secs) = config.upstream_request_timeout_secs
+        && secs > 0
+    {
+        options.read_timeout = Some(Duration::from_secs(secs));
     }
 }

@@ -215,7 +215,7 @@ pub async fn put_profile_keys(
 ) -> Result<Json<UpstreamProfileKeysView>, Response> {
     authorize(&headers, &state.admin_key)?;
     let id = id.trim();
-    if !state.runtime.profile(id).is_some() {
+    if state.runtime.profile(id).is_none() {
         return Err(bad_request("unknown upstream profile"));
     }
     if req.keys.is_empty() {
@@ -272,7 +272,7 @@ pub async fn patch_profile_key(
     authorize(&headers, &state.admin_key)?;
     let profile_id = path.id.trim();
     let key_id = path.key_id.trim();
-    if !state.runtime.profile(profile_id).is_some() {
+    if state.runtime.profile(profile_id).is_none() {
         return Err(bad_request("unknown upstream profile"));
     }
     if req.enabled.is_none() && req.secret.is_none() {
@@ -288,16 +288,16 @@ pub async fn patch_profile_key(
         .profile(profile_id)
         .expect("profile existence verified above");
     let pool = profile.resolve_upstream_pool();
-    if let Some(enabled) = req.enabled {
-        if !pool.set_enabled(key_id, enabled) {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("upstream key '{key_id}' not found"),
-                }),
-            )
-                .into_response());
-        }
+    if let Some(enabled) = req.enabled
+        && !pool.set_enabled(key_id, enabled)
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response());
     }
     let view = pool
         .list_status()
@@ -391,12 +391,10 @@ pub async fn test_upstream_profile(
                     .header("Authorization", format!("Bearer {api_key}"))
                     .send()
                     .await
+                    && br.status().is_success()
+                    && let Some(q) = parse_balance_response(br).await
                 {
-                    if br.status().is_success() {
-                        if let Some(q) = parse_balance_response(br).await {
-                            quota = Some(q);
-                        }
-                    }
+                    quota = Some(q);
                 }
             }
             Ok(Json(UpstreamTestResult {
@@ -466,19 +464,18 @@ pub async fn test_upstream_profile_key(
         .await;
     let balance_latency_ms = balance_start.elapsed().as_millis() as u64;
 
-    if let Ok(r) = balance_resp {
-        if r.status().is_success() {
-            if let Some(quota) = parse_balance_response(r).await {
-                return Ok(Json(UpstreamTestResult {
-                    ok: true,
-                    status_code: 200,
-                    latency_ms: balance_latency_ms,
-                    model_count: None,
-                    error: None,
-                    quota: Some(quota),
-                }));
-            }
-        }
+    if let Ok(r) = balance_resp
+        && r.status().is_success()
+        && let Some(quota) = parse_balance_response(r).await
+    {
+        return Ok(Json(UpstreamTestResult {
+            ok: true,
+            status_code: 200,
+            latency_ms: balance_latency_ms,
+            model_count: None,
+            error: None,
+            quota: Some(quota),
+        }));
     }
 
     // Step 2: Fallback to GET /v1/models (generic validity check)

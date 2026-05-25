@@ -679,7 +679,7 @@ mod tests {
             body, None, None, None, None, "model", 0, 0.0, false, None, None, 50,
         );
         assert_eq!(entry1.request_hash, entry2.request_hash);
-        assert!(!entry2.request_messages_snapshot.is_none());
+        assert!(entry2.request_messages_snapshot.is_some());
         assert_eq!(entry1.content_length, entry2.content_length);
     }
 }

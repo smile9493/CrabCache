@@ -33,6 +33,7 @@ pub enum UpstreamProvider {
 }
 
 impl UpstreamProvider {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "deepseek" => Self::Deepseek,
@@ -66,6 +67,7 @@ pub enum PipelineOverride {
 }
 
 impl PipelineOverride {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "cursor_deepseek_v4" => Self::CursorDeepSeekV4,
@@ -95,6 +97,7 @@ pub enum PipelineMode {
 }
 
 impl PipelineMode {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "force_cursor_v4" => Self::ForceCursorV4,
@@ -233,4 +236,5 @@ impl PipelineGlobals {
     }
 }
 
+#[allow(dead_code)]
 pub type ModelPrefixProfileMap = HashMap<String, String>;

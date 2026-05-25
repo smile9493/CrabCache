@@ -172,21 +172,20 @@ fn analyze_content(msg: &Value) -> (String, u64) {
 /// Detect thinking markup in message content or reasoning_content.
 fn detect_thinking_markup(msg: &Value) -> bool {
     // Check content field.
-    if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-        if content.contains("<thinking")
+    if let Some(content) = msg.get("content").and_then(|c| c.as_str())
+        && (content.contains("<thinking")
             || content.contains("</thinking>")
             || content.contains("<details")
             || content.contains("< tl;dr>")
-            || content.contains("<summary>Thinking</summary>")
-        {
-            return true;
-        }
+            || content.contains("<summary>Thinking</summary>"))
+    {
+        return true;
     }
     // Check reasoning_content field (DeepSeek V4).
-    if let Some(rc) = msg.get("reasoning_content").and_then(|r| r.as_str()) {
-        if !rc.is_empty() {
-            return true;
-        }
+    if let Some(rc) = msg.get("reasoning_content").and_then(|r| r.as_str())
+        && !rc.is_empty()
+    {
+        return true;
     }
     false
 }

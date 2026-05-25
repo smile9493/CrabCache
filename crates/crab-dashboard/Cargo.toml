@@ -7,6 +7,9 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 leptos = { version = "0.7", features = ["csr"] }
 leptos_router = "0.7"

@@ -5,7 +5,7 @@ use crab_proxy::RuntimeConfig;
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 const PERSIST_MAX_ATTEMPTS: u32 = 3;
 

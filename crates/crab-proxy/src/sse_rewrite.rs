@@ -21,20 +21,19 @@ pub fn apply_silent_strip_to_sse_chunk(chunk: &[u8]) -> Vec<u8> {
         let stripped_line = &line[start..end];
         if stripped_line.starts_with(b"data:") {
             let data = stripped_line[b"data:".len()..].trim_ascii_start();
-            if data != b"[DONE]" {
-                if let Ok(mut payload) = serde_json::from_slice::<Value>(data) {
-                    if payload.is_object() {
-                        strip_silent_sse_chunk_for_client(&mut payload);
-                        let ending = if line.ends_with(b"\r\n") {
-                            "\r\n"
-                        } else {
-                            "\n"
-                        };
-                        let json = serde_json::to_string(&payload).unwrap_or_default();
-                        out.extend_from_slice(format!("data: {json}{ending}").as_bytes());
-                        continue;
-                    }
-                }
+            if data != b"[DONE]"
+                && let Ok(mut payload) = serde_json::from_slice::<Value>(data)
+                && payload.is_object()
+            {
+                strip_silent_sse_chunk_for_client(&mut payload);
+                let ending = if line.ends_with(b"\r\n") {
+                    "\r\n"
+                } else {
+                    "\n"
+                };
+                let json = serde_json::to_string(&payload).unwrap_or_default();
+                out.extend_from_slice(format!("data: {json}{ending}").as_bytes());
+                continue;
             }
         }
         out.extend_from_slice(line);

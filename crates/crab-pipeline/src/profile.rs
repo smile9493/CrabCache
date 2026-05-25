@@ -34,15 +34,15 @@ pub fn resolve_upstream_profile_id(
             .map(|p| (p.id.clone(), p.provider))
     };
 
-    if let Some(id) = ctx.key_upstream_profile.filter(|s| !s.trim().is_empty()) {
-        if let Some(found) = pick(id) {
-            return (found.0, found.1, true);
-        }
+    if let Some(id) = ctx.key_upstream_profile.filter(|s| !s.trim().is_empty())
+        && let Some(found) = pick(id)
+    {
+        return (found.0, found.1, true);
     }
-    if let Some(id) = ctx.domain_upstream_profile.filter(|s| !s.trim().is_empty()) {
-        if let Some(found) = pick(id) {
-            return (found.0, found.1, true);
-        }
+    if let Some(id) = ctx.domain_upstream_profile.filter(|s| !s.trim().is_empty())
+        && let Some(found) = pick(id)
+    {
+        return (found.0, found.1, true);
     }
 
     if globals

@@ -106,7 +106,7 @@ impl RedisReasoningStore {
         let redis_key = self.redis_key(key);
         let ttl = self.max_age_seconds;
         if tokio::runtime::Handle::try_current().is_ok() {
-            let _ = tokio::task::block_in_place(|| {
+            tokio::task::block_in_place(|| {
                 Self::blocking_put(client, redis_key, payload, ttl);
             });
         } else {

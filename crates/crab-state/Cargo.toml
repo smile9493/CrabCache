@@ -3,6 +3,9 @@ name = "crab-state"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -23,3 +26,4 @@ futures-util = "0.3"
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 crab-pipeline = { path = "../crab-pipeline" }
+parking_lot.workspace = true

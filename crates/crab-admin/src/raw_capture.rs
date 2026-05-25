@@ -124,20 +124,23 @@ pub async fn get_capture_list(
     let filtered: Vec<RawCaptureEntry> = entries
         .into_iter()
         .filter(|e| {
-            if let Some(ref consumer) = query.consumer {
-                if !consumer.is_empty() && e.consumer.as_deref() != Some(consumer.as_str()) {
-                    return false;
-                }
+            if let Some(ref consumer) = query.consumer
+                && !consumer.is_empty()
+                && e.consumer.as_deref() != Some(consumer.as_str())
+            {
+                return false;
             }
-            if let Some(ref pid) = query.project_id {
-                if !pid.is_empty() && e.project_id.as_deref() != Some(pid.as_str()) {
-                    return false;
-                }
+            if let Some(ref pid) = query.project_id
+                && !pid.is_empty()
+                && e.project_id.as_deref() != Some(pid.as_str())
+            {
+                return false;
             }
-            if let Some(ref rh) = query.request_hash {
-                if !rh.is_empty() && e.request_hash.as_deref() != Some(rh.as_str()) {
-                    return false;
-                }
+            if let Some(ref rh) = query.request_hash
+                && !rh.is_empty()
+                && e.request_hash.as_deref() != Some(rh.as_str())
+            {
+                return false;
             }
             true
         })
@@ -179,10 +182,10 @@ pub async fn get_capture_detail(
                 if line.is_empty() {
                     continue;
                 }
-                if let Ok(entry) = serde_json::from_str::<RawCaptureEntry>(&line) {
-                    if entry.request_id == request_id {
-                        return Some(entry);
-                    }
+                if let Ok(entry) = serde_json::from_str::<RawCaptureEntry>(&line)
+                    && entry.request_id == request_id
+                {
+                    return Some(entry);
                 }
             }
             None

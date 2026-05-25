@@ -7,6 +7,8 @@
 # --- Rust / Cargo (build & toolchains) ---
 /target/
 /target_docker/
+.cargo-target/
+.musl/
 **/*.rs.bk
 .rustup/
 .cargo/

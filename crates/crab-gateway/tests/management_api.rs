@@ -4,23 +4,18 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use crab_cache::{FingerprintConfig, L0Config, TieredCache, TtlConfig};
+use crab_cache::{L0Config, TieredCache, TtlConfig};
 use crab_control::{
     CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER, GATEWAY_ADMIN_KEY_HEADER,
 };
 use crab_gateway::management::{ManagementState, router};
-use crab_pipeline::{PipelineGlobals, PipelineMode, UpstreamProvider};
-use crab_proxy::{
-    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, SemanticRuntimeState,
-    UpstreamKeyPool, UpstreamProfileRuntime,
-};
+use crab_pipeline::PipelineMode;
+use crab_proxy::{ClientKeyLimiter, ReasoningConfig, SemanticRuntimeState, UpstreamKeyPool};
 use crab_reasoning::ReasoningBackend;
-use crab_route::AffinityRouter;
 use crab_semantic::SemanticGateConfig;
 use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use parking_lot::RwLock as ParkingRwLock;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;

@@ -388,23 +388,23 @@ pub fn load_live_trace_entries_cached(
 
         // Split into lines; the last "line" without \n is partial.
         let mut lines: Vec<&str> = text.lines().collect();
-        if !has_trailing_newline && !lines.is_empty() {
-            if let Some(partial) = lines.pop() {
-                guard.partial_line = partial.as_bytes().to_vec();
-            }
+        if !has_trailing_newline
+            && !lines.is_empty()
+            && let Some(partial) = lines.pop()
+        {
+            guard.partial_line = partial.as_bytes().to_vec();
         }
 
         let cutoff = now_ms.saturating_sub(u64::from(window_secs) * 1000);
         for line in lines {
-            if !line.is_empty() {
-                if let Ok(entry) = serde_json::from_str::<TraceLogEntry>(line) {
-                    if entry.timestamp_ms >= cutoff {
-                        if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty()) {
-                            guard.consumers.insert(c.clone());
-                        }
-                        guard.entries.push(entry);
-                    }
+            if !line.is_empty()
+                && let Ok(entry) = serde_json::from_str::<TraceLogEntry>(line)
+                && entry.timestamp_ms >= cutoff
+            {
+                if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty()) {
+                    guard.consumers.insert(c.clone());
                 }
+                guard.entries.push(entry);
             }
         }
 
@@ -464,12 +464,12 @@ pub fn distinct_consumers(entries: &[TraceLogEntry], limit: usize) -> Vec<String
     let mut by_time: Vec<_> = entries.iter().collect();
     by_time.sort_by_key(|e| std::cmp::Reverse(e.timestamp_ms));
     for entry in by_time {
-        if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty()) {
-            if seen.insert(c.clone()) {
-                out.push(c.clone());
-                if out.len() >= limit {
-                    break;
-                }
+        if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty())
+            && seen.insert(c.clone())
+        {
+            out.push(c.clone());
+            if out.len() >= limit {
+                break;
             }
         }
     }
@@ -539,21 +539,20 @@ pub fn list_trace_sources(base_path: &str) -> Vec<TraceSource> {
                     && !name_str.ends_with(".tmp")
                     && !name_str.ends_with(".bak")
                     && !name_str.ends_with('.'));
-            if is_rotation {
-                if let Ok(meta) = entry.metadata() {
-                    if meta.is_file() {
-                        let mtime = meta
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        sources.push(TraceSource {
-                            path: entry.path().to_string_lossy().to_string(),
-                            mtime_ms: mtime,
-                        });
-                    }
-                }
+            if is_rotation
+                && let Ok(meta) = entry.metadata()
+                && meta.is_file()
+            {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                sources.push(TraceSource {
+                    path: entry.path().to_string_lossy().to_string(),
+                    mtime_ms: mtime,
+                });
             }
         }
     }
@@ -601,62 +600,64 @@ fn entry_matches_opts(
     cursor_ts: u64,
     cursor_hash: &str,
 ) -> bool {
-    if let Some(from) = opts.from_ms {
-        if e.timestamp_ms < from {
+    if let Some(from) = opts.from_ms
+        && e.timestamp_ms < from
+    {
+        return false;
+    }
+    if let Some(to) = opts.to_ms
+        && e.timestamp_ms > to
+    {
+        return false;
+    }
+    if let Some(ref consumer) = opts.consumer
+        && !consumer.is_empty()
+    {
+        let entry_consumer = e.consumer.as_deref().unwrap_or("");
+        if entry_consumer != consumer.as_str() {
             return false;
         }
     }
-    if let Some(to) = opts.to_ms {
-        if e.timestamp_ms > to {
+    if let Some(ref model) = opts.model
+        && !model.is_empty()
+        && e.model != model.as_str()
+    {
+        return false;
+    }
+    if let Some(ref cache_tier) = opts.cache_tier
+        && !cache_tier.is_empty()
+    {
+        let tier = e.cache_tier.as_deref().unwrap_or("");
+        if tier != cache_tier.as_str() {
             return false;
         }
     }
-    if let Some(ref consumer) = opts.consumer {
-        if !consumer.is_empty() {
-            let entry_consumer = e.consumer.as_deref().unwrap_or("");
-            if entry_consumer != consumer.as_str() {
-                return false;
-            }
-        }
+    if let Some(ref request_hash) = opts.request_hash
+        && !request_hash.is_empty()
+        && e.request_hash != request_hash.as_str()
+    {
+        return false;
     }
-    if let Some(ref model) = opts.model {
-        if !model.is_empty() && e.model != model.as_str() {
-            return false;
-        }
+    if let Some(lat_min) = opts.latency_min
+        && e.latency_ms < lat_min
+    {
+        return false;
     }
-    if let Some(ref cache_tier) = opts.cache_tier {
-        if !cache_tier.is_empty() {
-            let tier = e.cache_tier.as_deref().unwrap_or("");
-            if tier != cache_tier.as_str() {
-                return false;
-            }
-        }
-    }
-    if let Some(ref request_hash) = opts.request_hash {
-        if !request_hash.is_empty() && e.request_hash != request_hash.as_str() {
-            return false;
-        }
-    }
-    if let Some(lat_min) = opts.latency_min {
-        if e.latency_ms < lat_min {
-            return false;
-        }
-    }
-    if let Some(lat_max) = opts.latency_max {
-        if e.latency_ms > lat_max {
-            return false;
-        }
+    if let Some(lat_max) = opts.latency_max
+        && e.latency_ms > lat_max
+    {
+        return false;
     }
     let total_tokens = e.resolved_input_tokens() + e.resolved_output_tokens();
-    if let Some(tok_min) = opts.token_min {
-        if total_tokens < tok_min {
-            return false;
-        }
+    if let Some(tok_min) = opts.token_min
+        && total_tokens < tok_min
+    {
+        return false;
     }
-    if let Some(tok_max) = opts.token_max {
-        if total_tokens > tok_max {
-            return false;
-        }
+    if let Some(tok_max) = opts.token_max
+        && total_tokens > tok_max
+    {
+        return false;
     }
     if cursor_ts < u64::MAX {
         if e.timestamp_ms < cursor_ts {
@@ -735,6 +736,27 @@ pub fn filter_trace_by_hours(entries: Vec<TraceLogEntry>, hours: u32) -> Vec<Tra
         .into_iter()
         .filter(|e| e.timestamp_ms >= cutoff)
         .collect()
+}
+
+pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
+    // First check the active file.
+    if Path::new(path).exists()
+        && let Some(e) = load_trace_entries(path).into_iter().find(|e| e.id() == id)
+    {
+        return Some(e);
+    }
+    // Fall back to archive sources.
+    for source in list_trace_sources(path) {
+        if source.path == path {
+            continue; // already scanned above
+        }
+        let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
+        let entries = parse_trace_lines(&raw.0, raw.1);
+        if let Some(e) = entries.into_iter().find(|e| e.id() == id) {
+            return Some(e);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1077,7 +1099,7 @@ mod tests {
         // Stage 3: complete the partial line + append another complete line.
         // The completion continues from after `"input_tokens":10` and closes the JSON object,
         // then puts gamma_line on its own line (must be separate from the completed beta JSON).
-        let completion = format!(r#","output_tokens":5,"cache_hit":false,"cache_tier":null}}"#,);
+        let completion = r#","output_tokens":5,"cache_hit":false,"cache_tier":null}"#.to_string();
         let gamma_line = make_jsonl_line(now_ms - 1000, "gamma");
         let stage3_bytes = [completion.as_bytes(), b"\n", gamma_line.as_bytes()].concat();
         {
@@ -1136,25 +1158,4 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
-    // First check the active file.
-    if Path::new(path).exists() {
-        if let Some(e) = load_trace_entries(path).into_iter().find(|e| e.id() == id) {
-            return Some(e);
-        }
-    }
-    // Fall back to archive sources.
-    for source in list_trace_sources(path) {
-        if source.path == path {
-            continue; // already scanned above
-        }
-        let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
-        let entries = parse_trace_lines(&raw.0, raw.1);
-        if let Some(e) = entries.into_iter().find(|e| e.id() == id) {
-            return Some(e);
-        }
-    }
-    None
 }

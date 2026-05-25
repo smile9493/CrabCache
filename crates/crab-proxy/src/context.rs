@@ -250,6 +250,7 @@ impl Default for UpstreamState {
 }
 
 /// Streaming response processing state (SSE rewriting, reasoning accumulation).
+#[derive(Default)]
 pub struct StreamState {
     pub accumulator: Option<StreamAccumulator>,
     pub display_adapter: Option<CursorReasoningDisplayAdapter>,
@@ -262,20 +263,6 @@ pub struct StreamState {
     pub pending_recovery_notice: Option<String>,
     /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
     pub reasoning_bypass_warned: bool,
-}
-
-impl Default for StreamState {
-    fn default() -> Self {
-        Self {
-            accumulator: None,
-            display_adapter: None,
-            reasoning_finalized: false,
-            sse_remainder: Vec::new(),
-            client_sse_body: Vec::new(),
-            pending_recovery_notice: None,
-            reasoning_bypass_warned: false,
-        }
-    }
 }
 
 pub struct GatewayContext {

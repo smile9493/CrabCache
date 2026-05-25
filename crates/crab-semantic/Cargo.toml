@@ -3,6 +3,9 @@ name = "crab-semantic"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 crab-metrics.workspace = true
 crab-cache.workspace = true

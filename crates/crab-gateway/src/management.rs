@@ -87,12 +87,11 @@ impl InvalidateRateState {
         if self.recent.len() >= INVALIDATE_MAX_PER_WINDOW {
             return Err("cache invalidate rate limit exceeded (10 per 60s)");
         }
-        if is_all {
-            if let Some(last) = self.last_all_at {
-                if now.duration_since(last) < INVALIDATE_ALL_COOLDOWN {
-                    return Err("full cache invalidation is rate limited to once per 60s");
-                }
-            }
+        if is_all
+            && let Some(last) = self.last_all_at
+            && now.duration_since(last) < INVALIDATE_ALL_COOLDOWN
+        {
+            return Err("full cache invalidation is rate limited to once per 60s");
         }
         self.recent.push_back(now);
         if is_all {
@@ -245,7 +244,7 @@ fn default_fingerprint_normalize() -> bool {
     true
 }
 
-pub(crate) enum InvalidateAction {
+pub enum InvalidateAction {
     All,
     Prefix(String),
     Key(String),

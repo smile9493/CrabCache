@@ -78,7 +78,7 @@ pub fn CapturePage() -> impl IntoView {
     let active_filter = RwSignal::new(CaptureFilterForm::default());
 
     let load_list = {
-        let active_filter = active_filter.clone();
+        let active_filter = active_filter;
         move || {
             let f = active_filter.get();
             let consumer = f.consumer_opt().map(|s| s.to_string());

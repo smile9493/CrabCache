@@ -124,7 +124,7 @@ fn GeneralTab() -> impl IntoView {
                         let err = val
                             .get("error")
                             .and_then(|v| v.as_str())
-                            .unwrap_or(&t.system_key_change_failed())
+                            .unwrap_or(t.system_key_change_failed())
                             .to_string();
                         key_message.set(Some(err));
                         key_error.set(true);

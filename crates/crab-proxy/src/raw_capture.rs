@@ -217,7 +217,7 @@ impl RawCaptureLogger {
 
                     // Throttled body file cleanup (every 100 messages).
                     msg_count += 1;
-                    if msg_count % 100 == 0 {
+                    if msg_count.is_multiple_of(100) {
                         cleanup_body_files(&dir_clone, max_body_files);
                     }
                 }

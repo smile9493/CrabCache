@@ -581,12 +581,11 @@ impl AppState {
     pub async fn reconcile_upstream_if_stale(&self, force: bool) {
         if !force {
             let guard = self.upstream_reconcile_at.read();
-            if let Some(at) = *guard {
-                if at.elapsed()
+            if let Some(at) = *guard
+                && at.elapsed()
                     < std::time::Duration::from_secs(Self::upstream_reconcile_interval_secs())
-                {
-                    return;
-                }
+            {
+                return;
             }
         }
         self.reconcile_upstream_from_gateway().await;
@@ -674,10 +673,10 @@ impl AppState {
     /// Pick an API key for upstream model list sync (profile-specific or default).
     pub fn pick_sync_api_key(&self, profile_id: &str) -> Option<String> {
         let profiles = self.upstream_profile_secrets.read();
-        if let Some(pool) = profiles.get(profile_id) {
-            if let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty()) {
-                return Some(s.secret.clone());
-            }
+        if let Some(pool) = profiles.get(profile_id)
+            && let Some(s) = pool.iter().find(|k| k.enabled && !k.secret.is_empty())
+        {
+            return Some(s.secret.clone());
         }
         drop(profiles);
         if profile_id == "deepseek" || self.default_profile_id() == profile_id {

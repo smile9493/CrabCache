@@ -185,31 +185,31 @@ impl ReasoningStore {
     fn prune_locked(&self, conn: &Connection) -> anyhow::Result<()> {
         let mut deleted = 0;
 
-        if let Some(max_age) = self.max_age_seconds {
-            if max_age > 0 {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs_f64();
-                let cutoff = now - max_age as f64;
-                let result = conn.execute(
-                    "DELETE FROM reasoning_cache WHERE created_at < ?1",
-                    rusqlite::params![cutoff],
-                )?;
-                deleted += result;
-            }
+        if let Some(max_age) = self.max_age_seconds
+            && max_age > 0
+        {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64();
+            let cutoff = now - max_age as f64;
+            let result = conn.execute(
+                "DELETE FROM reasoning_cache WHERE created_at < ?1",
+                rusqlite::params![cutoff],
+            )?;
+            deleted += result;
         }
 
-        if let Some(max_rows) = self.max_rows {
-            if max_rows > 0 {
-                let result = conn.execute(
-                    "DELETE FROM reasoning_cache WHERE key NOT IN (
+        if let Some(max_rows) = self.max_rows
+            && max_rows > 0
+        {
+            let result = conn.execute(
+                "DELETE FROM reasoning_cache WHERE key NOT IN (
                         SELECT key FROM reasoning_cache ORDER BY created_at DESC LIMIT ?1
                     )",
-                    rusqlite::params![max_rows as i64],
-                )?;
-                deleted += result;
-            }
+                rusqlite::params![max_rows as i64],
+            )?;
+            deleted += result;
         }
 
         if deleted > 0 {

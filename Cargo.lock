@@ -1244,6 +1244,7 @@ dependencies = [
  "crab-proxy",
  "crab-route",
  "futures-util",
+ "parking_lot",
  "redis",
  "serde",
  "serde_json",

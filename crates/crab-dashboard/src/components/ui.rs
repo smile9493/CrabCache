@@ -207,7 +207,7 @@ pub fn TabBar(tabs: Vec<String>, active: RwSignal<usize>) -> impl IntoView {
                     <button
                         type="button"
                         role="tab"
-                        aria-selected=move || is_active()
+                        aria-selected=is_active
                         class=move || {
                             if is_active() {
                                 "px-4 py-2 text-sm font-semibold border-b-2 border-[var(--cc-accent)] text-[var(--cc-accent-bright)] bg-transparent cursor-pointer"

@@ -49,23 +49,17 @@ impl ServerConfig {
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
-                "--listen" | "-l" => {
-                    if i + 1 < args.len() {
-                        listen_addr = args[i + 1].clone();
-                        i += 1;
-                    }
+                "--listen" | "-l" if i + 1 < args.len() => {
+                    listen_addr = args[i + 1].clone();
+                    i += 1;
                 }
-                "--cert" | "-c" => {
-                    if i + 1 < args.len() {
-                        cert_path = Some(PathBuf::from(&args[i + 1]));
-                        i += 1;
-                    }
+                "--cert" | "-c" if i + 1 < args.len() => {
+                    cert_path = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
                 }
-                "--key" | "-k" => {
-                    if i + 1 < args.len() {
-                        key_path = Some(PathBuf::from(&args[i + 1]));
-                        i += 1;
-                    }
+                "--key" | "-k" if i + 1 < args.len() => {
+                    key_path = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
                 }
                 "--https" => {
                     cert_path = Some(PathBuf::from("certs/cert.pem"));

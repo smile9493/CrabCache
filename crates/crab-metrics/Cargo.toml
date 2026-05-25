@@ -3,6 +3,9 @@ name = "crab-metrics"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 prometheus.workspace = true
 once_cell.workspace = true

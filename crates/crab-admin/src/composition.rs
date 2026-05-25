@@ -38,10 +38,8 @@ async fn load_debug_entries_async(path: &str, hours: u32) -> Vec<CompositionDebu
         } else {
             0
         };
-        if start > 0 {
-            if file.seek(SeekFrom::Start(start as u64)).is_err() {
-                return Vec::new();
-            }
+        if start > 0 && file.seek(SeekFrom::Start(start as u64)).is_err() {
+            return Vec::new();
         }
 
         let mut buf = vec![0u8; read_len];
@@ -117,16 +115,18 @@ pub async fn get_composition_summary(
         .filter_map(|e| {
             let comp = e.composition.clone()?;
             // Apply project_id filter.
-            if let Some(ref pid) = query.project_id {
-                if !pid.is_empty() && comp.project_id.as_deref() != Some(pid.as_str()) {
-                    return None;
-                }
+            if let Some(ref pid) = query.project_id
+                && !pid.is_empty()
+                && comp.project_id.as_deref() != Some(pid.as_str())
+            {
+                return None;
             }
             // Apply consumer filter.
-            if let Some(ref consumer) = query.consumer {
-                if !consumer.is_empty() && comp.consumer != *consumer {
-                    return None;
-                }
+            if let Some(ref consumer) = query.consumer
+                && !consumer.is_empty()
+                && comp.consumer != *consumer
+            {
+                return None;
             }
             let latency = e.latency_ms;
             let tokens = e.resolved_input_tokens() + e.resolved_output_tokens();
@@ -228,20 +228,23 @@ pub async fn get_composition_debug(
     let mut filtered: Vec<CompositionDebugEntry> = entries
         .into_iter()
         .filter(|e| {
-            if let Some(ref rh) = query.request_hash {
-                if !rh.is_empty() && e.request_hash != *rh {
-                    return false;
-                }
+            if let Some(ref rh) = query.request_hash
+                && !rh.is_empty()
+                && e.request_hash != *rh
+            {
+                return false;
             }
-            if let Some(ref c) = query.consumer {
-                if !c.is_empty() && e.consumer != *c {
-                    return false;
-                }
+            if let Some(ref c) = query.consumer
+                && !c.is_empty()
+                && e.consumer != *c
+            {
+                return false;
             }
-            if let Some(ref pid) = query.project_id {
-                if !pid.is_empty() && e.project_id.as_deref() != Some(pid.as_str()) {
-                    return false;
-                }
+            if let Some(ref pid) = query.project_id
+                && !pid.is_empty()
+                && e.project_id.as_deref() != Some(pid.as_str())
+            {
+                return false;
             }
             true
         })

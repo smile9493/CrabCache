@@ -64,10 +64,10 @@ pub fn LivePage() -> impl IntoView {
                         })
                         .unwrap_or_default();
                     if !names.is_empty() {
-                        if selected_consumer.get_untracked().is_none() {
-                            if let Some(first) = names.first() {
-                                selected_consumer.set(Some(first.clone()));
-                            }
+                        if selected_consumer.get_untracked().is_none()
+                            && let Some(first) = names.first()
+                        {
+                            selected_consumer.set(Some(first.clone()));
                         }
                         consumers.set(names);
                         consumers_loaded.set(true);
@@ -86,10 +86,10 @@ pub fn LivePage() -> impl IntoView {
                         .filter(|n| !n.is_empty())
                         .collect();
                     if !names.is_empty() {
-                        if selected_consumer.get_untracked().is_none() {
-                            if let Some(first) = names.first() {
-                                selected_consumer.set(Some(first.clone()));
-                            }
+                        if selected_consumer.get_untracked().is_none()
+                            && let Some(first) = names.first()
+                        {
+                            selected_consumer.set(Some(first.clone()));
                         }
                         consumers.set(names);
                     }
@@ -118,10 +118,10 @@ pub fn LivePage() -> impl IntoView {
                         }
                         if !data.available_consumers.is_empty() {
                             consumers.set(data.available_consumers.clone());
-                            if selected_consumer.get_untracked().is_none() {
-                                if let Some(first) = data.available_consumers.first() {
-                                    selected_consumer.set(Some(first.clone()));
-                                }
+                            if selected_consumer.get_untracked().is_none()
+                                && let Some(first) = data.available_consumers.first()
+                            {
+                                selected_consumer.set(Some(first.clone()));
                             }
                         }
                         live_data.set(Some(Ok(data)));
@@ -460,7 +460,10 @@ fn LiveTokenChart(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
 fn LiveLatestCard(data: LiveMetricsResponse) -> impl IntoView {
     let t = use_translations();
     match data.latest {
-        None => view! { <></> }.into_any(),
+        None => {
+            let _: () = view! { <></> };
+            ().into_any()
+        },
         Some(latest) => view! {
             <div class="glass-card p-4">
                 <h3 class="text-sm font-semibold text-theme mb-3">{t.live_latest_request()}</h3>

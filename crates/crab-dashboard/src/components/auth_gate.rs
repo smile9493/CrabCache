@@ -47,12 +47,12 @@ pub fn AuthGate() -> impl IntoView {
     };
 
     let submit_click = {
-        let do_submit = do_submit.clone();
+        let do_submit = do_submit;
         move |_| do_submit()
     };
 
     let submit_keydown = {
-        let do_submit = do_submit.clone();
+        let do_submit = do_submit;
         move |ev: web_sys::KeyboardEvent| {
             if ev.key() == "Enter" {
                 do_submit();

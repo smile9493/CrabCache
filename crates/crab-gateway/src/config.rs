@@ -438,50 +438,50 @@ impl GatewayConfig {
         let content = std::fs::read_to_string(path)?;
         let mut config: Self = toml::from_str(&content)?;
         // Environment variable overrides api_key from config file
-        if let Ok(key) = std::env::var("CRABCACHE_API_KEY") {
-            if !key.is_empty() {
-                config.api_key = SecretString::new(key);
-            }
+        if let Ok(key) = std::env::var("CRABCACHE_API_KEY")
+            && !key.is_empty()
+        {
+            config.api_key = SecretString::new(key);
         }
-        if let Ok(url) = std::env::var("CRABCACHE_L1_REDIS_URL") {
-            if !url.is_empty() {
-                config.cache.l1_redis_url = url;
-            }
+        if let Ok(url) = std::env::var("CRABCACHE_L1_REDIS_URL")
+            && !url.is_empty()
+        {
+            config.cache.l1_redis_url = url;
         }
-        if let Ok(keys_csv) = std::env::var("CRABCACHE_UPSTREAM_KEYS") {
-            if !keys_csv.is_empty() {
-                config.upstream.keys = keys_csv
-                    .split(',')
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| SecretString::new(s.to_string()))
-                    .collect();
-            }
+        if let Ok(keys_csv) = std::env::var("CRABCACHE_UPSTREAM_KEYS")
+            && !keys_csv.is_empty()
+        {
+            config.upstream.keys = keys_csv
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| SecretString::new(s.to_string()))
+                .collect();
         }
         if config.management.is_none() {
             config.management = Some(ManagementConfig::default());
         }
         if let Some(mgmt) = &mut config.management {
-            if let Ok(key) = std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY") {
-                if !key.is_empty() {
-                    mgmt.admin_key = SecretString::new(key);
-                }
+            if let Ok(key) = std::env::var("CRABCACHE_GATEWAY_ADMIN_KEY")
+                && !key.is_empty()
+            {
+                mgmt.admin_key = SecretString::new(key);
             }
-            if let Ok(addr) = std::env::var("CRABCACHE_MANAGEMENT_LISTEN") {
-                if !addr.is_empty() {
-                    mgmt.listen_addr = addr;
-                }
-            }
-        }
-        if let Ok(url) = std::env::var("CRABCACHE_UPSTREAM_BASE_URL") {
-            if !url.is_empty() {
-                config.upstream.base_url = Some(url);
+            if let Ok(addr) = std::env::var("CRABCACHE_MANAGEMENT_LISTEN")
+                && !addr.is_empty()
+            {
+                mgmt.listen_addr = addr;
             }
         }
-        if let Ok(model) = std::env::var("CRABCACHE_UPSTREAM_MODEL") {
-            if !model.is_empty() {
-                config.upstream.model = Some(model);
-            }
+        if let Ok(url) = std::env::var("CRABCACHE_UPSTREAM_BASE_URL")
+            && !url.is_empty()
+        {
+            config.upstream.base_url = Some(url);
+        }
+        if let Ok(model) = std::env::var("CRABCACHE_UPSTREAM_MODEL")
+            && !model.is_empty()
+        {
+            config.upstream.model = Some(model);
         }
         config.apply_upstream_defaults()?;
         Ok(config)
@@ -573,17 +573,14 @@ impl GatewayConfig {
         let mut backends = Vec::new();
         let mut errors = Vec::new();
         for (i, endpoint) in endpoints.iter().enumerate() {
-            match endpoint.parse::<SocketAddr>() {
-                Ok(addr) => {
-                    backends.push(crab_route::Backend::new(
-                        format!("{}-backend-{}", profile.id, i + 1),
-                        addr,
-                        weight,
-                        tls_sni.clone(),
-                    ));
-                    continue;
-                }
-                Err(_) => {}
+            if let Ok(addr) = endpoint.parse::<SocketAddr>() {
+                backends.push(crab_route::Backend::new(
+                    format!("{}-backend-{}", profile.id, i + 1),
+                    addr,
+                    weight,
+                    tls_sni.clone(),
+                ));
+                continue;
             }
             match endpoint.to_socket_addrs() {
                 Ok(mut addrs) => {
@@ -752,10 +749,10 @@ impl GatewayConfig {
             }
         }
 
-        if let Some(threshold) = self.semantic.similarity_threshold {
-            if !(0.0..=1.0).contains(&threshold) {
-                errors.push("semantic.similarity_threshold must be in [0.0, 1.0]".into());
-            }
+        if let Some(threshold) = self.semantic.similarity_threshold
+            && !(0.0..=1.0).contains(&threshold)
+        {
+            errors.push("semantic.similarity_threshold must be in [0.0, 1.0]".into());
         }
 
         if self.metrics_addr.parse::<SocketAddr>().is_err() {
@@ -817,13 +814,13 @@ impl GatewayConfig {
             }
         }
 
-        if let Some(coalesce_max) = self.upstream.max_coalesce_inflight {
-            if coalesce_max > self.limits.max_concurrent_requests {
-                errors.push(format!(
+        if let Some(coalesce_max) = self.upstream.max_coalesce_inflight
+            && coalesce_max > self.limits.max_concurrent_requests
+        {
+            errors.push(format!(
                     "upstream.max_coalesce_inflight ({coalesce_max}) must be <= limits.max_concurrent_requests ({})",
                     self.limits.max_concurrent_requests
                 ));
-            }
         }
 
         if let Err(msg) = validate_cursor_models(&self.cursor_models_config()) {

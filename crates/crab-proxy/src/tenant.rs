@@ -56,13 +56,13 @@ pub fn resolve_project_id(
 ) -> Result<Option<String>, ProjectResolveError> {
     let key = key_project_id
         .filter(|s| !s.trim().is_empty())
-        .map(|s| sanitize_user_id(s))
+        .map(sanitize_user_id)
         .transpose()
-        .map_err(|e| ProjectResolveError::InvalidHeader(e))?;
+        .map_err(ProjectResolveError::InvalidHeader)?;
 
     let header_val = header
         .filter(|s| !s.trim().is_empty())
-        .map(|s| sanitize_user_id(s))
+        .map(sanitize_user_id)
         .transpose()
         .map_err(ProjectResolveError::InvalidHeader)?;
 

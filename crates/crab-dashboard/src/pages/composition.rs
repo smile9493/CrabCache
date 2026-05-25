@@ -737,12 +737,14 @@ pub fn CompositionPage() -> impl IntoView {
                                                 {if has_system {
                                                     view! { <span class="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-400">system</span> }.into_any()
                                                 } else {
-                                                    view! {}.into_any()
+                                                    let _: () = view! {};
+                                                    ().into_any()
                                                 }}
                                                 {if has_tools {
                                                     view! { <span class="text-[9px] px-1 py-0.5 rounded bg-green-500/10 text-green-400">tools</span> }.into_any()
                                                 } else {
-                                                    view! {}.into_any()
+                                                    let _: () = view! {};
+                                                    ().into_any()
                                                 }}
                                             </div>
                                         </div>

@@ -218,13 +218,13 @@ impl UpstreamUserIdLimiter {
         }
         // Only clean up empty slots when enabled, and only if the slot in the map
         // is still the same Arc we're releasing (avoids TOCTOU clobber of fresh slots).
-        if self.enabled.load(Ordering::Relaxed) && slot.inflight.load(Ordering::Relaxed) == 0 {
-            if let Some(entry) = self.slots.get(slot_key) {
-                if Arc::ptr_eq(entry.value(), slot) {
-                    drop(entry); // release read guard before remove
-                    self.slots.remove(slot_key);
-                }
-            }
+        if self.enabled.load(Ordering::Relaxed)
+            && slot.inflight.load(Ordering::Relaxed) == 0
+            && let Some(entry) = self.slots.get(slot_key)
+            && Arc::ptr_eq(entry.value(), slot)
+        {
+            drop(entry); // release read guard before remove
+            self.slots.remove(slot_key);
         }
     }
 }

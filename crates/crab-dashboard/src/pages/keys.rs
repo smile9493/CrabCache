@@ -897,7 +897,7 @@ pub fn KeysPage() -> impl IntoView {
                                                                 <td class="w-8">
                                                                     <input
                                                                         type="checkbox"
-                                                                        prop:checked=move || is_checked()
+                                                                        prop:checked=is_checked
                                                                         on:change={
                                                                             let id = id.clone();
                                                                             move |_| toggle_select(&id)

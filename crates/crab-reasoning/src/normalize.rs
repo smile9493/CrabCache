@@ -2,7 +2,6 @@ use crate::backend::ReasoningBackend;
 use crate::keys::{
     message_signature, resolve_reasoning_scope, tool_call_ids, tool_call_names, tool_call_signature,
 };
-use crab_composition::immutable_prefix_block_hash;
 use crab_metrics::global_metrics;
 use regex::Regex;
 use serde_json::Value;
@@ -129,9 +128,7 @@ pub fn extract_text_content(content: &Value) -> Option<String> {
                             .or_else(|| obj.get("content"))
                             .and_then(|t| t.as_str())
                             .unwrap_or("");
-                        if item_type == "text" || item_type == "input_text" {
-                            parts.push(text.to_string());
-                        } else if !text.is_empty() {
+                        if item_type == "text" || item_type == "input_text" || !text.is_empty() {
                             parts.push(text.to_string());
                         }
                     }
@@ -254,20 +251,19 @@ fn normalize_tool_choice(tool_choice: &Value) -> Option<Value> {
             }
         }
         Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
-                if let Some(func) = obj.get("function").and_then(|f| f.as_object()) {
-                    if func.get("name").is_some() {
-                        let mut m = serde_json::Map::new();
-                        m.insert("type".into(), Value::String("function".into()));
-                        let mut fm = serde_json::Map::new();
-                        fm.insert(
-                            "name".into(),
-                            func.get("name").cloned().unwrap_or(Value::Null),
-                        );
-                        m.insert("function".into(), Value::Object(fm));
-                        return Some(Value::Object(m));
-                    }
-                }
+            if obj.get("type").and_then(|t| t.as_str()) == Some("function")
+                && let Some(func) = obj.get("function").and_then(|f| f.as_object())
+                && func.get("name").is_some()
+            {
+                let mut m = serde_json::Map::new();
+                m.insert("type".into(), Value::String("function".into()));
+                let mut fm = serde_json::Map::new();
+                fm.insert(
+                    "name".into(),
+                    func.get("name").cloned().unwrap_or(Value::Null),
+                );
+                m.insert("function".into(), Value::Object(fm));
+                return Some(Value::Object(m));
             }
             Some(tool_choice.clone())
         }
@@ -453,10 +449,10 @@ fn try_restore_reasoning_from_store(
         prefer_portable,
     );
     for lookup_key in &lookup_keys {
-        if let Some(key_str) = lookup_key.get("key").and_then(|k| k.as_str()) {
-            if let Some(restored) = store.get(key_str) {
-                return Some(restored);
-            }
+        if let Some(key_str) = lookup_key.get("key").and_then(|k| k.as_str())
+            && let Some(restored) = store.get(key_str)
+        {
+            return Some(restored);
         }
     }
     None
@@ -473,22 +469,21 @@ fn patch_missing_reasoning_inplace(
     let mut patched = 0;
     for &idx in missing_indexes {
         let prior: Vec<Value> = messages.get(..idx).unwrap_or(&[]).to_vec();
-        if let Some(store) = store {
-            if let Some(msg_obj) = messages.get(idx).and_then(|m| m.as_object()) {
-                if let Some(restored) = try_restore_reasoning_from_store(
-                    msg_obj,
-                    store,
-                    &prior,
-                    stable_session_id,
-                    cache_namespace,
-                ) {
-                    if let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) {
-                        obj.insert("reasoning_content".into(), Value::String(restored));
-                        patched += 1;
-                    }
-                    continue;
-                }
+        if let Some(store) = store
+            && let Some(msg_obj) = messages.get(idx).and_then(|m| m.as_object())
+            && let Some(restored) = try_restore_reasoning_from_store(
+                msg_obj,
+                store,
+                &prior,
+                stable_session_id,
+                cache_namespace,
+            )
+        {
+            if let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) {
+                obj.insert("reasoning_content".into(), Value::String(restored));
+                patched += 1;
             }
+            continue;
         }
         let Some(obj) = messages.get_mut(idx).and_then(|m| m.as_object_mut()) else {
             continue;
@@ -553,11 +548,11 @@ fn normalize_message(
         msg.insert("content".into(), Value::String(String::new()));
     }
 
-    if role_str == "assistant" {
-        if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-            let stripped = strip_cursor_thinking_blocks(content);
-            msg.insert("content".into(), Value::String(stripped));
-        }
+    if role_str == "assistant"
+        && let Some(content) = msg.get("content").and_then(|c| c.as_str())
+    {
+        let stripped = strip_cursor_thinking_blocks(content);
+        msg.insert("content".into(), Value::String(stripped));
     }
 
     if let Some(tool_calls) = msg.get("tool_calls").and_then(|tc| tc.as_array()).cloned() {
@@ -597,12 +592,12 @@ fn normalize_message(
                     );
                     if let Some(store) = store {
                         for lookup_key in &lookup_keys {
-                            if let Some(key_str) = lookup_key.get("key").and_then(|k| k.as_str()) {
-                                if let Some(restored) = store.get(key_str) {
-                                    msg.insert("reasoning_content".into(), Value::String(restored));
-                                    patched = true;
-                                    break;
-                                }
+                            if let Some(key_str) = lookup_key.get("key").and_then(|k| k.as_str())
+                                && let Some(restored) = store.get(key_str)
+                            {
+                                msg.insert("reasoning_content".into(), Value::String(restored));
+                                patched = true;
+                                break;
                             }
                         }
                     }
@@ -826,6 +821,7 @@ fn recover_messages_from_missing_reasoning(
 }
 
 /// Truncate to leading system + last user (drops tool-call assistants that still lack reasoning).
+#[allow(dead_code)]
 fn force_latest_user_recover(messages: &[Value]) -> Option<(Vec<Value>, usize, Option<String>)> {
     let last_user_index = messages
         .iter()
@@ -902,17 +898,17 @@ fn validate_prefix_append_only(scope: &str, messages: &[Value]) {
     let Ok(mut guard) = PREFIX_SNAPSHOTS.lock() else {
         return;
     };
-    if let Some(snap) = guard.get(scope) {
-        if messages.len() > snap.message_count {
-            let current = messages_prefix_hash(messages, snap.message_count);
-            if current != snap.hash {
-                global_metrics().record_prefix_break();
-                tracing::warn!(
-                    scope = scope,
-                    expected_len = snap.message_count,
-                    "Non-append-only message prefix detected"
-                );
-            }
+    if let Some(snap) = guard.get(scope)
+        && messages.len() > snap.message_count
+    {
+        let current = messages_prefix_hash(messages, snap.message_count);
+        if current != snap.hash {
+            global_metrics().record_prefix_break();
+            tracing::warn!(
+                scope = scope,
+                expected_len = snap.message_count,
+                "Non-append-only message prefix detected"
+            );
         }
     }
     if !messages.is_empty() {
@@ -930,11 +926,11 @@ fn track_immutable_prefix_block(scope: &str, block_hash: &str) {
     let Ok(mut guard) = IMMUTABLE_PREFIX_BLOCKS.lock() else {
         return;
     };
-    if let Some(prev) = guard.get(scope) {
-        if prev != block_hash {
-            global_metrics().record_prefix_block_drift();
-            tracing::warn!(scope = scope, "Immutable system/tools prefix block drifted");
-        }
+    if let Some(prev) = guard.get(scope)
+        && prev != block_hash
+    {
+        global_metrics().record_prefix_block_drift();
+        tracing::warn!(scope = scope, "Immutable system/tools prefix block drifted");
     }
     guard.insert(scope.to_string(), block_hash.to_string());
 }
@@ -969,15 +965,15 @@ pub fn parse_deepseek_v4_thinking_suffix(model_name: &str) -> DeepSeekV4SuffixPa
         ("-none", "disabled", None),
         ("-max", "enabled", Some("max")),
     ] {
-        if let Some(base) = model_name.strip_suffix(suffix) {
-            if base.starts_with("deepseek-v4-") {
-                return DeepSeekV4SuffixParse {
-                    base_model: base.to_string(),
-                    thinking_mode_override: Some(thinking.to_string()),
-                    reasoning_effort_override: effort.map(str::to_string),
-                    matched: true,
-                };
-            }
+        if let Some(base) = model_name.strip_suffix(suffix)
+            && base.starts_with("deepseek-v4-")
+        {
+            return DeepSeekV4SuffixParse {
+                base_model: base.to_string(),
+                thinking_mode_override: Some(thinking.to_string()),
+                reasoning_effort_override: effort.map(str::to_string),
+                matched: true,
+            };
         }
     }
     DeepSeekV4SuffixParse {
@@ -1022,10 +1018,10 @@ fn filter_supported_request_fields(payload: &Value) -> serde_json::Map<String, V
         .into_iter()
         .filter(|(k, _)| supported_set.contains(k.as_str()))
         .collect();
-    if !prepared.contains_key("max_tokens") {
-        if let Some(mct) = payload.get("max_completion_tokens") {
-            prepared.insert("max_tokens".into(), mct.clone());
-        }
+    if !prepared.contains_key("max_tokens")
+        && let Some(mct) = payload.get("max_completion_tokens")
+    {
+        prepared.insert("max_tokens".into(), mct.clone());
     }
     prepared
 }
@@ -1077,10 +1073,10 @@ pub fn prepare_light_request(
         } else {
             prepared.remove("tool_choice");
         }
-    } else if let Some(function_call) = payload.get("function_call") {
-        if let Some(converted) = convert_function_call(function_call) {
-            prepared.insert("tool_choice".into(), converted);
-        }
+    } else if let Some(function_call) = payload.get("function_call")
+        && let Some(converted) = convert_function_call(function_call)
+    {
+        prepared.insert("tool_choice".into(), converted);
     }
 
     let raw_messages = payload
@@ -1177,6 +1173,7 @@ pub struct PreparedRequest {
     pub record_response_contexts: Vec<(String, Vec<Value>)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_upstream_request(
     payload: &Value,
     store: Option<&ReasoningBackend>,
@@ -1221,10 +1218,10 @@ pub fn prepare_upstream_request(
         .filter(|(k, _)| supported_set.contains(k.as_str()))
         .collect();
 
-    if !prepared.contains_key("max_tokens") {
-        if let Some(mct) = payload.get("max_completion_tokens") {
-            prepared.insert("max_tokens".into(), mct.clone());
-        }
+    if !prepared.contains_key("max_tokens")
+        && let Some(mct) = payload.get("max_completion_tokens")
+    {
+        prepared.insert("max_tokens".into(), mct.clone());
     }
 
     prepared.insert("model".into(), Value::String(upstream_model.clone()));
@@ -1261,10 +1258,10 @@ pub fn prepare_upstream_request(
         } else {
             prepared.remove("tool_choice");
         }
-    } else if let Some(function_call) = payload.get("function_call").cloned() {
-        if let Some(converted) = convert_function_call(&function_call) {
-            prepared.insert("tool_choice".into(), converted);
-        }
+    } else if let Some(function_call) = payload.get("function_call").cloned()
+        && let Some(converted) = convert_function_call(&function_call)
+    {
+        prepared.insert("tool_choice".into(), converted);
     }
 
     let thinking_enabled = thinking_mode == "enabled";
@@ -1331,13 +1328,14 @@ pub fn prepare_upstream_request(
 
     // deepseek-cursor-proxy: boundary only on `recover` without stable session (see transform.py).
     // Stable session (client_key / conversation): skip boundary — preserves tool history (H-G fix).
-    if thinking_enabled && missing_reasoning_strategy == "recover" && stable_scope.is_none() {
-        if let Some((active, retired, _step)) =
+    if thinking_enabled
+        && missing_reasoning_strategy == "recover"
+        && stable_scope.is_none()
+        && let Some((active, retired, _step)) =
             active_messages_from_recovery_boundary(&pre_repair.messages)
-        {
-            messages_for_repair = active;
-            retired_prefix_messages = retired;
-        }
+    {
+        messages_for_repair = active;
+        retired_prefix_messages = retired;
     }
 
     let tools_for_block = prepared.get("tools").cloned();

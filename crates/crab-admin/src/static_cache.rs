@@ -33,11 +33,11 @@ pub async fn static_cache_headers(req: Request<Body>, next: Next) -> Response<Bo
         None
     };
 
-    if let Some(value) = cache_value {
-        if let Ok(header_value) = value.parse() {
-            res.headers_mut()
-                .insert(header::CACHE_CONTROL, header_value);
-        }
+    if let Some(value) = cache_value
+        && let Ok(header_value) = value.parse()
+    {
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, header_value);
     }
 
     // ServeDir SPA fallback returns index.html for missing hashed assets; treat as 404.

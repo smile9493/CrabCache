@@ -124,15 +124,14 @@ impl BackendHealth {
     }
 
     pub fn check_open_circuit(&mut self, config: &CircuitBreakerConfig) {
-        if self.circuit_state == CircuitState::Open {
-            if let Some(opened_at) = self.circuit_opened_at {
-                if opened_at.elapsed().as_millis() as u64 >= config.timeout_ms {
-                    self.circuit_state = CircuitState::HalfOpen;
-                    self.healthy = true;
-                    self.half_open_successes = 0;
-                    self.circuit_opened_at = None;
-                }
-            }
+        if self.circuit_state == CircuitState::Open
+            && let Some(opened_at) = self.circuit_opened_at
+            && opened_at.elapsed().as_millis() as u64 >= config.timeout_ms
+        {
+            self.circuit_state = CircuitState::HalfOpen;
+            self.healthy = true;
+            self.half_open_successes = 0;
+            self.circuit_opened_at = None;
         }
     }
 }
@@ -187,10 +186,10 @@ impl AffinityRouter {
 
         let addr = self.continuum.node(key)?;
 
-        if let Some(selected) = self.backends.iter().find(|b| b.addr == addr) {
-            if is_healthy(&selected.name) {
-                return Some(selected.as_ref());
-            }
+        if let Some(selected) = self.backends.iter().find(|b| b.addr == addr)
+            && is_healthy(&selected.name)
+        {
+            return Some(selected.as_ref());
         }
 
         if healthy_count > 0 {
@@ -333,10 +332,10 @@ mod tests {
 
         let mut changed = 0;
         for (key, original_backend) in &original_mapping {
-            if let Some(backend) = router.select(key.as_bytes()) {
-                if backend.name != *original_backend {
-                    changed += 1;
-                }
+            if let Some(backend) = router.select(key.as_bytes())
+                && backend.name != *original_backend
+            {
+                changed += 1;
             }
         }
 

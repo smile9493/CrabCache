@@ -262,7 +262,7 @@ fn connection_config_roundtrip() {
     let runtime = test_runtime();
     let mut conn = ConnectionConfig::default();
     conn.tcp_keepalive_idle_secs = Some(120);
-    *runtime.conn_config.write().expect("conn lock") = Arc::new(conn);
+    *runtime.conn_config.write() = Arc::new(conn);
 
     let snap = build_snapshot_from_runtime(&runtime);
     let rt = snap.runtime.as_ref().expect("runtime snapshot");
@@ -270,6 +270,6 @@ fn connection_config_roundtrip() {
 
     let runtime_b = test_runtime();
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply");
-    let loaded = runtime_b.conn_config.read().expect("conn lock").clone();
+    let loaded = runtime_b.conn_config.read().clone();
     assert_eq!(loaded.tcp_keepalive_idle_secs, Some(120));
 }

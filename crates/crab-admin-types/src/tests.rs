@@ -1,5 +1,4 @@
 use super::*;
-use serde_json;
 
 #[test]
 fn api_key_roundtrip() {

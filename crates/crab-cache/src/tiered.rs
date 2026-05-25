@@ -125,7 +125,7 @@ impl TieredCache {
         })
     }
 
-    #[tracing::instrument(skip(self), fields(key = %key, consumer = consumer.map(|c| c.as_ref()).unwrap_or("none")))]
+    #[tracing::instrument(skip(self), fields(key = %key, consumer = consumer.map(|c| c).unwrap_or("none")))]
     pub async fn get(
         &self,
         key: &str,
@@ -196,7 +196,7 @@ impl TieredCache {
         None
     }
 
-    #[tracing::instrument(skip(self, entry), fields(key = %key, model = %model, consumer = consumer.map(|c| c.as_ref()).unwrap_or("none")))]
+    #[tracing::instrument(skip(self, entry), fields(key = %key, model = %model, consumer = consumer.map(|c| c).unwrap_or("none")))]
     pub async fn put(
         &self,
         key: &str,

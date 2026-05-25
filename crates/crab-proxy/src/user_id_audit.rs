@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn injected_when_project_matches_upstream() {
-        let body = br#"{"model":"deepseek-v4-pro","user_id":"tenant_a"}"#;
+        let _body = br#"{"model":"deepseek-v4-pro","user_id":"tenant_a"}"#;
         let status = compute_user_id_audit(
             Some(RequestPipeline::CursorDeepSeekV4),
             Some("tenant_a"),

@@ -9,16 +9,10 @@ use crab_cache::{
     CacheEntry, FingerprintConfig, L0Config, RequestCoalescer, TieredCache, TtlConfig, UsageInfo,
     generate_cache_key_with_fingerprint, generate_namespaced_cache_key_with_fingerprint,
 };
-use crab_control::parse_backend_endpoints;
 use crab_metrics::CacheTier;
-use crab_pipeline::{PipelineGlobals, UpstreamProvider};
-use crab_proxy::{
-    ClientKeyRateLimiter, ConnectionConfig, RuntimeConfig, StoredKey, UpstreamKeyPool,
-    UpstreamProfileRuntime,
-};
+use crab_proxy::{ClientKeyRateLimiter, StoredKey};
 use crab_reasoning::CursorReasoningDisplayAdapter;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------

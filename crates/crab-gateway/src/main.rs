@@ -331,15 +331,15 @@ fn main() -> Result<()> {
                 max_files = trace_config.max_files,
                 "Trace logging enabled"
             );
-            if let Some(ref debug_cfg) = trace_config.composition_debug {
-                if debug_cfg.enabled {
-                    info!(
-                        debug_path = %debug_cfg.path,
-                        debug_max_lines = debug_cfg.max_lines,
-                        debug_max_files = debug_cfg.max_files,
-                        "Composition debug logging enabled"
-                    );
-                }
+            if let Some(ref debug_cfg) = trace_config.composition_debug
+                && debug_cfg.enabled
+            {
+                info!(
+                    debug_path = %debug_cfg.path,
+                    debug_max_lines = debug_cfg.max_lines,
+                    debug_max_files = debug_cfg.max_files,
+                    "Composition debug logging enabled"
+                );
             }
             Some(Arc::new(logger))
         } else {

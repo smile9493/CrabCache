@@ -86,11 +86,11 @@ pub fn OverviewPage() -> impl IntoView {
             match api::fetch_overview_core(&current_etag).await {
                 Ok(result) => {
                     etag.set(result.etag);
-                    if load_generation.get() == request_id {
-                        if let Some(core) = result.core {
-                            overview_core.set(Some(Ok(core)));
-                            last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
-                        }
+                    if load_generation.get() == request_id
+                        && let Some(core) = result.core
+                    {
+                        overview_core.set(Some(Ok(core)));
+                        last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
                     }
                 }
                 Err(e) => {
@@ -115,13 +115,10 @@ pub fn OverviewPage() -> impl IntoView {
         let request_id = ts_generation.get();
         let window = ts_window.get_untracked();
         leptos::task::spawn_local(async move {
-            match api::fetch_overview_timeseries(&window).await {
-                Ok(resp) => {
-                    if ts_generation.get() == request_id {
-                        ts_points.set(resp.points);
-                    }
-                }
-                Err(_) => {}
+            if let Ok(resp) = api::fetch_overview_timeseries(&window).await
+                && ts_generation.get() == request_id
+            {
+                ts_points.set(resp.points);
             }
         });
     };
@@ -1072,10 +1069,10 @@ fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
             <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_gateway_cache_title()}</h3>
             <p class="text-xs text-theme-muted mb-4">{t.overview_tier_5m_hint()}</p>
             <div class="space-y-3">
-                <ProgressBar label=crate::locale::Translations::overview_l0_label() value=l0.into() max=total as f64 />
-                <ProgressBar label=crate::locale::Translations::overview_l1_label() value=l1.into() max=total as f64 />
-                <ProgressBar label=crate::locale::Translations::overview_l2_label() value=l2.into() max=total as f64 />
-                <ProgressBar label=t.overview_miss_label() value=miss.into() max=total as f64 />
+                <ProgressBar label=crate::locale::Translations::overview_l0_label() value=l0.into() max=total />
+                <ProgressBar label=crate::locale::Translations::overview_l1_label() value=l1.into() max=total />
+                <ProgressBar label=crate::locale::Translations::overview_l2_label() value=l2.into() max=total />
+                <ProgressBar label=t.overview_miss_label() value=miss.into() max=total />
             </div>
             <div class="mt-4 pt-3 border-t border-theme flex justify-between text-sm">
                 <span class="text-theme-secondary">{t.overview_hit_rate()}</span>

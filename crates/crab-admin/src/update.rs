@@ -176,14 +176,14 @@ pub fn replace_binary(src: &std::path::Path, dest: &std::path::Path) -> Result<(
     }
 
     // Copy permissions from destination if it exists
-    if dest.exists() {
-        if let Ok(meta) = std::fs::metadata(dest) {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = meta.permissions();
-            let mode = perms.mode();
-            if let Err(e) = std::fs::set_permissions(src, std::fs::Permissions::from_mode(mode)) {
-                tracing::warn!(error = %e, "Failed to preserve binary permissions");
-            }
+    if dest.exists()
+        && let Ok(meta) = std::fs::metadata(dest)
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = meta.permissions();
+        let mode = perms.mode();
+        if let Err(e) = std::fs::set_permissions(src, std::fs::Permissions::from_mode(mode)) {
+            tracing::warn!(error = %e, "Failed to preserve binary permissions");
         }
     }
 
@@ -252,7 +252,7 @@ pub fn self_update_and_restart(new_binary: &std::path::Path) -> Result<(), Strin
         current_exe.display()
     ));
     script.push_str(&format!("chmod +x {}\n", current_exe.display()));
-    script.push_str(&format!("echo 'Starting updated CrabCache admin...'\n"));
+    script.push_str("echo 'Starting updated CrabCache admin...'\n");
     script.push_str(&format!(
         "exec {} {}\n",
         current_exe.display(),

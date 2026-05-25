@@ -314,7 +314,7 @@ pub fn apply_snapshot_to_runtime(
                 default_weight: 1,
             };
             // Apply key fallback: explicit -> default profile -> legacy global pool.
-            let resolved_specs = resolve_profile_key_specs(specs, &runtime, &p.id);
+            let resolved_specs = resolve_profile_key_specs(specs, runtime, &p.id);
             let profile =
                 build_profile_runtime(input, resolved_specs, upstream_cooldown_secs, None)
                     .map_err(|e| anyhow::anyhow!(e))?;

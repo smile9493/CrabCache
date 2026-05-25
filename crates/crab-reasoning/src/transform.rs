@@ -174,6 +174,7 @@ pub fn record_response_reasoning(
     stored
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn rewrite_response_body(
     body: &[u8],
     original_model: &str,
@@ -186,10 +187,10 @@ pub fn rewrite_response_body(
     collapsible_reasoning: bool,
 ) -> Option<Vec<u8>> {
     let mut response_payload: Value = serde_json::from_slice(body).ok()?;
-    if let Some(obj) = response_payload.as_object_mut() {
-        if let Some(prefix) = content_prefix {
-            prefix_response_content(obj, prefix);
-        }
+    if let Some(obj) = response_payload.as_object_mut()
+        && let Some(prefix) = content_prefix
+    {
+        prefix_response_content(obj, prefix);
     }
     record_response_reasoning(
         &response_payload,
@@ -203,10 +204,10 @@ pub fn rewrite_response_body(
         display_reasoning,
         collapsible_reasoning,
     );
-    if let Some(obj) = response_payload.as_object_mut() {
-        if let Some(model) = obj.get_mut("model") {
-            *model = Value::String(original_model.to_string());
-        }
+    if let Some(obj) = response_payload.as_object_mut()
+        && let Some(model) = obj.get_mut("model")
+    {
+        *model = Value::String(original_model.to_string());
     }
     Some(serde_json::to_vec(&response_payload).unwrap_or_default())
 }
@@ -294,24 +295,25 @@ fn inject_recovery_notice(chunk: &mut Value, notice: &str) -> bool {
         if !has_content && !has_tool_calls {
             continue;
         }
-        if let Some(delta) = choice.get_mut("delta") {
-            if let Some(obj) = delta.as_object_mut() {
-                let existing = obj
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                obj.insert(
-                    "content".into(),
-                    Value::String(format!("{notice}{existing}")),
-                );
-                return true;
-            }
+        if let Some(delta) = choice.get_mut("delta")
+            && let Some(obj) = delta.as_object_mut()
+        {
+            let existing = obj
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            obj.insert(
+                "content".into(),
+                Value::String(format!("{notice}{existing}")),
+            );
+            return true;
         }
     }
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn rewrite_sse_chunk(
     line: &[u8],
     original_model: &str,

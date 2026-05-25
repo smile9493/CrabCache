@@ -87,46 +87,46 @@ fn auto_pipeline_with_reason(
     ctx: &PipelineRequestContext<'_>,
     provider: UpstreamProvider,
 ) -> (RequestPipeline, PipelineSelectionReason) {
-    if provider == UpstreamProvider::Deepseek {
-        if let Some(alias_pipe) = ctx.model_alias_pipeline {
-            match alias_pipe {
-                PipelineOverride::CursorDeepSeekV4 => {
-                    return (
-                        RequestPipeline::CursorDeepSeekV4,
-                        PipelineSelectionReason::ModelAlias,
-                    );
-                }
-                PipelineOverride::DeepSeekLight => {
-                    return (
-                        RequestPipeline::DeepSeekLight,
-                        PipelineSelectionReason::ModelAlias,
-                    );
-                }
-                PipelineOverride::GenericRelay => {
-                    return (
-                        RequestPipeline::GenericRelay,
-                        PipelineSelectionReason::ModelAlias,
-                    );
-                }
-                PipelineOverride::MimoRelay | PipelineOverride::Auto => {}
+    if provider == UpstreamProvider::Deepseek
+        && let Some(alias_pipe) = ctx.model_alias_pipeline
+    {
+        match alias_pipe {
+            PipelineOverride::CursorDeepSeekV4 => {
+                return (
+                    RequestPipeline::CursorDeepSeekV4,
+                    PipelineSelectionReason::ModelAlias,
+                );
             }
+            PipelineOverride::DeepSeekLight => {
+                return (
+                    RequestPipeline::DeepSeekLight,
+                    PipelineSelectionReason::ModelAlias,
+                );
+            }
+            PipelineOverride::GenericRelay => {
+                return (
+                    RequestPipeline::GenericRelay,
+                    PipelineSelectionReason::ModelAlias,
+                );
+            }
+            PipelineOverride::MimoRelay | PipelineOverride::Auto => {}
         }
     }
 
-    if provider == UpstreamProvider::Mimo {
-        if let Some(alias_pipe) = ctx.model_alias_pipeline {
-            match alias_pipe {
-                PipelineOverride::MimoRelay | PipelineOverride::GenericRelay => {
-                    let pipeline = if alias_pipe == PipelineOverride::MimoRelay {
-                        RequestPipeline::MimoRelay
-                    } else {
-                        RequestPipeline::GenericRelay
-                    };
-                    return (pipeline, PipelineSelectionReason::ModelAlias);
-                }
-                PipelineOverride::Auto => {}
-                _ => {}
+    if provider == UpstreamProvider::Mimo
+        && let Some(alias_pipe) = ctx.model_alias_pipeline
+    {
+        match alias_pipe {
+            PipelineOverride::MimoRelay | PipelineOverride::GenericRelay => {
+                let pipeline = if alias_pipe == PipelineOverride::MimoRelay {
+                    RequestPipeline::MimoRelay
+                } else {
+                    RequestPipeline::GenericRelay
+                };
+                return (pipeline, PipelineSelectionReason::ModelAlias);
             }
+            PipelineOverride::Auto => {}
+            _ => {}
         }
     }
 
@@ -154,8 +154,6 @@ fn auto_pipeline_legacy(
                     || user_agent_suggests_cursor(ctx.user_agent))
             {
                 RequestPipeline::CursorDeepSeekV4
-            } else if ctx.model.starts_with("deepseek-") {
-                RequestPipeline::DeepSeekLight
             } else {
                 RequestPipeline::DeepSeekLight
             }

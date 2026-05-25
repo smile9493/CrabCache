@@ -284,11 +284,12 @@ mod tests {
 
     #[test]
     fn test_achievable_hit_rate_estimation() {
-        let mut fitted = FittedParameters::default();
-
-        fitted.repeat_ratio = 0.9;
-        fitted.semantic_cluster_ratio = 0.3;
-        fitted.estimated_zipf_alpha = 1.5;
+        let fitted = FittedParameters {
+            repeat_ratio: 0.9,
+            semantic_cluster_ratio: 0.3,
+            estimated_zipf_alpha: 1.5,
+            ..Default::default()
+        };
 
         let achievable = fitted.estimate_achievable_hit_rate();
         println!("Achievable hit rate: {:.1}%", achievable * 100.0);

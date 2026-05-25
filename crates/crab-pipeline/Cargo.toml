@@ -3,6 +3,9 @@ name = "crab-pipeline"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 crab-reasoning.workspace = true
 serde.workspace = true

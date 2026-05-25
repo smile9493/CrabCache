@@ -5,7 +5,8 @@ use crab_cache::{
     generate_cache_key_with_fingerprint,
 };
 use crab_metrics::CacheTier;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 async fn test_redis_pool() -> Option<bb8::Pool<bb8_redis::RedisConnectionManager>> {
     let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")

@@ -92,9 +92,27 @@ rusqlite       = { version = "0.32", features = ["bundled"] }
 regex          = "1"
 unicode-normalization = "0.1"
 
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+redundant_locals = "allow"
+type_complexity = "allow"
+len_without_is_empty = "allow"
+unused_unit = "allow"
+field_reassign_with_default = "allow"
+result_large_err = "allow"
+uninlined_format_args = "allow"
+inconsistent_digit_grouping = "allow"
+unnecessary_sort_by = "allow"
+collapsible_if = "allow"
+if_same_then_else = "allow"
+
+[workspace.lints.rust]
+dead_code = "allow"
+deprecated = "allow"
+
 [profile.release]
 lto = true
-codegen-units = 1
+codegen-units = 4
 opt-level = "z"
 panic = "abort"
 strip = "symbols"

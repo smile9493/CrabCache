@@ -180,10 +180,10 @@ impl StreamAccumulator {
                 }
             };
             let storage_key = (index, scope.to_string());
-            if let Some(previous) = self.stored_choices.get(&storage_key) {
-                if stage_rank(previous) >= stage_rank("final") {
-                    continue;
-                }
+            if let Some(previous) = self.stored_choices.get(&storage_key)
+                && stage_rank(previous) >= stage_rank("final")
+            {
+                continue;
             }
             let count = store.store_assistant_message(msg, scope, cache_namespace, prior_messages);
             if count > 0 {
@@ -221,10 +221,10 @@ impl StreamAccumulator {
                 }
             };
             let storage_key = (index, scope.to_string());
-            if let Some(previous) = self.stored_choices.get(&storage_key) {
-                if stage_rank(previous) >= stage_rank(stage) {
-                    continue;
-                }
+            if let Some(previous) = self.stored_choices.get(&storage_key)
+                && stage_rank(previous) >= stage_rank(stage)
+            {
+                continue;
             }
             let count = store.store_assistant_message(msg, scope, cache_namespace, prior_messages);
             if count > 0 {
@@ -255,7 +255,9 @@ fn has_identified_tool_calls(choice: &StreamingChoice) -> bool {
 pub struct CursorReasoningDisplayAdapter {
     open_choices: HashMap<usize, bool>,
     last_chunk_metadata: serde_json::Map<String, Value>,
+    #[allow(dead_code)]
     block_start: String,
+    #[allow(dead_code)]
     block_end: String,
 }
 
@@ -315,38 +317,36 @@ impl CursorReasoningDisplayAdapter {
                 (rc, ec, htc, hf)
             };
 
-            if let Some(delta) = raw_choice.get_mut("delta") {
-                if let Some(obj) = delta.as_object_mut() {
-                    // OpenAI-compatible streaming: incremental `delta.content` only (no
-                    // per-chunk <details> wrappers). Cursor closes the connection otherwise.
-                    if !reasoning_content.is_empty() {
-                        if !self.open_choices.contains_key(&index) {
-                            self.open_choices.insert(index, true);
-                        }
-                        if existing_content.is_empty() {
-                            obj.insert("content".into(), Value::String(reasoning_content));
-                        } else {
-                            obj.insert(
-                                "content".into(),
-                                Value::String(format!("{reasoning_content}{existing_content}")),
-                            );
-                        }
-                    } else if obj.get("role").is_some() && !obj.contains_key("content") {
-                        obj.insert("content".into(), Value::String(String::new()));
-                    } else if !existing_content.is_empty() {
-                        obj.insert("content".into(), Value::String(existing_content));
+            if let Some(delta) = raw_choice.get_mut("delta")
+                && let Some(obj) = delta.as_object_mut()
+            {
+                // OpenAI-compatible streaming: incremental `delta.content` only (no
+                // per-chunk <details> wrappers). Cursor closes the connection otherwise.
+                if !reasoning_content.is_empty() {
+                    self.open_choices.entry(index).or_insert(true);
+                    if existing_content.is_empty() {
+                        obj.insert("content".into(), Value::String(reasoning_content));
+                    } else {
+                        obj.insert(
+                            "content".into(),
+                            Value::String(format!("{reasoning_content}{existing_content}")),
+                        );
                     }
-                    // Upstream may send `reasoning_content: null` on role chunks; Cursor rejects it.
-                    obj.remove("reasoning_content");
-                    if obj.get("content").map(|v| v.is_null()).unwrap_or(false) {
-                        obj.insert("content".into(), Value::String(String::new()));
-                    }
+                } else if obj.get("role").is_some() && !obj.contains_key("content") {
+                    obj.insert("content".into(), Value::String(String::new()));
+                } else if !existing_content.is_empty() {
+                    obj.insert("content".into(), Value::String(existing_content));
+                }
+                // Upstream may send `reasoning_content: null` on role chunks; Cursor rejects it.
+                obj.remove("reasoning_content");
+                if obj.get("content").map(|v| v.is_null()).unwrap_or(false) {
+                    obj.insert("content".into(), Value::String(String::new()));
+                }
 
-                    let should_close =
-                        self.open_choices.contains_key(&index) && (has_tool_calls || has_finish);
-                    if should_close {
-                        self.open_choices.remove(&index);
-                    }
+                let should_close =
+                    self.open_choices.contains_key(&index) && (has_tool_calls || has_finish);
+                if should_close {
+                    self.open_choices.remove(&index);
                 }
             }
         }
@@ -416,13 +416,13 @@ pub fn fold_reasoning_into_content(response_payload: &mut Value, collapsible: bo
         if reasoning.is_empty() {
             continue;
         }
-        if let Some(message) = choice.get_mut("message") {
-            if let Some(obj) = message.as_object_mut() {
-                obj.insert(
-                    "content".into(),
-                    Value::String(format!("{block_start}{reasoning}{block_end}{content}")),
-                );
-            }
+        if let Some(message) = choice.get_mut("message")
+            && let Some(obj) = message.as_object_mut()
+        {
+            obj.insert(
+                "content".into(),
+                Value::String(format!("{block_start}{reasoning}{block_end}{content}")),
+            );
         }
     }
 }

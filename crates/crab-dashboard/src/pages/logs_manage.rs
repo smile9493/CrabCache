@@ -24,7 +24,7 @@ pub fn LogsManagePage() -> impl IntoView {
 
     // Load data on mount
     {
-        let usage = usage.clone();
+        let usage = usage;
         leptos::task::spawn_local(async move {
             match api::fetch_log_disk_usage().await {
                 Ok(v) => usage.set(Some(Ok(v))),
@@ -33,7 +33,7 @@ pub fn LogsManagePage() -> impl IntoView {
         });
     }
     {
-        let retention = retention.clone();
+        let retention = retention;
         leptos::task::spawn_local(async move {
             match api::fetch_retention_policy().await {
                 Ok(v) => retention.set(Some(Ok(v))),
@@ -216,7 +216,7 @@ fn RetentionPolicyCard(
         };
 
         saving.set(true);
-        let feedback = feedback.clone();
+        let feedback = feedback;
         leptos::task::spawn_local(async move {
             match api::update_retention_policy(&req).await {
                 Ok(_) => feedback.set("Retention policy saved.".to_string()),
@@ -317,8 +317,8 @@ fn ManualClearCard(
         clearing.set(true);
         show_confirm.set(false);
 
-        let feedback = feedback.clone();
-        let usage = usage.clone();
+        let feedback = feedback;
+        let usage = usage;
         leptos::task::spawn_local(async move {
             match api::clear_logs(&target_val, older_val).await {
                 Ok(resp) => {
@@ -379,7 +379,7 @@ fn ManualClearCard(
             {move || {
                 if show_confirm.get() {
                     let confirm_clear = {
-                        let do_clear = do_clear.clone();
+                        let do_clear = do_clear;
                         move |_| do_clear()
                     };
                     view! {

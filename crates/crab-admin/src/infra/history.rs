@@ -81,10 +81,10 @@ impl InfraHistoryRing {
             total_net_tx_bps,
         };
 
-        if let Some(last) = self.samples.last() {
-            if point.sampled_at <= last.sampled_at {
-                return;
-            }
+        if let Some(last) = self.samples.last()
+            && point.sampled_at <= last.sampled_at
+        {
+            return;
         }
 
         self.samples.push(point);

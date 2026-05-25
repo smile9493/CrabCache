@@ -558,6 +558,7 @@ impl GatewayMetrics {
             .inc();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_upstream_usage(
         &self,
         prompt_tokens: u64,

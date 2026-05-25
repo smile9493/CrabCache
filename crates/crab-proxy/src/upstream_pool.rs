@@ -179,7 +179,7 @@ impl UpstreamKeyPool {
                 has_enabled = true;
             }
             if enabled && in_cooldown {
-                let remaining = (cooldown_until - now + 999) / 1000;
+                let remaining = (cooldown_until - now).div_ceil(1000);
                 if remaining < min_cooldown_remaining {
                     min_cooldown_remaining = remaining;
                 }
@@ -336,10 +336,10 @@ impl UpstreamKeyPool {
             if slot.cooldown_until_ms.load(Ordering::Relaxed) > now {
                 continue;
             }
-            if let Some(ex) = excluded {
-                if slot.account_id.as_ref() == ex {
-                    continue;
-                }
+            if let Some(ex) = excluded
+                && slot.account_id.as_ref() == ex
+            {
+                continue;
             }
             let inflight = slot.inflight.load(Ordering::Relaxed);
             if inflight < best_inflight {

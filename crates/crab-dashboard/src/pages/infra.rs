@@ -65,27 +65,29 @@ async fn poll_speed_job(
         if job.status == "failed" {
             return Ok(job);
         }
-        if direction == "upload" && !upload_sent {
-            if let (Some(token), bytes) = (
+        if direction == "upload"
+            && !upload_sent
+            && let (Some(token), bytes) = (
                 job.upload_token.clone(),
                 job.upload_bytes.unwrap_or(10 * 1024 * 1024),
-            ) {
-                run_upload_probe(job_id, &token, bytes).await?;
-                upload_sent = true;
-                continue;
-            }
+            )
+        {
+            run_upload_probe(job_id, &token, bytes).await?;
+            upload_sent = true;
+            continue;
         }
-        if direction == "both" && !upload_sent {
-            if job.download_mbps.is_some() && job.upload_mbps.is_none() {
-                if let (Some(token), bytes) = (
-                    job.upload_token.clone(),
-                    job.upload_bytes.unwrap_or(10 * 1024 * 1024),
-                ) {
-                    run_upload_probe(job_id, &token, bytes).await?;
-                    upload_sent = true;
-                    continue;
-                }
-            }
+        if direction == "both"
+            && !upload_sent
+            && job.download_mbps.is_some()
+            && job.upload_mbps.is_none()
+            && let (Some(token), bytes) = (
+                job.upload_token.clone(),
+                job.upload_bytes.unwrap_or(10 * 1024 * 1024),
+            )
+        {
+            run_upload_probe(job_id, &token, bytes).await?;
+            upload_sent = true;
+            continue;
         }
         if job.status == "done" {
             return Ok(job);
@@ -411,10 +413,10 @@ pub fn InfraPage() -> impl IntoView {
                     snapshot.set(Some(Ok(snap)));
                     error.set(None);
 
-                    if selected_container.get_untracked().is_empty() {
-                        if let Some(id) = first_id.clone() {
-                            selected_container.set(id);
-                        }
+                    if selected_container.get_untracked().is_empty()
+                        && let Some(id) = first_id.clone()
+                    {
+                        selected_container.set(id);
                     }
                     let chart_cid = if cid.is_empty() {
                         first_id.unwrap_or_default()

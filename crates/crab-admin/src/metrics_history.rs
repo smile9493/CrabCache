@@ -112,10 +112,10 @@ impl MetricsHistory {
     }
 
     pub fn append(&mut self, snapshot: MetricsCounterSnapshot) {
-        if let Some(last) = self.samples.last() {
-            if snapshot.sampled_at <= last.sampled_at {
-                return;
-            }
+        if let Some(last) = self.samples.last()
+            && snapshot.sampled_at <= last.sampled_at
+        {
+            return;
         }
         self.samples.push(snapshot);
         self.trim();

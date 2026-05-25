@@ -550,14 +550,13 @@ async fn get_overview_core(
     if let Some(if_none_match) = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
+        && if_none_match == etag_val
     {
-        if if_none_match == etag_val {
-            let mut resp = Response::new(axum::body::Body::empty());
-            *resp.status_mut() = StatusCode::NOT_MODIFIED;
-            resp.headers_mut()
-                .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
-            return Ok(resp);
-        }
+        let mut resp = Response::new(axum::body::Body::empty());
+        *resp.status_mut() = StatusCode::NOT_MODIFIED;
+        resp.headers_mut()
+            .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
+        return Ok(resp);
     }
 
     // 200 with ETag header for client-side caching.
@@ -1929,8 +1928,8 @@ async fn get_logs(
                 request_payload: serde_json::to_string_pretty(&log.request_payload)
                     .unwrap_or_default(),
                 response_preview: log.response_body.chars().take(200).collect(),
-                input_tokens: Some(log.input_tokens as u64),
-                output_tokens: Some(log.output_tokens as u64),
+                input_tokens: Some(log.input_tokens),
+                output_tokens: Some(log.output_tokens),
                 ttft_ms: None,
                 content_length: None,
                 request_hash: None,
@@ -2499,21 +2498,23 @@ async fn update_upstream_config(
         } else {
             config.endpoints = req.endpoints.clone();
         }
-        if let Some(key) = &req.api_key {
-            if !key.is_empty() && !key.contains("****") {
-                if let Err(e) = validate_deepseek_key(key) {
-                    return Err((StatusCode::BAD_REQUEST, e));
-                }
-                config.api_key = key.clone();
+        if let Some(key) = &req.api_key
+            && !key.is_empty()
+            && !key.contains("****")
+        {
+            if let Err(e) = validate_deepseek_key(key) {
+                return Err((StatusCode::BAD_REQUEST, e));
             }
+            config.api_key = key.clone();
         }
     }
 
     let mut keys_to_push: Vec<String> = req.keys_to_append.clone();
-    if let Some(key) = &req.api_key {
-        if !key.is_empty() && !key.contains("****") {
-            keys_to_push.push(key.clone());
-        }
+    if let Some(key) = &req.api_key
+        && !key.is_empty()
+        && !key.contains("****")
+    {
+        keys_to_push.push(key.clone());
     }
     keys_to_push.retain(|k| !k.trim().is_empty());
     if !keys_to_push.is_empty() {

@@ -158,10 +158,10 @@ impl PersistHandle {
         if let Some(parent) = self.path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(json) = serde_json::to_string_pretty(file) {
-            if let Err(e) = std::fs::write(&self.path, json) {
-                tracing::warn!(path = %self.path.display(), error = %e, "Failed to write admin state");
-            }
+        if let Ok(json) = serde_json::to_string_pretty(file)
+            && let Err(e) = std::fs::write(&self.path, json)
+        {
+            tracing::warn!(path = %self.path.display(), error = %e, "Failed to write admin state");
         }
     }
 

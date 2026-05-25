@@ -66,11 +66,12 @@ fn y_range(series: &[ChartSeries]) -> (f64, f64) {
     let mut ymax = f64::MIN;
     for s in series {
         for v in &s.values {
-            if let Some(x) = v {
-                if *x > 0.0 && x.is_finite() {
-                    ymin = ymin.min(*x);
-                    ymax = ymax.max(*x);
-                }
+            if let Some(x) = v
+                && *x > 0.0
+                && x.is_finite()
+            {
+                ymin = ymin.min(*x);
+                ymax = ymax.max(*x);
             }
         }
     }
