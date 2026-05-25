@@ -79,11 +79,7 @@ pub fn extract_composition(payload: &Value, hints: &CompositionHints) -> Request
         .unwrap_or(0);
     let has_tools = tool_count > 0;
     let tool_names_hash = if has_tools {
-        if let Some(arr) = tools.and_then(|t| t.as_array()) {
-            Some(tool_names_hash(arr))
-        } else {
-            None
-        }
+        tools.and_then(|t| t.as_array()).map(|arr| tool_names_hash(arr))
     } else {
         None
     };

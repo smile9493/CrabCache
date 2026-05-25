@@ -33,10 +33,10 @@ pub fn immutable_prefix_block_hash(
             hasher.update(&bytes);
         }
     }
-    if let Some(tools) = tools {
-        if let Ok(bytes) = serde_json::to_vec(tools) {
-            hasher.update(&bytes);
-        }
+    if let Some(tools) = tools
+        && let Ok(bytes) = serde_json::to_vec(tools)
+    {
+        hasher.update(&bytes);
     }
     hex::encode(hasher.finalize())
 }

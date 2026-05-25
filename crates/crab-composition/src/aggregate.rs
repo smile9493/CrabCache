@@ -135,7 +135,7 @@ pub fn aggregate_composition(
                 count: *c,
             })
             .collect();
-        v.sort_by(|a, b| b.count.cmp(&a.count));
+        v.sort_by_key(|b| std::cmp::Reverse(b.count));
         v.truncate(n);
         v
     }
