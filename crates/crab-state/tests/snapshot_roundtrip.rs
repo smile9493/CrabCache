@@ -8,7 +8,8 @@ use crab_state::{
     apply_snapshot_to_runtime, build_snapshot_from_runtime, ControlPlaneSnapshot,
 };
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 fn test_runtime() -> Arc<RuntimeConfig> {
     let backends = crab_control::parse_backend_endpoints(
@@ -49,6 +50,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         PipelineGlobals::default(),
         false,
         std::collections::HashSet::new(),
+        false,
     )
 }
 

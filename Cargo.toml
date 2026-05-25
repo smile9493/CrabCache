@@ -57,6 +57,7 @@ prometheus = "0.13"
 tracing-appender = "0.2"
 
 # -- Utilities --
+parking_lot    = "0.12"
 bytes          = "1"
 anyhow         = "1"
 thiserror      = "2"

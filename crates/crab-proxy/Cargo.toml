@@ -25,6 +25,7 @@ uuid.workspace = true
 http.workspace = true
 tokio.workspace = true
 dashmap.workspace = true
+parking_lot = "0.12"
 crab-composition.workspace = true
 sha2.workspace = true
 hex.workspace = true

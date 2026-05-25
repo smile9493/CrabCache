@@ -11,10 +11,11 @@ use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
-use crab_semantic::{SemanticCache, SemanticGateConfig};
+use crate::semantic_runtime::SharedSemanticRuntime;
+use crab_semantic::SemanticCache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -218,6 +219,8 @@ pub struct UpstreamState {
     pub retry_buffer_truncated: bool,
     /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
     pub error_body_logged: bool,
+    /// Whether the first upstream body chunk was logged for debug.
+    pub first_body_chunk_logged: bool,
 }
 
 impl UpstreamState {
@@ -240,6 +243,7 @@ impl Default for UpstreamState {
             connection_close: false,
             retry_buffer_truncated: false,
             error_body_logged: false,
+            first_body_chunk_logged: false,
         }
     }
 }
@@ -322,6 +326,8 @@ pub struct GatewayContext {
     /// Accumulated response body for trace logging (non-streaming / streaming).
     /// Only populated when `trace_logging.max_response_preview_bytes > 0`.
     pub response_body_preview: Vec<u8>,
+    /// Per-request cached reasoning config snapshot (avoids repeated RwLock reads).
+    pub cached_reasoning_config: ReasoningConfig,
 }
 
 impl GatewayContext {
@@ -364,6 +370,7 @@ impl GatewayContext {
             upstream: UpstreamState::default(),
             stream: StreamState::default(),
             response_body_preview: Vec::new(),
+            cached_reasoning_config: ReasoningConfig::default(),
         }
     }
 }
@@ -372,10 +379,10 @@ pub struct GatewayState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
     pub semantic_cache: Option<Arc<SemanticCache>>,
-    pub semantic_gate: SemanticGateConfig,
+    pub semantic_runtime: SharedSemanticRuntime,
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningBackend>,
-    pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
+    pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
     pub cors_enabled: bool,
     pub trace_logger: Option<Arc<TraceLogger>>,
     pub cache_key_namespace: Option<String>,

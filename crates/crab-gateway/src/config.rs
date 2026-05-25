@@ -9,7 +9,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
 pub use crab_state::StateBackendConfig;
@@ -123,6 +124,9 @@ pub struct GatewaySection {
     /// Cursor-visible model aliases (e.g. `gpt-4o` → `deepseek-v4-pro`).
     #[serde(default)]
     pub cursor_models: GatewayCursorModelsConfig,
+    /// When true, client keys without `project_id` get a stable derived DeepSeek `user_id` (`client:{hash}`).
+    #[serde(default)]
+    pub auto_project_id_from_client_key: bool,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -719,6 +723,17 @@ impl GatewayConfig {
                         i + 1
                     ));
                 }
+            }
+        }
+
+        // Validate each profile can resolve at least one key (explicit or fallback to global).
+        for profile in self.resolved_upstream_profiles() {
+            let resolved = self.profile_key_secrets(&profile);
+            if resolved.is_empty() {
+                errors.push(format!(
+                    "upstream profile '{}' has no API keys and global fallback is also empty",
+                    profile.id
+                ));
             }
         }
 

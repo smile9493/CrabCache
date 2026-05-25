@@ -1,12 +1,15 @@
 //! Build `UpstreamProfileRuntime` from Management API inputs.
 
+use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::{UpstreamKeyPool, UpstreamKeySpec};
 use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_control::parse_upstream_base_url;
 use crab_pipeline::UpstreamProvider;
 use crab_route::{AffinityRouter, Backend};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct ProfileBuildInput {
@@ -68,6 +71,47 @@ pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>,
     Ok(backends)
 }
 
+/// Resolve key specs for a profile with fallback to default/legacy pools.
+///
+/// Priority: `explicit` > default profile pool > legacy `runtime.upstream_pool()` > empty.
+pub fn resolve_profile_key_specs(
+    explicit: Vec<UpstreamKeySpec>,
+    runtime: &RuntimeConfig,
+    profile_id: &str,
+) -> Vec<UpstreamKeySpec> {
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    // 1) Default profile pool (if this is not the default, inherit its keys).
+    let default_id = runtime.default_upstream_profile_id();
+    if let Some(default_profile) = runtime.profile(&default_id) {
+        let specs = default_profile.resolve_upstream_pool().to_specs();
+        if !specs.is_empty() {
+            if profile_id != default_id {
+                tracing::debug!(
+                    profile_id,
+                    default_profile_id = %default_id,
+                    key_count = specs.len(),
+                    "Profile inheriting keys from default profile"
+                );
+            }
+            return specs;
+        }
+    }
+    // 2) Legacy global upstream_pool.
+    let legacy = runtime.upstream_pool().to_specs();
+    if !legacy.is_empty() {
+        tracing::debug!(
+            profile_id,
+            key_count = legacy.len(),
+            "Profile inheriting keys from legacy global pool"
+        );
+        return legacy;
+    }
+    warn!(profile_id, "No upstream keys available for profile (explicit, default, and legacy pools are all empty)");
+    Vec::new()
+}
+
 pub fn build_profile_runtime(
     input: ProfileBuildInput,
     key_specs: Vec<UpstreamKeySpec>,
@@ -95,14 +139,9 @@ pub fn build_profile_runtime(
     };
 
     if !key_specs.is_empty() {
-        let current = pool_handle
-            .read()
-            .map_err(|_| "upstream_pool lock poisoned".to_string())?
-            .clone();
+        let current = pool_handle.read().clone();
         let new_pool = UpstreamKeyPool::hot_replace(&current, key_specs);
-        if let Ok(mut guard) = pool_handle.write() {
-            *guard = new_pool;
-        }
+        *pool_handle.write() = new_pool;
     }
 
     Ok(Arc::new(UpstreamProfileRuntime {

@@ -14,6 +14,7 @@ use crab_control::{
 };
 use crab_proxy::{
     ProfileBuildInput, UpstreamKeyPool, UpstreamKeySpec, build_profile_runtime,
+    resolve_profile_key_specs,
 };
 use std::sync::Arc;
 
@@ -35,17 +36,14 @@ fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<Upstrea
 }
 
 fn profiles_response(runtime: &crab_proxy::RuntimeConfig) -> UpstreamProfilesResponse {
-    let mut profiles: Vec<UpstreamProfileView> = runtime
-        .upstream_profiles
-        .read()
-        .map(|map| {
-            let mut ids: Vec<String> = map.keys().cloned().collect();
-            ids.sort();
-            ids.into_iter()
-                .filter_map(|id| profile_view(runtime, &id))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut profiles: Vec<UpstreamProfileView> = {
+        let map = runtime.upstream_profiles.read();
+        let mut ids: Vec<String> = map.keys().cloned().collect();
+        ids.sort();
+        ids.into_iter()
+            .filter_map(|id: String| profile_view(runtime, &id))
+            .collect()
+    };
     profiles.sort_by(|a, b| a.id.cmp(&b.id));
     UpstreamProfilesResponse {
         default_profile_id: runtime.default_upstream_profile_id(),
@@ -94,9 +92,11 @@ pub async fn put_upstream_profile(
         default_weight: req.default_weight.max(1),
     };
 
+    // Resolve key specs with fallback to default/legacy pools instead of passing empty.
+    let resolved_specs = resolve_profile_key_specs(Vec::new(), &state.runtime, &id);
     let profile = build_profile_runtime(
         input,
-        Vec::new(),
+        resolved_specs,
         state.upstream_key_cooldown_secs,
         existing_pool,
     )
@@ -192,7 +192,7 @@ pub async fn put_profile_keys(
             account_id: k.account_id,
         })
         .collect();
-    let profile = state.runtime.profile(id).unwrap();
+    let profile = state.runtime.profile(id).expect("profile existence verified above");
     let current = profile.resolve_upstream_pool();
     let new_pool = match req.mode {
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
@@ -232,7 +232,7 @@ pub async fn patch_profile_key(
             "rotating secret via PATCH is not supported; use PUT /v1/upstream/profiles/{id}/keys",
         ));
     }
-    let profile = state.runtime.profile(profile_id).unwrap();
+    let profile = state.runtime.profile(profile_id).expect("profile existence verified above");
     let pool = profile.resolve_upstream_pool();
     if let Some(enabled) = req.enabled {
         if !pool.set_enabled(key_id, enabled) {

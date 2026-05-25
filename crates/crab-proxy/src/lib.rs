@@ -25,12 +25,15 @@ mod cache_response;
 mod metrics_helpers;
 mod sse_rewrite;
 mod connection_helpers;
+mod semantic_runtime;
+mod send_helpers;
 
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimiter, ClientKeyLimitError};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
 };
+pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
 pub use stored_key::StoredKey;
 pub use error::ProxyError;
 pub use proxy::GatewayProxy;
@@ -62,5 +65,7 @@ pub use user_id_audit::{
     UserIdAuditStatus, apply_user_id_audit_to_entry, compute_user_id_audit, is_deepseek_pipeline,
     parse_user_id_from_json,
 };
-pub use profile_build::{build_profile_runtime, parse_profile_backends, ProfileBuildInput};
+pub use profile_build::{
+    build_profile_runtime, parse_profile_backends, resolve_profile_key_specs, ProfileBuildInput,
+};
 pub use upstream_profile::UpstreamProfileRuntime;

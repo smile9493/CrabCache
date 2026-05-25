@@ -6,6 +6,7 @@ use crab_gateway::management::{InvalidateRateState, ManagementState, serve as se
 use crab_metrics::global_metrics;
 use crab_proxy::{
     ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy, GatewayState,
+    SemanticRuntimeState, SharedSemanticRuntime,
     RuntimeConfig, UpstreamUserIdLimiter,
 };
 use crab_reasoning::ReasoningBackend;
@@ -20,7 +21,8 @@ use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
@@ -290,7 +292,7 @@ fn main() -> Result<()> {
 
     let upstream_pool = default_profile.upstream_pool.clone();
     info!(
-        upstream_key_count = upstream_pool.read().map(|p| p.len()).unwrap_or(0),
+        upstream_key_count = upstream_pool.read().len(),
         default_profile = %default_profile_id,
         "Upstream key pool initialized (default profile)"
     );
@@ -300,6 +302,7 @@ fn main() -> Result<()> {
         legacy_client_tokens.insert(api_key.to_string());
     }
     let legacy_api_key_as_client_auth = config.gateway.legacy_api_key_as_client_auth;
+    let auto_project_id_from_client_key = config.gateway.auto_project_id_from_client_key;
 
     info!(
         thinking_mode = %reasoning_config.thinking_mode,
@@ -363,6 +366,7 @@ fn main() -> Result<()> {
         pipeline_globals,
         legacy_api_key_as_client_auth,
         legacy_client_tokens,
+        auto_project_id_from_client_key,
     );
 
     let state_redis_url = config
@@ -461,13 +465,9 @@ fn main() -> Result<()> {
         None
     };
 
-    for profile in runtime
-        .upstream_profiles
-        .read()
-        .expect("upstream profiles lock poisoned")
-        .values()
-    {
-        if let Ok(mut health) = runtime.backend_health.write() {
+    for profile in runtime.upstream_profiles.read().values() {
+        {
+            let mut health = runtime.backend_health.write();
             for b in profile.router.backends() {
                 health
                     .entry(b.name.clone())
@@ -487,13 +487,8 @@ fn main() -> Result<()> {
                 loop {
                     interval.tick().await;
                     let backends: Vec<(String, std::net::SocketAddr)> = {
-                        let router = runtime.router.read()
-                            .map_err(|e| tracing::error!(error=%e, "Router lock poisoned"))
-                            .ok();
-                        match router {
-                            Some(r) => r.backends().iter().map(|b| (b.name.clone(), b.addr)).collect(),
-                            None => continue,
-                        }
+                        let router = runtime.router.read();
+                        router.backends().iter().map(|b| (b.name.clone(), b.addr)).collect()
                     };
 
                     for (name, addr) in &backends {
@@ -501,7 +496,8 @@ fn main() -> Result<()> {
                         let result = tokio::net::TcpStream::connect(addr).await;
                         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-                        if let Ok(mut health_map) = runtime.backend_health.write() {
+                        {
+                            let mut health_map = runtime.backend_health.write();
                             let entry = health_map.entry(name.clone())
                                 .or_insert_with(crab_route::BackendHealth::new_healthy);
                             let now_ms = std::time::SystemTime::now()
@@ -535,6 +531,17 @@ fn main() -> Result<()> {
     client_key_limiter.sync_all_keys(&runtime.keys);
     let client_key_rate_limiter = ClientKeyRateLimiter::new();
 
+    let semantic_threshold = config.semantic.similarity_threshold.unwrap_or(0.95);
+    let semantic_runtime: SharedSemanticRuntime = Arc::new(parking_lot::RwLock::new(SemanticRuntimeState::new(
+        config.semantic.enabled && semantic_cache.is_some(),
+        semantic_threshold,
+        SemanticGateConfig {
+            min_query_chars: config.semantic.min_query_chars,
+            max_query_chars: config.semantic.max_query_chars,
+            embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
+        },
+    )));
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -548,6 +555,8 @@ fn main() -> Result<()> {
         invalidate_scan_timeout_secs: mgmt_cfg.invalidate_scan_timeout_secs,
         client_key_limiter: client_key_limiter.clone(),
         upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
+        semantic_runtime: semantic_runtime.clone(),
+        semantic_cache: semantic_cache.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -559,12 +568,6 @@ fn main() -> Result<()> {
             }
         });
     });
-
-    let semantic_gate = SemanticGateConfig {
-        min_query_chars: config.semantic.min_query_chars,
-        max_query_chars: config.semantic.max_query_chars,
-        embed_only_on_exact_miss: config.semantic.embed_only_on_exact_miss,
-    };
 
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(
         config.limits.max_concurrent_requests,
@@ -579,7 +582,7 @@ fn main() -> Result<()> {
         runtime,
         tiered_cache,
         semantic_cache,
-        semantic_gate,
+        semantic_runtime: semantic_runtime.clone(),
         coalescer: {
             let max_inflight = config.upstream.max_coalesce_inflight.unwrap_or(1000);
             let timeout = config.upstream.coalesce_timeout_secs.unwrap_or(60);

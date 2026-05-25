@@ -286,7 +286,7 @@ impl LogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().unwrap().to_str().unwrap(),
+            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -303,8 +303,8 @@ impl LogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().unwrap();
-        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+        let parent = self.path.parent().expect("path has parent — validated at init");
+        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())
@@ -374,7 +374,7 @@ impl DebugLogWriter {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
-            self.path.file_name().unwrap().to_str().unwrap(),
+            self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8"),
             timestamp
         ));
 
@@ -391,8 +391,8 @@ impl DebugLogWriter {
     }
 
     fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self.path.parent().unwrap();
-        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+        let parent = self.path.parent().expect("path has parent — validated at init");
+        let file_name = self.path.file_name().expect("path has file_name — validated at init").to_str().expect("file_name is valid UTF-8");
 
         let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
             .filter_map(|e| e.ok())

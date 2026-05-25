@@ -2,8 +2,8 @@ use anyhow::Result;
 use crab_cache::TtlConfig;
 use crab_control::parse_backend_endpoints;
 use crab_proxy::{
-    build_profile_runtime, ConnectionConfig, DomainPolicy, ProfileBuildInput, RuntimeConfig,
-    StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    build_profile_runtime, resolve_profile_key_specs, ConnectionConfig, DomainPolicy,
+    ProfileBuildInput, RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -124,58 +124,34 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         })
         .collect();
 
-    let ttl = runtime
-        .ttl
-        .read()
-        .map(|t| t.clone())
-        .unwrap_or_else(|_| TtlConfig::new(3600));
+    let ttl = runtime.ttl.read().clone();
 
-    let fingerprint = runtime
-        .fingerprint
-        .read()
-        .map(|f| FingerprintSnapshot {
+    let fingerprint = {
+        let f = runtime.fingerprint.read();
+        FingerprintSnapshot {
             version: f.version,
             normalize_content: f.normalize_content,
-        })
-        .unwrap_or(FingerprintSnapshot {
-            version: 1,
-            normalize_content: true,
-        });
+        }
+    };
 
-    let upstream_base_url = runtime
-        .upstream_base_url
-        .read()
-        .map(|u| u.clone())
-        .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
+    let upstream_base_url = runtime.upstream_base_url.read().clone();
 
-    let fallback_model = runtime
-        .fallback_model
-        .read()
-        .map(|m| m.clone())
-        .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+    let fallback_model = runtime.fallback_model.read().clone();
 
     let backends: Vec<BackendSnapshot> = runtime
         .router
         .read()
-        .map(|router| {
-            router
-                .backends()
-                .iter()
-                .map(|b| BackendSnapshot {
-                    name: b.name.clone(),
-                    addr: b.addr.to_string(),
-                    weight: b.weight,
-                    tls_sni: b.tls_sni.clone(),
-                })
-                .collect()
+        .backends()
+        .iter()
+        .map(|b| BackendSnapshot {
+            name: b.name.clone(),
+            addr: b.addr.to_string(),
+            weight: b.weight,
+            tls_sni: b.tls_sni.clone(),
         })
-        .unwrap_or_default();
+        .collect();
 
-    let connection = runtime
-        .conn_config
-        .read()
-        .map(|c| (**c).clone())
-        .unwrap_or_default();
+    let connection = (**runtime.conn_config.read()).clone();
 
     let upstream_keys: Vec<UpstreamKeySnapshot> = runtime
         .upstream_pool()
@@ -194,50 +170,47 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         .into_iter()
         .collect();
 
-    let upstream_profiles: Vec<UpstreamProfileSnapshot> = runtime
-        .upstream_profiles
-        .read()
-        .map(|map| {
-            let mut ids: Vec<String> = map.keys().cloned().collect();
-            ids.sort();
-            ids.into_iter()
-                .filter_map(|id| {
-                    let profile = map.get(&id)?;
-                    let endpoints: Vec<BackendSnapshot> = profile
-                        .router
-                        .backends()
-                        .iter()
-                        .map(|b| BackendSnapshot {
-                            name: b.name.clone(),
-                            addr: b.addr.to_string(),
-                            weight: b.weight,
-                            tls_sni: b.tls_sni.clone(),
-                        })
-                        .collect();
-                    let keys: Vec<UpstreamKeySnapshot> = profile
-                        .resolve_upstream_pool()
-                        .to_specs()
-                        .into_iter()
-                        .map(|s| UpstreamKeySnapshot {
-                            id: s.id,
-                            secret: s.secret,
-                            enabled: s.enabled,
-                            account_id: s.account_id,
-                        })
-                        .collect();
-                    Some(UpstreamProfileSnapshot {
-                        id: profile.id.clone(),
-                        provider: profile.provider.as_str().to_string(),
-                        base_url: profile.base_url.clone(),
-                        fallback_model: profile.fallback_model.clone(),
-                        tls_sni: profile.tls_sni.clone(),
-                        endpoints,
-                        keys,
+    let upstream_profiles: Vec<UpstreamProfileSnapshot> = {
+        let map = runtime.upstream_profiles.read();
+        let mut ids: Vec<String> = map.keys().cloned().collect();
+        ids.sort();
+        ids.into_iter()
+            .filter_map(|id| {
+                let profile = map.get(&id)?;
+                let endpoints: Vec<BackendSnapshot> = profile
+                    .router
+                    .backends()
+                    .iter()
+                    .map(|b| BackendSnapshot {
+                        name: b.name.clone(),
+                        addr: b.addr.to_string(),
+                        weight: b.weight,
+                        tls_sni: b.tls_sni.clone(),
                     })
+                    .collect();
+                let keys: Vec<UpstreamKeySnapshot> = profile
+                    .resolve_upstream_pool()
+                    .to_specs()
+                    .into_iter()
+                    .map(|s| UpstreamKeySnapshot {
+                        id: s.id,
+                        secret: s.secret,
+                        enabled: s.enabled,
+                        account_id: s.account_id,
+                    })
+                    .collect();
+                Some(UpstreamProfileSnapshot {
+                    id: profile.id.clone(),
+                    provider: profile.provider.as_str().to_string(),
+                    base_url: profile.base_url.clone(),
+                    fallback_model: profile.fallback_model.clone(),
+                    tls_sni: profile.tls_sni.clone(),
+                    endpoints,
+                    keys,
                 })
-                .collect()
-        })
-        .unwrap_or_default();
+            })
+            .collect()
+    };
 
     let pipeline_globals = runtime.pipeline_globals();
     ControlPlaneSnapshot {
@@ -284,10 +257,9 @@ pub fn apply_snapshot_to_runtime(
     }
 
     if let Some(rt) = &snap.runtime {
-        if let Ok(mut ttl) = runtime.ttl.write() {
-            *ttl = rt.ttl.clone();
-        }
-        if let Ok(mut fp) = runtime.fingerprint.write() {
+        *runtime.ttl.write() = rt.ttl.clone();
+        {
+            let mut fp = runtime.fingerprint.write();
             fp.version = rt.fingerprint.version;
             fp.normalize_content = rt.fingerprint.normalize_content;
         }
@@ -296,15 +268,9 @@ pub fn apply_snapshot_to_runtime(
             crab_pipeline::PipelineMode::from_str(&rt.pipeline_mode),
             &rt.default_upstream_profile,
         );
-        if let Ok(mut base) = runtime.upstream_base_url.write() {
-            *base = rt.upstream_base_url.clone();
-        }
-        if let Ok(mut model) = runtime.fallback_model.write() {
-            *model = rt.fallback_model.clone();
-        }
-        if let Ok(mut conn) = runtime.conn_config.write() {
-            *conn = Arc::new(rt.connection.clone());
-        }
+        *runtime.upstream_base_url.write() = rt.upstream_base_url.clone();
+        *runtime.fallback_model.write() = rt.fallback_model.clone();
+        *runtime.conn_config.write() = Arc::new(rt.connection.clone());
 
         if !rt.backends.is_empty() {
             let tls_sni = rt.backends[0].tls_sni.clone();
@@ -312,10 +278,9 @@ pub fn apply_snapshot_to_runtime(
             let route_backends = parse_backend_endpoints(&endpoints, 1, &tls_sni)
                 .map_err(|errors| anyhow::anyhow!("{}", errors.join("; ")))?;
             let backend_names: Vec<String> = route_backends.iter().map(|b| b.name.clone()).collect();
-            if let Ok(mut router) = runtime.router.write() {
-                router.update(&route_backends)?;
-            }
-            if let Ok(mut health) = runtime.backend_health.write() {
+            runtime.router.write().update(&route_backends)?;
+            {
+                let mut health = runtime.backend_health.write();
                 health.clear();
                 for name in backend_names {
                     health.insert(name, crab_route::BackendHealth::new_healthy());
@@ -349,9 +314,11 @@ pub fn apply_snapshot_to_runtime(
                 tls_sni: Some(p.tls_sni.clone()),
                 default_weight: 1,
             };
+            // Apply key fallback: explicit -> default profile -> legacy global pool.
+            let resolved_specs = resolve_profile_key_specs(specs, &runtime, &p.id);
             let profile = build_profile_runtime(
                 input,
-                specs,
+                resolved_specs,
                 upstream_cooldown_secs,
                 None,
             )
@@ -366,7 +333,6 @@ pub fn apply_snapshot_to_runtime(
             let stale_ids: Vec<String> = runtime
                 .upstream_profiles
                 .read()
-                .map_err(|_| anyhow::anyhow!("upstream profiles lock poisoned"))?
                 .keys()
                 .filter(|id| !snapshot_ids.contains(*id))
                 .cloned()

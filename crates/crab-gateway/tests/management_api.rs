@@ -9,15 +9,18 @@ use crab_control::{
 use crab_gateway::management::{ManagementState, router};
 use crab_pipeline::{PipelineGlobals, PipelineMode, UpstreamProvider};
 use crab_proxy::{
-    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, UpstreamKeyPool,
-    UpstreamProfileRuntime,
+    ClientKeyLimiter, ConnectionConfig, ReasoningConfig, RuntimeConfig, SemanticRuntimeState,
+    UpstreamKeyPool, UpstreamProfileRuntime,
 };
+use crab_semantic::SemanticGateConfig;
 use crab_reasoning::ReasoningBackend;
+use parking_lot::RwLock as ParkingRwLock;
 use std::collections::HashMap;
 use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use crab_route::AffinityRouter;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 fn test_runtime() -> Arc<RuntimeConfig> {
@@ -59,6 +62,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         PipelineGlobals::default(),
         false,
         std::collections::HashSet::new(),
+        false,
     )
 }
 
@@ -97,6 +101,12 @@ async fn test_management_state() -> Option<ManagementState> {
         invalidate_scan_timeout_secs: 300,
         client_key_limiter: ClientKeyLimiter::new(),
         upstream_key_cooldown_secs: 60,
+        semantic_runtime: Arc::new(ParkingRwLock::new(SemanticRuntimeState::new(
+            false,
+            0.95,
+            SemanticGateConfig::default(),
+        ))),
+        semantic_cache: None,
     })
 }
 
@@ -1005,4 +1015,192 @@ async fn upstream_profiles_list_and_upsert() {
         .unwrap();
     let get_json: serde_json::Value = serde_json::from_slice(&get_bytes).unwrap();
     assert_eq!(get_json["keys"][0]["enabled"], false);
+}
+
+#[tokio::test]
+async fn runtime_reasoning_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/reasoning")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body: crab_control::ReasoningRuntimeConfigView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "thinking_mode": "auto",
+        "reasoning_effort": get_body.reasoning_effort,
+        "missing_reasoning_strategy": "recover",
+        "display_reasoning": !get_body.display_reasoning,
+        "collapsible_reasoning": get_body.collapsible_reasoning,
+        "cache_invalidate_recommended": false
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/reasoning")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_view: crab_control::ReasoningRuntimeConfigView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(put_view.thinking_mode, "enabled");
+    assert!(!put_view.display_reasoning);
+}
+
+#[tokio::test]
+async fn runtime_semantic_threshold_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let before: crab_control::SemanticRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "enabled": before.enabled,
+        "similarity_threshold": 0.88,
+        "min_query_chars": before.min_query_chars,
+        "max_query_chars": before.max_query_chars,
+        "embed_only_on_exact_miss": before.embed_only_on_exact_miss
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let after: crab_control::SemanticRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert!((after.similarity_threshold - 0.88).abs() < f64::EPSILON);
+}
+
+#[tokio::test]
+async fn runtime_semantic_enable_without_cache_returns_409() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_body = serde_json::json!({
+        "enabled": true,
+        "similarity_threshold": 0.95,
+        "min_query_chars": 8,
+        "max_query_chars": 4096,
+        "embed_only_on_exact_miss": true
+    });
+    let put_resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/semantic")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn runtime_connection_roundtrip() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/connection")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let before: crab_control::ConnectionRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+
+    let put_body = serde_json::json!({
+        "tcp_keepalive_idle_secs": before.tcp_keepalive_idle_secs + 1,
+        "tcp_keepalive_interval_secs": before.tcp_keepalive_interval_secs,
+        "tcp_keepalive_count": before.tcp_keepalive_count,
+        "idle_timeout_secs": before.idle_timeout_secs,
+        "h2_ping_interval_secs": before.h2_ping_interval_secs
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/runtime/connection")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let after: crab_control::ConnectionRuntimeView =
+        serde_json::from_slice(&axum::body::to_bytes(put_resp.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(
+        after.tcp_keepalive_idle_secs,
+        before.tcp_keepalive_idle_secs + 1
+    );
 }

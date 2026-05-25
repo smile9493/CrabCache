@@ -64,6 +64,7 @@ impl RequestCoalescer {
                     });
                 }
 
+                tokio::task::yield_now().await;
                 continue;
             }
 
