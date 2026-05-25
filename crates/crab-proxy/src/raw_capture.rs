@@ -195,6 +195,7 @@ impl RawCaptureLogger {
                     return;
                 }
 
+                let mut msg_count: u64 = 0;
                 while let Ok(msg) = rx.recv() {
                     // Write body files.
                     if let Some(body) = &msg.client_body {
@@ -215,8 +216,11 @@ impl RawCaptureLogger {
                         warn!("Raw capture index write failed: {}", e);
                     }
 
-                    // Periodic body file cleanup.
-                    cleanup_body_files(&dir_clone, max_body_files);
+                    // Throttled body file cleanup (every 100 messages).
+                    msg_count += 1;
+                    if msg_count % 100 == 0 {
+                        cleanup_body_files(&dir_clone, max_body_files);
+                    }
                 }
             })
             .expect("Failed to spawn raw capture logger thread");
@@ -289,8 +293,8 @@ impl RawCaptureLogger {
             apply_body_limit(b, self.max_upstream_bytes, self.mask_api_keys)
         });
 
-        // Determine whether upstream body differs from client.
-        let upstream_path = if upstream_body.is_some() && upstream_body != client_body {
+        // Determine whether upstream body differs from client (compare file-body bytes).
+        let upstream_path = if upstream_file_body.is_some() && upstream_file_body != client_file_body {
             Some(format!("{}.upstream.json", request_id))
         } else {
             None
@@ -301,12 +305,18 @@ impl RawCaptureLogger {
             None
         };
 
-        let capture_error = if client_body.is_some() && !client_json_ok {
-            Some("client body JSON parse failed".to_string())
-        } else if upstream_body.is_some() && !upstream_json_ok {
-            Some("upstream body JSON parse failed".to_string())
-        } else {
+        // Capture errors (concatenate both if both fail).
+        let mut errors = Vec::new();
+        if client_body.is_some() && !client_json_ok {
+            errors.push("client JSON parse failed");
+        }
+        if upstream_body.is_some() && !upstream_json_ok {
+            errors.push("upstream JSON parse failed");
+        }
+        let capture_error = if errors.is_empty() {
             None
+        } else {
+            Some(errors.join("; "))
         };
 
         let entry = RawCaptureEntry {
@@ -361,17 +371,19 @@ fn apply_body_limit(body: &[u8], max_bytes: usize, mask: bool) -> Vec<u8> {
 /// Mask `sk-*` / `sk-cc-*` tokens in body text.
 fn mask_body_api_keys(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let len = bytes.len();
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
     let mut i = 0;
     while i < len {
-        if i + 2 < len && bytes[i] == b's' && bytes[i + 1] == b'k' && bytes[i + 2] == b'-' {
+        if i + 2 < len && chars[i] == 's' && chars[i + 1] == 'k' && chars[i + 2] == '-' {
             let start = i;
             i += 3;
-            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_') {
+            while i < len
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '_')
+            {
                 i += 1;
             }
-            let token = &text[start..i];
+            let token: String = chars[start..i].iter().collect();
             if token.len() > 8 {
                 result.push_str(&token[..4]);
                 result.push_str("...");
@@ -381,7 +393,7 @@ fn mask_body_api_keys(text: &str) -> String {
                 result.push_str("***");
             }
         } else {
-            result.push(bytes[i] as char);
+            result.push(chars[i]);
             i += 1;
         }
     }

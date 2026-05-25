@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod cache;
+pub mod capture;
 pub mod composition;
 pub mod config;
 pub mod domains;
@@ -17,6 +18,7 @@ pub mod upstream;
 
 pub use audit::*;
 pub use cache::*;
+pub use capture::*;
 pub use composition::*;
 pub use config::*;
 pub use domains::*;

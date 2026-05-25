@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod capture;
 pub mod composition;
 pub mod domains;
 pub mod infra;

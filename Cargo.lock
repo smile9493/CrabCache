@@ -970,6 +970,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-admin-types",
+ "crab-capture",
  "crab-composition",
  "crab-control",
  "crab-proxy",
@@ -1002,6 +1003,7 @@ dependencies = [
 name = "crab-admin-types"
 version = "0.1.0"
 dependencies = [
+ "crab-capture",
  "crab-composition",
  "serde",
  "serde_json",

@@ -102,3 +102,12 @@ path = "/app/logs/trace.jsonl"
 # max_files = 10
 max_lines = 10000
 max_files = 5
+
+# Raw capture (packet-level analysis). Default OFF. See config/gateway.example.toml for docs.
+# [raw_capture]
+# enabled = false
+# dir = "/app/logs/raw_capture"
+# max_index_lines = 5000
+# max_body_files = 5000
+# mask_api_keys = false
+# skip_paths = ["/health", "/healthz", "/ready"]

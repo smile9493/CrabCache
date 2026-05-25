@@ -85,6 +85,12 @@ impl Translations {
             Locale::EnUS => "Insights",
         }
     }
+    pub fn tab_capture(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "包捕获",
+            Locale::EnUS => "Capture",
+        }
+    }
     pub fn tab_config(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "配置",

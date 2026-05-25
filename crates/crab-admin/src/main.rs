@@ -12,6 +12,7 @@ mod persist;
 mod trace_log;
 mod live_metrics;
 mod composition;
+mod raw_capture;
 mod routes;
 mod state;
 mod static_cache;

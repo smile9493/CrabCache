@@ -8,6 +8,7 @@ description = "Shared serde types for CrabCache Admin API and Dashboard (wasm-sa
 [dependencies]
 serde.workspace = true
 crab-composition.workspace = true
+crab-capture.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

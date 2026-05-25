@@ -264,3 +264,30 @@ max_files = 5
 # path = "/var/log/crabcache/trace-debug.jsonl"
 # max_lines = 5000
 # max_files = 3
+
+# ── Raw Capture (packet-level request analysis) ─────────────────
+# Captures full client + upstream JSON bodies per request for offline
+# packet structure analysis. Designed for diagnosing DeepSeek V4
+# thinking mode context explosion and downstream client issues.
+#
+# SECURITY: Raw bodies contain API keys and full prompts.
+#   - Default is OFF. Only enable in controlled/internal environments.
+#   - Set file permissions to 600 on the capture directory.
+#   - Do NOT expose the capture directory to the public internet.
+#
+# DISK: Each capture stores ~2x body size. For 64 MiB bodies, a single
+#   request can write up to 128 MiB. Monitor disk usage and adjust
+#   max_body_files to cap storage.
+#
+# Admin API: GET /api/admin/capture/list, /capture/{id}, /capture/stats
+# Dashboard: Requests page → Capture tab (client/upstream comparison)
+#
+# [raw_capture]
+# enabled = false
+# dir = "/var/log/crabcache/raw_capture"
+# max_index_lines = 5000
+# max_body_files = 5000
+# max_client_bytes = 0   # 0 = no limit (64 MiB gateway limit applies)
+# max_upstream_bytes = 0
+# mask_api_keys = false  # true = mask sk-* tokens in captured bodies
+# skip_paths = ["/health", "/healthz", "/ready"]

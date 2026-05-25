@@ -35,6 +35,7 @@ ring = "0.17"
 crab-admin-types.workspace = true
 crab-control.workspace = true
 crab-composition.workspace = true
+crab-capture.workspace = true
 crab-proxy.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
