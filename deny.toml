@@ -7,6 +7,7 @@ unmaintained = "workspace"
 yanked = "warn"
 ignore = [
     "RUSTSEC-2025-0134",  # rustls-pemfile unmaintained (transitive dep, no safe upgrade)
+    "RUSTSEC-2024-0437",  # protobuf: uncontrolled recursion (transitive dep via pingora)
 ]
 
 [licenses]
@@ -24,7 +25,7 @@ allow = [
     "OpenSSL",
     "MPL-2.0",
     "BSL-1.0",
-    "Zlib",
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

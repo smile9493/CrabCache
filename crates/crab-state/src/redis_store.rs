@@ -34,6 +34,8 @@ impl RedisStateStore {
         let pool = Pool::builder()
             .max_size(8)
             .connection_timeout(Duration::from_secs(5))
+            .idle_timeout(Some(Duration::from_secs(60)))
+            .max_lifetime(Some(Duration::from_secs(300)))
             .build(RedisConnectionManager::new(config.redis_url.clone())?)
             .await
             .context("Redis state store pool")?;

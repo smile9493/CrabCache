@@ -1005,6 +1005,7 @@ pub async fn sample_metrics_history(
     history: &parking_lot::RwLock<MetricsHistory>,
     store: Option<&crate::metrics_store::MetricsStore>,
     gateway_uptime_secs: u64,
+    pg_store: Option<&crate::pg::PgStore>,
 ) -> Result<(), String> {
     let body = fetch_gateway_metrics_cached(cache).await?;
     let now = std::time::SystemTime::now()
@@ -1019,6 +1020,17 @@ pub async fn sample_metrics_history(
         store.insert_snapshot(&snapshot, gateway_uptime_secs);
         let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());
         store.prune_older_than(cutoff);
+    }
+
+    // Dual-write to PostgreSQL.
+    if let Some(pg) = pg_store {
+        if let Err(e) = pg.insert_metric_snapshot(&snapshot, gateway_uptime_secs).await {
+            tracing::warn!(error = %e, "PG dual-write: insert_metric_snapshot failed");
+        }
+        let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());
+        if let Err(e) = pg.prune_metric_snapshots(cutoff).await {
+            tracing::warn!(error = %e, "PG dual-write: prune_metric_snapshots failed");
+        }
     }
 
     Ok(())

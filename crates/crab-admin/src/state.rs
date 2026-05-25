@@ -107,6 +107,8 @@ pub struct AppState {
     pub infra_speed_jobs: Arc<crate::infra::speed_test::SpeedTestJobs>,
     /// Log retention policy for automatic cleanup.
     pub log_retention: RwLock<RetentionPolicy>,
+    /// PostgreSQL store (None when CRADMIN_PG_URL is not set).
+    pub pg_store: Option<crate::pg::PgStore>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -351,6 +353,9 @@ impl AppState {
         // Open MetricsStore and hydrate memory ring from SQLite.
         let metrics_store = crate::metrics_store::MetricsStore::open().ok();
         let mut history = MetricsHistory::new();
+        // Note: PG hydration happens after pg_store is initialized (below).
+        // For now, hydrate from SQLite as before; PG snapshots will be merged
+        // if PG is available and has more data.
         if let Some(ref store) = metrics_store {
             let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
             let snapshots = store.load_snapshots_since(cutoff);
@@ -363,7 +368,7 @@ impl AppState {
             );
         }
 
-        Self {
+        let mut state = Self {
             start_time: now,
             current_version: env!("CARGO_PKG_VERSION").to_string(),
             admin_key: Arc::new(RwLock::new(Self::load_or_init_admin_key())),
@@ -460,7 +465,54 @@ impl AppState {
             infra_history: RwLock::new(crate::infra::history::InfraHistoryRing::new()),
             infra_speed_jobs: Arc::new(crate::infra::speed_test::SpeedTestJobs::new()),
             log_retention: RwLock::new(load_retention_policy()),
+            pg_store: None,
+        };
+
+        // Initialize PostgreSQL store (async) if configured.
+        let pg_cfg = crate::pg::PgConfig::from_env();
+        if pg_cfg.enabled() {
+            if let Some(url) = &pg_cfg.url {
+                match tokio::runtime::Handle::current()
+                    .block_on(crate::pg::PgStore::new(url, pg_cfg.max_pool_size))
+                {
+                    Ok(pg) => {
+                        tracing::info!("PostgreSQL store initialized");
+                        // Attempt one-time JSON → PG migration.
+                        if pg_cfg.migrate_from_json {
+                            if let Ok(migrated) = tokio::runtime::Handle::current()
+                                .block_on(pg.maybe_import_from_json(&loaded))
+                            {
+                                if migrated {
+                                    tracing::info!("JSON state imported into PostgreSQL");
+                                }
+                            }
+                        }
+                        // Hydrate metrics history from PG if it has more data than SQLite.
+                        let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+                        if let Ok(pg_snapshots) =
+                            tokio::runtime::Handle::current().block_on(pg.load_metric_snapshots_since(cutoff))
+                        {
+                            if pg_snapshots.len() > history.sample_count() {
+                                history = MetricsHistory::new();
+                                for s in &pg_snapshots {
+                                    history.append(s.clone());
+                                }
+                                tracing::info!(
+                                    hydrated = history.sample_count(),
+                                    "Metrics history restored from PostgreSQL (supersedes SQLite)"
+                                );
+                            }
+                        }
+                        state.pg_store = Some(pg);
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to initialize PostgreSQL; falling back to JSON/SQLite");
+                    }
+                }
+            }
         }
+
+        state
     }
 
     pub async fn fetch_gateway_metrics(&self) -> Result<String, String> {
@@ -551,6 +603,68 @@ impl AppState {
             &pool_secrets,
         );
         self.persist.save_debounced(file);
+
+        // Dual-write to PostgreSQL if available.
+        if let Some(ref pg) = self.pg_store {
+            let pg = pg.clone();
+            let pg_keys = keys_meta.clone();
+            let pg_policies = domain_policies.clone();
+            let pg_pool = pool_secrets.clone();
+            let pg_profiles = profile_secrets.clone();
+            let models_snap = file.models.clone();
+            let upstream_snap = file.upstream_snapshot.clone();
+            let notes = file.upstream_notes.clone();
+            let last_test = file.last_upstream_test.clone();
+            tokio::spawn(async move {
+                // Keys
+                for key in &pg_keys {
+                    if let Err(e) = pg.upsert_key(key).await {
+                        tracing::warn!(error = %e, key_id = %key.id, "PG dual-write: upsert_key failed");
+                    }
+                }
+                // Domain policies
+                if let Err(e) = pg.replace_policies(&pg_policies).await {
+                    tracing::warn!(error = %e, "PG dual-write: replace_policies failed");
+                }
+                // Pool secrets
+                if let Err(e) = pg.replace_pool_secrets(&pg_pool).await {
+                    tracing::warn!(error = %e, "PG dual-write: replace_pool_secrets failed");
+                }
+                // Profile secrets
+                for (pid, secrets) in &pg_profiles.by_profile {
+                    if let Err(e) = pg.replace_profile_secrets(pid, secrets).await {
+                        tracing::warn!(error = %e, profile_id = %pid, "PG dual-write: replace_profile_secrets failed");
+                    }
+                }
+                // Models
+                for (pid, synced_at) in &models_snap.synced_at_by_profile {
+                    let profile_models: Vec<_> = models_snap
+                        .models
+                        .iter()
+                        .filter(|m| &m.profile_id == pid)
+                        .cloned()
+                        .collect();
+                    if let Err(e) = pg.replace_models(pid, &profile_models, synced_at).await {
+                        tracing::warn!(error = %e, profile_id = %pid, "PG dual-write: replace_models failed");
+                    }
+                }
+                // Upstream config
+                if let Some(ref snap) = upstream_snap {
+                    if let Err(e) = pg
+                        .save_upstream(
+                            &snap.base_url,
+                            &snap.model,
+                            &snap.endpoints,
+                            notes.as_deref(),
+                            last_test.as_ref(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %e, "PG dual-write: save_upstream failed");
+                    }
+                }
+            });
+        }
     }
 
     /// Refresh cached profile_id → provider map from the gateway.

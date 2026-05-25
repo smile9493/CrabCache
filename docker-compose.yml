@@ -90,6 +90,8 @@ services:
       # Infra container monitoring
       - CRABCACHE_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME:-crabcache}
       - CRABCACHE_INFRA_CACHE_TTL_SECS=5
+      # PostgreSQL (optional; set CRADMIN_PG_URL to enable)
+      - CRADMIN_PG_URL=${CRADMIN_PG_URL:-}
     depends_on:
       gateway:
         condition: service_healthy
@@ -99,6 +101,26 @@ services:
       timeout: 3s
       retries: 3
       start_period: 25s
+    restart: unless-stopped
+
+  postgres:
+    profiles:
+      - admin
+    image: postgres:16-alpine
+    container_name: crabcache-postgres
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: crabcache_admin
+      POSTGRES_USER: crabcache
+      POSTGRES_PASSWORD: ${CRADMIN_PG_PASSWORD:-crabcache}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crabcache -d crabcache_admin"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   redis:
@@ -137,3 +159,4 @@ volumes:
   gateway_data:
   gateway_logs:
   admin_data:
+  postgres_data:

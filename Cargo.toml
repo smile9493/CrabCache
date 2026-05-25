@@ -89,6 +89,8 @@ crab-composition = { path = "crates/crab-composition" }
 crab-capture    = { path = "crates/crab-capture" }
 crab-admin-types = { path = "crates/crab-admin-types" }
 rusqlite       = { version = "0.32", features = ["bundled"] }
+tokio-postgres = "0.7"
+deadpool-postgres = { version = "0.14", features = ["serde"] }
 regex          = "1"
 unicode-normalization = "0.1"
 

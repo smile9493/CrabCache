@@ -8,6 +8,7 @@ mod metrics_store;
 mod network;
 mod openresty;
 mod overview;
+mod pg;
 mod persist;
 mod raw_capture;
 mod routes;
@@ -146,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
                     &metrics_state.metrics_history,
                     metrics_state.metrics_store.as_ref(),
                     uptime,
+                    metrics_state.pg_store.as_ref(),
                 )
                 .await
                 {
