@@ -20,15 +20,11 @@ pub fn SystemPage() -> impl IntoView {
                 tabs=vec!["General", "Pipeline", "Reasoning"]
                 active=active_tab
             />
-            <div class=move || if active_tab.get() == 0 { "" } else { "hidden" }>
-                <GeneralTab />
-            </div>
-            <div class=move || if active_tab.get() == 1 { "" } else { "hidden" }>
-                <PipelinePage />
-            </div>
-            <div class=move || if active_tab.get() == 2 { "" } else { "hidden" }>
-                <ReasoningPage />
-            </div>
+            {move || match active_tab.get() {
+                0 => view! { <GeneralTab /> }.into_any(),
+                1 => view! { <PipelinePage /> }.into_any(),
+                _ => view! { <ReasoningPage /> }.into_any(),
+            }}
         </div>
     }
 }

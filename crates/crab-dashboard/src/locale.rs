@@ -49,16 +49,10 @@ impl Translations {
             Locale::EnUS => "Keys & Budgets",
         }
     }
-    pub fn sidebar_routing(self) -> &'static str {
+    pub fn sidebar_cache(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "路由与缓存",
-            Locale::EnUS => "Routing & Cache",
-        }
-    }
-    pub fn sidebar_cache_ops(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "缓存运维",
-            Locale::EnUS => "Cache Ops",
+            Locale::ZhCN => "缓存",
+            Locale::EnUS => "Cache",
         }
     }
     pub fn sidebar_models(self) -> &'static str {
@@ -67,22 +61,16 @@ impl Translations {
             Locale::EnUS => "Models",
         }
     }
-    pub fn sidebar_reasoning(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "推理管线",
-            Locale::EnUS => "Reasoning",
-        }
-    }
-    pub fn sidebar_cursor_models(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "Cursor 别名",
-            Locale::EnUS => "Cursor Aliases",
-        }
-    }
     pub fn sidebar_logs(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "日志与追踪",
             Locale::EnUS => "Logs & Traces",
+        }
+    }
+    pub fn sidebar_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求",
+            Locale::EnUS => "Requests",
         }
     }
     pub fn sidebar_live(self) -> &'static str {

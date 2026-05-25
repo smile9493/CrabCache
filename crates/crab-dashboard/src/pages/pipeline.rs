@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::PipelineRuntimeConfig;
@@ -25,18 +24,15 @@ pub fn PipelinePage() -> impl IntoView {
     reload();
 
     view! {
-        <div class="page-content space-y-6">
-            <PageHeader
-                title=move || t.pipeline_title()
-                description=move || t.pipeline_desc()
-            >
+        <div class="space-y-4">
+            <div class="flex items-center justify-end">
                 <button
                     on:click=move |_| reload()
                     class="btn btn-secondary text-xs"
                 >
                     {t.overview_refresh()}
                 </button>
-            </PageHeader>
+            </div>
 
             <Alert variant="info" message=feedback.into() />
 

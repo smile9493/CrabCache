@@ -14,12 +14,10 @@ pub fn RequestsPage() -> impl IntoView {
                 tabs=vec!["Logs", "Insights"]
                 active=active_tab
             />
-            <div class=move || if active_tab.get() == 0 { "" } else { "hidden" }>
-                <LogsPage />
-            </div>
-            <div class=move || if active_tab.get() == 1 { "" } else { "hidden" }>
-                <CompositionPage />
-            </div>
+            {move || match active_tab.get() {
+                0 => view! { <LogsPage /> }.into_any(),
+                _ => view! { <CompositionPage /> }.into_any(),
+            }}
         </div>
     }
 }
