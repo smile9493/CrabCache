@@ -795,6 +795,21 @@ async fn patch_upstream_key(
             )
                 .into_response());
         }
+        // Fan-out: sync enabled status to all other profile pools.
+        let profile_ids: Vec<String> = {
+            let profiles = state.runtime.upstream_profiles.read();
+            profiles.keys().cloned().collect()
+        };
+        let default_id = state.runtime.default_upstream_profile_id();
+        for pid in &profile_ids {
+            if *pid == default_id {
+                continue;
+            }
+            if let Some(profile) = state.runtime.profile(pid) {
+                let peer_pool = profile.resolve_upstream_pool();
+                peer_pool.set_enabled(&id, enabled);
+            }
+        }
     }
     if req.secret.is_some() {
         return Err((

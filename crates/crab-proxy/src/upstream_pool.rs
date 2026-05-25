@@ -65,6 +65,19 @@ impl UpstreamKeyGuard {
     }
 }
 
+/// Diagnoses why `acquire()` returned `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolAcquireFailure {
+    /// No key slots at all (pool was initialized empty).
+    Empty,
+    /// All keys are explicitly disabled.
+    AllDisabled,
+    /// All keys are in cooldown (rate-limited); includes the minimum seconds until one recovers.
+    AllInCooldown { min_retry_secs: u64 },
+    /// Mix of disabled and in-cooldown keys (none available for any other reason).
+    Unavailable,
+}
+
 pub fn normalize_account_id(raw: &str) -> Arc<str> {
     let t = raw.trim();
     if t.is_empty() {
@@ -145,6 +158,46 @@ impl UpstreamKeyPool {
                     && s.cooldown_until_ms.load(Ordering::Relaxed) <= now
             })
             .count()
+    }
+
+    /// Diagnose why `acquire()` returns `None` without consuming a key.
+    pub fn diagnose_acquire_failure(&self) -> PoolAcquireFailure {
+        if self.slots.is_empty() {
+            return PoolAcquireFailure::Empty;
+        }
+        let now = now_ms();
+        let mut has_enabled = false;
+        let mut min_cooldown_remaining = u64::MAX;
+        let mut all_enabled_in_cooldown = true;
+
+        for slot in &self.slots {
+            let enabled = slot.enabled.load(Ordering::Relaxed);
+            let cooldown_until = slot.cooldown_until_ms.load(Ordering::Relaxed);
+            let in_cooldown = cooldown_until > now;
+
+            if enabled {
+                has_enabled = true;
+            }
+            if enabled && in_cooldown {
+                let remaining = (cooldown_until - now + 999) / 1000;
+                if remaining < min_cooldown_remaining {
+                    min_cooldown_remaining = remaining;
+                }
+            }
+            if enabled && !in_cooldown {
+                all_enabled_in_cooldown = false;
+            }
+        }
+
+        if !has_enabled {
+            return PoolAcquireFailure::AllDisabled;
+        }
+        if all_enabled_in_cooldown {
+            return PoolAcquireFailure::AllInCooldown {
+                min_retry_secs: min_cooldown_remaining.min(3600),
+            };
+        }
+        PoolAcquireFailure::Unavailable
     }
 
     pub fn list_status(&self) -> Vec<UpstreamKeyStatus> {
@@ -472,5 +525,78 @@ mod tests {
         assert_eq!(g1.key_id(), "key-1");
         drop(g1);
         assert!(UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-1").is_none());
+    }
+
+    #[test]
+    fn diagnose_empty_pool() {
+        let pool = UpstreamKeyPool::new(vec![], 60);
+        assert_eq!(pool.diagnose_acquire_failure(), PoolAcquireFailure::Empty);
+    }
+
+    #[test]
+    fn diagnose_all_disabled() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "k1".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: false,
+                    account_id: String::new(),
+                },
+                UpstreamKeySpec {
+                    id: "k2".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: false,
+                    account_id: String::new(),
+                },
+            ],
+            60,
+        );
+        assert_eq!(
+            pool.diagnose_acquire_failure(),
+            PoolAcquireFailure::AllDisabled
+        );
+    }
+
+    #[test]
+    fn diagnose_all_in_cooldown() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 120);
+        pool.report_rate_limited("key-1");
+        let failure = pool.diagnose_acquire_failure();
+        match failure {
+            PoolAcquireFailure::AllInCooldown { min_retry_secs } => {
+                assert!(min_retry_secs > 0 && min_retry_secs <= 120);
+            }
+            other => panic!("expected AllInCooldown, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn diagnose_mixed_disabled_and_cooldown() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "k1".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: false,
+                    account_id: String::new(),
+                },
+                UpstreamKeySpec {
+                    id: "k2".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+            ],
+            60,
+        );
+        pool.report_rate_limited("k2");
+        // One disabled, one in cooldown → AllInCooldown (all enabled keys are cooling down).
+        match pool.diagnose_acquire_failure() {
+            PoolAcquireFailure::AllInCooldown { min_retry_secs } => {
+                assert!(min_retry_secs > 0 && min_retry_secs <= 60);
+            }
+            other => panic!("expected AllInCooldown, got {:?}", other),
+        }
     }
 }
