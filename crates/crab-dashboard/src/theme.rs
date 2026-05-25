@@ -22,7 +22,7 @@ impl Theme {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Theme::Dark => "GitHub 深色",
+            Theme::Dark => "深色",
             Theme::Light => "晨光",
             Theme::Midnight => "极夜紫",
         }
