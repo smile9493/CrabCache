@@ -1,14 +1,16 @@
 use crate::keys::{portable_reasoning_keys, scoped_reasoning_keys};
+use crate::pg_store::PgReasoningStore;
 use crate::redis_store::RedisReasoningStore;
 use crate::store::ReasoningStore;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;
 
-/// Shared reasoning cache (SQLite single-instance or Redis multi-instance).
+/// Shared reasoning cache (SQLite single-instance, Redis, or PostgreSQL).
 pub enum ReasoningBackend {
     Sqlite(ReasoningStore),
     Redis(Arc<RedisReasoningStore>),
+    Pg(Arc<PgReasoningStore>),
 }
 
 impl ReasoningBackend {
@@ -40,6 +42,16 @@ impl ReasoningBackend {
         Ok(Self::Redis(store))
     }
 
+    /// Create a PG-backed reasoning store. Must be called from an async context.
+    pub async fn open_pg(
+        pg_url: &str,
+        max_age_seconds: Option<u64>,
+        max_rows: Option<usize>,
+    ) -> anyhow::Result<Self> {
+        let store = PgReasoningStore::connect(pg_url, max_age_seconds, max_rows).await?;
+        Ok(Self::Pg(Arc::new(store)))
+    }
+
     pub fn from_config(
         backend: &str,
         cache_db_path: &str,
@@ -55,6 +67,11 @@ impl ReasoningBackend {
         if effective == "redis" {
             let url = redis_url.filter(|s| !s.is_empty()).unwrap_or(l1_redis_url);
             Self::open_redis(url, max_age_seconds, max_rows, max_entry_bytes)
+        } else if effective == "pg" {
+            // PG backend requires async init — caller must use open_pg() directly.
+            Err(anyhow::anyhow!(
+                "PG reasoning backend requires async init; use ReasoningBackend::open_pg() instead"
+            ))
         } else {
             Self::open_sqlite(cache_db_path, max_age_seconds, max_rows)
         }
@@ -64,6 +81,15 @@ impl ReasoningBackend {
         match self {
             Self::Sqlite(s) => s.put(key, reasoning, message),
             Self::Redis(s) => s.put(key, reasoning, message),
+            Self::Pg(s) => {
+                let s = Arc::clone(s);
+                let key = key.to_string();
+                let reasoning = reasoning.to_string();
+                let message = message.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(s.put(&key, &reasoning, &message))
+                });
+            }
         }
     }
 
@@ -71,6 +97,13 @@ impl ReasoningBackend {
         match self {
             Self::Sqlite(s) => s.get(key),
             Self::Redis(s) => s.get(key),
+            Self::Pg(s) => {
+                let s = Arc::clone(s);
+                let key = key.to_string();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(s.get(&key))
+                })
+            }
         }
     }
 
@@ -161,6 +194,12 @@ impl ReasoningBackend {
         match self {
             Self::Sqlite(s) => s.clear(),
             Self::Redis(s) => s.clear(),
+            Self::Pg(s) => {
+                let s = Arc::clone(s);
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(s.clear())
+                })
+            }
         }
     }
 }

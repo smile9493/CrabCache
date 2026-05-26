@@ -1,6 +1,7 @@
 mod backend;
 mod keys;
 mod normalize;
+pub mod pg_store;
 mod redis_store;
 mod store;
 mod streaming;
