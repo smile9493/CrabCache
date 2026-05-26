@@ -4,7 +4,6 @@ use leptos::prelude::*;
 use crate::api;
 use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
-use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::page_visible::page_visible;
 use crate::types::{
@@ -233,11 +232,7 @@ fn VolumeTable(volumes: ReadSignal<Vec<VolumeDisk>>) -> impl IntoView {
 #[component]
 fn InfraHistoryChart(
     timeseries: ReadSignal<Option<InfraTimeseriesResponse>>,
-    window: ReadSignal<String>,
-    set_window: WriteSignal<String>,
     sample_count: ReadSignal<usize>,
-    selected_container: ReadSignal<String>,
-    on_reload: Callback<(String, String)>,
 ) -> impl IntoView {
     let t = use_translations();
 
@@ -269,39 +264,10 @@ fn InfraHistoryChart(
     });
 
     view! {
-        <div class="glass-card p-4 space-y-3">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <h3 class="text-sm font-semibold">{t.infra_history()}</h3>
-                    <p class="text-xs text-muted">
-                        {t.infra_history_samples()}: {sample_count}
-                    </p>
-                </div>
-                <div class="flex gap-2">
-                    <button
-                        type="button"
-                        class=move || if window.get() == "1h" { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
-                        on:click={
-                            let cid = selected_container;
-                            move |_| {
-                                set_window.set("1h".to_string());
-                                on_reload.run(("1h".to_string(), cid.get()));
-                            }
-                        }
-                    >"1h"</button>
-                    <button
-                        type="button"
-                        class=move || if window.get() == "24h" { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
-                        on:click={
-                            let cid = selected_container;
-                            move |_| {
-                                set_window.set("24h".to_string());
-                                on_reload.run(("24h".to_string(), cid.get()));
-                            }
-                        }
-                    >"24h"</button>
-                </div>
-            </div>
+        <>
+            <p class="text-xs text-theme-muted mb-3">
+                {t.infra_history_samples()}: {sample_count}
+            </p>
             <LineChart
                 x_labels=x_labels
                 series=series
@@ -309,7 +275,7 @@ fn InfraHistoryChart(
                 y_unit="%"
                 empty_message=t.infra_history_collecting()
             />
-        </div>
+        </>
     }
 }
 
@@ -454,12 +420,6 @@ pub fn InfraPage() -> impl IntoView {
         </PageHeader>
 
         <div class="page-content space-y-6">
-            <div class="flex flex-wrap gap-4 text-xs text-muted">
-                <span>{t.infra_compose_project()}: <strong class="text-foreground">{compose_project}</strong></span>
-                <span>{t.infra_last_collected()}: {move || format_unix_secs(last_collected.get().unwrap_or(0))}</span>
-                <span>{t.infra_history_samples()}: {history_samples}</span>
-            </div>
-
             {move || {
                 if !docker_connected.get() {
                     view! {
@@ -491,127 +451,187 @@ pub fn InfraPage() -> impl IntoView {
                 })
             }}
 
-            <SectionHeader title={t.infra_containers()} description="" />
-            <div class="glass-card overflow-hidden">
-                {move || {
-                    if docker_connected.get() {
-                        view! {
-                            <ContainerTable containers=containers.read_only() />
-                        }.into_any()
-                    } else {
-                        view! {
-                            <div class="p-8 text-center text-muted">
-                                <p class="text-lg">{t.infra_docker_unavailable()}</p>
-                            </div>
-                        }.into_any()
-                    }
-                }}
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <span class="dash-card-title">{t.infra_containers()}</span>
+                    <span class="panel-header-meta">
+                        {move || {
+                            let count = containers.get().len();
+                            let project = compose_project.get();
+                            if count > 0 && !project.is_empty() {
+                                format!("{} containers \u{00b7} {} \u{00b7} {}", count, project, format_unix_secs(last_collected.get().unwrap_or(0)))
+                            } else if count > 0 {
+                                format!("{} containers \u{00b7} {}", count, format_unix_secs(last_collected.get().unwrap_or(0)))
+                            } else {
+                                String::new()
+                            }
+                        }}
+                    </span>
+                </div>
+                <div class="dash-card-body-flush">
+                    {move || {
+                        if docker_connected.get() {
+                            view! {
+                                <ContainerTable containers=containers.read_only() />
+                            }.into_any()
+                        } else {
+                            view! {
+                                <div class="p-8 text-center text-theme-muted">
+                                    <p class="text-lg">{t.infra_docker_unavailable()}</p>
+                                </div>
+                            }.into_any()
+                        }
+                    }}
+                </div>
             </div>
 
-            <SectionHeader title={t.infra_host_disk()} description="" />
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <HostDiskCard disks=host_disks.read_only() />
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <span class="dash-card-title">{t.infra_host_disk()}</span>
+                </div>
+                <div class="dash-card-body">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <HostDiskCard disks=host_disks.read_only() />
+                    </div>
+                </div>
             </div>
 
             {move || (!volumes.get().is_empty()).then(|| view! {
-                <>
-                    <SectionHeader title={t.infra_volumes()} description="" />
-                    <div class="glass-card overflow-hidden">
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <span class="dash-card-title">{t.infra_volumes()}</span>
+                    </div>
+                    <div class="dash-card-body-flush">
                         <VolumeTable volumes=volumes.read_only() />
                     </div>
-                </>
+                </div>
             })}
 
             {move || docker_connected.get().then(|| {
                 let container_options = containers.get();
                 view! {
-                    <div class="flex flex-wrap items-center gap-2">
-                        <label class="text-sm text-muted" for="infra-chart-container">
-                            {t.infra_select_container()}
-                        </label>
-                        <select
-                            id="infra-chart-container"
-                            class="input input-sm"
-                            on:change=move |ev| {
-                                let value = event_target_value(&ev);
-                                selected_container.set(value.clone());
-                                load_timeseries(ts_window.get_untracked(), value);
-                            }
-                        >
-                            {container_options.into_iter().map(|c| {
-                                let id = c.container_id.clone();
-                                let name = c.name.clone();
-                                view! { <option value=id>{name}</option> }
-                            }).collect::<Vec<_>>()}
-                        </select>
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">{t.infra_history()}</span>
+                            <div class="flex items-center gap-2">
+                                <select
+                                    id="infra-chart-container"
+                                    class="input input-sm"
+                                    style="width: auto; min-width: 8rem;"
+                                    on:change=move |ev| {
+                                        let value = event_target_value(&ev);
+                                        selected_container.set(value.clone());
+                                        load_timeseries(ts_window.get_untracked(), value);
+                                    }
+                                >
+                                    {container_options.into_iter().map(|c| {
+                                        let id = c.container_id.clone();
+                                        let name = c.name.clone();
+                                        view! { <option value=id>{name}</option> }
+                                    }).collect::<Vec<_>>()}
+                                </select>
+                                <div class="flex gap-1">
+                                    <button
+                                        type="button"
+                                        class=move || if ts_window.get() == "1h" { "btn btn-primary btn-sm" } else { "btn btn-secondary btn-sm" }
+                                        on:click={
+                                            let cid = selected_container;
+                                            move |_| {
+                                                ts_window.set("1h".to_string());
+                                                reload_timeseries.run(("1h".to_string(), cid.get()));
+                                            }
+                                        }
+                                    >"1h"</button>
+                                    <button
+                                        type="button"
+                                        class=move || if ts_window.get() == "24h" { "btn btn-primary btn-sm" } else { "btn btn-secondary btn-sm" }
+                                        on:click={
+                                            let cid = selected_container;
+                                            move |_| {
+                                                ts_window.set("24h".to_string());
+                                                reload_timeseries.run(("24h".to_string(), cid.get()));
+                                            }
+                                        }
+                                    >"24h"</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dash-card-body">
+                            <InfraHistoryChart
+                                timeseries=timeseries.read_only()
+                                sample_count=history_samples.read_only()
+                            />
+                        </div>
                     </div>
-                    <InfraHistoryChart
-                        timeseries=timeseries.read_only()
-                        window=ts_window.read_only()
-                        set_window=ts_window.write_only()
-                        sample_count=history_samples.read_only()
-                        selected_container=selected_container.read_only()
-                        on_reload=reload_timeseries
-                    />
                 }
             })}
 
-            <SectionHeader title={t.infra_speed_test()} description="" />
-            <div class="glass-card p-4 space-y-3">
-                <div class="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        class="btn btn-secondary text-sm"
-                        disabled=move || speed_testing.get()
-                        on:click=run_speed_test("download")
-                    >
-                        {t.infra_speed_test_run()}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn btn-secondary text-sm"
-                        disabled=move || speed_testing.get()
-                        on:click=run_speed_test("upload")
-                    >
-                        {t.infra_speed_test_upload()}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn btn-secondary text-sm"
-                        disabled=move || speed_testing.get()
-                        on:click=run_speed_test("both")
-                    >
-                        {t.infra_speed_test_both()}
-                    </button>
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <span class="dash-card-title">{t.infra_speed_test()}</span>
                 </div>
-                {move || {
-                    if speed_testing.get() {
-                        Some(view! { <p class="text-sm text-muted">{speed_message.get()}</p> }.into_any())
-                    } else if let Some(job) = speed_job.get() {
-                        let mut lines = Vec::new();
-                        if let Some(mbps) = job.download_mbps {
-                            lines.push(format!("{}: {:.1} Mbps", t.infra_speed_test_result(), mbps));
-                        }
-                        if let Some(mbps) = job.upload_mbps {
-                            lines.push(format!("{}: {:.1} Mbps", t.infra_upload_result(), mbps));
-                        }
-                        if let Some(err) = &job.error {
-                            Some(view! { <p class="text-sm text-danger">{err.clone()}</p> }.into_any())
-                        } else if lines.is_empty() {
-                            None
+                <div class="dash-card-body space-y-3">
+                    <div class="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            class="btn btn-secondary text-sm"
+                            disabled=move || speed_testing.get()
+                            on:click=run_speed_test("download")
+                        >
+                            {t.infra_speed_test_run()}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-secondary text-sm"
+                            disabled=move || speed_testing.get()
+                            on:click=run_speed_test("upload")
+                        >
+                            {t.infra_speed_test_upload()}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-secondary text-sm"
+                            disabled=move || speed_testing.get()
+                            on:click=run_speed_test("both")
+                        >
+                            {t.infra_speed_test_both()}
+                        </button>
+                    </div>
+                    {move || {
+                        if speed_testing.get() {
+                            view! { <p class="text-sm text-theme-muted">{speed_message.get()}</p> }.into_any()
+                        } else if let Some(job) = speed_job.get() {
+                            let mut result_rows = Vec::new();
+                            if let Some(mbps) = job.download_mbps {
+                                result_rows.push(view! {
+                                    <div class="test-result-row">
+                                        <span class="test-result-label">{t.infra_speed_test_result()}</span>
+                                        <span class="test-result-value test-result-value-mono">{format!("{:.1} Mbps", mbps)}</span>
+                                    </div>
+                                });
+                            }
+                            if let Some(mbps) = job.upload_mbps {
+                                result_rows.push(view! {
+                                    <div class="test-result-row">
+                                        <span class="test-result-label">{t.infra_upload_result()}</span>
+                                        <span class="test-result-value test-result-value-mono">{format!("{:.1} Mbps", mbps)}</span>
+                                    </div>
+                                });
+                            }
+                            if let Some(err) = &job.error {
+                                view! { <p class="text-sm" style="color: var(--error)">{err.clone()}</p> }.into_any()
+                            } else if result_rows.is_empty() {
+                                ().into_any()
+                            } else {
+                                view! { <div class="test-result-panel mt-2">{result_rows}</div> }.into_any()
+                            }
+                        } else if !speed_message.get().is_empty() {
+                            view! { <p class="text-sm" style="color: var(--error)">{speed_message.get()}</p> }.into_any()
                         } else {
-                            Some(view! {
-                                <div class="text-sm space-y-1">
-                                    {lines.into_iter().map(|l| view! { <p>{l}</p> }).collect::<Vec<_>>()}
-                                </div>
-                            }.into_any())
+                            ().into_any()
                         }
-                    } else if !speed_message.get().is_empty() {
-                        Some(view! { <p class="text-sm text-danger">{speed_message.get()}</p> }.into_any())
-                    } else {
-                        None
-                    }
-                }}
+                    }}
+                </div>
             </div>
         </div>
     }
