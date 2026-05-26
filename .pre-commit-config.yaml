@@ -1,0 +1,13 @@
+repos:
+  # GitHub Actions workflows: YAML + expressions + shell snippets (static)
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.6.27
+    hooks:
+      # Prefer system binary to avoid Docker dependency.
+      - id: actionlint-system
+
+  # GitHub Actions workflows: schema/structure validation (static)
+  - repo: https://github.com/action-validator/pre-commit-hook
+    rev: v0.6.0
+    hooks:
+      - id: action-validator

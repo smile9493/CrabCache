@@ -409,6 +409,22 @@ cargo clippy --workspace -- -D warnings
 cargo test --workspace
 ```
 
+同时建议启用 **GitHub Actions 工作流的纯静态检查**（不依赖 Docker、不跑任何构建），在提交前几秒内拦截 YAML / 表达式 / 结构错误：
+
+```bash
+# 1) 安装（示例：Linux/macOS）
+brew install actionlint
+npm install -g action-validator
+
+# 2) 启用 pre-commit（首次）
+pip install pre-commit
+pre-commit install
+
+# 3) 手动运行（可选）
+actionlint
+action-validator .github/workflows/*.yml .github/workflows/*.yaml
+```
+
 ## 许可证
 
 MIT License — 详见 [LICENSE](LICENSE)。

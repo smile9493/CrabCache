@@ -1,0 +1,7 @@
+paths:
+  ignore:
+    # Keep generated/vendor folders out of lint scope (monorepo-safe defaults).
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/target/**"
