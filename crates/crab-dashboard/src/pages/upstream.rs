@@ -15,7 +15,9 @@ use crate::types::{
 const OFFICIAL_BASE: &str = "https://api.deepseek.com";
 const DEFAULT_MODEL: &str = "deepseek-v4-pro";
 const MIMO_BASE: &str = "https://api.xiaomimimo.com";
-const MIMO_MODEL: &str = "xiaomi/mimo-v2.5-pro";
+const MIMO_TOKEN_PLAN_CN_BASE: &str = "https://token-plan-cn.xiaomimimo.com";
+const MIMO_TOKEN_PLAN_SGP_BASE: &str = "https://token-plan-sgp.xiaomimimo.com";
+const MIMO_MODEL: &str = "mimo-v2.5-pro";
 
 fn parse_upstream_pool_line(line: &str) -> (String, String) {
     let t = line.trim();
@@ -646,6 +648,28 @@ pub fn UpstreamPage() -> impl IntoView {
                                         }
                                     >
                                         {t.upstream_preset_mimo()}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| {
+                                            base_url.set(MIMO_TOKEN_PLAN_CN_BASE.into());
+                                            model.set(MIMO_MODEL.into());
+                                            provider.set("mimo".into());
+                                        }
+                                    >
+                                        "MiMo TP CN"
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary text-xs"
+                                        on:click=move |_| {
+                                            base_url.set(MIMO_TOKEN_PLAN_SGP_BASE.into());
+                                            model.set(MIMO_MODEL.into());
+                                            provider.set("mimo".into());
+                                        }
+                                    >
+                                        "MiMo TP SGP"
                                     </button>
                                     <button
                                         type="button"
