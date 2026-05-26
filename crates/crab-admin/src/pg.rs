@@ -15,8 +15,9 @@ use crate::types::UpstreamTestResult;
 use anyhow::{Context, Result};
 use deadpool_postgres::{Config as PoolConfig, Pool, Runtime};
 use std::collections::HashMap;
+use std::time::Duration;
 use tokio_postgres::NoTls;
-use tracing::{info, warn};
+use tracing::info;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -64,6 +65,22 @@ impl PgConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Saturating cast: `u64` → `i64` (clamps at `i64::MAX` instead of wrapping).
+#[inline]
+fn to_pg_bigint(v: u64) -> i64 {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+/// Safe cast: `i64` → `u64` (negative values map to 0).
+#[inline]
+fn from_pg_bigint(v: i64) -> u64 {
+    v.max(0) as u64
+}
+
+// ---------------------------------------------------------------------------
 // PgStore
 // ---------------------------------------------------------------------------
 
@@ -78,8 +95,14 @@ impl PgStore {
     pub async fn new(url: &str, max_pool_size: usize) -> Result<Self> {
         let mut cfg = PoolConfig::new();
         cfg.url = Some(url.to_string());
+        cfg.connect_timeout = Some(Duration::from_secs(5));
         cfg.pool = Some(deadpool_postgres::PoolConfig {
             max_size: max_pool_size,
+            timeouts: deadpool_postgres::Timeouts {
+                wait: Some(Duration::from_secs(10)),
+                create: Some(Duration::from_secs(5)),
+                recycle: Some(Duration::from_secs(5)),
+            },
             ..Default::default()
         });
 
@@ -217,10 +240,14 @@ impl PgStore {
             )
             .await?;
 
+        // Note: sampled_at is PRIMARY KEY so an implicit index already exists.
+
         client
             .execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_at
-                 ON metrics_snapshots(sampled_at)",
+                "CREATE TABLE IF NOT EXISTS schema_migration (
+                    version     INTEGER PRIMARY KEY,
+                    migrated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
                 &[],
             )
             .await?;
@@ -259,7 +286,8 @@ impl PgStore {
             )
             .await?;
 
-        let model_limits_json = serde_json::to_string(&meta.model_limits).unwrap_or_default();
+        let model_limits_json =
+            serde_json::to_string(&meta.model_limits).context("serialize model_limits")?;
         client
             .execute(
                 &stmt,
@@ -267,17 +295,17 @@ impl PgStore {
                     &meta.id,
                     &meta.token,
                     &meta.name,
-                    &(meta.rpm_limit as i64),
-                    &(meta.monthly_token_limit as i64),
-                    &meta.expired_at.map(|v| v as i64),
+                    &to_pg_bigint(meta.rpm_limit),
+                    &to_pg_bigint(meta.monthly_token_limit),
+                    &meta.expired_at.map(to_pg_bigint),
                     &model_limits_json,
                     &meta.remain_quota,
                     &meta.unlimited_quota,
                     &(meta.max_concurrent as i32),
                     &meta.usage_month,
-                    &(meta.tokens_this_month as i64),
-                    &(meta.input_tokens as i64),
-                    &(meta.output_tokens as i64),
+                    &to_pg_bigint(meta.tokens_this_month),
+                    &to_pg_bigint(meta.input_tokens),
+                    &to_pg_bigint(meta.output_tokens),
                 ],
             )
             .await?;
@@ -313,17 +341,17 @@ impl PgStore {
                 id: row.get(0),
                 token: row.get(1),
                 name: row.get(2),
-                rpm_limit: row.get::<_, i64>(3) as u64,
-                monthly_token_limit: row.get::<_, i64>(4) as u64,
-                expired_at: row.get::<_, Option<i64>>(5).map(|v| v as u64),
+                rpm_limit: from_pg_bigint(row.get(3)),
+                monthly_token_limit: from_pg_bigint(row.get(4)),
+                expired_at: row.get::<_, Option<i64>>(5).map(from_pg_bigint),
                 model_limits,
                 remain_quota: row.get(7),
                 unlimited_quota: row.get(8),
                 max_concurrent: row.get::<_, i32>(9) as u32,
                 usage_month: row.get(10),
-                tokens_this_month: row.get::<_, i64>(11) as u64,
-                input_tokens: row.get::<_, i64>(12) as u64,
-                output_tokens: row.get::<_, i64>(13) as u64,
+                tokens_this_month: from_pg_bigint(row.get(11)),
+                input_tokens: from_pg_bigint(row.get(12)),
+                output_tokens: from_pg_bigint(row.get(13)),
             });
         }
         Ok(out)
@@ -361,7 +389,7 @@ impl PgStore {
                     &m.profile_id,
                     &m.id,
                     &m.owned_by,
-                    &m.context_length.map(|v| v as i64),
+                    &m.context_length.map(to_pg_bigint),
                     &m.input_price_per_mtok,
                     &m.output_price_per_mtok,
                     &m.available,
@@ -401,7 +429,7 @@ impl PgStore {
                 profile_id: row.get(0),
                 id: row.get(1),
                 owned_by: row.get(2),
-                context_length: row.get::<_, Option<i64>>(3).map(|v| v as u64),
+                context_length: row.get::<_, Option<i64>>(3).map(from_pg_bigint),
                 input_price_per_mtok: row.get(4),
                 output_price_per_mtok: row.get(5),
                 available: row.get(6),
@@ -443,7 +471,7 @@ impl PgStore {
                 &stmt,
                 &[
                     &p.domain,
-                    &(p.monthly_token_budget as i64),
+                    &to_pg_bigint(p.monthly_token_budget),
                     &p.monthly_cost_budget_usd,
                     &p.min_hit_rate,
                     &p.enabled,
@@ -473,7 +501,7 @@ impl PgStore {
             .into_iter()
             .map(|row| PersistedDomainPolicy {
                 domain: row.get(0),
-                monthly_token_budget: row.get::<_, i64>(1) as u64,
+                monthly_token_budget: from_pg_bigint(row.get(1)),
                 monthly_cost_budget_usd: row.get(2),
                 min_hit_rate: row.get(3),
                 enabled: row.get(4),
@@ -496,11 +524,12 @@ impl PgStore {
         last_test: Option<&UpstreamTestResult>,
     ) -> Result<()> {
         let client = self.pool.get().await?;
-        let endpoints_json = serde_json::to_string(endpoints).unwrap_or_default();
+        let endpoints_json =
+            serde_json::to_string(endpoints).context("serialize endpoints")?;
         let last_test_json = last_test
             .map(serde_json::to_string)
             .transpose()
-            .unwrap_or_default();
+            .context("serialize last_test")?;
 
         client
             .execute(
@@ -675,15 +704,15 @@ impl PgStore {
         gateway_uptime_secs: u64,
     ) -> Result<()> {
         let client = self.pool.get().await?;
-        let payload = serde_json::to_string(snapshot).unwrap_or_default();
+        let payload = serde_json::to_string(snapshot).context("serialize metrics snapshot")?;
         client
             .execute(
                 "INSERT INTO metrics_snapshots (sampled_at, gateway_uptime_secs, payload)
                  VALUES ($1, $2, $3::jsonb)
                  ON CONFLICT (sampled_at) DO NOTHING",
                 &[
-                    &(snapshot.sampled_at as i64),
-                    &(gateway_uptime_secs as i64),
+                    &to_pg_bigint(snapshot.sampled_at),
+                    &to_pg_bigint(gateway_uptime_secs),
                     &payload,
                 ],
             )
@@ -700,7 +729,7 @@ impl PgStore {
             .query(
                 "SELECT payload FROM metrics_snapshots
                  WHERE sampled_at >= $1 ORDER BY sampled_at ASC",
-                &[&(cutoff_ts as i64)],
+                &[&(to_pg_bigint(cutoff_ts))],
             )
             .await?;
 
@@ -724,7 +753,7 @@ impl PgStore {
             )
             .await?;
 
-        Ok(rows.first().map(|row| row.get::<_, i64>(0) as u64))
+        Ok(rows.first().map(|row| from_pg_bigint(row.get(0))))
     }
 
     pub async fn prune_metric_snapshots(&self, cutoff_ts: u64) -> Result<()> {
@@ -732,7 +761,7 @@ impl PgStore {
         client
             .execute(
                 "DELETE FROM metrics_snapshots WHERE sampled_at < $1",
-                &[&(cutoff_ts as i64)],
+                &[&(to_pg_bigint(cutoff_ts))],
             )
             .await?;
         Ok(())
@@ -782,25 +811,33 @@ impl PgStore {
     // -----------------------------------------------------------------------
 
     /// Import data from a loaded `AdminStateFile` into PG.
-    /// Only runs when PG tables are empty (checked via `keys_meta` count).
+    /// Uses a `schema_migration` table to track whether the import has been done.
+    /// Returns `Ok(true)` if import succeeded, `Ok(false)` if skipped (already done).
     pub async fn maybe_import_from_json(&self, json: &AdminStateFile) -> Result<bool> {
         let client = self.pool.get().await?;
-        let count: i64 = client
-            .query_one("SELECT COUNT(*) FROM keys_meta", &[])
+
+        // Check if migration already completed.
+        let migrated: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version = 1)",
+                &[],
+            )
             .await?
             .get(0);
 
-        if count > 0 {
-            info!("PG tables already populated; skipping JSON import");
+        if migrated {
+            info!("JSON → PG migration already completed; skipping");
             return Ok(false);
         }
 
         info!("Importing admin state from JSON into PostgreSQL...");
+        let mut failures: u32 = 0;
 
         // Import keys_meta
         for key in &json.keys_meta {
             if let Err(e) = self.upsert_key(key).await {
-                warn!(error = %e, key_id = %key.id, "Failed to import key to PG");
+                tracing::error!(error = %e, key_id = %key.id, "Failed to import key to PG");
+                failures += 1;
             }
         }
 
@@ -817,13 +854,15 @@ impl PgStore {
                 .replace_models(profile_id, &profile_models, synced_at)
                 .await
             {
-                warn!(error = %e, profile_id = %profile_id, "Failed to import models to PG");
+                tracing::error!(error = %e, profile_id = %profile_id, "Failed to import models to PG");
+                failures += 1;
             }
         }
 
         // Import domain policies
         if let Err(e) = self.replace_policies(&json.domain_policies).await {
-            warn!(error = %e, "Failed to import domain policies to PG");
+            tracing::error!(error = %e, "Failed to import domain policies to PG");
+            failures += 1;
         }
 
         // Import upstream config
@@ -838,27 +877,47 @@ impl PgStore {
                 )
                 .await
             {
-                warn!(error = %e, "Failed to import upstream config to PG");
+                tracing::error!(error = %e, "Failed to import upstream config to PG");
+                failures += 1;
             }
         }
 
         // Import pool secrets
         if let Err(e) = self.replace_pool_secrets(&json.upstream_pool_secrets).await {
-            warn!(error = %e, "Failed to import pool secrets to PG");
+            tracing::error!(error = %e, "Failed to import pool secrets to PG");
+            failures += 1;
         }
 
         // Import profile secrets
         for (profile_id, secrets) in &json.upstream_profile_secrets.by_profile {
             if let Err(e) = self.replace_profile_secrets(profile_id, secrets).await {
-                warn!(
+                tracing::error!(
                     error = %e,
                     profile_id = %profile_id,
                     "Failed to import profile secrets to PG"
                 );
+                failures += 1;
             }
         }
 
-        info!("JSON → PG migration complete");
+        if failures > 0 {
+            tracing::error!(
+                failures,
+                "JSON → PG migration completed with errors; PG state may be incomplete"
+            );
+            // Still mark as migrated to avoid infinite retry on partial data.
+            // The failed entities can be re-synced via the dual-write path.
+        }
+
+        // Mark migration as complete.
+        client
+            .execute(
+                "INSERT INTO schema_migration (version) VALUES (1) ON CONFLICT DO NOTHING",
+                &[],
+            )
+            .await?;
+
+        info!(failures, "JSON → PG migration complete");
         Ok(true)
     }
 

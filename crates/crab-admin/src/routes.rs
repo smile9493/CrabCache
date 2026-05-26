@@ -93,6 +93,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_prefix_cache_metrics),
         )
         .route("/api/admin/gateway/health", get(get_gateway_health))
+        .route("/api/admin/pg/health", get(get_pg_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key).patch(patch_key))
@@ -480,6 +481,91 @@ async fn post_system_update(
 
 async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayHealthView> {
     Json(crate::overview::build_gateway_health(&state).await)
+}
+
+const PG_HEALTH_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[derive(serde::Serialize, Clone)]
+struct PgHealthResponse {
+    configured: bool,
+    connected: bool,
+    pool_available: Option<usize>,
+    pool_max: Option<usize>,
+    error: Option<String>,
+}
+
+async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthResponse> {
+    // Check TTL cache first.
+    {
+        let cache = state.pg_health_cache.read();
+        if let Some((at, health)) = cache.as_ref() {
+            if at.elapsed() < PG_HEALTH_TTL {
+                return Json(PgHealthResponse {
+                    configured: health.configured,
+                    connected: health.connected,
+                    pool_available: health.pool_available,
+                    pool_max: health.pool_max,
+                    error: health.error.clone(),
+                });
+            }
+        }
+    }
+
+    // Clone PgStore out of the lock before any await points.
+    let pg_clone = state.pg_store.read().clone();
+
+    let health = match pg_clone {
+        None => {
+            if state.pg_pending_config.read().is_some() {
+                PgHealthResponse {
+                    configured: true,
+                    connected: false,
+                    pool_available: None,
+                    pool_max: None,
+                    error: Some("connection pending (retry in progress)".to_string()),
+                }
+            } else {
+                PgHealthResponse {
+                    configured: false,
+                    connected: false,
+                    pool_available: None,
+                    pool_max: None,
+                    error: None,
+                }
+            }
+        }
+        Some(pg) => {
+            let pool = pg.pool();
+            let status = pool.status();
+            match pool.get().await {
+                Ok(_client) => PgHealthResponse {
+                    configured: true,
+                    connected: true,
+                    pool_available: Some(status.available),
+                    pool_max: Some(status.max_size),
+                    error: None,
+                },
+                Err(e) => PgHealthResponse {
+                    configured: true,
+                    connected: false,
+                    pool_available: Some(status.available),
+                    pool_max: Some(status.max_size),
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+    };
+
+    // Update cache with PgHealth type for consistency.
+    let cache_health = crate::types::PgHealth {
+        configured: health.configured,
+        connected: health.connected,
+        pool_available: health.pool_available,
+        pool_max: health.pool_max,
+        error: health.error.clone(),
+    };
+    *state.pg_health_cache.write() = Some((std::time::Instant::now(), cache_health));
+    Json(health)
 }
 
 async fn get_network_info() -> Json<NetworkInfo> {

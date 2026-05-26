@@ -3,10 +3,25 @@
 
 pub use crab_admin_types::*;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Historical alias used across admin overview routes (same wire shape as [`GatewayHealth`]).
 pub type GatewayHealthView = GatewayHealth;
+
+/// PostgreSQL connection health status.
+#[derive(Debug, Clone, Serialize)]
+pub struct PgHealth {
+    /// Whether PG is configured (CRADMIN_PG_URL is set).
+    pub configured: bool,
+    /// Whether the connection pool is reachable.
+    pub connected: bool,
+    /// Number of connections currently available in the pool.
+    pub pool_available: Option<usize>,
+    /// Maximum pool size.
+    pub pool_max: Option<usize>,
+    /// Error message (if any).
+    pub error: Option<String>,
+}
 
 /// Query parameters for `GET /api/admin/models`.
 #[derive(Debug, Deserialize)]

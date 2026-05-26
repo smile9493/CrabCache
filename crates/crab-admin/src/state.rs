@@ -108,7 +108,13 @@ pub struct AppState {
     /// Log retention policy for automatic cleanup.
     pub log_retention: RwLock<RetentionPolicy>,
     /// PostgreSQL store (None when CRADMIN_PG_URL is not set).
-    pub pg_store: Option<crate::pg::PgStore>,
+    pub pg_store: parking_lot::RwLock<Option<crate::pg::PgStore>>,
+    /// PG config retained for background retry when initial connection fails.
+    pub pg_pending_config: parking_lot::RwLock<Option<(String, usize, bool)>>, // (url, max_pool_size, migrate_from_json)
+    /// Serializes concurrent PG dual-write tasks to prevent DELETE-then-INSERT races.
+    pub pg_write_lock: Arc<AsyncMutex<()>>,
+    /// Cached PG health probe (TTL-based, like GatewayProbe).
+    pub pg_health_cache: RwLock<Option<(Instant, crate::types::PgHealth)>>,
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -367,7 +373,7 @@ impl AppState {
             );
         }
 
-        let mut state = Self {
+        let state = Self {
             start_time: now,
             current_version: env!("CARGO_PKG_VERSION").to_string(),
             admin_key: Arc::new(RwLock::new(Self::load_or_init_admin_key())),
@@ -465,7 +471,10 @@ impl AppState {
             infra_history: RwLock::new(crate::infra::history::InfraHistoryRing::new()),
             infra_speed_jobs: Arc::new(crate::infra::speed_test::SpeedTestJobs::new()),
             log_retention: RwLock::new(load_retention_policy()),
-            pg_store: None,
+            pg_store: parking_lot::RwLock::new(None),
+            pg_pending_config: parking_lot::RwLock::new(None),
+            pg_write_lock: Arc::new(AsyncMutex::new(())),
+            pg_health_cache: RwLock::new(None),
         };
 
         // Initialize PostgreSQL store (async) if configured.
@@ -505,10 +514,15 @@ impl AppState {
                                 );
                             }
                         }
-                        state.pg_store = Some(pg);
+                        *state.pg_store.write() = Some(pg);
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Failed to initialize PostgreSQL; falling back to JSON/SQLite");
+                        tracing::warn!(error = %e, "Failed to initialize PostgreSQL; will retry in background");
+                        *state.pg_pending_config.write() = Some((
+                            url.clone(),
+                            pg_cfg.max_pool_size,
+                            pg_cfg.migrate_from_json,
+                        ));
                     }
                 }
             }
@@ -606,7 +620,7 @@ impl AppState {
         );
 
         // Dual-write to PostgreSQL if available (extract data before moving file).
-        let pg_task = if let Some(ref pg) = self.pg_store {
+        let pg_task = if let Some(ref pg) = *self.pg_store.read() {
             let pg = pg.clone();
             let pg_keys = keys_meta;
             let pg_policies = domain_policies;
@@ -624,7 +638,9 @@ impl AppState {
         self.persist.save_debounced(file);
 
         if let Some((pg, pg_keys, pg_policies, pg_pool, pg_profiles, models_snap, upstream_snap, notes, last_test)) = pg_task {
+            let write_lock = self.pg_write_lock.clone();
             tokio::spawn(async move {
+                let _guard = write_lock.lock().await;
                 for key in &pg_keys {
                     if let Err(e) = pg.upsert_key(key).await {
                         tracing::warn!(error = %e, key_id = %key.id, "PG dual-write: upsert_key failed");

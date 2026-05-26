@@ -142,12 +142,13 @@ async fn main() -> anyhow::Result<()> {
                     .as_ref()
                     .and_then(|(_, p)| p.status.as_ref().map(|s| s.uptime_secs))
                     .unwrap_or(0);
+                let pg_ref = metrics_state.pg_store.read().clone();
                 if let Err(e) = crate::metrics_history::sample_metrics_history(
                     &metrics_state.gateway_metrics_cache,
                     &metrics_state.metrics_history,
                     metrics_state.metrics_store.as_ref(),
                     uptime,
-                    metrics_state.pg_store.as_ref(),
+                    pg_ref.as_ref(),
                 )
                 .await
                 {
@@ -157,6 +158,64 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         info!(interval_secs, "Metrics history sampler started");
+    }
+
+    // Background PG init retry: if PG was configured but unavailable at startup,
+    // retry every 30s until connected, then run migration and hydrate metrics.
+    if state.pg_pending_config.read().is_some() {
+        let retry_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let pending = retry_state.pg_pending_config.read().clone();
+                let Some((url, pool_size, migrate)) = pending else {
+                    break; // PG connected or never configured
+                };
+                match crate::pg::PgStore::new(&url, pool_size).await {
+                    Ok(pg) => {
+                        info!("PostgreSQL connection established on retry");
+                        if migrate {
+                            if let Ok(true) = pg
+                                .maybe_import_from_json(&retry_state.persist.load())
+                                .await
+                            {
+                                info!("JSON state imported into PostgreSQL (retry)");
+                            }
+                        }
+                        // Hydrate metrics from PG.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let cutoff = now
+                            .saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+                        if let Ok(snaps) = pg.load_metric_snapshots_since(cutoff).await {
+                            let sqlite_count =
+                                retry_state.metrics_history.read().sample_count();
+                            if snaps.len() > sqlite_count {
+                                let mut hist = retry_state.metrics_history.write();
+                                *hist = crate::metrics_history::MetricsHistory::new();
+                                for s in &snaps {
+                                    hist.append(s.clone());
+                                }
+                                info!(
+                                    hydrated = hist.sample_count(),
+                                    "Metrics history restored from PostgreSQL (retry)"
+                                );
+                            }
+                        }
+                        *retry_state.pg_store.write() = Some(pg);
+                        *retry_state.pg_pending_config.write() = None;
+                        info!("PostgreSQL fully initialized (retry successful)");
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!(error = %e, "PG retry failed; will try again in 30s");
+                    }
+                }
+            }
+        });
+        info!("Background PG init retry started (every 30s)");
     }
 
     {
