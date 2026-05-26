@@ -539,7 +539,7 @@ async fn status(
 ) -> Result<Json<GatewayStatus>, Response> {
     authorize(&headers, &state.admin_key)?;
     let backend_count = state.runtime.router.read().backends().len();
-    let pool = state.runtime.upstream_pool();
+    let (upstream_key_count, upstream_keys_available) = state.runtime.default_upstream_key_stats();
     let upstream_base_url = Some(state.runtime.upstream_base_url.read().clone());
     let upstream_model = Some(state.runtime.fallback_model.read().clone());
     Ok(Json(GatewayStatus {
@@ -547,8 +547,8 @@ async fn status(
         active_keys: state.runtime.keys.len() as u64,
         backend_count,
         stream_cache_enabled: state.runtime.stream_cache_enabled(),
-        upstream_key_count: pool.len(),
-        upstream_keys_available: pool.available_count(),
+        upstream_key_count,
+        upstream_keys_available,
         upstream_base_url,
         upstream_model,
     }))
@@ -855,7 +855,7 @@ async fn patch_upstream_key(
 }
 
 fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
-    let pool = runtime.upstream_pool();
+    let pool = runtime.default_profile().resolve_upstream_pool();
     UpstreamKeysView {
         keys: pool
             .list_status()

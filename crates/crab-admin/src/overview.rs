@@ -25,6 +25,19 @@ const DEFAULT_OVERVIEW_TIMESERIES_CACHE_TTL: Duration = Duration::from_secs(60);
 
 use crate::metrics_history::BucketKind;
 
+/// Align overview key-pool counts with upstream profile list (same as Dashboard upstream tabs).
+async fn enrich_ops_upstream_keys(state: &Arc<AppState>, ops: &mut crate::types::OverviewOpsMetrics) {
+    let Ok(resp) = state.gateway.list_upstream_profiles().await else {
+        return;
+    };
+    let default_id = resp.default_profile_id;
+    if let Some(p) = resp.profiles.iter().find(|p| p.id == default_id) {
+        ops.upstream_key_count = p.key_pool_count as u32;
+        ops.upstream_keys_available = p.keys_available as u32;
+        ops.upstream_default_profile_id = Some(default_id);
+    }
+}
+
 /// Maps the `window` query parameter to the (bucket kind, window seconds) pair.
 fn resolve_timeseries_params(window: &str) -> (BucketKind, u64) {
     match window {
@@ -256,6 +269,7 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
         ops.upstream_key_count = status.upstream_key_count as u32;
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
+    enrich_ops_upstream_keys(state, &mut ops).await;
 
     let trace_summary = cached_trace_summary(state, 24).await;
 
@@ -332,6 +346,7 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
         ops.upstream_key_count = status.upstream_key_count as u32;
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
+    enrich_ops_upstream_keys(state, &mut ops).await;
 
     let trace_summary = cached_trace_summary(state, 24).await;
 

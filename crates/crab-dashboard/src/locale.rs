@@ -2284,6 +2284,16 @@ impl Translations {
             Locale::EnUS => "Manage upstream",
         }
     }
+    pub fn overview_upstream_keys_hint(self, default_profile_id: &str) -> String {
+        match self.locale {
+            Locale::ZhCN => format!(
+                "默认 Profile「{default_profile_id}」可用/已配置；其它 Profile 见上游配置页 Tab"
+            ),
+            Locale::EnUS => format!(
+                "Default profile \"{default_profile_id}\" available/configured; see other profiles on Upstream page"
+            ),
+        }
+    }
     pub fn overview_prefix_health_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "前缀与 Reasoning 保护",

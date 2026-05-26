@@ -242,6 +242,9 @@ pub struct OverviewOpsMetrics {
     pub stream_cache_sse_omitted: u64,
     pub upstream_key_count: u32,
     pub upstream_keys_available: u32,
+    /// Default upstream profile id (keys above are for this profile).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_default_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

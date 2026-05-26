@@ -1455,6 +1455,21 @@ pub fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
 #[component]
 pub fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
+    let locale = crate::locale::use_locale();
+    let hint = ops
+        .upstream_default_profile_id
+        .as_deref()
+        .map(|id| t.overview_upstream_keys_hint(id))
+        .unwrap_or_else(|| {
+            match locale.get() {
+                crate::locale::Locale::ZhCN => {
+                    "与上游配置页默认 Profile 的 Key 池一致".to_string()
+                }
+                crate::locale::Locale::EnUS => {
+                    "Matches the default profile key pool on Upstream page".to_string()
+                }
+            }
+        });
     view! {
         <div class="glass-card h-full flex flex-col justify-between">
             <div>
@@ -1462,7 +1477,7 @@ pub fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
                 <div class="text-3xl font-mono tabular-nums text-accent">
                     {format!("{}/{}", ops.upstream_keys_available, ops.upstream_key_count)}
                 </div>
-                <p class="text-xs text-theme-muted mt-2">"available / configured"</p>
+                <p class="text-xs text-theme-muted mt-2">{hint}</p>
             </div>
             <a href="/upstream" class="btn btn-secondary text-xs mt-4 w-fit">
                 {t.overview_upstream_keys_link()}

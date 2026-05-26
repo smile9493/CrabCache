@@ -162,6 +162,12 @@ impl RuntimeConfig {
         Arc::clone(&self.upstream_pool.read())
     }
 
+    /// Key pool stats for the default upstream profile (same source as profile list / status).
+    pub fn default_upstream_key_stats(&self) -> (usize, usize) {
+        let pool = self.default_profile().resolve_upstream_pool();
+        (pool.len(), pool.available_count())
+    }
+
     pub fn replace_upstream_pool(&self, pool: Arc<UpstreamKeyPool>) {
         *self.upstream_pool.write() = pool;
     }

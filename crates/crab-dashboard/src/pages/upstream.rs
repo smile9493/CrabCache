@@ -201,13 +201,16 @@ pub fn UpstreamPage() -> impl IntoView {
     let show_delete_confirm = RwSignal::new(false);
     let deleting = RwSignal::new(false);
 
+    let default_profile_id = RwSignal::new(String::new());
+
     // API loaders
     let load_key_pool = move |pid: String| {
         key_pool.set(None);
         key_test_results.set(HashMap::new());
         key_testing.set(HashMap::new());
+        let default_id = default_profile_id.get_untracked();
         leptos::task::spawn_local(async move {
-            let result = if pid == "deepseek" {
+            let result = if pid == default_id {
                 api::fetch_upstream_keys().await
             } else {
                 api::fetch_upstream_profile_keys(&pid)
@@ -230,7 +233,8 @@ pub fn UpstreamPage() -> impl IntoView {
         sync_result.set(None);
 
         let p_list = profiles.get();
-        if pid == "deepseek" {
+        let default_id = default_profile_id.get_untracked();
+        if pid == default_id {
             leptos::task::spawn_local(async move {
                 match api::fetch_upstream_config().await {
                     Ok(c) => {
@@ -259,17 +263,21 @@ pub fn UpstreamPage() -> impl IntoView {
         load_key_pool(pid);
     };
 
-    let load_profiles_and_select = move |pid: String| {
+    let load_profiles_and_select = move |pid: Option<String>| {
         leptos::task::spawn_local(async move {
             if let Ok(resp) = api::fetch_upstream_profiles().await {
+                let def = resp.default_profile_id.clone();
+                default_profile_id.set(def.clone());
                 profiles.set(resp.profiles);
+                let select = pid.unwrap_or(def);
+                active_profile.set(select.clone());
+                load_profile_data(select);
             }
-            load_profile_data(pid);
         });
     };
 
-    // Initial load
-    load_profiles_and_select("deepseek".to_string());
+    // Initial load: gateway default profile (not hardcoded id)
+    load_profiles_and_select(None);
 
     // Actions
     let on_test = move |_| {
@@ -299,7 +307,9 @@ pub fn UpstreamPage() -> impl IntoView {
                     Ok(r) => test_result.set(Some(r)),
                     Err(e) => test_error.set(e),
                 }
-            } else if pid == "deepseek" || profiles.get().iter().any(|p| p.id == pid) {
+            } else if pid == default_profile_id.get_untracked()
+                || profiles.get().iter().any(|p| p.id == pid)
+            {
                 // Otherwise test saved profile keys
                 match api::test_upstream_profile(&pid).await {
                     Ok(r) => test_result.set(Some(r)),
@@ -359,7 +369,7 @@ pub fn UpstreamPage() -> impl IntoView {
         let keys_to_append_clone = keys_to_append.clone();
 
         leptos::task::spawn_local(async move {
-            let result = if pid == "deepseek" {
+            let result = if pid == default_profile_id.get_untracked() {
                 let req = UpdateUpstreamConfigRequest {
                     base_url: url.clone(),
                     model: model_val.clone(),
@@ -391,7 +401,7 @@ pub fn UpstreamPage() -> impl IntoView {
                             keys,
                             mode: UpstreamKeysPutMode::Append,
                         };
-                        let key_err = if pid == "deepseek" {
+                        let key_err = if pid == default_profile_id.get_untracked() {
                             api::put_upstream_keys(&key_req).await.err()
                         } else {
                             api::put_upstream_profile_keys(&pid, &key_req).await.err()
@@ -405,7 +415,7 @@ pub fn UpstreamPage() -> impl IntoView {
                         pool_secrets_text.set(String::new());
                     }
                     saved.set(true);
-                    load_profiles_and_select(pid);
+                    load_profiles_and_select(Some(pid));
                 }
                 Err(e) => save_error.set(e),
             }
@@ -441,7 +451,7 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let req = PutUpstreamKeysRequest { keys, mode };
         leptos::task::spawn_local(async move {
-            let result = if pid == "deepseek" {
+            let result = if pid == default_profile_id.get_untracked() {
                 api::put_upstream_keys(&req).await
             } else {
                 api::put_upstream_profile_keys(&pid, &req)
@@ -455,6 +465,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     pool_saved.set(true);
                     // Refresh profiles list (since key count changed)
                     if let Ok(resp) = api::fetch_upstream_profiles().await {
+                        default_profile_id.set(resp.default_profile_id.clone());
                         profiles.set(resp.profiles);
                     }
                 }
@@ -466,7 +477,7 @@ pub fn UpstreamPage() -> impl IntoView {
 
     let on_delete_profile = move |_| {
         let pid = active_profile.get();
-        if pid == "deepseek" {
+        if pid == default_profile_id.get_untracked() {
             return;
         }
         deleting.set(true);
@@ -474,8 +485,7 @@ pub fn UpstreamPage() -> impl IntoView {
             match api::delete_upstream_profile(&pid).await {
                 Ok(_) => {
                     show_delete_confirm.set(false);
-                    active_profile.set("deepseek".to_string());
-                    load_profiles_and_select("deepseek".to_string());
+                    load_profiles_and_select(None);
                 }
                 Err(e) => {
                     save_error.set(e);
@@ -523,7 +533,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     is_creating.set(false);
                     new_profile_id.set(String::new());
                     active_profile.set(id.clone());
-                    load_profiles_and_select(id);
+                    load_profiles_and_select(Some(id));
                 }
                 Err(e) => {
                     save_error.set(e);

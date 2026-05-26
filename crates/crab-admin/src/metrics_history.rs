@@ -750,6 +750,7 @@ pub fn scrape_ops_metrics(
         stream_cache_sse_omitted: counters.stream_cache_sse_omitted,
         upstream_key_count: 0,
         upstream_keys_available: 0,
+        upstream_default_profile_id: None,
     }
 }
 
