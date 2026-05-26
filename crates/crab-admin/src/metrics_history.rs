@@ -1024,7 +1024,10 @@ pub async fn sample_metrics_history(
 
     // Dual-write to PostgreSQL.
     if let Some(pg) = pg_store {
-        if let Err(e) = pg.insert_metric_snapshot(&snapshot, gateway_uptime_secs).await {
+        if let Err(e) = pg
+            .insert_metric_snapshot(&snapshot, gateway_uptime_secs)
+            .await
+        {
             tracing::warn!(error = %e, "PG dual-write: insert_metric_snapshot failed");
         }
         let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());

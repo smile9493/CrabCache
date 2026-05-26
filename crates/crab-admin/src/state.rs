@@ -489,8 +489,8 @@ impl AppState {
                         }
                         // Hydrate metrics history from PG if it has more data than SQLite.
                         let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
-                        if let Ok(pg_snapshots) =
-                            tokio::runtime::Handle::current().block_on(pg.load_metric_snapshots_since(cutoff))
+                        if let Ok(pg_snapshots) = tokio::runtime::Handle::current()
+                            .block_on(pg.load_metric_snapshots_since(cutoff))
                         {
                             if pg_snapshots.len() > history.sample_count() {
                                 history = MetricsHistory::new();

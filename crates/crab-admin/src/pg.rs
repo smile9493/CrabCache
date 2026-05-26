@@ -6,8 +6,11 @@
 //! backends until PG is proven stable.
 
 use crate::metrics_history::MetricsCounterSnapshot;
-use crate::persist::{AdminStateFile, PersistedDomainPolicy, PersistedKeyMetadata, PersistedModel, PersistedModels, PersistedUpstreamPoolSecret, PersistedUpstreamSnapshot};
-use crate::state::{StoredModelList, StoredUpstreamConfig};
+use crate::persist::{
+    AdminStateFile, PersistedDomainPolicy, PersistedKeyMetadata, PersistedModel, PersistedModels,
+    PersistedUpstreamPoolSecret, PersistedUpstreamSnapshot,
+};
+use crate::state::StoredUpstreamConfig;
 use crate::types::UpstreamTestResult;
 use anyhow::{Context, Result};
 use deadpool_postgres::{Config as PoolConfig, Pool, Runtime};
@@ -237,7 +240,7 @@ impl PgStore {
                     (id, token, name, rpm_limit, monthly_token_limit, expired_at,
                      model_limits, remain_quota, unlimited_quota, max_concurrent,
                      usage_month, tokens_this_month, input_tokens, output_tokens)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14)
                  ON CONFLICT (id) DO UPDATE SET
                     token = EXCLUDED.token,
                     name = EXCLUDED.name,
@@ -303,9 +306,9 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let model_limits_raw: serde_json::Value = row.get(6);
+            let model_limits_raw: String = row.get(6);
             let model_limits: Vec<String> =
-                serde_json::from_value(model_limits_raw).unwrap_or_default();
+                serde_json::from_str(&model_limits_raw).unwrap_or_default();
             out.push(PersistedKeyMetadata {
                 id: row.get(0),
                 token: row.get(1),
@@ -339,11 +342,8 @@ impl PgStore {
         let mut client = self.pool.get().await?;
         let tx = client.transaction().await?;
 
-        tx.execute(
-            "DELETE FROM models WHERE profile_id = $1",
-            &[&profile_id],
-        )
-        .await?;
+        tx.execute("DELETE FROM models WHERE profile_id = $1", &[&profile_id])
+            .await?;
 
         let stmt = tx
             .prepare_cached(
@@ -505,7 +505,7 @@ impl PgStore {
         client
             .execute(
                 "INSERT INTO upstream_config (singleton, base_url, model, endpoints, notes, last_test)
-                 VALUES (true, $1, $2, $3, $4, $5)
+                 VALUES (true, $1, $2, $3::jsonb, $4, $5::jsonb)
                  ON CONFLICT (singleton) DO UPDATE SET
                     base_url = EXCLUDED.base_url,
                     model = EXCLUDED.model,
@@ -539,12 +539,12 @@ impl PgStore {
         }
 
         let row = &rows[0];
-        let endpoints_raw: serde_json::Value = row.get(2);
-        let endpoints: Vec<String> = serde_json::from_value(endpoints_raw).unwrap_or_default();
+        let endpoints_raw: String = row.get(2);
+        let endpoints: Vec<String> = serde_json::from_str(&endpoints_raw).unwrap_or_default();
         let notes: Option<String> = row.get(3);
-        let last_test_raw: Option<serde_json::Value> = row.get(4);
-        let last_test: Option<UpstreamTestResult> = last_test_raw
-            .and_then(|v| serde_json::from_value(v).ok());
+        let last_test_raw: Option<String> = row.get(4);
+        let last_test: Option<UpstreamTestResult> =
+            last_test_raw.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok((
             StoredUpstreamConfig {
@@ -654,11 +654,13 @@ impl PgStore {
         let mut map: HashMap<String, Vec<PersistedUpstreamPoolSecret>> = HashMap::new();
         for row in rows {
             let pid: String = row.get(0);
-            map.entry(pid).or_default().push(PersistedUpstreamPoolSecret {
-                id: row.get(1),
-                secret: row.get(2),
-                enabled: row.get(3),
-            });
+            map.entry(pid)
+                .or_default()
+                .push(PersistedUpstreamPoolSecret {
+                    id: row.get(1),
+                    secret: row.get(2),
+                    enabled: row.get(3),
+                });
         }
         Ok(map)
     }
@@ -704,8 +706,8 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let payload: serde_json::Value = row.get(0);
-            if let Ok(snap) = serde_json::from_value::<MetricsCounterSnapshot>(payload) {
+            let payload: String = row.get(0);
+            if let Ok(snap) = serde_json::from_str::<MetricsCounterSnapshot>(&payload) {
                 out.push(snap);
             }
         }
@@ -896,9 +898,324 @@ mod tests {
 
     #[test]
     fn test_pg_config_from_env_disabled() {
-        // CRADMIN_PG_URL is not set in test env by default.
         let cfg = PgConfig::from_env();
-        // Just verify it doesn't panic.
         let _ = cfg.enabled();
+    }
+
+    /// Helper: connect to a test PG database (requires TEST_PG_URL env var).
+    async fn test_pg() -> Option<PgStore> {
+        let url = std::env::var("TEST_PG_URL").ok()?;
+        PgStore::new(&url, 4).await.ok()
+    }
+
+    #[tokio::test]
+    async fn test_keys_meta_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        // Clean table first.
+        let client = pg.pool.get().await.unwrap();
+        let _ = client.execute("DELETE FROM keys_meta", &[]).await;
+
+        let meta = PersistedKeyMetadata {
+            id: "test-key-1".to_string(),
+            token: "sk-cc-test123".to_string(),
+            name: "test-consumer".to_string(),
+            rpm_limit: 100,
+            monthly_token_limit: 1_000_000,
+            expired_at: None,
+            model_limits: vec!["deepseek-v4-pro".to_string()],
+            remain_quota: 500_000,
+            unlimited_quota: false,
+            max_concurrent: 10,
+            usage_month: "2026-05".to_string(),
+            tokens_this_month: 42_000,
+            input_tokens: 30_000,
+            output_tokens: 12_000,
+        };
+        pg.upsert_key(&meta).await.unwrap();
+
+        let loaded = pg.load_all_keys().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "test-key-1");
+        assert_eq!(loaded[0].name, "test-consumer");
+        assert_eq!(loaded[0].rpm_limit, 100);
+        assert_eq!(loaded[0].tokens_this_month, 42_000);
+
+        // Update
+        let mut updated = meta.clone();
+        updated.name = "updated-consumer".to_string();
+        updated.tokens_this_month = 50_000;
+        pg.upsert_key(&updated).await.unwrap();
+
+        let loaded = pg.load_all_keys().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "updated-consumer");
+        assert_eq!(loaded[0].tokens_this_month, 50_000);
+
+        // Delete
+        pg.delete_key("test-key-1").await.unwrap();
+        let loaded = pg.load_all_keys().await.unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_models_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client.execute("DELETE FROM models", &[]).await;
+        let _ = client.execute("DELETE FROM model_sync_state", &[]).await;
+
+        let models = vec![
+            PersistedModel {
+                profile_id: "deepseek".to_string(),
+                id: "deepseek-v4-pro".to_string(),
+                owned_by: "deepseek".to_string(),
+                context_length: Some(128_000),
+                input_price_per_mtok: Some(0.27),
+                output_price_per_mtok: Some(1.10),
+                available: true,
+            },
+            PersistedModel {
+                profile_id: "deepseek".to_string(),
+                id: "deepseek-v4-flash".to_string(),
+                owned_by: "deepseek".to_string(),
+                context_length: Some(64_000),
+                input_price_per_mtok: Some(0.10),
+                output_price_per_mtok: Some(0.40),
+                available: true,
+            },
+        ];
+
+        pg.replace_models("deepseek", &models, "2026-05-26T00:00:00Z")
+            .await
+            .unwrap();
+
+        let (loaded, sync_map) = pg.load_all_models().await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(sync_map.get("deepseek").unwrap(), "2026-05-26T00:00:00Z");
+
+        // Replace with fewer models.
+        let models_v2 = vec![PersistedModel {
+            profile_id: "deepseek".to_string(),
+            id: "deepseek-v4-pro".to_string(),
+            owned_by: "deepseek".to_string(),
+            context_length: Some(128_000),
+            input_price_per_mtok: None,
+            output_price_per_mtok: None,
+            available: true,
+        }];
+        pg.replace_models("deepseek", &models_v2, "2026-05-26T01:00:00Z")
+            .await
+            .unwrap();
+
+        let (loaded, _) = pg.load_all_models().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_domain_policies_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client.execute("DELETE FROM domain_policies", &[]).await;
+
+        let policies = vec![PersistedDomainPolicy {
+            domain: "example.com".to_string(),
+            monthly_token_budget: 10_000_000,
+            monthly_cost_budget_usd: 50.0,
+            min_hit_rate: 0.8,
+            enabled: true,
+            pipeline: Some("cursor_deepseek_v4".to_string()),
+            upstream_profile: Some("deepseek".to_string()),
+        }];
+
+        pg.replace_policies(&policies).await.unwrap();
+        let loaded = pg.load_policies().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].domain, "example.com");
+        assert_eq!(loaded[0].monthly_token_budget, 10_000_000);
+    }
+
+    #[tokio::test]
+    async fn test_upstream_config_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client.execute("DELETE FROM upstream_config", &[]).await;
+
+        let endpoints = vec!["api.deepseek.com:443".to_string()];
+        pg.save_upstream(
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            &endpoints,
+            Some("test notes"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (cfg, notes, _test) = pg.load_upstream().await.unwrap();
+        assert_eq!(cfg.base_url, "https://api.deepseek.com");
+        assert_eq!(cfg.model, "deepseek-v4-pro");
+        assert_eq!(notes.as_deref(), Some("test notes"));
+    }
+
+    #[tokio::test]
+    async fn test_pool_secrets_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client
+            .execute("DELETE FROM upstream_pool_secrets", &[])
+            .await;
+
+        let secrets = vec![
+            PersistedUpstreamPoolSecret {
+                id: "key-1".to_string(),
+                secret: "sk-ds-test123".to_string(),
+                enabled: true,
+            },
+            PersistedUpstreamPoolSecret {
+                id: "key-2".to_string(),
+                secret: "sk-ds-test456".to_string(),
+                enabled: false,
+            },
+        ];
+
+        pg.replace_pool_secrets(&secrets).await.unwrap();
+        let loaded = pg.load_pool_secrets().await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|s| s.id == "key-1" && s.enabled));
+        assert!(loaded.iter().any(|s| s.id == "key-2" && !s.enabled));
+    }
+
+    #[tokio::test]
+    async fn test_profile_secrets_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client
+            .execute("DELETE FROM upstream_profile_secrets", &[])
+            .await;
+
+        let secrets = vec![PersistedUpstreamPoolSecret {
+            id: "pk-1".to_string(),
+            secret: "sk-openai-test".to_string(),
+            enabled: true,
+        }];
+
+        pg.replace_profile_secrets("openai", &secrets)
+            .await
+            .unwrap();
+        let loaded = pg.load_profile_secrets().await.unwrap();
+        assert!(loaded.contains_key("openai"));
+        assert_eq!(loaded["openai"].len(), 1);
+        assert_eq!(loaded["openai"][0].id, "pk-1");
+    }
+
+    #[tokio::test]
+    async fn test_full_state_roundtrip() {
+        let Some(pg) = test_pg().await else { return };
+        // Clean all tables.
+        let client = pg.pool.get().await.unwrap();
+        for table in &[
+            "keys_meta",
+            "models",
+            "model_sync_state",
+            "domain_policies",
+            "upstream_config",
+            "upstream_pool_secrets",
+            "upstream_profile_secrets",
+        ] {
+            let _ = client
+                .execute(format!("DELETE FROM {}", table).as_str(), &[])
+                .await;
+        }
+
+        // Build a test state.
+        let state = AdminStateFile {
+            version: 4,
+            keys_meta: vec![PersistedKeyMetadata {
+                id: "k1".to_string(),
+                token: "sk-cc-k1".to_string(),
+                name: "consumer-1".to_string(),
+                rpm_limit: 50,
+                monthly_token_limit: 500_000,
+                expired_at: None,
+                model_limits: vec![],
+                remain_quota: 0,
+                unlimited_quota: true,
+                max_concurrent: 5,
+                usage_month: "2026-05".to_string(),
+                tokens_this_month: 1000,
+                input_tokens: 800,
+                output_tokens: 200,
+            }],
+            models: PersistedModels {
+                models: vec![PersistedModel {
+                    profile_id: "deepseek".to_string(),
+                    id: "deepseek-v4-pro".to_string(),
+                    owned_by: "deepseek".to_string(),
+                    context_length: Some(128_000),
+                    input_price_per_mtok: None,
+                    output_price_per_mtok: None,
+                    available: true,
+                }],
+                synced_at_by_profile: [("deepseek".to_string(), "2026-05-26".to_string())]
+                    .into_iter()
+                    .collect(),
+                synced_at: None,
+            },
+            domain_policies: vec![PersistedDomainPolicy {
+                domain: "test.local".to_string(),
+                monthly_token_budget: 1_000_000,
+                monthly_cost_budget_usd: 10.0,
+                min_hit_rate: 0.5,
+                enabled: true,
+                pipeline: None,
+                upstream_profile: None,
+            }],
+            upstream_snapshot: Some(PersistedUpstreamSnapshot {
+                base_url: "https://api.deepseek.com".to_string(),
+                model: "deepseek-v4-pro".to_string(),
+                endpoints: vec!["api.deepseek.com:443".to_string()],
+            }),
+            upstream_notes: Some("test notes".to_string()),
+            last_upstream_test: None,
+            upstream_pool_secrets: vec![PersistedUpstreamPoolSecret {
+                id: "ps-1".to_string(),
+                secret: "sk-ds-pool1".to_string(),
+                enabled: true,
+            }],
+            upstream_profile_secrets: crate::persist::PersistedProfileSecrets {
+                by_profile: [(
+                    "openai".to_string(),
+                    vec![PersistedUpstreamPoolSecret {
+                        id: "oai-1".to_string(),
+                        secret: "sk-oai-1".to_string(),
+                        enabled: true,
+                    }],
+                )]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        // Import.
+        let migrated = pg.maybe_import_from_json(&state).await.unwrap();
+        assert!(migrated);
+
+        // Load back.
+        let loaded = pg.load_full_state().await.unwrap();
+        assert_eq!(loaded.keys_meta.len(), 1);
+        assert_eq!(loaded.keys_meta[0].id, "k1");
+        assert_eq!(loaded.models.models.len(), 1);
+        assert_eq!(loaded.domain_policies.len(), 1);
+        assert_eq!(loaded.upstream_pool_secrets.len(), 1);
+        assert!(
+            loaded
+                .upstream_profile_secrets
+                .by_profile
+                .contains_key("openai")
+        );
+
+        // Second import should skip (tables already populated).
+        let migrated2 = pg.maybe_import_from_json(&state).await.unwrap();
+        assert!(!migrated2);
     }
 }
