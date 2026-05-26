@@ -134,7 +134,18 @@ mod tests {
             active_keys: 0,
             uptime_hours: 0,
             uptime_secs: 0,
-            hourly_stats: if hourly_empty { vec![] } else { vec![] },
+            hourly_stats: if hourly_empty {
+                vec![]
+            } else {
+                vec![crate::types::TimeSeriesPoint {
+                    timestamp: "12:00".into(),
+                    requests: 100,
+                    tokens: 200,
+                    cache_hits: 50,
+                    avg_latency_ms: 0.0,
+                    hit_rate: 0.5,
+                }]
+            },
             daily_stats: vec![],
             weekly_stats: vec![],
             monthly_stats: vec![],
@@ -208,5 +219,41 @@ mod tests {
                 .any(|x| x.target == "hit_rate" && x.severity == "info")
         );
         assert!(s.iter().any(|x| x.target == "timeseries"));
+    }
+
+    #[test]
+    fn trace_hit_rate_divergence_emits_warn() {
+        let mut m = test_metrics(false, false);
+        m.hit_rate_5m = 0.40; // 40% gateway 5m hit rate
+        let bundle = OverviewBundle {
+            metrics: m,
+            health: GatewayHealthView {
+                healthy: true,
+                ..Default::default()
+            },
+            prefix_cache: PrefixCacheMetricsSnapshot {
+                hit_tokens: 0,
+                miss_tokens: 0,
+                hit_ratio: 0.0,
+                by_model: vec![],
+            },
+            semantic: SemanticConfig {
+                enabled: false,
+                similarity_threshold: 0.95,
+            },
+            trace_summary: TraceSummary {
+                hours: 24,
+                total_requests: 1000,
+                cache_hit_ratio: 0.90, // 90% trace hit rate → 50% gap > 15%
+            },
+            ops: OverviewOpsMetrics::default(),
+            suggestions: vec![],
+        };
+        let s = build_overview_suggestions(&bundle);
+        assert!(
+            s.iter()
+                .any(|x| x.target == "hit_rate" && x.severity == "warn"),
+            "should emit warn when trace hit rate far exceeds gateway 5m hit rate"
+        );
     }
 }

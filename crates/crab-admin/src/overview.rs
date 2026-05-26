@@ -21,6 +21,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const TRACE_SUMMARY_TTL: Duration = Duration::from_secs(60);
 const GATEWAY_PROBE_TTL: Duration = Duration::from_secs(3);
 const DEFAULT_OVERVIEW_CORE_CACHE_TTL: Duration = Duration::from_secs(10);
+const DEFAULT_OVERVIEW_TIMESERIES_CACHE_TTL: Duration = Duration::from_secs(60);
+
+use crate::metrics_history::BucketKind;
+
+/// Maps the `window` query parameter to the (bucket kind, window seconds) pair.
+fn resolve_timeseries_params(window: &str) -> (BucketKind, u64) {
+    match window {
+        "24h" => (BucketKind::Hour, 86400),
+        "7d" => (BucketKind::Day, 7 * 86400),
+        _ => (BucketKind::FiveMin, 3600),
+    }
+}
 
 pub fn overview_core_cache_ttl() -> Duration {
     std::env::var("CRABCACHE_OVERVIEW_CORE_CACHE_TTL_SECS")
@@ -39,6 +51,77 @@ pub fn overview_core_background_interval() -> Duration {
         .filter(|&s| s > 0)
         .map(Duration::from_secs)
         .unwrap_or(overview_core_cache_ttl())
+}
+
+pub fn overview_timeseries_cache_ttl() -> Duration {
+    std::env::var("CRABCACHE_OVERVIEW_TIMESERIES_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_OVERVIEW_TIMESERIES_CACHE_TTL)
+}
+
+/// Serve timeseries from TTL cache when fresh; rebuild with in-flight dedup on miss.
+///
+/// Reads only from the in-memory `metrics_history` ring (no Prometheus scrape).
+pub async fn get_overview_timeseries_cached(
+    state: &Arc<AppState>,
+    window: &str,
+) -> Result<(Vec<TimeSeriesPoint>, String), String> {
+    let window = match window {
+        "1h" | "24h" | "7d" => window,
+        _ => "1h",
+    };
+    let ttl = overview_timeseries_cache_ttl();
+    {
+        let cache = state.overview_timeseries_cache.read();
+        if let Some((at, points, etag)) = cache.get(window) {
+            if at.elapsed() < ttl {
+                return Ok((points.clone(), etag.clone()));
+            }
+        }
+    }
+
+    let _guard = state.overview_timeseries_lock.lock().await;
+    {
+        let cache = state.overview_timeseries_cache.read();
+        if let Some((at, points, etag)) = cache.get(window) {
+            if at.elapsed() < ttl {
+                return Ok((points.clone(), etag.clone()));
+            }
+        }
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let (bucket_kind, window_secs) = resolve_timeseries_params(window);
+    let points = {
+        let history = state.metrics_history.read();
+        history.build_windowed_stats(now, bucket_kind, window_secs)
+    };
+
+    let etag = timeseries_etag(window, &points)?;
+    state
+        .overview_timeseries_cache
+        .write()
+        .insert(window.to_string(), (Instant::now(), points.clone(), etag.clone()));
+    Ok((points, etag))
+}
+
+fn timeseries_etag(window: &str, points: &[TimeSeriesPoint]) -> Result<String, String> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    window.hash(&mut hasher);
+    for p in points {
+        p.requests.hash(&mut hasher);
+        p.tokens.hash(&mut hasher);
+        p.cache_hits.hash(&mut hasher);
+        p.hit_rate.to_bits().hash(&mut hasher);
+    }
+    Ok(format!("\"{:x}\"", hasher.finish()))
 }
 
 fn read_fresh_overview_core_cache(
@@ -116,9 +199,11 @@ pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
         }
     }
 
-    let ready = state.gateway.ready().await;
-    let ready_ok = ready.is_ok();
-    let ready_error = ready.err().map(|e| e.to_string());
+    let detail = state.gateway.ready_detail().await;
+    let (ready_ok, ready_error, redis_status, l2_status) = match detail {
+        Ok(d) => (d.ready, None, d.redis, d.l2),
+        Err(e) => (false, Some(e.to_string()), "unavailable".to_string(), "unavailable".to_string()),
+    };
 
     let status_result = state.gateway.status().await;
     let (status, status_error) = match status_result {
@@ -131,6 +216,8 @@ pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
         ready_error,
         status,
         status_error,
+        redis_status,
+        l2_status,
     };
     *state.gateway_probe_cache.write() = Some((Instant::now(), probe.clone()));
     probe
@@ -170,16 +257,14 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
 
+    let trace_summary = cached_trace_summary(state, 24).await;
+
     let bundle_for_suggestions = OverviewBundle {
         metrics: metrics_snapshot_from_core(&metrics, &[]),
         health: health.clone(),
         prefix_cache: prefix_cache.clone(),
         semantic: semantic.clone(),
-        trace_summary: TraceSummary {
-            hours: 24,
-            total_requests: 0,
-            cache_hit_ratio: 0.0,
-        },
+        trace_summary,
         ops: ops.clone(),
         suggestions: vec![],
     };
@@ -206,13 +291,10 @@ pub async fn build_overview_timeseries(
         .as_secs();
     refresh_metrics_history_sample(state, &body, now).await;
 
+    let (bucket_kind, window_secs) = resolve_timeseries_params(window);
     let points = {
         let history = state.metrics_history.read();
-        match window {
-            "7d" => history.build_daily_stats(now),
-            "24h" => history.build_hourly_stats(now),
-            _ => history.build_hourly_stats(now),
-        }
+        history.build_windowed_stats(now, bucket_kind, window_secs)
     };
 
     Ok(OverviewTimeseriesResponse {
@@ -426,24 +508,13 @@ pub async fn build_metrics_snapshot_core(
         0.99,
     );
 
-    // Error rate from gateway_http_responses_total
-    let http_4xx_5m = metrics_history::sum_prometheus_counter_public(
-        body,
-        "gateway_http_responses_total",
-        &[("status_class", "4xx")],
-    );
-    let http_5xx_5m = metrics_history::sum_prometheus_counter_public(
-        body,
-        "gateway_http_responses_total",
-        &[("status_class", "5xx")],
-    );
-    let total_http = metrics_history::sum_prometheus_counter_public(
-        body,
-        "gateway_http_responses_total",
-        &[],
-    );
-    let error_rate_5m = if total_http > 0 {
-        (http_4xx_5m + http_5xx_5m) as f64 / total_http as f64
+    // Error rate: 5-minute counter deltas (not cumulative process totals).
+    let http_4xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_4xx_total);
+    let http_5xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_5xx_total);
+    let total_http_5m =
+        history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_responses_total);
+    let error_rate_5m = if total_http_5m > 0 {
+        (http_4xx_5m + http_5xx_5m) as f64 / total_http_5m as f64
     } else {
         0.0
     };
@@ -600,14 +671,17 @@ fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
             upstream_key_count: 0,
             upstream_keys_available: 0,
             error: probe.ready_error.clone(),
-            redis_connected: false,
-            qdrant_connected: false,
+            redis_connected: probe.redis_status == "ok",
+            qdrant_connected: probe.l2_status == "ok",
         };
     }
-    match &probe.status {
+    let mut health = match &probe.status {
         Some(s) => gateway_health_from_status(s.clone(), probe.status_error.clone()),
         None => gateway_health_from_status(empty_gateway_status(), probe.status_error.clone()),
-    }
+    };
+    health.redis_connected = probe.redis_status == "ok";
+    health.qdrant_connected = probe.l2_status == "ok";
+    health
 }
 
 fn gateway_health_from_status(s: GatewayStatus, error: Option<String>) -> GatewayHealthView {
@@ -722,6 +796,8 @@ mod tests {
                 ready_error: None,
                 status: None,
                 status_error: None,
+                redis_status: "ok".to_string(),
+                l2_status: "disabled".to_string(),
             }),
             prefix_cache: build_prefix_cache_snapshot(""),
             semantic: SemanticConfig {

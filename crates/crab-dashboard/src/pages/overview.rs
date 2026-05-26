@@ -4,7 +4,8 @@ use wasm_bindgen::JsCast;
 
 use crate::anomaly::detect_and_toast;
 use crate::api;
-use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::bar_chart::BarChart;
+use crate::components::line_chart::ChartSeries;
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
 use crate::components::ui::*;
@@ -92,6 +93,7 @@ pub fn OverviewPage() -> impl IntoView {
     let load_generation = RwSignal::new(0u64);
     let ts_generation = RwSignal::new(0u64);
     let etag = RwSignal::new(String::new());
+    let ts_etag = RwSignal::new(String::new());
 
     // SSE connection — receives pushed metrics, reducing polling overhead.
     let sse_active = RwSignal::new(false);
@@ -214,11 +216,22 @@ pub fn OverviewPage() -> impl IntoView {
         ts_generation.update(|g| *g += 1);
         let request_id = ts_generation.get();
         let window = ts_window.get_untracked();
+        let current_ts_etag = ts_etag.get();
         leptos::task::spawn_local(async move {
-            if let Ok(resp) = api::fetch_overview_timeseries(&window).await
-                && ts_generation.get() == request_id
-            {
-                ts_points.set(resp.points);
+            match api::fetch_overview_timeseries_etag(&window, &current_ts_etag).await {
+                Ok(result) => {
+                    ts_etag.set(result.etag);
+                    if ts_generation.get() == request_id {
+                        if let Some(points) = result.points {
+                            ts_points.set(points);
+                        }
+                    }
+                }
+                Err(e) => {
+                    web_sys::console::warn_1(
+                        &format!("[overview] timeseries fetch failed: {e}").into(),
+                    );
+                }
             }
         });
     };
@@ -264,11 +277,19 @@ pub fn OverviewPage() -> impl IntoView {
     });
 
     leptos::task::spawn_local(async move {
+        let mut tick: u64 = 0;
         loop {
             TimeoutFuture::new(10_000).await;
-            // Skip polling when SSE is actively pushing updates
+            tick += 1;
+            // Skip polling when SSE is actively pushing updates.
             if auto_refresh.get() && page_visible() && !sse_active.get() {
                 load_core();
+                // Timeseries and trace refresh every 60s (every 6th tick)
+                // to align with the 60s backend sampling interval.
+                if tick % 6 == 0 && deferred_loaded.get_untracked() {
+                    load_timeseries();
+                    load_trace();
+                }
             }
         }
     });
@@ -465,14 +486,15 @@ fn OverviewContent(
             // Mobile-only: condensed KPI summary (always visible on small screens)
             <div class="mobile-only">
                 {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
-                {move || metrics_memo.get().map(|m| {
+                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| {
                     let qps_val = Signal::derive(move || format!("{:.1}", m.qps_5m));
                     let hit_val = Signal::derive(move || format!("{:.1}%", m.hit_rate_5m * 100.0));
-                    let _cost_val = Signal::derive(move || format!("${:.2}", 0.0f64)); // placeholder
+                    let cost_val = Signal::derive(move || format!("${:.4}", ops.cost_saved_usd_5m));
                     view! {
                         <div class="mobile-kpi-grid">
                             <MetricCard title=t.overview_hit_rate() value=hit_val subtitle="5m window" />
                             <MetricCard title=Translations::overview_qps() value=qps_val subtitle="5m avg" />
+                            <MetricCard title=t.overview_cost_saved() value=cost_val subtitle="5m window" />
                         </div>
                     }
                 })}
@@ -514,60 +536,16 @@ fn OverviewContent(
             // === ANALYTICS TAB (index 1) ===
             {move || if active_tab.get() == 1 {
                 view! {
-                    <div class="space-y-6">
-                        {move || suggestions_memo.get().map(|s| {
-                            view! {
-                                <TimeSeriesChart
-                                    points=ts_points
-                                    selected_view=ts_window
-                                    suggestions=s
-                                />
-                            }
-                        })}
-                        {move || prefix_memo.get().zip(metrics_memo.get()).map(|(pref, _m)| view! {
-                            <PrefixCacheCard prefix=pref.clone() />
-                        })}
-                        {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
-                            <TokenStats metrics=m.clone() prefix=pref.clone() />
-                        })}
-                        {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                            <div class="bento-grid-2">
-                                <CoalescingCard metrics=m.clone() ops=ops.clone() />
-                                <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
-                            </div>
-                        })}
-                        {move || metrics_memo.get().map(|m| view! {
-                            <ConsumerHitTable metrics=m.clone() />
-                        })}
-                        {move || metrics_memo.get().map(|m| {
-                            let cb = Callback::new(move |domain: String| {
-                                selected_domain.set(Some(domain));
-                            });
-                            view! {
-                                <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
-                            }
-                        })}
-                        <crate::pages::domains::DomainDetailDrawer domain=selected_domain />
-                        {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                            <div class="bento-grid-3">
-                                <div class="bento-cell">
-                                    <CacheHitSection metrics=m.clone() />
-                                </div>
-                                <div class="bento-cell">
-                                    <CostSavingsSection ops=ops.clone() />
-                                </div>
-                                <div class="bento-cell">
-                                    <LatencySection metrics=m.clone() />
-                                </div>
-                            </div>
-                        })}
-                        {move || ops_memo.get().map(|ops| view! {
-                            <div class="bento-grid-2">
-                                <UpstreamKeyStrip ops=ops.clone() />
-                                <PrefixHealthCard ops=ops.clone() />
-                            </div>
-                        })}
-                    </div>
+                    <super::overview_analytics::OverviewAnalytics
+                        suggestions_memo
+                        ts_points
+                        ts_window
+                        prefix_memo
+                        metrics_memo
+                        ops_memo
+                        semantic_memo
+                        selected_domain
+                    />
                 }.into_any()
             } else {
                 ().into_any()
@@ -707,6 +685,20 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
         Some(metrics.hit_rate_5m * 100.0)
     };
 
+    let delta_html = gw_pct.map(|gw| {
+        let delta = trace_pct - gw;
+        let (color_class, prefix) = if delta > 0.0 {
+            ("text-green-500", "+")
+        } else if delta < -15.0 {
+            ("text-red-500", "")
+        } else if delta < -5.0 {
+            ("text-amber-400", "")
+        } else {
+            ("text-theme-muted", if delta >= 0.0 { "+" } else { "" })
+        };
+        (color_class, format!("{}{:.1}%", prefix, delta))
+    });
+
     view! {
         <div class="glass-card flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -724,11 +716,19 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
                             None => view! { <span class="text-theme-muted">"—"</span> }.into_any(),
                         }}
                     </span>
+                    {delta_html.map(|(color, text)| {
+                        view! { <span class=color>{text}</span> }.into_any()
+                    }).unwrap_or_else(|| view! { <span></span> }.into_any())}
                 </div>
             </div>
-            <a href="/cache?tab=trace" class="btn btn-secondary text-xs shrink-0">
-                {t.overview_trace_compare_link()}
-            </a>
+            <div class="flex gap-2 shrink-0">
+                <a href="/cache?tab=trace" class="btn btn-secondary text-xs">
+                    {t.overview_trace_compare_link()}
+                </a>
+                <a href="/live" class="btn btn-secondary text-xs">
+                    {t.sidebar_live()}
+                </a>
+            </div>
         </div>
     }
 }
@@ -775,7 +775,7 @@ fn OpsMetricsRow(ops: OverviewOpsMetrics) -> impl IntoView {
 }
 
 #[component]
-fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
+pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let ratio_pct = prefix.hit_ratio * 100.0;
     let total = prefix.hit_tokens + prefix.miss_tokens;
@@ -1021,7 +1021,7 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
 }
 
 #[component]
-fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
+pub fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let l3_total = prefix.hit_tokens + prefix.miss_tokens;
     let l3_ratio = if l3_total > 0 {
@@ -1079,7 +1079,7 @@ fn compress_timeseries_points(data: Vec<TimeSeriesPoint>) -> Vec<TimeSeriesPoint
 }
 
 #[component]
-fn TimeSeriesChart(
+pub fn TimeSeriesChart(
     points: RwSignal<Vec<TimeSeriesPoint>>,
     selected_view: RwSignal<String>,
     suggestions: Vec<OverviewSuggestion>,
@@ -1104,7 +1104,7 @@ fn TimeSeriesChart(
                 color: "var(--accent-primary)",
                 values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
                 dashed: false,
-                fill: true,
+                fill: false,
             },
             ChartSeries {
                 label: t.overview_requests().to_string(),
@@ -1162,7 +1162,7 @@ fn TimeSeriesChart(
 
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
-            <LineChart
+            <BarChart
                 x_labels=x_labels
                 series=series
                 height_px=220
@@ -1201,7 +1201,7 @@ pub fn format_number(n: u64) -> String {
 }
 
 #[component]
-fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl IntoView {
+pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
     view! {
         <div class="glass-card h-full">
@@ -1218,7 +1218,7 @@ fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl Int
 }
 
 #[component]
-fn SemanticCacheCard(metrics: MetricsSnapshot, semantic: SemanticConfig) -> impl IntoView {
+pub fn SemanticCacheCard(metrics: MetricsSnapshot, semantic: SemanticConfig) -> impl IntoView {
     let t = use_translations();
     let disabled = !semantic.enabled;
 
@@ -1271,7 +1271,7 @@ enum ConsumerSortField {
 }
 
 #[component]
-fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
+pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let sort_by = RwSignal::new(ConsumerSortField::HitTokens);
     let sort_desc = RwSignal::new(true);
@@ -1382,7 +1382,7 @@ fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
+pub fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let d = metrics.tier_deltas_5m;
     let total = (d.l0 + d.l1 + d.l2 + d.miss).max(1) as f64;
@@ -1427,7 +1427,7 @@ fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
+pub fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
 
     view! {
@@ -1453,7 +1453,7 @@ fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
 }
 
 #[component]
-fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
+pub fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
     view! {
         <div class="glass-card h-full flex flex-col justify-between">
@@ -1472,7 +1472,7 @@ fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
 }
 
 #[component]
-fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
+pub fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
     let reasoning_total = ops.reasoning_store_hits + ops.reasoning_store_misses;
     let reasoning_hit_pct = if reasoning_total > 0 {
@@ -1537,7 +1537,7 @@ fn ObservabilityFooter() -> impl IntoView {
 }
 
 #[component]
-fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
+pub fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     // (label, avg_ms, p99_ms)
     let stages: Vec<(&str, f64, f64)> = vec![
