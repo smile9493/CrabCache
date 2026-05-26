@@ -6,7 +6,7 @@
 
 | 指标 / UI 字段 | 来源 | 含义 |
 |---------------|------|------|
-| `hit_rate_5m`（Dashboard） | Admin 指标环，5 分钟增量 | 网关 L0–L2 请求命中率 |
+| `hit_rate_5m`（Dashboard） | Admin 指标环，5 分钟增量 | 网关 L0–L2 请求命中率（L2 路径先 `get_defer_miss` 再记 miss，避免 L2 命中双计；Coalesce Follower 回放计 hit） |
 | `token_hit_rate_5m` | `gateway_deepseek_input_tokens_total` 增量 | 按 Token 加权的输入命中率（成本视角） |
 | `hit_rate_cumulative` | Counter / 运行时间 | 自网关进程启动以来的累计值 |
 | `prefix_cache_hit_ratio`（L3） | `gateway_upstream_prompt_cache_tokens_total` | DeepSeek 上游前缀缓存 |
@@ -23,7 +23,7 @@
 
 ## Admin Dashboard
 
-- 概览每 **10 秒**轮询 **`GET /api/admin/overview/core`**（轻量指标，无时序数组）；时序与 24h Trace 分别由 **`GET /api/admin/overview/timeseries?window=1h|24h|7d`** 与 **`GET /api/admin/overview/trace`** 加载。完整包 **`GET /api/admin/overview`** 保留向后兼容。`GET /api/admin/metrics` 保留向后兼容。
+- 概览每 **10 秒**轮询 **`GET /api/admin/overview/core`**（轻量指标，无时序数组）；时序与 24h Trace 分别由 **`GET /api/admin/overview/timeseries?window=1h|24h|7d`** 与 **`GET /api/admin/overview/trace`** 加载（每 **60 秒**自动刷新，与采样间隔和 Trace 缓存 TTL 对齐）。完整包 **`GET /api/admin/overview`** 保留向后兼容。`GET /api/admin/metrics` 保留向后兼容。
 - 概览包字段：
 
 | 字段 | 说明 |
@@ -36,7 +36,7 @@
 | `ops` | 节省成本、合并/拒绝 5m、TTFT、prefix_break、reasoning 存储、SSE 省略 |
 | `suggestions` | 基于规则的运维提示（`severity`、`target`、`message`），供 Overview 卡片使用 |
 
-- 时序桶来自一个 **60 秒的指标采样器**（`CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS`，默认 60）。空图表表示"采集中"——启动后等待 1–2 分钟。
+- 时序桶来自一个 **60 秒的指标采样器**（`CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS`，默认 60）。空图表表示"采集中"——启动后等待 1–2 分钟。时序窗口：**1h** 使用 **5 分钟**桶（最多 12 个，截断到最近 1 小时）；**24h** 使用 **1 小时**桶；**7d** 使用 **1 天**桶。
 - 当 5 分钟窗口内请求数少于 5 时，`metrics_sample_insufficient` 为 true；UI 对窗口速率显示"—"。
 - UI 图例区分 **L0–L2**（网关完整响应）和 **L3**（上游前缀 Token）。
 
@@ -45,13 +45,15 @@
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `CRABCACHE_GATEWAY_METRICS_URL` | `http://127.0.0.1:9090/metrics` | Prometheus 抓取目标 |
-| `CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS` | `2` | Admin 在此窗口内去重抓取（概览每 5s 轮询） |
+| `CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS` | `2` | Admin 在此窗口内去重抓取（概览每 10s 轮询） |
 | `CRABCACHE_GATEWAY_METRICS_STALE_SECS` | `30` | 抓取失败时，在此时长内返回上次成功数据而非 HTTP 503 |
 | `CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS` | `60` | 历史环采样间隔 |
 | `CRABCACHE_TRACE_LOG_PATH` | `/app/logs/trace.jsonl` | Trace/日志页面的影子日志 |
 | `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` | `3` | Live 监控页 trace 缓存 TTL（秒）；增量 tail + 文件轮转检测 |
 | `CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS` | `30` | `GET /upstream/config` 网关协调的最小间隔 |
 | `CRABCACHE_GATEWAY_PROBE_TTL_SECS` | `3` | 概览中 `/v1/ready` + `/v1/status` 捆绑探针的缓存 TTL |
+| `CRABCACHE_OVERVIEW_CORE_CACHE_TTL_SECS` | `10` | Overview Core 服务端缓存 TTL（秒）；客户端 10s 轮询与此对齐 |
+| `CRABCACHE_OVERVIEW_CORE_REFRESH_SECS` | 与 `_CACHE_TTL` 相同 | Overview Core 后台预热间隔（秒）；SSE 广播触发源 |
 | `CRABCACHE_ADMIN_METRICS_DB_PATH` | `data/metrics.sqlite` | Admin 指标采样 SQLite 数据库路径 |
 | `CRABCACHE_METRICS_DB_RETENTION_SECS` | `2592000`（30 天） | 指标采样保留时长 |
 | `CRABCACHE_KEY_USAGE_SYNC_INTERVAL_SECS` | `60` | Key 月度用量同步周期（秒）；设为 0 禁用 |
@@ -405,11 +407,24 @@ raw_capture/
 
 | 方法 | 路径 | 行为 |
 |------|------|------|
-| GET | `/api/admin/capture/list?hours=&limit=&consumer=&project_id=&request_hash=` | 读 index.jsonl，返回摘要列表 |
+| GET | `/api/admin/capture/list?hours=&limit=&consumer=&project_id=&request_hash=&session_fingerprint=&backend_name=&client_key_fingerprint=&affinity_kind=` | 读 index.jsonl，返回摘要列表（含会话指纹、亲和键、后端、耗时等） |
 | GET | `/api/admin/capture/{request_id}` | 读 index + 加载 bodies/*.json，返回 client/upstream 全文 + 结构 diff |
 | GET | `/api/admin/capture/stats?hours=` | 聚合：平均 delta、reasoning 注入率、message_count P99、thinking 标记率 |
 
 Dashboard **请求页 → 包捕获 Tab** 提供图形化访问。
+
+每条 `index.jsonl` 记录（v2 字段，旧行缺失则为空）额外包含：
+
+| 字段 | 用途 |
+|------|------|
+| `session_fingerprint` | 首条 `user` 消息哈希，**区分同 key 下不同 Cursor 会话** |
+| `client_key_fingerprint` | 客户端 Bearer 密钥哈希，**区分不同 API key** |
+| `affinity_key` / `affinity_kind` | Ketama 亲和键（`conv`/`pck`/`user`/`ip`） |
+| `backend_name` / `upstream_host` | **负载均衡**落到的上游节点 |
+| `duration_ms` / `ttft_ms` / `upstream_latency_ms` | **串行耗时**与流式首字 |
+| `cache_hit` / `cache_tier` / `coalesce_leader` / `coalesced_follower` | 缓存与请求合并（并行去重） |
+
+筛选示例：`session_fingerprint=97d0e3a8e50d` 只看同一会话；`backend_name=deepseek-1` 看 LB 分布。
 
 ### 思考模式上下文膨胀排查
 

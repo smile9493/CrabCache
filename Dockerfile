@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /usr/local/cargo && \
-    printf '[source.crates-io]\nreplace-with = "ustc"\n[source.ustc]\nregistry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' \
+    printf '[source.crates-io]\nreplace-with = "tuna"\n[source.tuna]\nregistry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"' \
     > /usr/local/cargo/config.toml
 
 WORKDIR /app
@@ -30,6 +30,8 @@ COPY crates/crab-state/Cargo.toml crates/crab-state/Cargo.toml
 COPY crates/crab-composition/Cargo.toml crates/crab-composition/Cargo.toml
 COPY crates/crab-admin-types/Cargo.toml crates/crab-admin-types/Cargo.toml
 COPY crates/crab-capture/Cargo.toml crates/crab-capture/Cargo.toml
+COPY crates/crab-admin/Cargo.toml crates/crab-admin/Cargo.toml
+COPY crates/crab-dashboard/Cargo.toml crates/crab-dashboard/Cargo.toml
 
 RUN mkdir -p crates/crab-metrics/src && echo "" > crates/crab-metrics/src/lib.rs && \
     mkdir -p crates/crab-route/src && echo "" > crates/crab-route/src/lib.rs && \
@@ -43,21 +45,36 @@ RUN mkdir -p crates/crab-metrics/src && echo "" > crates/crab-metrics/src/lib.rs
     mkdir -p crates/crab-state/src && echo "" > crates/crab-state/src/lib.rs && \
     mkdir -p crates/crab-composition/src && echo "" > crates/crab-composition/src/lib.rs && \
     mkdir -p crates/crab-admin-types/src && echo "" > crates/crab-admin-types/src/lib.rs && \
-    mkdir -p crates/crab-capture/src && echo "" > crates/crab-capture/src/lib.rs
+    mkdir -p crates/crab-capture/src && echo "" > crates/crab-capture/src/lib.rs && \
+    mkdir -p crates/crab-admin/src && echo "fn main() {}" > crates/crab-admin/src/main.rs && \
+    mkdir -p crates/crab-dashboard/src && echo "" > crates/crab-dashboard/src/lib.rs
 
 RUN cargo build --release -p crab-gateway 2>/dev/null || true
 
-COPY . .
+COPY third_party/pingora-proxy third_party/pingora-proxy
+COPY crates/crab-metrics/src crates/crab-metrics/src
+COPY crates/crab-route/src crates/crab-route/src
+COPY crates/crab-cache/src crates/crab-cache/src
+COPY crates/crab-semantic/src crates/crab-semantic/src
+COPY crates/crab-proxy/src crates/crab-proxy/src
+COPY crates/crab-gateway/src crates/crab-gateway/src
+COPY crates/crab-reasoning/src crates/crab-reasoning/src
+COPY crates/crab-control/src crates/crab-control/src
+COPY crates/crab-pipeline/src crates/crab-pipeline/src
+COPY crates/crab-state/src crates/crab-state/src
+COPY crates/crab-composition/src crates/crab-composition/src
+COPY crates/crab-admin-types/src crates/crab-admin-types/src
+COPY crates/crab-capture/src crates/crab-capture/src
+COPY config config
 
-# Rebuild with full sources (patched pingora-proxy + crab-proxy upstream body inject)
 RUN cargo build --release -p crab-gateway \
     && cargo tree -p crab-proxy -i pingora-proxy | head -5
 
-FROM debian:bookworm-slim
+FROM ubuntu:latest
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl3 \
+    libssl3t64 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

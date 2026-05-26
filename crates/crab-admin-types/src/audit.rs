@@ -53,6 +53,18 @@ pub struct TraceAnalysis {
     pub cluster_distribution: Vec<ClusterInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deepseek_user_id: Option<DeepSeekUserIdAudit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zipf_log_points: Vec<ZipfLogPoint>,
+    #[serde(default)]
+    pub zipf_regression_slope: f64,
+    #[serde(default)]
+    pub zipf_regression_intercept: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZipfLogPoint {
+    pub log_rank: f64,
+    pub log_freq: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

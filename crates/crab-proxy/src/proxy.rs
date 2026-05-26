@@ -13,8 +13,8 @@ use crate::error_jsons::{
     upstream_pool_exhausted_error_json,
 };
 use crate::helper_fns::{
-    client_session_from_authorization, is_models_endpoint, last_user_message_fingerprint,
-    sanitize_for_trace, stable_session_log_fields,
+    build_capture_request_meta, client_session_from_authorization, fingerprint_client_key,
+    is_models_endpoint, last_user_message_fingerprint, sanitize_for_trace, stable_session_log_fields,
 };
 use crate::runtime::RuntimeConfig;
 use crate::send_helpers::{
@@ -557,6 +557,9 @@ impl ProxyHttp for GatewayProxy {
         }
 
         ctx.authorization = Some(auth);
+        if !provided_key.is_empty() {
+            ctx.client_key_fingerprint = Some(fingerprint_client_key(&provided_key));
+        }
         ctx.consumer = consumer_from_key
             .or(consumer_from_header)
             .or_else(|| ctx.project_id.clone());
@@ -639,6 +642,24 @@ impl ProxyHttp for GatewayProxy {
             .get("prompt_cache_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+
+        let client_ip = session
+            .client_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        let affinity_headers = HeaderMap::from_iter(
+            session
+                .req_header()
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        ctx.upstream.affinity_key = Some(extract_affinity_key(
+            &affinity_headers,
+            &client_ip,
+            ctx.prompt_cache_key.as_deref(),
+            ctx.project_id.as_deref(),
+        ));
 
         let pipeline_globals = self.state.runtime.pipeline_globals();
         let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
@@ -991,7 +1012,8 @@ impl ProxyHttp for GatewayProxy {
             }),
         );
         // #endregion
-        ctx.new_request_body = Some(new_body);
+        ctx.new_request_body = Some(new_body.clone());
+        ctx.upstream_body_for_capture = Some(new_body);
         ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
         if ctx.upstream.retry_buffer_truncated {
             debug_agent_log(
@@ -1039,12 +1061,24 @@ impl ProxyHttp for GatewayProxy {
         ) {
             ctx.cache_key = Some(cache_key.clone());
 
-            if let Some((entry, tier)) = self
-                .state
-                .tiered_cache
-                .get(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
-                .await
-            {
+            let may_try_l2 = ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4);
+            let tiered_exact = if may_try_l2 {
+                self.state
+                    .tiered_cache
+                    .get_defer_miss(
+                        &cache_key,
+                        ctx.consumer.as_deref(),
+                        ctx.domain.as_deref(),
+                    )
+                    .await
+            } else {
+                self.state
+                    .tiered_cache
+                    .get(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
+                    .await
+            };
+            let tiered_was_absent = tiered_exact.is_none();
+            if let Some((entry, tier)) = tiered_exact {
                 if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                     info!(
                         request_id = %ctx.request_id,
@@ -1166,13 +1200,18 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
 
-            if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
+            if may_try_l2 {
                 let cache_key_body_owned = cache_key_body.to_vec();
                 if self
                     .try_l2_semantic_cache(session, ctx, &cache_key_body_owned)
                     .await
                 {
                     return Ok(true);
+                }
+                if tiered_was_absent {
+                    self.state
+                        .tiered_cache
+                        .record_absent_miss(ctx.domain.as_deref());
                 }
             }
 
@@ -1199,7 +1238,7 @@ impl ProxyHttp for GatewayProxy {
                         if let Some((entry, tier)) = self
                             .state
                             .tiered_cache
-                            .get(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
+                            .get_silent(&cache_key)
                             .await
                         {
                             if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
@@ -1249,6 +1288,12 @@ impl ProxyHttp for GatewayProxy {
                                     ctx.tokens.last_input = entry.usage.prompt_tokens;
                                     ctx.tokens.last_output = entry.usage.completion_tokens;
                                     global_metrics().record_coalesced_request();
+                                    global_metrics().record_cache_hit(
+                                        tier,
+                                        &ctx.model,
+                                        ctx.consumer.as_deref(),
+                                        ctx.domain.as_deref(),
+                                    );
                                     global_metrics().record_latency(
                                         crab_metrics::LatencyKind::CacheFetch,
                                         ctx.request_start.elapsed(),
@@ -1393,6 +1438,7 @@ impl ProxyHttp for GatewayProxy {
                 .first()
                 .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
 
+            ctx.upstream.affinity_key = Some("models".to_string());
             ctx.upstream.backend_name = Some(backend.name.clone());
             ctx.upstream.host = Some(backend.tls_sni.clone());
             let peer = self.create_upstream_peer(backend, ctx);
@@ -1428,9 +1474,11 @@ impl ProxyHttp for GatewayProxy {
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
 
+        // Reuse affinity key from request_filter if available (avoids redundant SHA-256 hash)
         let body_pck = ctx.prompt_cache_key.as_deref();
-        let affinity_key =
-            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref());
+        let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
+            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref())
+        });
 
         let profile = self.active_upstream_profile(ctx);
         let router = &profile.router;
@@ -1454,12 +1502,24 @@ impl ProxyHttp for GatewayProxy {
         // Check if we have health information to filter by
         let backend = {
             let health = self.state.runtime.backend_health.read();
-            router
+            let selected = router
                 .select_healthy(affinity_key.as_bytes(), |name| {
                     health.get(name).map(|h| h.healthy).unwrap_or(true)
                 })
-                .cloned()
-                .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?
+                .cloned();
+
+            match selected {
+                Some(b) => b,
+                None => {
+                    // All backends are unhealthy - return 503 immediately
+                    // This prevents entering upstream_request_filter when no healthy backends exist
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        "All upstream backends unhealthy, returning 503"
+                    );
+                    return Err(Error::new(ErrorType::ConnectProxyFailure));
+                }
+            }
         };
 
         debug!(
@@ -1739,12 +1799,8 @@ impl ProxyHttp for GatewayProxy {
         let _ = upstream_response.insert_header("x-request-id", ctx.request_id.clone());
         let _ = upstream_response.insert_header("x-cache-status", "miss");
 
-        if let Some(ref backend_name) = ctx.upstream.backend_name {
-            let mut health = self.state.runtime.backend_health.write();
-            if let Some(h) = health.get_mut(backend_name) {
-                h.record_success(&self.state.runtime.circuit_breaker_config);
-            }
-        }
+        // Record success is deferred to logging phase (stream completion)
+        // to avoid counting incomplete SSE streams as successes
 
         ctx.upstream.start = Some(std::time::Instant::now());
 
@@ -2262,6 +2318,16 @@ impl ProxyHttp for GatewayProxy {
             {
                 guard.mark_failed();
             }
+
+            // Record circuit breaker failure on stream error
+            // (covers case where upstream returned 200 but stream died mid-way)
+            if let Some(ref backend_name) = ctx.upstream.backend_name {
+                let mut health = self.state.runtime.backend_health.write();
+                if let Some(h) = health.get_mut(backend_name) {
+                    h.record_failure(&self.state.runtime.circuit_breaker_config);
+                }
+            }
+
             // #region agent log
             debug_agent_log(
                 "F",
@@ -2312,6 +2378,16 @@ impl ProxyHttp for GatewayProxy {
                 upstream_key_id = ?ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
                 "Request completed"
             );
+
+            // Record circuit breaker success after stream completion (not just response headers)
+            // This prevents counting incomplete SSE streams as successes
+            if let Some(ref backend_name) = ctx.upstream.backend_name {
+                let mut health = self.state.runtime.backend_health.write();
+                if let Some(h) = health.get_mut(backend_name) {
+                    h.record_success(&self.state.runtime.circuit_breaker_config);
+                }
+            }
+
             if let Some(trace_logger) = &self.state.trace_logger {
                 let max_payload = trace_logger.max_payload_bytes();
                 let max_resp = trace_logger.max_response_preview_bytes();
@@ -2362,7 +2438,9 @@ impl ProxyHttp for GatewayProxy {
                         ctx.upstream_model.as_deref(),
                         ctx.project_id.as_deref(),
                         ctx.original_request_body.as_deref(),
-                        ctx.new_request_body.as_deref(),
+                        ctx.upstream_body_for_capture
+                            .as_deref()
+                            .or(ctx.new_request_body.as_deref()),
                     );
                     trace_logger.log(entry);
                 }
@@ -2377,6 +2455,7 @@ impl ProxyHttp for GatewayProxy {
                     .cached_reasoning_config
                     .missing_reasoning_strategy
                     .as_str();
+                let capture_meta = build_capture_request_meta(session, ctx, latency_ms);
                 raw_logger.capture(
                     &ctx.request_id,
                     ctx.req_hash.as_deref(),
@@ -2390,7 +2469,10 @@ impl ProxyHttp for GatewayProxy {
                         .map(|p| p.retired_prefix_messages),
                     Some(reasoning_strategy),
                     ctx.original_request_body.as_deref(),
-                    ctx.new_request_body.as_deref(),
+                    ctx.upstream_body_for_capture
+                        .as_deref()
+                        .or(ctx.new_request_body.as_deref()),
+                    capture_meta,
                 );
             }
         }

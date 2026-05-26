@@ -1,4 +1,7 @@
-use crab_capture::{PacketStructureSummary, RawCaptureEntry, analyze_packet, diff_structure};
+use crab_capture::{
+    CaptureRequestMeta, PacketStructureSummary, RawCaptureEntry, affinity_kind_from_key,
+    analyze_packet, diff_structure, session_fingerprint_from_payload,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -250,7 +253,7 @@ impl RawCaptureLogger {
     /// the proxy logging phase.
     ///
     /// `client_body` = `original_request_body` (client → gateway)
-    /// `upstream_body` = `new_request_body` (gateway → upstream)
+    /// `upstream_body` = prepared upstream JSON (`upstream_body_for_capture` snapshot)
     pub fn capture(
         &self,
         request_id: &str,
@@ -264,6 +267,7 @@ impl RawCaptureLogger {
         reasoning_strategy: Option<&str>,
         client_body: Option<&[u8]>,
         upstream_body: Option<&[u8]>,
+        meta: CaptureRequestMeta,
     ) {
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -271,10 +275,45 @@ impl RawCaptureLogger {
             .as_millis() as u64;
 
         // Analyze client and upstream packets.
-        let (client_summary, client_json_ok) = match client_body.and_then(parse_json_safe) {
-            Some(json) => (analyze_packet(&json), true),
+        let client_json = client_body.and_then(parse_json_safe);
+        let (client_summary, client_json_ok) = match client_json.as_ref() {
+            Some(json) => (analyze_packet(json), true),
             None => (PacketStructureSummary::default(), false),
         };
+
+        let mut session_fingerprint = meta.session_fingerprint.clone();
+        let mut body_user = meta.body_user.clone();
+        let mut conversation_id = meta.conversation_id.clone();
+        let mut prompt_cache_key = meta.prompt_cache_key.clone();
+        if let Some(ref json) = client_json {
+            if session_fingerprint.is_none() {
+                session_fingerprint = session_fingerprint_from_payload(json);
+            }
+            if body_user.is_none() {
+                body_user = json
+                    .get("user")
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string());
+            }
+            if conversation_id.is_none() {
+                conversation_id = json
+                    .get("conversation_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+            }
+            if prompt_cache_key.is_none() {
+                prompt_cache_key = json
+                    .get("prompt_cache_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+            }
+        }
+        let affinity_kind = meta
+            .affinity_key
+            .as_deref()
+            .map(affinity_kind_from_key)
+            .map(str::to_string)
+            .or(meta.affinity_kind.clone());
         let (upstream_summary, upstream_json_ok) = match upstream_body.and_then(parse_json_safe) {
             Some(json) => (analyze_packet(&json), true),
             None => (PacketStructureSummary::default(), false),
@@ -321,6 +360,7 @@ impl RawCaptureLogger {
 
         let entry = RawCaptureEntry {
             timestamp_ms,
+            timestamp_beijing: None,
             request_id: request_id.to_string(),
             request_hash: request_hash.map(|s| s.to_string()),
             model: model.to_string(),
@@ -337,6 +377,25 @@ impl RawCaptureLogger {
             client_path,
             upstream_path,
             capture_error,
+            conversation_id,
+            prompt_cache_key,
+            session_fingerprint,
+            body_user,
+            affinity_kind,
+            affinity_key: meta.affinity_key.clone(),
+            backend_name: meta.backend_name.clone(),
+            upstream_host: meta.upstream_host.clone(),
+            client_key_fingerprint: meta.client_key_fingerprint.clone(),
+            upstream_key_id: meta.upstream_key_id.clone(),
+            upstream_profile_id: meta.upstream_profile_id.clone(),
+            domain: meta.domain.clone(),
+            cache_tier: meta.cache_tier.clone(),
+            cache_hit: meta.cache_hit,
+            coalesced_follower: meta.coalesced_follower,
+            coalesce_leader: meta.coalesce_leader,
+            duration_ms: meta.duration_ms,
+            ttft_ms: meta.ttft_ms,
+            upstream_latency_ms: meta.upstream_latency_ms,
         };
 
         let _ = self.sender.send(RawCaptureMessage {

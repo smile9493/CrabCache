@@ -47,7 +47,7 @@ impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
             failure_threshold: 5,
-            success_threshold: 2,
+            success_threshold: 3,  // Increased from 2 to 3 for LLM streaming stability
             timeout_ms: 30_000,
         }
     }
@@ -175,7 +175,7 @@ impl AffinityRouter {
 
     /// Select a backend using the consistent hash ring, filtering by health.
     ///
-    /// Iterates through backends in hash-ring order until a healthy one is found.
+    /// Iterates through backends in hash-ring order (virtual node hopping) until a healthy one is found.
     /// If no backends are healthy, falls back to all backends with a warning.
     pub fn select_healthy<F>(&self, key: &[u8], is_healthy: F) -> Option<&Backend>
     where
@@ -184,15 +184,31 @@ impl AffinityRouter {
         let healthy_count = self.backends.iter().filter(|b| is_healthy(&b.name)).count();
         let total = self.backends.len();
 
+        // Try the primary backend from the hash ring
         let addr = self.continuum.node(key)?;
-
         if let Some(selected) = self.backends.iter().find(|b| b.addr == addr)
             && is_healthy(&selected.name)
         {
             return Some(selected.as_ref());
         }
 
+        // If primary is unhealthy, try next backends in hash-ring order
+        // by appending attempt counter to create virtual node hopping
         if healthy_count > 0 {
+            let mut probe = Vec::with_capacity(key.len() + 4);
+            for attempt in 1..total {
+                probe.clear();
+                probe.extend_from_slice(key);
+                probe.extend_from_slice(&(attempt as u32).to_le_bytes());
+                if let Some(next_addr) = self.continuum.node(&probe) {
+                    if let Some(candidate) = self.backends.iter().find(|b| b.addr == next_addr)
+                        && is_healthy(&candidate.name)
+                    {
+                        return Some(candidate.as_ref());
+                    }
+                }
+            }
+            // Final fallback: linear scan (preserves existing behavior as safety net)
             for b in &self.backends {
                 if is_healthy(&b.name) {
                     return Some(b.as_ref());

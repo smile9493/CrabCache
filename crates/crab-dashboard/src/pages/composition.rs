@@ -115,55 +115,49 @@ fn ComponentRateBar(component: String, present_count: usize, rate: f64) -> impl 
     }
 }
 
-/// A simple line chart for trends using a canvas element.
+/// Hourly request trend as vertical bars (matches overview usage chart style).
 #[component]
-fn TrendLineChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
+fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     let max_v = points.iter().map(|(_, v)| *v).max().unwrap_or(1).max(1);
-    let svg_width = points.len().max(2) * 12;
-    let svg_height = 120;
-
-    let points_str = points
-        .iter()
-        .enumerate()
-        .map(|(i, (_, v))| {
-            let x = (i as f64 / (points.len().saturating_sub(1) as f64).max(1.0))
-                * (svg_width as f64 - 20.0)
-                + 10.0;
-            let y =
-                svg_height as f64 - 20.0 - (*v as f64 / max_v as f64) * (svg_height as f64 - 40.0);
-            format!("{:.1},{:.1}", x, y)
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let max_h = 120.0;
+    let point_count = points.len();
+    let show_value_on_bar = point_count <= 24;
 
     view! {
         <div class="chart-card glass-card">
             <h3 class="text-sm font-semibold mb-2 text-[var(--text-primary)]">{title}</h3>
-            <svg
-                viewBox=format!("0 0 {} {}", svg_width, svg_height)
-                class="w-full h-32"
-                preserveAspectRatio="xMidYMid meet"
-            >
-                <polyline
-                    points=points_str
-                    fill="none"
-                    stroke="var(--accent)"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                />
-                {points.iter().enumerate().filter_map(|(i, (_, v))| {
-                    if points.len() > 30 && i % 5 != 0 { return None; }
-                    let x = (i as f64 / (points.len().saturating_sub(1) as f64).max(1.0)) * (svg_width as f64 - 20.0) + 10.0;
-                    let y = svg_height as f64 - 20.0 - (*v as f64 / max_v as f64) * (svg_height as f64 - 40.0);
-                    Some(view! {
-                        <circle cx={x.to_string()} cy={y.to_string()} r="3" fill="var(--accent)" />
-                        <text x={x.to_string()} y={(y - 8.0).to_string()} class="text-[9px]" fill="var(--text-secondary)" text-anchor="middle">
-                            {v.to_string()}
-                        </text>
-                    })
+            <div class="flex items-end gap-1 h-32 overflow-x-auto pb-1 px-0.5">
+                {points.into_iter().enumerate().map(|(i, (label, count))| {
+                    let h = if max_v > 0 {
+                        format!("{:.0}px", (count as f64 / max_v as f64) * max_h)
+                    } else {
+                        "0px".to_string()
+                    };
+                    let label_display = if point_count > 16 && i % 2 == 1 {
+                        String::new()
+                    } else {
+                        truncate(&label, 6)
+                    };
+                    view! {
+                        <div class="flex flex-col items-center gap-0.5 min-w-7 shrink-0">
+                            {show_value_on_bar.then(|| view! {
+                                <span class="text-[10px] font-mono text-[var(--text-secondary)]">{count}</span>
+                            })}
+                            <div
+                                class="w-5 sm:w-6 rounded-sm bg-[var(--accent)] opacity-85 hover:opacity-100 transition-opacity"
+                                style=format!("height: {}", h)
+                                title=format!("{}: {}", label, count)
+                            ></div>
+                            <span
+                                class="text-[9px] text-[var(--text-secondary)] truncate w-8 text-center"
+                                title=label.clone()
+                            >
+                                {label_display}
+                            </span>
+                        </div>
+                    }
                 }).collect::<Vec<_>>()}
-            </svg>
+            </div>
         </div>
     }
 }
@@ -606,13 +600,11 @@ pub fn CompositionPage() -> impl IntoView {
                     {tr.as_ref().map(|trends| {
                         let labels: Vec<(String, u32)> = trends.points.iter().map(|p| {
                             // Convert timestamp_ms to hour label.
-                            let ts = chrono::DateTime::from_timestamp_millis(p.timestamp_ms as i64)
-                                .map(|dt| dt.format("%H:00").to_string())
-                                .unwrap_or_else(|| p.timestamp_ms.to_string());
+                            let ts = crate::datetime::format_ms_china_hour_label(p.timestamp_ms);
                             (ts, p.request_count)
                         }).collect();
                         view! {
-                            <TrendLineChart
+                            <TrendBarChart
                                 title=format!("{} ({})", t.composition_trends(), trends.hours)
                                 points=labels
                             />

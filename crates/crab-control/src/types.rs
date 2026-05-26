@@ -23,6 +23,21 @@ pub struct GatewayStatus {
     pub upstream_model: Option<String>,
 }
 
+/// Detailed response from `GET /v1/ready` including subsystem health.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayReadyDetail {
+    pub ready: bool,
+    /// `"ok"` or `"unavailable"`.
+    pub redis: String,
+    /// `"ok"` (L2 cache loaded), `"disabled"` (semantic not configured), or `"unavailable"`.
+    #[serde(default = "default_l2_disabled")]
+    pub l2: String,
+}
+
+fn default_l2_disabled() -> String {
+    "disabled".to_string()
+}
+
 /// Runtime upstream relay target (hot-reloadable via Management API).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamRelayConfigView {

@@ -1007,6 +1007,7 @@ dependencies = [
  "prometheus",
  "reqwest",
  "ring",
+ "rusqlite",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -1064,8 +1065,11 @@ dependencies = [
 name = "crab-capture"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

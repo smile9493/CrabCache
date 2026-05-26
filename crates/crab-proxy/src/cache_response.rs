@@ -4,7 +4,7 @@ use pingora_proxy::Session;
 use tracing::warn;
 
 use crab_cache::CacheEntry;
-use crab_metrics::CacheTier;
+use crab_metrics::{CacheTier, global_metrics};
 use crab_reasoning::{
     completion_message_content_has_thinking_markup, response_body_has_thinking_markup,
     sanitize_client_completion, sanitize_client_message_content,
@@ -237,6 +237,7 @@ pub async fn send_cached_response(
             .write_response_body(Bytes::from(json_body), true)
             .await;
     }
+    global_metrics().record_http_response(200);
     true
 }
 

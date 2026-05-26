@@ -72,7 +72,7 @@ fn scale_segment(
         .join(" ")
 }
 
-fn y_range(series: &[ChartSeries]) -> (f64, f64) {
+pub(crate) fn y_range(series: &[ChartSeries]) -> (f64, f64) {
     let mut ymin = f64::MAX;
     let mut ymax = f64::MIN;
     for s in series {
@@ -96,7 +96,7 @@ fn y_range(series: &[ChartSeries]) -> (f64, f64) {
 
 /// Convert a mouse event's client X to SVG viewBox X coordinate.
 /// Uses the inverse of the SVG's screen CTM (SvgMatrix).
-fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Option<f64> {
+pub(crate) fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Option<f64> {
     let ctm = svg.get_screen_ctm()?;
     let inv = ctm.inverse().ok()?;
     let cx = ev.client_x() as f64;
@@ -119,7 +119,7 @@ fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Opt
 }
 
 /// Format a numeric value for tooltip display.
-fn format_tooltip_value(v: f64) -> String {
+pub(crate) fn format_tooltip_value(v: f64) -> String {
     if v >= 1_000_000.0 {
         format!("{:.1}M", v / 1_000_000.0)
     } else if v >= 1_000.0 {

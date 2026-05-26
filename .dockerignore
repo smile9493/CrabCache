@@ -1,27 +1,71 @@
 # Docker build context — exclude local toolchains and build artifacts
+
+# Other projects (not needed for CrabCache build)
 cursor-deepseek
 deepseek-cursor-proxy
+CLIProxyAPI
+new-api
+
+# Git and IDE
 .git
 .github
+.trae
+.idea
+.vscode
+
+# Rust build artifacts (critical!)
 target
 target_docker
 .rustup
 .cargo
 .cargo_home
+# Keep .cargo-target for prebuilt Docker images
+# .cargo-target
+
+# Node.js
 node_modules
-crates/crab-dashboard/dist
-.trae
-.idea
-.vscode
+
+# Dashboard build output
+# Keep dist for prebuilt Docker images
+# crates/crab-dashboard/dist
+
+# Data and logs
 data
 docker/data
 *.log
 *.sqlite3
+
+# Config (use docker-specific config)
 .env
 config/gateway.toml
+
+# Models
 models/*.onnx
+
+# Certificates
 certs
+
+# Documentation (not needed for build)
+docs
+*.md
+!README.md
 doc_content.txt
 read_doc.ps1
+
+# Tests
+tests
 tests/*.png
 tests/__pycache__
+
+# Deployment files
+deploy
+docker-compose*.yml
+*.service
+mkdocs.yml
+cliff.toml
+deny.toml
+
+# Misc
+1.html
+fangan.md
+.docker-cache

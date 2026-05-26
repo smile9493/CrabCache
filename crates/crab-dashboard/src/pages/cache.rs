@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::donut_chart::{DonutChart, DonutSegment};
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
@@ -762,11 +764,19 @@ fn OpsTab() -> impl IntoView {
 fn TraceTab() -> impl IntoView {
     let t = use_translations();
     let analysis: RwSignal<Option<Result<TraceAnalysis, String>>> = RwSignal::new(None);
+    let cached_etag = RwSignal::new(String::new());
 
     let load_analysis = move || {
+        let etag = cached_etag.get_untracked();
         leptos::task::spawn_local(async move {
-            match api::fetch_trace_analysis(24).await {
-                Ok(a) => analysis.set(Some(Ok(a))),
+            match api::fetch_trace_analysis_etag(24, &etag).await {
+                Ok(result) => {
+                    cached_etag.set(result.etag);
+                    if let Some(a) = result.analysis {
+                        analysis.set(Some(Ok(a)));
+                    }
+                    // 304: keep existing analysis data
+                }
                 Err(e) => analysis.set(Some(Err(e))),
             }
         });
@@ -811,7 +821,10 @@ fn TraceTab() -> impl IntoView {
                                     <div class="text-2xl font-bold text-accent font-mono">{format!("{:.1}%", data.repeat_ratio * 100.0)}</div>
                                 </div>
                                 <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_estimated_hit_rate()}</div>
+                                    <div class="text-xs text-theme-muted mb-1 flex items-center gap-1">
+                                        {t.trace_estimated_hit_rate()}
+                                        <span class="cursor-help" title=t.trace_estimated_hit_rate_hint()>"?"</span>
+                                    </div>
                                     <div class="text-2xl font-bold text-green-500 font-mono">{format!("{:.1}%", data.estimated_hit_rate * 100.0)}</div>
                                 </div>
                             </div>
@@ -865,20 +878,86 @@ fn TraceTab() -> impl IntoView {
 
                             <div class="glass-card">
                                 <h3 class="text-sm font-semibold text-theme mb-3">{t.trace_cluster_distribution()}</h3>
-                                <div class="space-y-2">
-                                    {cluster_dist.into_iter().map(|c| {
-                                        view! {
-                                            <div class="flex items-center gap-3">
-                                                <span class="text-xs font-mono text-theme-muted w-20">{format!("Cluster {}", c.cluster_id)}</span>
-                                                <div class="flex-1 h-2 bg-theme-tertiary rounded-full overflow-hidden">
-                                                    <div class="h-full bg-accent rounded-full" style=move || format!("width: {}%", c.percentage) />
-                                                </div>
-                                                <span class="text-xs font-mono text-theme w-16 text-right">{format!("{}", c.count)}</span>
-                                            </div>
+                                {if cluster_dist.is_empty() {
+                                    view! { <p class="text-xs text-theme-muted">"No cluster data"</p> }.into_any()
+                                } else {
+                                    let segment_colors: [&str; 5] = [
+                                        "var(--accent-primary)",
+                                        "var(--warning)",
+                                        "var(--info)",
+                                        "var(--success)",
+                                        "var(--error)",
+                                    ];
+                                    let top_count = 5.min(cluster_dist.len());
+                                    let mut segments: Vec<DonutSegment> = cluster_dist.iter().take(top_count).enumerate().map(|(i, c)| {
+                                        DonutSegment {
+                                            label: format!("C{}", c.cluster_id),
+                                            value: c.count as f64,
+                                            color: segment_colors[i % segment_colors.len()],
                                         }
-                                    }).collect::<Vec<_>>()}
-                                </div>
+                                    }).collect();
+                                    if cluster_dist.len() > top_count {
+                                        let other_count: usize = cluster_dist[top_count..].iter().map(|c| c.count).sum();
+                                        segments.push(DonutSegment {
+                                            label: "Other".into(),
+                                            value: other_count as f64,
+                                            color: "var(--cc-text-muted)",
+                                        });
+                                    }
+                                    view! {
+                                        <DonutChart
+                                            segments=segments
+                                            center_label=format!("{} clusters", cluster_dist.len())
+                                        />
+                                    }.into_any()
+                                }}
                             </div>
+
+                            // Zipf log-log distribution chart
+                            {if !data.zipf_log_points.is_empty() {
+                                let zipf_stored = StoredValue::new(data.zipf_log_points.clone());
+                                let slope = data.zipf_regression_slope;
+                                let intercept = data.zipf_regression_intercept;
+                                let x_labels = Signal::derive(move || {
+                                    zipf_stored.get_value().iter().map(|p| format!("{:.1}", p.log_rank)).collect()
+                                });
+                                let series = Signal::derive(move || {
+                                    let pts = zipf_stored.get_value();
+                                    let regression_line: Vec<Option<f64>> = pts.iter()
+                                        .map(|p| Some(slope * p.log_rank + intercept))
+                                        .collect();
+                                    vec![
+                                        ChartSeries {
+                                            label: "Actual".into(),
+                                            color: "var(--accent-primary)",
+                                            values: pts.iter().map(|p| Some(p.log_freq)).collect(),
+                                            dashed: false,
+                                            fill: false,
+                                        },
+                                        ChartSeries {
+                                            label: format!("Fit (slope={:.2})", slope),
+                                            color: "var(--warning)",
+                                            values: regression_line,
+                                            dashed: true,
+                                            fill: false,
+                                        },
+                                    ]
+                                });
+                                view! {
+                                    <div class="glass-card p-4 space-y-3">
+                                        <h3 class="text-sm font-semibold text-theme">{t.trace_zipf_chart()}</h3>
+                                        <LineChart
+                                            x_labels=x_labels
+                                            series=series
+                                            height_px=200
+                                            y_unit="ln(freq)"
+                                            empty_message=""
+                                        />
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }}
 
                             {data.deepseek_user_id.clone().map(|audit| {
                                 let ok = audit.isolation_ok;

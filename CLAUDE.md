@@ -412,7 +412,7 @@ DeepSeek V4 的硬盘级前缀缓存要求请求必须路由到同一后端节�
 
 ## 监控指标
 
-Admin Dashboard Overview 通过 **`GET /api/admin/overview/core`** 每 10s 轮询（metrics 核心、health、L3 前缀、语义配置、运维 ops）；**`GET /api/admin/overview/timeseries`** 与 **`GET /api/admin/overview/trace`** 分别加载时序与 24h Trace 摘要。展示 **5 分钟窗口**命中率（`hit_rate_5m`、`token_hit_rate_5m`）与 **进程累计**命中率，并区分 L0–L2 与 L3 口径。时序图来自 `crab-admin` 每 60s 采样的指标环。完整 **`GET /api/admin/overview`** 仍可用。影子日志 Trace 页为近 24h 实测命中率。详见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
+Admin Dashboard Overview 通过 **`GET /api/admin/overview/core`** 每 10s 轮询（metrics 核心、health、L3 前缀、语义配置、运维 ops）；**`GET /api/admin/overview/timeseries`** 与 **`GET /api/admin/overview/trace`** 分别每 60s 加载时序与 24h Trace 摘要。展示 **5 分钟窗口**命中率（`hit_rate_5m`、`token_hit_rate_5m`）与 **进程累计**命中率，并区分 L0–L2 与 L3 口径。时序图来自 `crab-admin` 每 60s 采样的指标环；**1h** 窗口使用 5 分钟桶（最多 12 个），**24h** 使用 1 小时桶，**7d** 使用 1 天桶。完整 **`GET /api/admin/overview`** 仍可用。影子日志 Trace 页为近 24h 实测命中率。详见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
 
 关键 Prometheus 指标（通过 `metrics_addr` 暴露）：
 

@@ -147,13 +147,24 @@ pub fn extract_system_text(payload: &Value, max_chars: usize) -> Option<String> 
     }
     let joined = texts.join("\n");
     if joined.len() > max_chars {
-        let end = joined.floor_char_boundary(max_chars);
+        let end = find_char_boundary(&joined, max_chars);
         let mut truncated = joined[..end].to_string();
         truncated.push_str("…<truncated>");
         Some(truncated)
     } else {
         Some(joined)
     }
+}
+
+fn find_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut boundary = index;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
 }
 
 /// Extract tools definition JSON string from the request payload,
@@ -165,7 +176,7 @@ pub fn extract_tools_json(payload: &Value, max_chars: usize) -> Option<String> {
         return None;
     }
     if json_str.len() > max_chars {
-        let end = json_str.floor_char_boundary(max_chars);
+        let end = find_char_boundary(&json_str, max_chars);
         let mut truncated = json_str[..end].to_string();
         truncated.push_str("…<truncated>");
         Some(truncated)

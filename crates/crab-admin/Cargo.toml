@@ -38,6 +38,7 @@ ring = "0.17"
 crab-admin-types.workspace = true
 crab-control.workspace = true
 crab-composition.workspace = true
+rusqlite.workspace = true
 crab-capture.workspace = true
 crab-proxy.workspace = true
 tokio-postgres.workspace = true

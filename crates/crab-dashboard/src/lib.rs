@@ -4,6 +4,7 @@ pub mod app;
 pub mod auth;
 pub mod clipboard;
 pub mod components;
+pub mod datetime;
 pub mod locale;
 pub mod page_visible;
 pub mod pages;

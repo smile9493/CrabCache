@@ -636,19 +636,43 @@ async fn get_overview_core(
 
 async fn get_overview_timeseries(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<OverviewTimeseriesQuery>,
-) -> Result<Json<OverviewTimeseriesResponse>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let window = match query.window.as_str() {
         "1h" | "24h" | "7d" => query.window.as_str(),
         _ => "1h",
     };
-    crate::overview::build_overview_timeseries(&state, window)
+
+    let (points, etag_val) = crate::overview::get_overview_timeseries_cached(&state, window)
         .await
-        .map(Json)
         .map_err(|e| {
             tracing::warn!(error = %e, "Failed to build overview timeseries");
             StatusCode::SERVICE_UNAVAILABLE
-        })
+        })?;
+
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        && if_none_match == etag_val.as_str()
+    {
+        let mut resp = Response::new(axum::body::Body::empty());
+        *resp.status_mut() = StatusCode::NOT_MODIFIED;
+        if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+            resp.headers_mut().insert(header::ETAG, hv);
+        }
+        return Ok(resp);
+    }
+
+    let payload = OverviewTimeseriesResponse {
+        window: window.to_string(),
+        points,
+    };
+    let mut resp = Json(payload).into_response();
+    if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+        resp.headers_mut().insert(header::ETAG, hv);
+    }
+    Ok(resp)
 }
 
 async fn get_overview_trace(
@@ -2702,6 +2726,9 @@ fn empty_trace_analysis() -> TraceAnalysis {
         top_models: vec![],
         cluster_distribution: vec![],
         deepseek_user_id: None,
+        zipf_log_points: vec![],
+        zipf_regression_slope: 0.0,
+        zipf_regression_intercept: 0.0,
     }
 }
 
@@ -2781,14 +2808,50 @@ async fn get_live_metrics(
     Ok(Json(resp))
 }
 
-async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<TraceAnalysis> {
+async fn get_trace_analysis(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<TraceAnalysisQuery>,
+) -> Result<Response, StatusCode> {
     use std::collections::HashMap;
+    use std::time::Duration;
+
+    // Check cache (60s TTL) — return (etag, analysis) tuple
+    {
+        let cached = state.trace_analysis_cache.read();
+        if let Some((instant, ref analysis)) = *cached {
+            if instant.elapsed() < Duration::from_secs(60) {
+                let etag_val = format!(
+                    "\"ta-{}-{}\"",
+                    analysis.total_requests,
+                    query.hours
+                );
+                if let Some(if_none_match) = headers
+                    .get(header::IF_NONE_MATCH)
+                    .and_then(|v| v.to_str().ok())
+                    && if_none_match == etag_val.as_str()
+                {
+                    let mut resp = Response::new(axum::body::Body::empty());
+                    *resp.status_mut() = StatusCode::NOT_MODIFIED;
+                    if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+                        resp.headers_mut().insert(header::ETAG, hv);
+                    }
+                    return Ok(resp);
+                }
+                let mut resp = Json(analysis.clone()).into_response();
+                if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+                    resp.headers_mut().insert(header::ETAG, hv);
+                }
+                return Ok(resp);
+            }
+        }
+    }
 
     let trace_path = crate::trace_log::trace_log_path();
     let entries = crate::trace_log::load_trace_entries_async(&trace_path, query.hours).await;
 
     if entries.is_empty() {
-        return Json(empty_trace_analysis());
+        return Ok(Json(empty_trace_analysis()).into_response());
     }
 
     let summary = crate::trace_summary::compute_trace_summary(&entries, query.hours);
@@ -2824,11 +2887,14 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
 
     let mut freqs: Vec<usize> = hash_counts.values().cloned().collect();
     freqs.sort_by(|a, b| b.cmp(a));
-    let estimated_zipf_alpha = if freqs.len() >= 2 {
-        compute_zipf_alpha(&freqs)
-    } else {
-        0.0
-    };
+    let (estimated_zipf_alpha, zipf_log_points, zipf_regression_slope, zipf_regression_intercept) =
+        if freqs.len() >= 2 {
+            let alpha = compute_zipf_alpha(&freqs);
+            let (points, slope, intercept) = compute_zipf_regression_data(&freqs);
+            (alpha, points, slope, intercept)
+        } else {
+            (0.0, Vec::new(), 0.0, 0.0)
+        };
 
     let avg_latency_ms = if total_requests > 0 {
         total_latency / total_requests as f64
@@ -2878,7 +2944,7 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
         &entries,
     ));
 
-    Json(TraceAnalysis {
+    let analysis = TraceAnalysis {
         total_requests,
         unique_requests,
         repeat_ratio,
@@ -2891,7 +2957,36 @@ async fn get_trace_analysis(Query(query): Query<TraceAnalysisQuery>) -> Json<Tra
         top_models,
         cluster_distribution,
         deepseek_user_id,
-    })
+        zipf_log_points,
+        zipf_regression_slope,
+        zipf_regression_intercept,
+    };
+
+    // Store in cache
+    *state.trace_analysis_cache.write() = Some((std::time::Instant::now(), analysis.clone()));
+
+    let etag_val = format!(
+        "\"ta-{}-{}\"",
+        analysis.total_requests,
+        query.hours
+    );
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        && if_none_match == etag_val.as_str()
+    {
+        let mut resp = Response::new(axum::body::Body::empty());
+        *resp.status_mut() = StatusCode::NOT_MODIFIED;
+        if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+            resp.headers_mut().insert(header::ETAG, hv);
+        }
+        return Ok(resp);
+    }
+    let mut resp = Json(analysis).into_response();
+    if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+        resp.headers_mut().insert(header::ETAG, hv);
+    }
+    Ok(resp)
 }
 
 fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
@@ -2899,7 +2994,7 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
         return 0.0;
     }
 
-    let n = freqs.len();
+    let mut n_valid = 0usize;
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
     let mut sum_xy = 0.0;
@@ -2909,6 +3004,7 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
         if freq == 0 {
             continue;
         }
+        n_valid += 1;
         let r = (rank + 1) as f64;
         let f = freq as f64;
         let log_r = r.ln();
@@ -2920,13 +3016,64 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
         sum_xx += log_r * log_r;
     }
 
-    let denominator = n as f64 * sum_xx - sum_x * sum_x;
+    if n_valid < 2 {
+        return 0.0;
+    }
+
+    let denominator = n_valid as f64 * sum_xx - sum_x * sum_x;
     if denominator == 0.0 {
         return 0.0;
     }
 
-    let alpha = (n as f64 * sum_xy - sum_x * sum_y) / denominator;
+    let alpha = (n_valid as f64 * sum_xy - sum_x * sum_y) / denominator;
     -alpha
+}
+
+/// Compute log-log data points and OLS regression line for Zipf visualization.
+/// Returns (points, slope, intercept) where slope ≈ -alpha.
+fn compute_zipf_regression_data(
+    freqs: &[usize],
+) -> (Vec<crate::types::ZipfLogPoint>, f64, f64) {
+    use crate::types::ZipfLogPoint;
+
+    let mut points = Vec::new();
+    let mut n_valid = 0usize;
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    let mut sum_xy = 0.0;
+    let mut sum_xx = 0.0;
+
+    for (rank, &freq) in freqs.iter().enumerate() {
+        if freq == 0 {
+            continue;
+        }
+        n_valid += 1;
+        let log_r = (rank + 1) as f64;
+        let log_f = freq as f64;
+        let lr = log_r.ln();
+        let lf = log_f.ln();
+        points.push(ZipfLogPoint {
+            log_rank: lr,
+            log_freq: lf,
+        });
+        sum_x += lr;
+        sum_y += lf;
+        sum_xy += lr * lf;
+        sum_xx += lr * lr;
+    }
+
+    if n_valid < 2 {
+        return (points, 0.0, 0.0);
+    }
+
+    let denominator = n_valid as f64 * sum_xx - sum_x * sum_x;
+    if denominator == 0.0 {
+        return (points, 0.0, 0.0);
+    }
+
+    let slope = (n_valid as f64 * sum_xy - sum_x * sum_y) / denominator;
+    let intercept = (sum_y - slope * sum_x) / n_valid as f64;
+    (points, slope, intercept)
 }
 
 // ── Infra handlers ──────────────────────────────────────────────

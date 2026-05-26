@@ -15,4 +15,6 @@ pub struct LogsFilterQuery {
     pub latency_max: Option<f64>,
     pub token_min: Option<u64>,
     pub token_max: Option<u64>,
+    pub from_ms: Option<u64>,
+    pub to_ms: Option<u64>,
 }

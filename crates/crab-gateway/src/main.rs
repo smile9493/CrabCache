@@ -727,7 +727,7 @@ fn main() -> Result<()> {
         }
     }
 
-    // Background task: TCP health check for upstream backends
+    // Background task: TCP health check for upstream backends (integrated with circuit breaker)
     {
         let runtime = runtime.clone();
         let health_interval = config.upstream.health_check_interval_secs;
@@ -755,18 +755,22 @@ fn main() -> Result<()> {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_millis() as u64;
+                            let circuit_cfg = &runtime.circuit_breaker_config;
                             match result {
                                 Ok(_) => {
                                     entry.healthy = true;
                                     entry.last_check_ms = now_ms;
                                     entry.latency_ms = elapsed_ms;
-                                    // Circuit breaker state is preserved
+                                    // Health check success helps HalfOpen → Closed transition
+                                    entry.record_success(circuit_cfg);
                                 }
                                 Err(e) => {
                                     tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
                                     entry.healthy = false;
                                     entry.last_check_ms = now_ms;
-                                    // Circuit breaker state is preserved
+                                    // Don't record_failure from health probes — let real traffic
+                                    // failures handle circuit breaker transitions. A TCP blip
+                                    // during a health probe shouldn't re-open a HalfOpen circuit.
                                 }
                             }
                         }

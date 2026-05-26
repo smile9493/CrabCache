@@ -18,6 +18,8 @@ struct CaptureFilterForm {
     consumer: String,
     project_id: String,
     request_hash: String,
+    session_fingerprint: String,
+    backend_name: String,
 }
 
 impl CaptureFilterForm {
@@ -25,6 +27,8 @@ impl CaptureFilterForm {
         !self.consumer.trim().is_empty()
             || !self.project_id.trim().is_empty()
             || !self.request_hash.trim().is_empty()
+            || !self.session_fingerprint.trim().is_empty()
+            || !self.backend_name.trim().is_empty()
     }
     fn consumer_opt(&self) -> Option<&str> {
         let v = self.consumer.trim();
@@ -38,17 +42,26 @@ impl CaptureFilterForm {
         let v = self.request_hash.trim();
         if v.is_empty() { None } else { Some(v) }
     }
+    fn session_opt(&self) -> Option<&str> {
+        let v = self.session_fingerprint.trim();
+        if v.is_empty() { None } else { Some(v) }
+    }
+    fn backend_opt(&self) -> Option<&str> {
+        let v = self.backend_name.trim();
+        if v.is_empty() { None } else { Some(v) }
+    }
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────
 
-fn fmt_ts(ms: u64) -> String {
-    use chrono::{TimeZone, Utc};
-    let dt = Utc.timestamp_millis_opt(ms as i64).single();
-    match dt {
-        Some(dt) => dt.format("%Y-%m-%d %H:%M UTC").to_string(),
-        None => format!("{ms}"),
-    }
+fn fmt_ts(entry: &RawCaptureEntry, tz_label: &str) -> String {
+    let clock = entry
+        .timestamp_beijing
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::datetime::format_ms_china_datetime(entry.timestamp_ms));
+    format!("{clock} {tz_label}")
 }
 
 fn fmt_delta(v: i64) -> String {
@@ -61,6 +74,19 @@ fn fmt_delta(v: i64) -> String {
 
 fn entry_is_anomaly(e: &RawCaptureEntry) -> bool {
     e.delta_bytes.abs() > 2048 || e.structure.delta_message_count > 0
+}
+
+fn session_short(e: &RawCaptureEntry) -> String {
+    e.session_fingerprint
+        .as_deref()
+        .map(|s| s.chars().take(8).collect())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn backend_short(e: &RawCaptureEntry) -> String {
+    e.backend_name
+        .clone()
+        .unwrap_or_else(|| "-".to_string())
 }
 
 // ── Main page ────────────────────────────────────────────────────────
@@ -84,6 +110,8 @@ pub fn CapturePage() -> impl IntoView {
             let consumer = f.consumer_opt().map(|s| s.to_string());
             let project = f.project_opt().map(|s| s.to_string());
             let hash = f.hash_opt().map(|s| s.to_string());
+            let session = f.session_opt().map(|s| s.to_string());
+            let backend = f.backend_opt().map(|s| s.to_string());
             leptos::task::spawn_local(async move {
                 list_data.set(None);
                 let result = api::fetch_capture_list(
@@ -92,6 +120,8 @@ pub fn CapturePage() -> impl IntoView {
                     consumer.as_deref(),
                     project.as_deref(),
                     hash.as_deref(),
+                    session.as_deref(),
+                    backend.as_deref(),
                 )
                 .await;
                 list_data.set(Some(result));
@@ -226,6 +256,20 @@ pub fn CapturePage() -> impl IntoView {
                     prop:value=move || filter_draft.get().request_hash
                     on:input=move |ev| filter_draft.update(|f| f.request_hash = event_target_value(&ev))
                 />
+                <input
+                    type="text"
+                    class="input"
+                    placeholder=t.capture_filter_session()
+                    prop:value=move || filter_draft.get().session_fingerprint
+                    on:input=move |ev| filter_draft.update(|f| f.session_fingerprint = event_target_value(&ev))
+                />
+                <input
+                    type="text"
+                    class="input"
+                    placeholder=t.capture_filter_backend()
+                    prop:value=move || filter_draft.get().backend_name
+                    on:input=move |ev| filter_draft.update(|f| f.backend_name = event_target_value(&ev))
+                />
                 <div class="logs-filter-actions">
                     <button on:click=move |_| apply_filters() class="btn btn-primary text-xs">
                         {t.capture_filter_apply()}
@@ -248,6 +292,8 @@ pub fn CapturePage() -> impl IntoView {
                     if let Some(v) = f.consumer_opt() { parts.push(format!("consumer={v}")); }
                     if let Some(v) = f.project_opt() { parts.push(format!("project={v}")); }
                     if let Some(v) = f.hash_opt() { parts.push(format!("hash={v}")); }
+                    if let Some(v) = f.session_opt() { parts.push(format!("session={v}")); }
+                    if let Some(v) = f.backend_opt() { parts.push(format!("backend={v}")); }
                     let label = format!("{} {}", t.capture_filter_active(), parts.join(" · "));
                     view! {
                         <div class="px-1">
@@ -272,6 +318,7 @@ pub fn CapturePage() -> impl IntoView {
                         return view! { <EmptyState message=t.capture_empty() /> }.into_any();
                     }
                     let entries_clone = entries.clone();
+                    let tz_label = t.capture_time_tz_label();
                     view! {
                         <div class="logs-split">
                             // ── List pane ──
@@ -286,9 +333,11 @@ pub fn CapturePage() -> impl IntoView {
                                     <thead>
                                         <tr>
                                             <th>{t.capture_col_time()}</th>
+                                            <th>{t.capture_col_session()}</th>
+                                            <th>{t.capture_col_backend()}</th>
                                             <th>{t.capture_col_model()}</th>
-                                            <th>{t.capture_col_consumer()}</th>
                                             <th>{t.capture_col_delta()}</th>
+                                            <th>{t.capture_col_duration()}</th>
                                             <th>{t.capture_col_msgs()}</th>
                                         </tr>
                                     </thead>
@@ -304,6 +353,9 @@ pub fn CapturePage() -> impl IntoView {
                                                 let anomaly = entry_is_anomaly(&entry);
                                                 let client = &entry.structure.client;
                                                 let upstream = &entry.structure.upstream;
+                                                let session_title = entry.session_fingerprint.clone().unwrap_or_default();
+                                                let session_label = session_short(&entry);
+                                                let backend_label = backend_short(&entry);
                                                 let row_class = move || {
                                                     if is_selected() {
                                                         "logs-row-selected"
@@ -325,16 +377,22 @@ pub fn CapturePage() -> impl IntoView {
                                                         }
                                                     >
                                                         <td class="text-xs font-mono text-theme-secondary whitespace-nowrap">
-                                                            {fmt_ts(entry.timestamp_ms)}
+                                                            {fmt_ts(&entry, tz_label)}
+                                                        </td>
+                                                        <td class="text-xs font-mono text-theme-secondary" title=session_title.clone()>
+                                                            {session_label}
+                                                        </td>
+                                                        <td class="text-xs font-mono text-theme-secondary truncate max-w-[5rem]">
+                                                            {backend_label}
                                                         </td>
                                                         <td class="text-xs font-mono text-theme truncate max-w-[8rem]">
                                                             {entry.model.clone()}
                                                         </td>
-                                                        <td class="text-xs font-mono text-theme-secondary truncate max-w-[6rem]">
-                                                            {entry.consumer.clone().unwrap_or_default()}
-                                                        </td>
                                                         <td class="text-xs font-mono tabular-nums">
                                                             <DeltaCell value=entry.delta_bytes />
+                                                        </td>
+                                                        <td class="text-xs font-mono tabular-nums text-theme-secondary">
+                                                            {entry.duration_ms.to_string()}
                                                         </td>
                                                         <td class="text-xs font-mono tabular-nums text-theme-secondary">
                                                             {format!("{}/{}", client.message_count, upstream.message_count)}
@@ -454,6 +512,20 @@ fn CaptureDetailContent(detail: CaptureDetailResponse) -> impl IntoView {
                 <DetailField label=t.capture_col_model() value=e.model.clone() />
                 <DetailField label=t.capture_col_consumer() value=e.consumer.clone().unwrap_or("-".into()) />
                 <DetailField label="project" value=e.project_id.clone().unwrap_or("-".into()) />
+                <DetailField label=t.capture_col_session() value=e.session_fingerprint.clone().unwrap_or("-".into()) />
+                <DetailField label=t.capture_col_backend() value=e.backend_name.clone().unwrap_or("-".into()) />
+                <DetailField label="affinity" value=e.affinity_key.clone().unwrap_or("-".into()) />
+                <DetailField label="client_key_fp" value=e.client_key_fingerprint.clone().unwrap_or("-".into()) />
+                <DetailField label=t.capture_col_duration() value=e.duration_ms.to_string() />
+                <DetailField label="ttft_ms" value=e.ttft_ms.map(|v| v.to_string()).unwrap_or("-".into()) />
+                <DetailField label="cache" value=e.cache_tier.clone().unwrap_or("-".into()) />
+                <DetailField label="coalesce" value={
+                    match (e.coalesce_leader, e.coalesced_follower) {
+                        (Some(true), _) => "leader".into(),
+                        (_, true) => "follower".into(),
+                        _ => "-".into(),
+                    }
+                } />
                 <DetailField label="request_id" value=request_id_short />
                 <DetailField label=t.capture_meta_stream() value=stream_val.into() />
                 <DetailField label=t.capture_meta_reasoning_strategy() value=reasoning_val.into() />

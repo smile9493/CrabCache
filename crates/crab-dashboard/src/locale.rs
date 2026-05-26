@@ -121,8 +121,14 @@ impl Translations {
     }
     pub fn capture_col_time(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "时间",
-            Locale::EnUS => "Time",
+            Locale::ZhCN => "时间 (北京)",
+            Locale::EnUS => "Time (CST)",
+        }
+    }
+    pub fn capture_time_tz_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "北京时间",
+            Locale::EnUS => "CST",
         }
     }
     pub fn capture_col_model(self) -> &'static str {
@@ -357,6 +363,36 @@ impl Translations {
             Locale::EnUS => "Request hash",
         }
     }
+    pub fn capture_filter_session(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话指纹",
+            Locale::EnUS => "Session fingerprint",
+        }
+    }
+    pub fn capture_filter_backend(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端节点",
+            Locale::EnUS => "Backend",
+        }
+    }
+    pub fn capture_col_session(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话",
+            Locale::EnUS => "Session",
+        }
+    }
+    pub fn capture_col_backend(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端",
+            Locale::EnUS => "Backend",
+        }
+    }
+    pub fn capture_col_duration(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "耗时 ms",
+            Locale::EnUS => "ms",
+        }
+    }
     pub fn capture_filter_apply(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "筛选",
@@ -539,6 +575,30 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "近 15 分钟",
             Locale::EnUS => "Last 15 min",
+        }
+    }
+    pub fn live_window_1m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 1 分钟",
+            Locale::EnUS => "Last 1 min",
+        }
+    }
+    pub fn live_window_30m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 30 分钟",
+            Locale::EnUS => "Last 30 min",
+        }
+    }
+    pub fn live_window_1h(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 1 小时",
+            Locale::EnUS => "Last 1 hour",
+        }
+    }
+    pub fn live_cache_hit_trend(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存命中率趋势",
+            Locale::EnUS => "Cache Hit Rate Trend",
         }
     }
     pub fn live_trace_unavailable(self) -> &'static str {
@@ -2858,6 +2918,30 @@ impl Translations {
             Locale::EnUS => "Tokens ≤",
         }
     }
+    pub fn logs_filter_advanced(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "高级筛选",
+            Locale::EnUS => "Advanced Filters",
+        }
+    }
+    pub fn logs_filter_from_time(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "开始时间",
+            Locale::EnUS => "From time",
+        }
+    }
+    pub fn logs_filter_to_time(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "结束时间",
+            Locale::EnUS => "To time",
+        }
+    }
+    pub fn logs_latency_distribution(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟分布",
+            Locale::EnUS => "Latency Distribution",
+        }
+    }
     pub fn logs_filter_apply(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "筛选",
@@ -3155,8 +3239,14 @@ impl Translations {
     }
     pub fn trace_estimated_hit_rate(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "预估命中率",
-            Locale::EnUS => "Est. Hit Rate",
+            Locale::ZhCN => "预估命中率(上限)",
+            Locale::EnUS => "Est. Hit Rate (upper bound)",
+        }
+    }
+    pub fn trace_estimated_hit_rate_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "公式: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio。语义命中假设所有同 cluster 请求均命中 L2，实际受相似度阈值限制。",
+            Locale::EnUS => "Formula: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio. Assumes all same-cluster requests hit L2; actual hit rate is bounded by similarity threshold.",
         }
     }
     pub fn trace_semantic_ratio(self) -> &'static str {
@@ -3205,6 +3295,12 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "聚类分布",
             Locale::EnUS => "Cluster Distribution",
+        }
+    }
+    pub fn trace_zipf_chart(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Zipf 分布 (log-log)",
+            Locale::EnUS => "Zipf Distribution (log-log)",
         }
     }
     pub fn trace_deepseek_user_id_title(self) -> &'static str {

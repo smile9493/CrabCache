@@ -46,6 +46,8 @@ pub struct LiveMetricsBucket {
     pub ttft_sample_count: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cache_hit_count: u32,
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -74,4 +76,6 @@ pub struct LiveMetricsSummary {
     pub avg_ttft_ms: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_hit_ratio: f64,
 }

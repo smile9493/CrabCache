@@ -349,7 +349,7 @@ impl UpstreamKeyPool {
         }
 
         let idx = best_idx?;
-        let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::Relaxed) + 1;
+        let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
         global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
         Some(UpstreamKeyGuard {
             pool: Arc::clone(self),

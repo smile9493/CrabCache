@@ -473,15 +473,23 @@ async fn health() -> StatusCode {
 struct ReadyResponse {
     ready: bool,
     redis: &'static str,
+    l2: &'static str,
 }
 
 async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyResponse>) {
-    if state.tiered_cache.ping().await {
+    let redis_ok = state.tiered_cache.ping().await;
+    let l2_status: &'static str = if state.semantic_cache.is_some() {
+        "ok"
+    } else {
+        "disabled"
+    };
+    if redis_ok {
         (
             StatusCode::OK,
             Json(ReadyResponse {
                 ready: true,
                 redis: "ok",
+                l2: l2_status,
             }),
         )
     } else {
@@ -490,6 +498,7 @@ async fn ready(State(state): State<ManagementState>) -> (StatusCode, Json<ReadyR
             Json(ReadyResponse {
                 ready: false,
                 redis: "unavailable",
+                l2: l2_status,
             }),
         )
     }

@@ -1,10 +1,20 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::histogram_chart::HistogramChart;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{LogsFilterQuery, RequestDetail, RequestLog};
+
+fn cache_tier_color(status: &str) -> &'static str {
+    match status {
+        "L0" | "L0_MOKA" | "L0_moka" => "teal",
+        "L1" | "L1_REDIS" | "L1_redis" => "amber",
+        "L2" | "L2_SEMANTIC" | "L2_semantic" => "violet",
+        _ => "rose",
+    }
+}
 
 /// Draft/applied filter fields for the logs list (string inputs → parsed on fetch).
 #[derive(Clone, Default, PartialEq)]
@@ -17,6 +27,8 @@ struct LogsFilterForm {
     latency_max: String,
     token_min: String,
     token_max: String,
+    from_time: String,
+    to_time: String,
 }
 
 impl LogsFilterForm {
@@ -29,6 +41,8 @@ impl LogsFilterForm {
             || !self.latency_max.is_empty()
             || !self.token_min.is_empty()
             || !self.token_max.is_empty()
+            || !self.from_time.is_empty()
+            || !self.to_time.is_empty()
     }
 
     fn to_query(&self, limit: usize, cursor: Option<String>) -> LogsFilterQuery {
@@ -48,6 +62,19 @@ impl LogsFilterForm {
             let t = s.trim();
             if t.is_empty() { None } else { t.parse().ok() }
         }
+        fn parse_datetime_to_ms(s: &str) -> Option<u64> {
+            let t = s.trim();
+            if t.is_empty() { return None; }
+            // datetime-local format: "YYYY-MM-DDTHH:MM" → parse as Beijing time (UTC+8)
+            let dt_str = if t.len() == 16 { format!("{}:00", t) } else { t.to_string() };
+            chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|ndt| {
+                    use chrono::TimeZone;
+                    let beijing = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                    beijing.from_local_datetime(&ndt).unwrap().timestamp_millis() as u64
+                })
+        }
         LogsFilterQuery {
             limit: Some(limit),
             cursor,
@@ -59,6 +86,8 @@ impl LogsFilterForm {
             latency_max: parse_f64(&self.latency_max),
             token_min: parse_u64(&self.token_min),
             token_max: parse_u64(&self.token_max),
+            from_ms: parse_datetime_to_ms(&self.from_time),
+            to_ms: parse_datetime_to_ms(&self.to_time),
         }
     }
 }
@@ -80,6 +109,8 @@ pub fn LogsPage() -> impl IntoView {
     let has_prev: RwSignal<bool> = RwSignal::new(false);
     let filter_draft = RwSignal::new(LogsFilterForm::default());
     let active_filter = RwSignal::new(LogsFilterForm::default());
+    let page_generation = RwSignal::new(0u64);
+    let show_advanced = RwSignal::new(false);
 
     let load_detail = move |id: String| {
         detail_loading.set(true);
@@ -99,10 +130,15 @@ pub fn LogsPage() -> impl IntoView {
     };
 
     let fetch_page = move |cursor: Option<String>, reset_selection: bool| {
+        page_generation.update(|g| *g += 1);
+        let request_id = page_generation.get();
         let query = active_filter.get().to_query(100, cursor);
         leptos::task::spawn_local(async move {
             match api::fetch_logs(&query).await {
                 Ok(resp) => {
+                    if page_generation.get_untracked() != request_id {
+                        return;
+                    }
                     logs.set(Some(Ok(resp.items.clone())));
                     next_cursor.set(resp.next_cursor);
                     total_in_window.set(resp.total_in_window);
@@ -120,7 +156,11 @@ pub fn LogsPage() -> impl IntoView {
                         }
                     }
                 }
-                Err(e) => logs.set(Some(Err(e))),
+                Err(e) => {
+                    if page_generation.get_untracked() == request_id {
+                        logs.set(Some(Err(e)));
+                    }
+                }
             }
             loading_more.set(false);
         });
@@ -241,41 +281,6 @@ pub fn LogsPage() -> impl IntoView {
                     <option value="L1_redis">"L1_redis"</option>
                     <option value="L2_semantic">"L2_semantic"</option>
                 </select>
-                <input
-                    type="text"
-                    class="input"
-                    placeholder=t.logs_filter_hash().to_string()
-                    prop:value=move || filter_draft.get().request_hash
-                    on:input=move |ev| filter_draft.update(|f| f.request_hash = event_target_value(&ev))
-                />
-                <input
-                    type="text"
-                    class="input"
-                    placeholder=t.logs_filter_latency_min().to_string()
-                    prop:value=move || filter_draft.get().latency_min
-                    on:input=move |ev| filter_draft.update(|f| f.latency_min = event_target_value(&ev))
-                />
-                <input
-                    type="text"
-                    class="input"
-                    placeholder=t.logs_filter_latency_max().to_string()
-                    prop:value=move || filter_draft.get().latency_max
-                    on:input=move |ev| filter_draft.update(|f| f.latency_max = event_target_value(&ev))
-                />
-                <input
-                    type="text"
-                    class="input"
-                    placeholder=t.logs_filter_token_min().to_string()
-                    prop:value=move || filter_draft.get().token_min
-                    on:input=move |ev| filter_draft.update(|f| f.token_min = event_target_value(&ev))
-                />
-                <input
-                    type="text"
-                    class="input"
-                    placeholder=t.logs_filter_token_max().to_string()
-                    prop:value=move || filter_draft.get().token_max
-                    on:input=move |ev| filter_draft.update(|f| f.token_max = event_target_value(&ev))
-                />
                 <div class="logs-filter-actions">
                     <button on:click=move |_| apply_filters() class="btn btn-primary text-xs">
                         {t.logs_filter_apply()}
@@ -287,8 +292,103 @@ pub fn LogsPage() -> impl IntoView {
                     >
                         {t.logs_filter_clear()}
                     </button>
+                    <button
+                        on:click=move |_| show_advanced.update(|v| *v = !*v)
+                        class="btn btn-secondary text-xs"
+                    >
+                        {t.logs_filter_advanced()}
+                    </button>
                 </div>
             </div>
+
+            {move || if show_advanced.get() {
+                view! {
+                    <div class="glass-card-flat logs-filter-bar logs-filter-advanced">
+                        <input
+                            type="text"
+                            class="input"
+                            placeholder=t.logs_filter_hash().to_string()
+                            prop:value=move || filter_draft.get().request_hash
+                            on:input=move |ev| filter_draft.update(|f| f.request_hash = event_target_value(&ev))
+                        />
+                        <input
+                            type="text"
+                            class="input"
+                            placeholder=t.logs_filter_latency_min().to_string()
+                            prop:value=move || filter_draft.get().latency_min
+                            on:input=move |ev| filter_draft.update(|f| f.latency_min = event_target_value(&ev))
+                        />
+                        <input
+                            type="text"
+                            class="input"
+                            placeholder=t.logs_filter_latency_max().to_string()
+                            prop:value=move || filter_draft.get().latency_max
+                            on:input=move |ev| filter_draft.update(|f| f.latency_max = event_target_value(&ev))
+                        />
+                        <input
+                            type="text"
+                            class="input"
+                            placeholder=t.logs_filter_token_min().to_string()
+                            prop:value=move || filter_draft.get().token_min
+                            on:input=move |ev| filter_draft.update(|f| f.token_min = event_target_value(&ev))
+                        />
+                        <input
+                            type="text"
+                            class="input"
+                            placeholder=t.logs_filter_token_max().to_string()
+                            prop:value=move || filter_draft.get().token_max
+                            on:input=move |ev| filter_draft.update(|f| f.token_max = event_target_value(&ev))
+                        />
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-theme-muted">{t.logs_filter_from_time()}</label>
+                            <input
+                                type="datetime-local"
+                                class="input"
+                                prop:value=move || filter_draft.get().from_time
+                                on:input=move |ev| filter_draft.update(|f| f.from_time = event_target_value(&ev))
+                            />
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-theme-muted">{t.logs_filter_to_time()}</label>
+                            <input
+                                type="datetime-local"
+                                class="input"
+                                prop:value=move || filter_draft.get().to_time
+                                on:input=move |ev| filter_draft.update(|f| f.to_time = event_target_value(&ev))
+                            />
+                        </div>
+                    </div>
+                }.into_any()
+            } else {
+                view! { <span></span> }.into_any()
+            }}
+
+            // Latency distribution histogram
+            {move || {
+                if let Some(Ok(ref log_list)) = logs.get() {
+                    let latencies: Vec<f64> = log_list.iter().map(|l| l.latency_ms as f64).filter(|v| v.is_finite() && *v > 0.0).collect();
+                    if !latencies.is_empty() {
+                        let stored = StoredValue::new(latencies);
+                        let latency_sig = Signal::derive(move || stored.get_value());
+                        view! {
+                            <div class="glass-card p-4 space-y-3">
+                                <h3 class="text-sm font-semibold text-theme">{t.logs_latency_distribution()}</h3>
+                                <HistogramChart
+                                    values=latency_sig
+                                    bin_count=15
+                                    height_px=150
+                                    y_unit="req"
+                                    empty_message=""
+                                />
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <span></span> }.into_any()
+                    }
+                } else {
+                    view! { <span></span> }.into_any()
+                }
+            }}
 
             {move || match logs.get() {
                 None => view! { <Spinner /> }.into_any(),
@@ -333,12 +433,7 @@ pub fn LogsPage() -> impl IntoView {
                                                 let is_selected = move || {
                                                     selected_id.get().as_deref() == Some(id.as_str())
                                                 };
-                                                let cache_color = match log.cache_status.as_str() {
-                                                    "L0" | "L0_MOKA" => "teal",
-                                                    "L1" | "L1_REDIS" => "amber",
-                                                    "L2" | "L2_SEMANTIC" => "violet",
-                                                    _ => "rose",
-                                                };
+                                                let cache_color = cache_tier_color(&log.cache_status);
                                                 view! {
                                                     <tr
                                                         class=move || {
@@ -441,12 +536,7 @@ fn LogDetailPane(
     on_filter_hash: Callback<String>,
 ) -> impl IntoView {
     let t = use_translations();
-    let cache_color = match summary.cache_status.as_str() {
-        "L0" => "teal",
-        "L1" => "amber",
-        "L2" => "violet",
-        _ => "rose",
-    };
+    let cache_color = cache_tier_color(&summary.cache_status);
 
     view! {
         <div class="logs-detail-inner">
@@ -624,8 +714,10 @@ fn CollapsibleMessage(msg_role: String, content: String) -> impl IntoView {
         _ => "text-theme",
     };
 
-    let preview = if content.len() > 120 {
-        format!("{}...", &content[..120])
+    let char_count = content.chars().count();
+    let preview = if char_count > 120 {
+        let truncated: String = content.chars().take(120).collect();
+        format!("{}...", truncated)
     } else {
         content.clone()
     };

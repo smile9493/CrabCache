@@ -211,6 +211,50 @@ pub async fn fetch_overview_timeseries(
     .await
 }
 
+/// Result of an ETag-aware timeseries fetch.
+pub struct TimeseriesResult {
+    pub points: Option<Vec<crate::types::TimeSeriesPoint>>,
+    pub etag: String,
+}
+
+/// Fetch overview/timeseries with If-None-Match for 304 support.
+pub async fn fetch_overview_timeseries_etag(
+    window: &str,
+    current_etag: &str,
+) -> Result<TimeseriesResult, String> {
+    let url = format!("{}/overview/timeseries?window={}", API_BASE, window);
+    let (builder, epoch) = apply_admin_auth(Request::get(&url));
+    let builder = if !current_etag.is_empty() {
+        builder.header("If-None-Match", current_etag)
+    } else {
+        builder
+    };
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let new_etag = resp.headers().get("etag").unwrap_or_default();
+
+    if resp.status() == 304 {
+        return Ok(TimeseriesResult {
+            points: None,
+            etag: new_etag,
+        });
+    }
+
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+
+    let data: crate::types::OverviewTimeseriesResponse =
+        resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    Ok(TimeseriesResult {
+        points: Some(data.points),
+        etag: new_etag,
+    })
+}
+
 pub async fn fetch_overview_trace() -> Result<crate::types::TraceSummary, String> {
     fetch_json(&format!("{}/overview/trace", API_BASE)).await
 }
@@ -529,6 +573,12 @@ pub async fn fetch_logs(query: &crate::types::LogsFilterQuery) -> Result<LogsPag
     if let Some(v) = query.token_max {
         params.push(format!("token_max={}", v));
     }
+    if let Some(v) = query.from_ms {
+        params.push(format!("from_ms={}", v));
+    }
+    if let Some(v) = query.to_ms {
+        params.push(format!("to_ms={}", v));
+    }
     if !params.is_empty() {
         path.push('?');
         path.push_str(&params.join("&"));
@@ -540,8 +590,48 @@ pub async fn fetch_log_detail(id: &str) -> Result<RequestDetail, String> {
     fetch_json(&format!("{}/logs/{}", API_BASE, id)).await
 }
 
-pub async fn fetch_trace_analysis(hours: u32) -> Result<TraceAnalysis, String> {
-    fetch_json(&format!("{}/trace/analysis?hours={}", API_BASE, hours)).await
+pub struct TraceAnalysisResult {
+    pub analysis: Option<TraceAnalysis>,
+    pub etag: String,
+}
+
+pub async fn fetch_trace_analysis_etag(
+    hours: u32,
+    current_etag: &str,
+) -> Result<TraceAnalysisResult, String> {
+    let url = format!("{}/trace/analysis?hours={}", API_BASE, hours);
+    let (builder, epoch) = apply_admin_auth(Request::get(&url));
+    let builder = if !current_etag.is_empty() {
+        builder.header("If-None-Match", current_etag)
+    } else {
+        builder
+    };
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let new_etag = resp.headers().get("etag").unwrap_or_default();
+
+    if resp.status() == 304 {
+        return Ok(TraceAnalysisResult {
+            analysis: None,
+            etag: new_etag,
+        });
+    }
+
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+
+    let analysis: TraceAnalysis = resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+    Ok(TraceAnalysisResult {
+        analysis: Some(analysis),
+        etag: new_etag,
+    })
 }
 
 pub async fn fetch_cache_ops() -> Result<CacheOpsView, String> {
@@ -731,6 +821,8 @@ pub async fn fetch_capture_list(
     consumer: Option<&str>,
     project_id: Option<&str>,
     request_hash: Option<&str>,
+    session_fingerprint: Option<&str>,
+    backend_name: Option<&str>,
 ) -> Result<crate::types::CaptureListResponse, String> {
     let mut path = format!("{}/capture/list?hours={}", API_BASE, hours);
     if let Some(l) = limit {
@@ -744,6 +836,12 @@ pub async fn fetch_capture_list(
     }
     if let Some(rh) = request_hash.filter(|s| !s.is_empty()) {
         path.push_str(&format!("&request_hash={}", percent_encode_query(rh)));
+    }
+    if let Some(sf) = session_fingerprint.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&session_fingerprint={}", percent_encode_query(sf)));
+    }
+    if let Some(bn) = backend_name.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&backend_name={}", percent_encode_query(bn)));
     }
     fetch_json(&path).await
 }

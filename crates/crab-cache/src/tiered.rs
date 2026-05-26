@@ -10,6 +10,26 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CacheGetMetrics {
+    /// Record L0/L1 hits and tiered miss on absent.
+    Full,
+    /// Record L0/L1 hits only; caller records miss after optional L2 lookup.
+    HitsOnly,
+    /// No Prometheus cache counters (coalesce follower probe).
+    Silent,
+}
+
+impl CacheGetMetrics {
+    const fn record_hits(self) -> bool {
+        matches!(self, Self::Full | Self::HitsOnly)
+    }
+
+    const fn record_miss(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
 /// Custom Moka expiry that resolves per-entry TTL from the shared `TtlConfig`,
 /// with internal caching to avoid `RwLock::read()` on every access.
 ///
@@ -125,6 +145,31 @@ impl TieredCache {
         })
     }
 
+    /// Lookup cache without incrementing Prometheus counters (e.g. coalesce follower replay).
+    pub async fn get_silent(
+        &self,
+        key: &str,
+    ) -> Option<(CacheEntry, CacheTier)> {
+        self.get_inner(key, None, None, CacheGetMetrics::Silent)
+            .await
+    }
+
+    /// L0/L1 lookup: record hits immediately; defer tiered miss until caller confirms L2 also missed.
+    pub async fn get_defer_miss(
+        &self,
+        key: &str,
+        consumer: Option<&str>,
+        domain: Option<&str>,
+    ) -> Option<(CacheEntry, CacheTier)> {
+        self.get_inner(key, consumer, domain, CacheGetMetrics::HitsOnly)
+            .await
+    }
+
+    /// Record a tiered cache miss after L0/L1 absent and L2 semantic lookup failed.
+    pub fn record_absent_miss(&self, domain: Option<&str>) {
+        global_metrics().record_cache_miss(CacheTier::Miss, domain);
+    }
+
     #[tracing::instrument(skip(self), fields(key = %key, consumer = consumer.map(|c| c).unwrap_or("none")))]
     pub async fn get(
         &self,
@@ -132,8 +177,23 @@ impl TieredCache {
         consumer: Option<&str>,
         domain: Option<&str>,
     ) -> Option<(CacheEntry, CacheTier)> {
+        self.get_inner(key, consumer, domain, CacheGetMetrics::Full)
+            .await
+    }
+
+    async fn get_inner(
+        &self,
+        key: &str,
+        consumer: Option<&str>,
+        domain: Option<&str>,
+        metrics: CacheGetMetrics,
+    ) -> Option<(CacheEntry, CacheTier)> {
+        let record_hits = metrics.record_hits();
+        let record_miss = metrics.record_miss();
         if let Some(entry) = self.l0.get(key).await {
-            global_metrics().record_cache_hit(CacheTier::L0Moka, &entry.model, consumer, domain);
+            if record_hits {
+                global_metrics().record_cache_hit(CacheTier::L0Moka, &entry.model, consumer, domain);
+            }
             debug!(key = key, tier = "L0", "Cache hit");
             return Some((entry, CacheTier::L0Moka));
         }
@@ -142,7 +202,9 @@ impl TieredCache {
             Ok(c) => c,
             Err(e) => {
                 warn!(error = %e, key = key, "Failed to get Redis connection for cache get");
-                global_metrics().record_cache_miss(CacheTier::Miss, domain);
+                if record_miss {
+                    global_metrics().record_cache_miss(CacheTier::Miss, domain);
+                }
                 return None;
             }
         };
@@ -151,7 +213,9 @@ impl TieredCache {
             Ok(val) => val,
             Err(e) => {
                 warn!(error = %e, key = key, "Redis GET failed for cache key");
-                global_metrics().record_cache_miss(CacheTier::Miss, domain);
+                if record_miss {
+                    global_metrics().record_cache_miss(CacheTier::Miss, domain);
+                }
                 return None;
             }
         };
@@ -159,12 +223,14 @@ impl TieredCache {
         if let Some(json) = result {
             match serde_json::from_str::<CacheEntry>(&json) {
                 Ok(entry) => {
-                    global_metrics().record_cache_hit(
-                        CacheTier::L1Redis,
-                        &entry.model,
-                        consumer,
-                        domain,
-                    );
+                    if record_hits {
+                        global_metrics().record_cache_hit(
+                            CacheTier::L1Redis,
+                            &entry.model,
+                            consumer,
+                            domain,
+                        );
+                    }
                     debug!(key = key, tier = "L1", "Cache hit");
 
                     self.l0.insert(key.to_string(), entry.clone()).await;
@@ -191,7 +257,9 @@ impl TieredCache {
             }
         }
 
-        global_metrics().record_cache_miss(CacheTier::Miss, domain);
+        if record_miss {
+            global_metrics().record_cache_miss(CacheTier::Miss, domain);
+        }
         debug!(key = key, "Cache miss");
         None
     }

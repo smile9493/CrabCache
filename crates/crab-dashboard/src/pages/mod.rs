@@ -9,6 +9,7 @@ pub mod logs;
 pub mod logs_manage;
 pub mod models;
 pub mod overview;
+pub mod overview_analytics;
 pub mod pipeline;
 pub mod reasoning;
 pub mod requests;

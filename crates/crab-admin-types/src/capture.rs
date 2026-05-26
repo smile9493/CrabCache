@@ -1,4 +1,7 @@
-pub use crab_capture::{PacketStructureSummary, RawCaptureEntry, StructureDiff};
+pub use crab_capture::{
+    PacketStructureSummary, RawCaptureEntry, StructureDiff, format_beijing_datetime_ms,
+    format_beijing_datetime_secs_ms, format_beijing_hour_label, normalize_epoch_ms,
+};
 
 use serde::{Deserialize, Serialize};
 

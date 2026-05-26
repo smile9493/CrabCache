@@ -4,6 +4,7 @@ mod key_usage_sync;
 mod live_metrics;
 mod log_management;
 mod metrics_history;
+mod metrics_store;
 mod network;
 mod openresty;
 mod overview;
@@ -148,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
                     &metrics_state.metrics_history,
                     uptime,
                     pg_ref.as_ref(),
+                    metrics_state.metrics_store.as_ref(),
                 )
                 .await
                 {
@@ -214,6 +216,30 @@ async fn main() -> anyhow::Result<()> {
         info!("Background PG init retry started (every 30s)");
     }
 
+    // Hydrate metrics history from SQLite if PG did not provide data.
+    if state.pg_store.read().is_none() {
+        if let Some(ref store) = state.metrics_store {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+            let snaps = store.load_snapshots_since(cutoff);
+            if !snaps.is_empty() {
+                let mut hist = state.metrics_history.write();
+                if hist.sample_count() == 0 {
+                    for s in &snaps {
+                        hist.append(s.clone());
+                    }
+                    info!(
+                        hydrated = hist.sample_count(),
+                        "Metrics history restored from SQLite"
+                    );
+                }
+            }
+        }
+    }
+
     {
         crate::infra::collector::spawn_background_collector(Arc::clone(&state));
         info!(
@@ -274,15 +300,19 @@ async fn main() -> anyhow::Result<()> {
         let bg = Arc::clone(&state);
         let interval = crate::overview::overview_core_background_interval();
         tokio::spawn(async move {
+            let mut last_broadcast_etag = String::new();
             loop {
                 if let Err(e) = crate::overview::refresh_overview_core_cache(&bg).await {
                     tracing::debug!(error = %e, "Overview core background refresh failed");
                 } else {
-                    // Broadcast the fresh OverviewCore to SSE clients.
+                    // Only broadcast when the ETag changes (data actually differs).
                     let cache = bg.overview_core_cache.read();
-                    if let Some((_, ref core, _)) = *cache {
-                        if let Ok(json) = serde_json::to_value(core) {
-                            let _ = bg.sse_broadcast.send(crate::sse::SseEvent::Metrics(json));
+                    if let Some((_, ref core, ref etag)) = *cache {
+                        if etag != &last_broadcast_etag {
+                            if let Ok(json) = serde_json::to_value(core) {
+                                let _ = bg.sse_broadcast.send(crate::sse::SseEvent::Metrics(json));
+                            }
+                            last_broadcast_etag = etag.clone();
                         }
                     }
                 }

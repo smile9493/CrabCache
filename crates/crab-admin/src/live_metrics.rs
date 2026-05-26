@@ -2,7 +2,7 @@ use crate::trace_log::TraceLogEntry;
 use crate::types::{LiveMetricsBucket, LiveMetricsResponse, LiveRequestPoint};
 use std::collections::HashMap;
 
-const MAX_WINDOW_SECS: u32 = 900;
+const MAX_WINDOW_SECS: u32 = 3600;
 const MAX_BUCKET_SECS: u32 = 60;
 const MIN_BUCKET_SECS: u32 = 1;
 
@@ -64,6 +64,9 @@ pub fn aggregate_live_metrics(
             slot.ttft_sum += ttft;
             slot.ttft_count += 1;
         }
+        if entry.cache_hit {
+            slot.cache_hit_count += 1;
+        }
     }
 
     let mut buckets = Vec::new();
@@ -82,6 +85,7 @@ pub fn aggregate_live_metrics(
                 ttft_sample_count: 0,
                 input_tokens: 0,
                 output_tokens: 0,
+                cache_hit_count: 0,
             });
         }
     }
@@ -119,6 +123,7 @@ struct BucketAcc {
     ttft_count: u32,
     input_tokens: u64,
     output_tokens: u64,
+    cache_hit_count: u32,
 }
 
 impl BucketAcc {
@@ -146,6 +151,7 @@ impl BucketAcc {
             ttft_sample_count: self.ttft_count,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            cache_hit_count: self.cache_hit_count,
         }
     }
 }
@@ -172,6 +178,7 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
     let mut ttft_total_count = 0u32;
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
+    let mut cache_hit_total = 0u32;
 
     for b in buckets {
         request_count += b.request_count;
@@ -189,6 +196,7 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
         }
         input_tokens += b.input_tokens;
         output_tokens += b.output_tokens;
+        cache_hit_total += b.cache_hit_count;
     }
 
     crate::types::LiveMetricsSummary {
@@ -210,6 +218,11 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
         },
         input_tokens,
         output_tokens,
+        cache_hit_ratio: if request_count > 0 {
+            f64::from(cache_hit_total) / f64::from(request_count)
+        } else {
+            0.0
+        },
     }
 }
 
@@ -312,6 +325,7 @@ mod tests {
             ttft_sample_count: 0,
             input_tokens: 0,
             output_tokens: 0,
+            cache_hit_count: 0,
         };
         assert!(b.upstream_latency_ms.is_none());
         assert!(b.ttft_ms.is_none());
@@ -334,6 +348,7 @@ mod tests {
                 ttft_sample_count: 1000,
                 input_tokens: 10000,
                 output_tokens: 5000,
+                cache_hit_count: 200,
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -345,6 +360,7 @@ mod tests {
                 ttft_sample_count: 1,
                 input_tokens: 10,
                 output_tokens: 5,
+                cache_hit_count: 0,
             },
         ];
         let s = summarize_window(&buckets);

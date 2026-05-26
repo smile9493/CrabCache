@@ -80,6 +80,21 @@ impl GatewayAdminClient {
         Err(ControlError::Http { status, body })
     }
 
+    /// Readiness probe with detailed subsystem health (Redis, L2).
+    pub async fn ready_detail(&self) -> Result<GatewayReadyDetail, ControlError> {
+        let resp = self
+            .http
+            .get(format!("{}/v1/ready", self.base_url))
+            .send()
+            .await?;
+        if resp.status().is_success() || resp.status().as_u16() == 503 {
+            return resp.json().await.map_err(ControlError::from);
+        }
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        Err(ControlError::Http { status, body })
+    }
+
     pub async fn status(&self) -> Result<GatewayStatus, ControlError> {
         let resp = self
             .authed(reqwest::Method::GET, "/v1/status")

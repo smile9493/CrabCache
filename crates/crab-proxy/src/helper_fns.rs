@@ -1,4 +1,18 @@
+use crab_capture::affinity_kind_from_key;
+use crab_route::extract_affinity_key;
+use http::HeaderMap;
+use pingora_proxy::Session;
 use sha2::{Digest, Sha256};
+
+use crate::context::GatewayContext;
+
+/// SHA-256 hex prefix (16 chars) of the client API key token (Bearer value).
+pub fn fingerprint_client_key(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    hash[..hash.len().min(16)].to_string()
+}
 
 /// Labels which stable ReasoningStore scope source is active (for ops / Cursor sub-agent debugging).
 pub fn last_user_message_fingerprint(payload: &serde_json::Value) -> Option<String> {
@@ -53,6 +67,61 @@ pub fn stable_session_log_fields(
         return ("req_hash", Some(short));
     }
     ("message_scope", None)
+}
+
+/// Metadata for raw capture: session grouping, load balancing, and latency.
+pub fn build_capture_request_meta(
+    session: &Session,
+    ctx: &GatewayContext,
+    duration_ms: u64,
+) -> crab_capture::CaptureRequestMeta {
+    let req_header = session.req_header();
+    let headers = HeaderMap::from_iter(
+        req_header
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
+    let client_ip = session
+        .client_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+
+    let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
+        extract_affinity_key(
+            &headers,
+            &client_ip,
+            ctx.prompt_cache_key.as_deref(),
+            ctx.project_id.as_deref(),
+        )
+    });
+    let affinity_kind = Some(affinity_kind_from_key(&affinity_key).to_string());
+
+    crab_capture::CaptureRequestMeta {
+        conversation_id: ctx.conversation_id.clone(),
+        prompt_cache_key: ctx.prompt_cache_key.clone(),
+        session_fingerprint: None,
+        body_user: None,
+        affinity_kind,
+        affinity_key: Some(affinity_key),
+        backend_name: ctx.upstream.backend_name.clone(),
+        upstream_host: ctx.upstream.host.clone(),
+        client_key_fingerprint: ctx.client_key_fingerprint.clone(),
+        upstream_key_id: ctx
+            .upstream
+            .key_guard
+            .as_ref()
+            .map(|g| g.key_id().to_string()),
+        upstream_profile_id: ctx.upstream_profile_id.clone(),
+        domain: ctx.domain.clone(),
+        cache_tier: ctx.cache_tier.map(|t| t.as_str().to_string()),
+        cache_hit: ctx.cache_tier.is_some(),
+        coalesced_follower: ctx.is_coalesced_follower,
+        coalesce_leader: ctx.coalesce_guard.as_ref().map(|g| g.is_leader()),
+        duration_ms,
+        ttft_ms: ctx.ttft.map(|d| d.as_millis() as u64),
+        upstream_latency_ms: ctx.upstream.latency_ms,
+    }
 }
 
 #[inline]

@@ -2,7 +2,7 @@ use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
 use crate::types::UpstreamTestResult;
-use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceSummary};
+use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceAnalysis, TraceSummary};
 use crab_control::{GatewayAdminClient, GatewayStatus, PutUpstreamKeysRequest, UpstreamKeyInput};
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -81,6 +81,7 @@ pub struct AppState {
     pub metrics_history: RwLock<MetricsHistory>,
     pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
     pub trace_summary_cache: RwLock<Option<(Instant, TraceSummary)>>,
+    pub trace_analysis_cache: RwLock<Option<(Instant, TraceAnalysis)>>,
     pub domain_policies: RwLock<Vec<DomainPolicy>>,
     /// Last successful upstream reconcile from gateway Management API.
     pub upstream_reconcile_at: RwLock<Option<Instant>>,
@@ -88,6 +89,9 @@ pub struct AppState {
     /// Cached `OverviewCore` + ETag for `/api/admin/overview/core` (background refresh).
     pub overview_core_cache: RwLock<Option<(Instant, OverviewCore, String)>>,
     pub overview_core_build_lock: AsyncMutex<()>,
+    /// Cached timeseries per window + ETag for `/api/admin/overview/timeseries`.
+    pub overview_timeseries_cache: RwLock<HashMap<String, (Instant, Vec<crate::types::TimeSeriesPoint>, String)>>,
+    pub overview_timeseries_lock: AsyncMutex<()>,
     pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (incremental tail, configurable TTL via CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS).
     pub live_trace_cache: RwLock<crate::trace_log::LiveTraceCache>,
@@ -107,6 +111,8 @@ pub struct AppState {
     pub log_retention: RwLock<RetentionPolicy>,
     /// PostgreSQL store (None when CRADMIN_PG_URL is not set).
     pub pg_store: parking_lot::RwLock<Option<crate::pg::PgStore>>,
+    /// SQLite metrics store (always available as fallback for PG).
+    pub metrics_store: Option<crate::metrics_store::MetricsStore>,
     /// PG config retained for background retry when initial connection fails.
     pub pg_pending_config: parking_lot::RwLock<Option<(String, usize, bool)>>, // (url, max_pool_size, migrate_from_json)
     /// Serializes concurrent PG dual-write tasks to prevent DELETE-then-INSERT races.
@@ -161,6 +167,10 @@ pub struct GatewayProbe {
     pub ready_error: Option<String>,
     pub status: Option<GatewayStatus>,
     pub status_error: Option<String>,
+    /// `"ok"` or `"unavailable"` (from `/v1/ready`).
+    pub redis_status: String,
+    /// `"ok"`, `"disabled"`, or `"unavailable"` (from `/v1/ready`).
+    pub l2_status: String,
 }
 
 #[derive(Debug, Clone)]
@@ -463,10 +473,13 @@ impl AppState {
             metrics_history: RwLock::new(history),
             trace_entries: RwLock::new(Vec::new()),
             trace_summary_cache: RwLock::new(None),
+            trace_analysis_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
             gateway_probe_cache: RwLock::new(None),
             overview_core_cache: RwLock::new(None),
             overview_core_build_lock: AsyncMutex::new(()),
+            overview_timeseries_cache: RwLock::new(HashMap::new()),
+            overview_timeseries_lock: AsyncMutex::new(()),
             gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             key_usage_last_synced: parking_lot::Mutex::new(0),
@@ -494,6 +507,7 @@ impl AppState {
             infra_speed_jobs: Arc::new(crate::infra::speed_test::SpeedTestJobs::new()),
             log_retention: RwLock::new(load_retention_policy()),
             pg_store: parking_lot::RwLock::new(None),
+            metrics_store: crate::metrics_store::MetricsStore::open().ok(),
             pg_pending_config: parking_lot::RwLock::new(None),
             pg_write_lock: Arc::new(AsyncMutex::new(())),
             pg_health_cache: RwLock::new(None),

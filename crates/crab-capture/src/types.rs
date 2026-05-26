@@ -77,10 +77,61 @@ pub struct StructureDiff {
     pub reasoning_was_injected: bool,
 }
 
+/// Per-request routing / session / timing metadata (from gateway at logging).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CaptureRequestMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    /// First `user` message fingerprint — groups Cursor chat threads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_fingerprint: Option<String>,
+    /// `user` field from JSON body (upstream / Cursor account id).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_user: Option<String>,
+    /// Ketama affinity prefix: `conv` | `pck` | `user` | `ip`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affinity_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affinity_key: Option<String>,
+    /// Selected upstream backend (load balancing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_host: Option<String>,
+    /// SHA-256 prefix of client Bearer token (same key → same value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_key_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tier: Option<String>,
+    #[serde(default)]
+    pub cache_hit: bool,
+    #[serde(default)]
+    pub coalesced_follower: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coalesce_leader: Option<bool>,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
+}
+
 /// Complete raw capture entry written to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawCaptureEntry {
     pub timestamp_ms: u64,
+    /// Beijing display time; filled by Admin API for the dashboard (not in index.jsonl).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_beijing: Option<String>,
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_hash: Option<String>,
@@ -110,4 +161,44 @@ pub struct RawCaptureEntry {
     /// Set when JSON parse or write fails.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capture_error: Option<String>,
+
+    // ── Session / LB / perf (optional for older index lines) ──
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affinity_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affinity_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_key_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tier: Option<String>,
+    #[serde(default)]
+    pub cache_hit: bool,
+    #[serde(default)]
+    pub coalesced_follower: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coalesce_leader: Option<bool>,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_latency_ms: Option<f64>,
 }

@@ -2,7 +2,7 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::line_chart::{ChartSeries, LineChart, TokenLineChart};
+use crate::components::line_chart::{ChartSeries, LineChart, ThresholdLine, TokenLineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::use_translations;
@@ -14,13 +14,11 @@ use crate::view_state;
 const MAX_CHART_POINTS: usize = 36;
 
 fn format_bucket_time(ts_ms: u64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts_ms as i64)
-        .map(|dt| dt.format("%H:%M:%S").to_string())
-        .unwrap_or_else(|| "—".to_string())
+    crate::datetime::format_ms_china_time(ts_ms, true)
 }
 
 fn poll_interval_ms(window_secs: u32) -> u32 {
-    if window_secs >= 900 { 3000 } else { 2000 }
+    if window_secs >= 3600 { 10000 } else if window_secs >= 1800 { 5000 } else if window_secs >= 900 { 3000 } else { 2000 }
 }
 
 fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucket> {
@@ -176,6 +174,33 @@ pub fn LivePage() -> impl IntoView {
         }
     });
 
+    // Immediate refresh when page becomes visible after being hidden
+    {
+        use wasm_bindgen::prelude::*;
+        use wasm_bindgen::JsCast;
+        let load_live = load_live;
+        let vis_cb = Closure::wrap(Box::new(move || {
+            if !web_sys::window()
+                .unwrap()
+                .document()
+                .unwrap()
+                .hidden()
+                && auto_refresh.get_untracked()
+                && selected_consumer.get_untracked().is_some()
+            {
+                load_live();
+            }
+        }) as Box<dyn FnMut()>);
+        web_sys::window()
+            .unwrap()
+            .add_event_listener_with_callback(
+                "visibilitychange",
+                vis_cb.as_ref().unchecked_ref(),
+            )
+            .ok();
+        vis_cb.forget();
+    }
+
     view! {
         <div class="page-content space-y-6">
             <PageHeader
@@ -228,6 +253,12 @@ pub fn LivePage() -> impl IntoView {
                 </div>
                 <div class="flex gap-2">
                     <button
+                        class=move || if window_secs.get() == 60 { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
+                        on:click=move |_| window_secs.set(60)
+                    >
+                        {t.live_window_1m()}
+                    </button>
+                    <button
                         class=move || if window_secs.get() == 300 { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
                         on:click=move |_| window_secs.set(300)
                     >
@@ -238,6 +269,18 @@ pub fn LivePage() -> impl IntoView {
                         on:click=move |_| window_secs.set(900)
                     >
                         {t.live_window_15m()}
+                    </button>
+                    <button
+                        class=move || if window_secs.get() == 1800 { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
+                        on:click=move |_| window_secs.set(1800)
+                    >
+                        {t.live_window_30m()}
+                    </button>
+                    <button
+                        class=move || if window_secs.get() == 3600 { "btn btn-primary text-xs" } else { "btn btn-secondary text-xs" }
+                        on:click=move |_| window_secs.set(3600)
+                    >
+                        {t.live_window_1h()}
                     </button>
                 </div>
             </div>
@@ -289,7 +332,8 @@ pub fn LivePage() -> impl IntoView {
                     view! {
                         <LiveSummaryCards data=data.clone() />
                         <LiveLatencyCharts buckets=chart_buckets.clone() />
-                        <LiveTokenChart buckets=chart_buckets />
+                        <LiveTokenChart buckets=chart_buckets.clone() />
+                        <LiveCacheHitChart buckets=chart_buckets />
                         <LiveLatestCard data=data />
                     }.into_any()
                 }
@@ -462,6 +506,58 @@ fn LiveTokenChart(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                 input_label=t.live_tokens_input().to_string()
                 output_label=t.live_tokens_output().to_string()
                 empty_message=t.live_no_data()
+            />
+        </div>
+    }
+}
+
+#[component]
+fn LiveCacheHitChart(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+    let t = use_translations();
+    let stored = StoredValue::new(buckets);
+    let x_labels = Signal::derive(move || {
+        stored
+            .get_value()
+            .iter()
+            .map(|b| format_bucket_time(b.timestamp_ms))
+            .collect()
+    });
+    let hit_rate_values = Signal::derive(move || {
+        stored
+            .get_value()
+            .iter()
+            .map(|b| {
+                if b.request_count > 0 {
+                    Some(b.cache_hit_count as f64 / b.request_count as f64 * 100.0)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    let t2 = use_translations();
+    view! {
+        <div class="glass-card p-4 space-y-3">
+            <h3 class="text-sm font-semibold text-theme">{t2.live_cache_hit_trend()}</h3>
+            <LineChart
+                x_labels=x_labels
+                series=Signal::derive(move || {
+                    vec![ChartSeries {
+                        label: "Hit Rate".into(),
+                        color: "var(--success)",
+                        values: hit_rate_values.get(),
+                        dashed: false,
+                        fill: true,
+                    }]
+                })
+                height_px=180
+                y_unit="%"
+                empty_message=t.live_no_data()
+                thresholds=vec![ThresholdLine {
+                    value: 95.0,
+                    label: "95%".into(),
+                    color: "var(--warning)",
+                }]
             />
         </div>
     }

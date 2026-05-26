@@ -3,7 +3,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use crab_capture::RawCaptureEntry;
+use crab_capture::{RawCaptureEntry, format_beijing_datetime_ms};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -103,6 +103,14 @@ pub struct CaptureListQuery {
     pub project_id: Option<String>,
     #[serde(default)]
     pub request_hash: Option<String>,
+    #[serde(default)]
+    pub session_fingerprint: Option<String>,
+    #[serde(default)]
+    pub backend_name: Option<String>,
+    #[serde(default)]
+    pub client_key_fingerprint: Option<String>,
+    #[serde(default)]
+    pub affinity_kind: Option<String>,
 }
 
 fn default_capture_hours() -> u32 {
@@ -110,6 +118,12 @@ fn default_capture_hours() -> u32 {
 }
 fn default_capture_limit() -> usize {
     100
+}
+
+fn enrich_capture_timestamps(entries: &mut [RawCaptureEntry]) {
+    for e in entries {
+        e.timestamp_beijing = Some(format_beijing_datetime_ms(e.timestamp_ms));
+    }
 }
 
 /// `GET /api/admin/capture/list` — list recent captures.
@@ -121,7 +135,7 @@ pub async fn get_capture_list(
     let limit = query.limit.min(1000);
     let entries = load_capture_entries_async(&dir, query.hours, limit).await;
 
-    let filtered: Vec<RawCaptureEntry> = entries
+    let mut filtered: Vec<RawCaptureEntry> = entries
         .into_iter()
         .filter(|e| {
             if let Some(ref consumer) = query.consumer
@@ -142,10 +156,35 @@ pub async fn get_capture_list(
             {
                 return false;
             }
+            if let Some(ref sf) = query.session_fingerprint
+                && !sf.is_empty()
+                && e.session_fingerprint.as_deref() != Some(sf.as_str())
+            {
+                return false;
+            }
+            if let Some(ref bn) = query.backend_name
+                && !bn.is_empty()
+                && e.backend_name.as_deref() != Some(bn.as_str())
+            {
+                return false;
+            }
+            if let Some(ref ck) = query.client_key_fingerprint
+                && !ck.is_empty()
+                && e.client_key_fingerprint.as_deref() != Some(ck.as_str())
+            {
+                return false;
+            }
+            if let Some(ref ak) = query.affinity_kind
+                && !ak.is_empty()
+                && e.affinity_kind.as_deref() != Some(ak.as_str())
+            {
+                return false;
+            }
             true
         })
         .collect();
 
+    enrich_capture_timestamps(&mut filtered);
     let total = filtered.len();
     Json(CaptureListResponse {
         entries: filtered,
@@ -194,7 +233,7 @@ pub async fn get_capture_detail(
     .await
     .unwrap_or(None);
 
-    let entry = match entry {
+    let mut entry = match entry {
         Some(e) => e,
         None => {
             return Err((
@@ -203,6 +242,7 @@ pub async fn get_capture_detail(
             ));
         }
     };
+    enrich_capture_timestamps(std::slice::from_mut(&mut entry));
 
     // Load body files.
     let client_body = load_body_file(&dir, &request_id, "client").await;
@@ -251,15 +291,27 @@ pub async fn get_capture_stats(
         .count();
     let thinking_count = entries
         .iter()
-        .filter(|e| e.structure.upstream.has_thinking_markup)
+        .filter(|e| {
+            e.structure.client.has_thinking_markup || e.structure.upstream.has_thinking_markup
+        })
         .count();
     let sum_upstream_bytes: u64 = entries.iter().map(|e| e.upstream_body_bytes).sum();
     let sum_client_bytes: u64 = entries.iter().map(|e| e.client_body_bytes).sum();
+    let upstream_nonzero: Vec<u64> = entries
+        .iter()
+        .filter(|e| e.upstream_body_bytes > 0)
+        .map(|e| e.upstream_body_bytes)
+        .collect();
 
-    // P99 message count.
+    // P99 message count (client body; upstream may be empty on older captures).
     let mut msg_counts: Vec<u32> = entries
         .iter()
-        .map(|e| e.structure.upstream.message_count)
+        .map(|e| {
+            e.structure
+                .client
+                .message_count
+                .max(e.structure.upstream.message_count)
+        })
         .collect();
     msg_counts.sort_unstable();
     let p99_idx = ((total as f64) * 0.99).ceil() as usize;
@@ -275,7 +327,11 @@ pub async fn get_capture_stats(
         reasoning_injection_rate: reasoning_count as f64 / total as f64,
         message_count_p99: p99,
         thinking_markup_rate: thinking_count as f64 / total as f64,
-        avg_upstream_body_bytes: sum_upstream_bytes as f64 / total as f64,
+        avg_upstream_body_bytes: if upstream_nonzero.is_empty() {
+            sum_upstream_bytes as f64 / total as f64
+        } else {
+            upstream_nonzero.iter().sum::<u64>() as f64 / upstream_nonzero.len() as f64
+        },
         avg_client_body_bytes: sum_client_bytes as f64 / total as f64,
     })
 }

@@ -208,6 +208,8 @@ pub struct TokenStats {
 pub struct UpstreamState {
     /// HTTP `Host` / TLS SNI for the selected upstream peer.
     pub host: Option<String>,
+    /// Ketama affinity key used for backend selection (also on cache-hit paths).
+    pub affinity_key: Option<String>,
     /// Backend name for circuit breaker tracking.
     pub backend_name: Option<String>,
     pub start: Option<Instant>,
@@ -238,6 +240,7 @@ impl Default for UpstreamState {
     fn default() -> Self {
         Self {
             host: None,
+            affinity_key: None,
             backend_name: None,
             start: None,
             latency_ms: None,
@@ -292,7 +295,11 @@ pub struct GatewayContext {
     pub original_request_body: Option<Vec<u8>>,
     pub prepared_request: Option<PreparedRequest>,
     pub new_request_body: Option<Vec<u8>>,
+    /// Snapshot of the upstream JSON body for raw capture (survives `new_request_body.take()`).
+    pub upstream_body_for_capture: Option<Vec<u8>>,
     pub authorization: Option<String>,
+    /// SHA-256 prefix of client Bearer token (for capture: same key grouping).
+    pub client_key_fingerprint: Option<String>,
     pub req_hash: Option<String>,
     pub content_length: usize,
     pub conversation_id: Option<String>,
@@ -346,7 +353,9 @@ impl GatewayContext {
             original_request_body: None,
             prepared_request: None,
             new_request_body: None,
+            upstream_body_for_capture: None,
             authorization: None,
+            client_key_fingerprint: None,
             req_hash: None,
             content_length: 0,
             conversation_id: None,
