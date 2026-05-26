@@ -14,9 +14,9 @@ use crab_control::{
     PatchUpstreamKeyRequest, PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest,
     PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
-    SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode,
-    UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str, parse_backend_endpoints,
-    parse_upstream_base_url,
+    RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
+    UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str,
+    parse_backend_endpoints, parse_upstream_base_url,
 };
 use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
@@ -187,6 +187,14 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/upstream/profiles/{id}/test",
             post(management_profiles::test_upstream_profile),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/routing",
+            get(management_profiles::get_profile_routing),
+        )
+        .route(
+            "/v1/routing/summary",
+            get(get_routing_summary),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
@@ -1184,6 +1192,7 @@ async fn get_ttl(
         default_ttl_secs: cfg.default_ttl_secs,
         model_overrides: cfg.model_overrides.clone(),
         consumer_overrides: cfg.consumer_overrides.clone(),
+        consumer_model_overrides: cfg.consumer_model_overrides.clone(),
     }))
 }
 
@@ -1197,12 +1206,16 @@ async fn put_ttl(
     cfg.default_ttl_secs = req.default_ttl_secs;
     cfg.model_overrides = req.model_overrides.clone();
     cfg.consumer_overrides = req.consumer_overrides.clone();
+    cfg.consumer_model_overrides = req.consumer_model_overrides.clone();
     let view = TtlConfigView {
         default_ttl_secs: cfg.default_ttl_secs,
         model_overrides: cfg.model_overrides.clone(),
         consumer_overrides: cfg.consumer_overrides.clone(),
+        consumer_model_overrides: cfg.consumer_model_overrides.clone(),
     };
     drop(cfg);
+    // Sync the ArcSwap in TieredCache so DynamicTtlExpiry picks up the change.
+    state.tiered_cache.sync_ttl();
     schedule_persist_state(&state);
     Ok(Json(view))
 }
@@ -1624,6 +1637,49 @@ fn backend_to_spec(
         last_check_ms,
         latency_ms,
     }
+}
+
+async fn get_routing_summary(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<RoutingSummaryView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let profile = state.runtime.default_profile();
+    let router = &profile.router;
+    let backends = router.backends();
+    let health_map = state.runtime.backend_health.read();
+
+    let backends_total = backends.len();
+    let mut backends_healthy = 0usize;
+    let mut circuit_open_count = 0usize;
+    for b in backends {
+        if let Some(h) = health_map.get(&b.name) {
+            if h.healthy {
+                backends_healthy += 1;
+            }
+            if h.circuit_state == crab_route::CircuitState::Open {
+                circuit_open_count += 1;
+            }
+        } else {
+            backends_healthy += 1;
+        }
+    }
+
+    let pool = profile.resolve_upstream_pool();
+    let pool_status = pool.list_status();
+    let upstream_keys_available = pool_status
+        .iter()
+        .filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0)
+        .count();
+
+    Ok(Json(RoutingSummaryView {
+        backends_healthy,
+        backends_total,
+        circuit_open_count,
+        upstream_keys_available,
+        upstream_keys_total: pool_status.len(),
+        profile_id: profile.id.clone(),
+    }))
 }
 
 async fn get_backends(

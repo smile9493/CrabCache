@@ -204,6 +204,7 @@ fn TtlConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl IntoV
             l1_ttl_secs: l1_ttl.get(),
             model_overrides: config.model_overrides.clone(),
             consumer_overrides: config.consumer_overrides.clone(),
+            consumer_model_overrides: config.consumer_model_overrides.clone(),
         };
         leptos::task::spawn_local(async move {
             match api::update_cache_config(&req).await {

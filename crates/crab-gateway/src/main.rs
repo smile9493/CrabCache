@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
+use std::collections::HashMap;
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
@@ -389,6 +390,7 @@ fn main() -> Result<()> {
             .consumer_ttl_overrides
             .clone()
             .unwrap_or_default(),
+        consumer_model_overrides: HashMap::new(),
     }));
 
     let l0_config = crab_cache::L0Config {

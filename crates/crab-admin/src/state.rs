@@ -200,6 +200,8 @@ pub struct StoredCacheConfig {
     pub default_ttl_secs: u64,
     pub model_overrides: Vec<(String, u64)>,
     pub consumer_overrides: Vec<(String, u64)>,
+    /// Combined overrides keyed by `"consumer:model"`.
+    pub consumer_model_overrides: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -438,6 +440,7 @@ impl AppState {
                     ("deepseek-coder".into(), 300),
                 ],
                 consumer_overrides: vec![("reporting-job".into(), 1800)],
+                consumer_model_overrides: vec![],
             }),
             semantic_config: RwLock::new(StoredSemanticConfig {
                 enabled: true,

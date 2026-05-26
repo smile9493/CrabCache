@@ -63,6 +63,9 @@ pub struct CacheConfig {
     pub model_overrides: Vec<(String, u64)>,
     #[serde(default)]
     pub consumer_overrides: Vec<(String, u64)>,
+    /// Combined overrides keyed by `"consumer:model"`.
+    #[serde(default)]
+    pub consumer_model_overrides: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +76,9 @@ pub struct UpdateCacheConfigRequest {
     pub model_overrides: Vec<(String, u64)>,
     #[serde(default)]
     pub consumer_overrides: Vec<(String, u64)>,
+    /// Combined overrides keyed by `"consumer:model"`.
+    #[serde(default)]
+    pub consumer_model_overrides: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

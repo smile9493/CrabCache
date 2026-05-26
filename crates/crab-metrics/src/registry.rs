@@ -115,7 +115,7 @@ impl GatewayMetrics {
                 "Upstream response latency in seconds",
             )
             .buckets(vec![
-                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+                0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0,
             ]),
             &["model"],
         )?;
@@ -126,7 +126,7 @@ impl GatewayMetrics {
                 "Time to first token latency in seconds for streaming responses",
             )
             .buckets(vec![
-                0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+                0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0,
             ]),
             &["model"],
         )?;
@@ -287,9 +287,9 @@ impl GatewayMetrics {
         let composition_requests = IntCounterVec::new(
             Opts::new(
                 "gateway_composition_requests_total",
-                "Request composition counts by project_id, pipeline, has_tools, and message count bucket",
+                "Request composition counts by pipeline, has_tools, and message count bucket",
             ),
-            &["project_id", "pipeline", "has_tools", "msg_bucket"],
+            &["pipeline", "has_tools", "msg_bucket"],
         )?;
 
         let composition_component = IntCounterVec::new(
@@ -434,7 +434,6 @@ impl GatewayMetrics {
     }
 
     pub fn record_composition_metrics(&self, comp: &crab_composition::RequestComposition) {
-        let project_id = comp.project_id.as_deref().unwrap_or("none");
         let has_tools = if comp.has_tools { "true" } else { "false" };
         let mc = comp.message_count;
         let msg_bucket = if mc <= 10 {
@@ -448,7 +447,7 @@ impl GatewayMetrics {
         };
 
         self.composition_requests
-            .with_label_values(&[project_id, &comp.pipeline, has_tools, msg_bucket])
+            .with_label_values(&[&comp.pipeline, has_tools, msg_bucket])
             .inc();
 
         // Component detection counters

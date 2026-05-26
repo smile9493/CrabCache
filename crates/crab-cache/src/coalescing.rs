@@ -1,11 +1,14 @@
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
 pub struct RequestCoalescer {
     inflight: DashMap<String, Arc<InflightEntry>>,
+    /// Atomic counter for precise capacity control without TOCTOU races.
+    inflight_count: Arc<AtomicUsize>,
     max_inflight: usize,
     follower_timeout: Duration,
 }
@@ -21,6 +24,7 @@ impl RequestCoalescer {
     pub fn new() -> Self {
         Self {
             inflight: DashMap::new(),
+            inflight_count: Arc::new(AtomicUsize::new(0)),
             max_inflight: 1000,
             follower_timeout: Duration::from_secs(60),
         }
@@ -29,6 +33,7 @@ impl RequestCoalescer {
     pub fn with_config(max_inflight: usize, follower_timeout_secs: u64) -> Self {
         Self {
             inflight: DashMap::new(),
+            inflight_count: Arc::new(AtomicUsize::new(0)),
             max_inflight,
             follower_timeout: Duration::from_secs(follower_timeout_secs),
         }
@@ -45,6 +50,7 @@ impl RequestCoalescer {
                         key: key.to_string(),
                         is_leader: false,
                         inflight: self.inflight.clone(),
+                        inflight_count: None, // followers don't own the counter
                         entry: Some(entry),
                     });
                 }
@@ -60,6 +66,7 @@ impl RequestCoalescer {
                         key: key.to_string(),
                         is_leader: false,
                         inflight: self.inflight.clone(),
+                        inflight_count: None,
                         entry: Some(entry),
                     });
                 }
@@ -70,7 +77,10 @@ impl RequestCoalescer {
                 continue;
             }
 
-            if self.inflight.len() >= self.max_inflight {
+            // Atomic capacity check: increment first, then verify.
+            let prev = self.inflight_count.fetch_add(1, Ordering::Relaxed);
+            if prev >= self.max_inflight {
+                self.inflight_count.fetch_sub(1, Ordering::Relaxed);
                 return Err(CoalesceError::CapacityExceeded);
             }
 
@@ -83,6 +93,9 @@ impl RequestCoalescer {
             use dashmap::mapref::entry::Entry;
             match self.inflight.entry(key.to_string()) {
                 Entry::Occupied(existing) => {
+                    // Race: another task inserted this key between our check and entry.
+                    // Release the counter slot and retry as follower.
+                    self.inflight_count.fetch_sub(1, Ordering::Relaxed);
                     let entry = existing.get().clone();
 
                     if entry.completed.load(std::sync::atomic::Ordering::Acquire) {
@@ -90,6 +103,7 @@ impl RequestCoalescer {
                             key: key.to_string(),
                             is_leader: false,
                             inflight: self.inflight.clone(),
+                            inflight_count: None,
                             entry: Some(entry),
                         });
                     }
@@ -107,6 +121,7 @@ impl RequestCoalescer {
                         key: key.to_string(),
                         is_leader: true,
                         inflight: self.inflight.clone(),
+                        inflight_count: Some(self.inflight_count.clone()),
                         entry: Some(entry),
                     });
                 }
@@ -115,11 +130,11 @@ impl RequestCoalescer {
     }
 
     pub fn len(&self) -> usize {
-        self.inflight.len()
+        self.inflight_count.load(Ordering::Relaxed)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inflight.is_empty()
+        self.inflight_count.load(Ordering::Relaxed) == 0
     }
 }
 
@@ -150,6 +165,8 @@ pub struct CoalesceGuard {
     key: String,
     is_leader: bool,
     inflight: DashMap<String, Arc<InflightEntry>>,
+    /// Only set for the leader; decrements on drop.
+    inflight_count: Option<Arc<AtomicUsize>>,
     entry: Option<Arc<InflightEntry>>,
 }
 
@@ -192,12 +209,23 @@ impl Drop for CoalesceGuard {
     fn drop(&mut self) {
         if self.is_leader {
             if let Some(entry) = &self.entry {
-                entry
-                    .completed
-                    .store(true, std::sync::atomic::Ordering::Release);
-                entry.notify.notify_waiters();
+                // Defensive: if leader dropped without explicit mark_completed(),
+                // treat it as a failure so followers don't read a stale cache miss.
+                if !entry.completed.load(std::sync::atomic::Ordering::Acquire) {
+                    entry
+                        .failed
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    entry
+                        .completed
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    entry.notify.notify_waiters();
+                }
             }
             self.inflight.remove(&self.key);
+            // Release the atomic counter slot.
+            if let Some(count) = &self.inflight_count {
+                count.fetch_sub(1, Ordering::Relaxed);
+            }
         }
     }
 }

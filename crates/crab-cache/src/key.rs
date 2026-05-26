@@ -123,9 +123,10 @@ pub fn generate_cache_key_with_fingerprint(
         );
     }
 
-    let normalized = canonical_to_string(&value);
+    let mut canonical = String::with_capacity(request_body.len());
+    canonical_write(&value, &mut canonical);
     let mut hasher = Sha256::new();
-    hasher.update(normalized.as_bytes());
+    hasher.update(canonical.as_bytes());
     let hash = hasher.finalize();
     let key = hex::encode(hash);
 
@@ -207,29 +208,49 @@ fn normalize_content_string(s: &str) -> String {
 }
 
 /// Recursively serialize a JSON value with sorted object keys for canonical output.
-fn canonical_to_string(value: &Value) -> String {
+///
+/// Writes directly into the provided `String` buffer to avoid intermediate allocations.
+fn canonical_write(value: &Value, out: &mut String) {
     match value {
         Value::Object(map) => {
-            let mut sorted_keys: Vec<&String> = map.keys().collect();
-            sorted_keys.sort();
-            let pairs: Vec<String> = sorted_keys
-                .into_iter()
-                .map(|k| {
-                    let key_json = canonical_to_string(&Value::String(k.clone()));
-                    let val_json = canonical_to_string(&map[k]);
-                    format!("{key_json}:{val_json}")
-                })
-                .collect();
-            format!("{{{}}}", pairs.join(","))
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable();
+            out.push('{');
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                // Key: use serde_json escaping for correctness (handles special chars)
+                out.push('"');
+                // serde_json keys are already valid JSON strings; write the raw key
+                // and let the serializer handle escaping via to_writer if needed.
+                // For simplicity, use serde_json::to_string for the key part.
+                let key_json = serde_json::to_string(k.as_str())
+                    .unwrap_or_else(|_| format!("\"{k}\""));
+                out.push_str(&key_json[1..key_json.len() - 1]); // strip outer quotes
+                out.push_str("\":");
+                canonical_write(&map[*k], out);
+            }
+            out.push('}');
         }
         Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(canonical_to_string).collect();
-            format!("[{}]", items.join(","))
+            out.push('[');
+            for (i, v) in arr.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical_write(v, out);
+            }
+            out.push(']');
         }
-        Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| format!("\"{s}\"")),
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".to_string(),
+        Value::String(s) => {
+            // Use serde_json for proper JSON string escaping
+            let escaped = serde_json::to_string(s).unwrap_or_else(|_| format!("\"{s}\""));
+            out.push_str(&escaped);
+        }
+        Value::Number(n) => out.push_str(&n.to_string()),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Null => out.push_str("null"),
     }
 }
 
@@ -470,8 +491,10 @@ mod tests {
         let obj1: Value = json!({"b": 2, "a": 1, "c": {"z": 9, "y": 8}});
         let obj2: Value = json!({"c": {"y": 8, "z": 9}, "a": 1, "b": 2});
 
-        let s1 = canonical_to_string(&obj1);
-        let s2 = canonical_to_string(&obj2);
+        let mut s1 = String::new();
+        canonical_write(&obj1, &mut s1);
+        let mut s2 = String::new();
+        canonical_write(&obj2, &mut s2);
         assert_eq!(
             s1, s2,
             "Canonical representation should be key-order independent"

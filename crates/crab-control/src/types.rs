@@ -220,6 +220,9 @@ pub struct TtlConfigView {
     pub default_ttl_secs: u64,
     pub model_overrides: HashMap<String, u64>,
     pub consumer_overrides: HashMap<String, u64>,
+    /// Combined overrides keyed by `"consumer:model"`.
+    #[serde(default)]
+    pub consumer_model_overrides: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +232,9 @@ pub struct PutTtlConfigRequest {
     pub model_overrides: HashMap<String, u64>,
     #[serde(default)]
     pub consumer_overrides: HashMap<String, u64>,
+    /// Combined overrides keyed by `"consumer:model"`.
+    #[serde(default)]
+    pub consumer_model_overrides: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,4 +457,56 @@ pub struct FingerprintConfigRequest {
 
 fn default_fingerprint_normalize() -> bool {
     true
+}
+
+/// Per-backend routing info for the Dashboard (enriched with circuit breaker state).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProfileRoutingBackendView {
+    pub name: String,
+    pub addr: String,
+    pub weight: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_sni: Option<String>,
+    pub healthy: bool,
+    pub last_check_ms: u64,
+    pub latency_ms: u64,
+    pub circuit_state: String,
+    pub consecutive_failures: u32,
+    pub half_open_successes: u32,
+}
+
+/// Circuit breaker config snapshot (read-only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerView {
+    pub failure_threshold: u32,
+    pub success_threshold: u32,
+    pub timeout_ms: u64,
+}
+
+/// Key pool summary for the routing view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingKeyPoolSummary {
+    pub total: usize,
+    pub available: usize,
+}
+
+/// Full routing view for a profile (Dashboard "路由与健康" tab).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileRoutingView {
+    pub profile_id: String,
+    pub backends: Vec<ProfileRoutingBackendView>,
+    pub circuit_breaker: CircuitBreakerView,
+    pub key_pool: RoutingKeyPoolSummary,
+}
+
+/// Lightweight routing summary for the Overview card (default profile only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingSummaryView {
+    pub backends_healthy: usize,
+    pub backends_total: usize,
+    pub circuit_open_count: usize,
+    pub upstream_keys_available: usize,
+    pub upstream_keys_total: usize,
+    pub profile_id: String,
 }

@@ -164,6 +164,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/upstream/profiles/{id}/test",
             post(post_upstream_profile_test),
         )
+        .route(
+            "/api/admin/upstream/profiles/{id}/routing",
+            get(get_upstream_profile_routing),
+        )
         .route("/api/admin/models", get(get_models).post(sync_models))
         .route("/api/admin/models/detect", post(post_models_detect))
         .route("/api/admin/models/apply", post(post_models_apply))
@@ -1782,6 +1786,7 @@ async fn get_cache_config(
         default_ttl_secs: config.default_ttl_secs,
         model_overrides: config.model_overrides.clone(),
         consumer_overrides: config.consumer_overrides.clone(),
+        consumer_model_overrides: config.consumer_model_overrides.clone(),
     }))
 }
 
@@ -1795,6 +1800,7 @@ async fn update_cache_config(
         config.l1_ttl_secs = req.l1_ttl_secs;
         config.model_overrides = req.model_overrides.clone();
         config.consumer_overrides = req.consumer_overrides.clone();
+        config.consumer_model_overrides = req.consumer_model_overrides.clone();
     }
     let put_req = {
         let config = state.cache_config.read();
@@ -1807,6 +1813,11 @@ async fn update_cache_config(
                 .collect(),
             consumer_overrides: config
                 .consumer_overrides
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect(),
+            consumer_model_overrides: config
+                .consumer_model_overrides
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect(),
@@ -1831,6 +1842,7 @@ async fn update_cache_config(
         default_ttl_secs: config.default_ttl_secs,
         model_overrides: config.model_overrides.clone(),
         consumer_overrides: config.consumer_overrides.clone(),
+        consumer_model_overrides: config.consumer_model_overrides.clone(),
     }))
 }
 
@@ -2386,6 +2398,18 @@ async fn post_upstream_profile_key_test(
     let result = crate::upstream_profiles::test_profile_key(&state, &id, &key_id)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(result))
+}
+
+async fn get_upstream_profile_routing(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crab_control::ProfileRoutingView>, (StatusCode, String)> {
+    let result = state
+        .gateway
+        .get_profile_routing(&id)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
     Ok(Json(result))
 }
 

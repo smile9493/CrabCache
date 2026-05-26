@@ -1272,7 +1272,7 @@ pub fn percentile_from_buckets(
                 .iter()
                 .filter(|(l, _)| *l < le)
                 .map(|(l, _)| *l)
-                .last()
+                .next_back()
                 .unwrap_or(0.0);
             let bucket_range = le - prev_le;
             let bucket_count = count - prev_count;

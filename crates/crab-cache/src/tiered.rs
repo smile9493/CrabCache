@@ -1,4 +1,5 @@
 use crate::{CacheEntry, L0Config, TtlConfig};
+use arc_swap::ArcSwap;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use crab_metrics::{CacheTier, global_metrics};
@@ -6,7 +7,7 @@ use moka::future::Cache;
 use moka::policy::Expiry;
 use parking_lot::RwLock;
 use redis::{AsyncCommands, cmd};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -31,27 +32,19 @@ impl CacheGetMetrics {
 }
 
 /// Custom Moka expiry that resolves per-entry TTL from the shared `TtlConfig`,
-/// with internal caching to avoid `RwLock::read()` on every access.
+/// using `ArcSwap` for lock-free reads on the hot path.
 ///
-/// The cached TTL copy is refreshed at most once per second. `expire_after_read`
-/// returns `None` so that cache reads do NOT extend the entry's lifetime (the TTL
-/// set at creation/update time is authoritative; Management API TTL decreases are
+/// `expire_after_read` returns `None` so that cache reads do NOT extend the entry's lifetime
+/// (the TTL set at creation/update time is authoritative; Management API TTL decreases are
 /// picked up via `expire_after_update` and on the next write-through from L1).
 struct DynamicTtlExpiry {
-    ttl_config: Arc<RwLock<TtlConfig>>,
-    cached: Mutex<(TtlConfig, Instant)>,
+    ttl_config: Arc<ArcSwap<TtlConfig>>,
 }
 
 impl DynamicTtlExpiry {
     fn resolve_ttl(&self, model: &str) -> Option<Duration> {
-        let mut cache = match self.cached.lock() {
-            Ok(c) => c,
-            Err(_) => return None,
-        };
-        if cache.1.elapsed() > Duration::from_secs(1) {
-            *cache = (self.ttl_config.read().clone(), Instant::now());
-        }
-        Some(Duration::from_secs(cache.0.resolve(model, None)))
+        let config = self.ttl_config.load();
+        Some(Duration::from_secs(config.resolve(model, None)))
     }
 }
 
@@ -120,7 +113,9 @@ const SCAN_PROGRESS_EVERY_BATCHES: u64 = 10;
 pub struct TieredCache {
     l0: Cache<String, CacheEntry>,
     l1_pool: Pool<RedisConnectionManager>,
-    ttl_config: Arc<RwLock<TtlConfig>>,
+    ttl_config: Arc<ArcSwap<TtlConfig>>,
+    /// Retained for backward-compat API surface that exposes the old RwLock handle.
+    ttl_config_rwlock: Arc<RwLock<TtlConfig>>,
 }
 
 impl TieredCache {
@@ -129,11 +124,12 @@ impl TieredCache {
         l0_config: L0Config,
         ttl_config: Arc<RwLock<TtlConfig>>,
     ) -> Result<Self, CacheError> {
+        let arc_swap = Arc::new(ArcSwap::from_pointee(ttl_config.read().clone()));
+
         let l0 = Cache::builder()
             .max_capacity(l0_config.max_capacity)
             .expire_after(DynamicTtlExpiry {
-                ttl_config: ttl_config.clone(),
-                cached: Mutex::new((ttl_config.read().clone(), Instant::now())),
+                ttl_config: arc_swap.clone(),
             })
             .support_invalidation_closures()
             .build();
@@ -141,7 +137,8 @@ impl TieredCache {
         Ok(Self {
             l0,
             l1_pool,
-            ttl_config,
+            ttl_config: arc_swap,
+            ttl_config_rwlock: ttl_config,
         })
     }
 
@@ -272,7 +269,7 @@ impl TieredCache {
         model: &str,
         consumer: Option<&str>,
     ) -> Result<(), CacheError> {
-        let ttl = self.ttl_config.read().resolve(model, consumer);
+        let ttl = self.ttl_config.load().resolve(model, consumer);
 
         self.l0.insert(key.to_string(), entry.clone()).await;
 
@@ -311,11 +308,20 @@ impl TieredCache {
     }
 
     pub fn resolve_ttl(&self, model: &str, consumer: Option<&str>) -> u64 {
-        self.ttl_config.read().resolve(model, consumer)
+        self.ttl_config.load().resolve(model, consumer)
+    }
+
+    /// Sync the internal ArcSwap from the external RwLock.
+    ///
+    /// Call this after updating `ttl_config()` via the management API to ensure
+    /// the lock-free read path in `DynamicTtlExpiry` picks up the new config.
+    pub fn sync_ttl(&self) {
+        let snapshot = self.ttl_config_rwlock.read().clone();
+        self.ttl_config.store(Arc::new(snapshot));
     }
 
     pub fn ttl_config(&self) -> Arc<parking_lot::RwLock<TtlConfig>> {
-        self.ttl_config.clone()
+        self.ttl_config_rwlock.clone()
     }
 
     #[tracing::instrument(skip(self), fields(key = %key))]
@@ -366,6 +372,19 @@ impl TieredCache {
         self.scan_delete_l1(&pattern, prefix, scan).await
     }
 
+    /// Scan and delete L1 (Redis) entries matching the given pattern.
+    ///
+    /// # Redis Cluster Compatibility
+    ///
+    /// **WARNING**: This implementation uses `SCAN` which is a single-node operation.
+    /// In Redis Cluster mode, `SCAN` only scans the current node and cannot cross
+    /// slots, so keys on other nodes will be missed. If Redis is migrated to Cluster
+    /// mode, this method will silently return success but only partially delete data.
+    ///
+    /// Long-term mitigations:
+    /// - Embed `{hash_tag}` in keys to ensure same-prefix keys land on the same slot
+    /// - Use Redis 7.0+ `SCAN` with `TYPE` filter to reduce irrelevant key scanning
+    /// - Consider `UNLINK` (non-blocking DEL) for large batches
     async fn scan_delete_l1(
         &self,
         pattern: &str,
