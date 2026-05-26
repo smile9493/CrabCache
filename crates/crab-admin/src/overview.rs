@@ -255,8 +255,15 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
 
     let probe = fetch_gateway_probe_cached(state).await;
     let metrics = build_metrics_snapshot_core(&body, state, now, probe.status.as_ref()).await?;
-    let health = build_gateway_health_from_probe(&probe);
+    let mut health = build_gateway_health_from_probe(&probe);
     let prefix_cache = build_prefix_cache_snapshot(&body);
+
+    // Fetch routing summary for backend health / circuit breaker fields.
+    if let Ok(summary) = state.gateway.get_routing_summary().await {
+        health.backends_healthy = summary.backends_healthy;
+        health.backends_total = summary.backends_total;
+        health.circuit_open_count = summary.circuit_open_count;
+    }
 
     let semantic_cfg = state.semantic_config.read().clone();
     let semantic = SemanticConfig {
@@ -688,6 +695,9 @@ fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
             error: probe.ready_error.clone(),
             redis_connected: probe.redis_status == "ok",
             qdrant_connected: probe.l2_status == "ok",
+            backends_healthy: 0,
+            backends_total: 0,
+            circuit_open_count: 0,
         };
     }
     let mut health = match &probe.status {
@@ -711,6 +721,9 @@ fn gateway_health_from_status(s: GatewayStatus, error: Option<String>) -> Gatewa
         error,
         redis_connected: false,
         qdrant_connected: false,
+        backends_healthy: 0,
+        backends_total: 0,
+        circuit_open_count: 0,
     }
 }
 

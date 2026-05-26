@@ -194,6 +194,9 @@ mod tests {
                 error: None,
                 redis_connected: false,
                 qdrant_connected: false,
+                backends_healthy: 0,
+                backends_total: 0,
+                circuit_open_count: 0,
             },
             prefix_cache: PrefixCacheMetricsSnapshot {
                 hit_tokens: 0,

@@ -516,6 +516,21 @@ pub async fn patch_upstream_profile_key(
     .await
 }
 
+pub async fn fetch_profile_routing(
+    profile_id: &str,
+) -> Result<ProfileRoutingView, String> {
+    fetch_json(&format!(
+        "{}/upstream/profiles/{}/routing",
+        API_BASE,
+        urlencoding::encode(profile_id)
+    ))
+    .await
+}
+
+pub async fn fetch_routing_summary() -> Result<RoutingSummaryView, String> {
+    fetch_json(&format!("{}/routing/summary", API_BASE)).await
+}
+
 pub async fn sync_models(profile_id: &str) -> Result<SyncResult, String> {
     let (builder, epoch) = apply_admin_auth(Request::post(&format!(
         "{}/models?profile_id={}",

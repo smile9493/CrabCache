@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::routing_tab::RoutingTab;
 use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
@@ -159,6 +160,11 @@ pub fn UpstreamPage() -> impl IntoView {
     let active_profile = RwSignal::new("deepseek".to_string());
     let is_creating = RwSignal::new(false);
     let gateway_reachable = RwSignal::new(true);
+
+    // Secondary tab: 0 = Profiles, 1 = Routing, 2 = Keys
+    let sub_tab: RwSignal<usize> = RwSignal::new(0);
+    // Initialize from URL query param ?tab=routing
+    init_tab_from_query(sub_tab, &[("profiles", 0), ("routing", 1), ("keys", 2)]);
 
     // Form inputs
     let provider = RwSignal::new("deepseek".to_string());
@@ -617,10 +623,43 @@ pub fn UpstreamPage() -> impl IntoView {
                 </button>
             </div>
 
+            // Secondary tab bar (only when not creating)
+            {move || (!is_creating.get()).then(|| view! {
+                <div class="tab-bar">
+                    <button
+                        type="button"
+                        class=move || if sub_tab.get() == 0 { "tab-item tab-item-active" } else { "tab-item" }
+                        on:click=move |_| sub_tab.set(0)
+                    >
+                        {t.upstream_subtab_profiles()}
+                    </button>
+                    <button
+                        type="button"
+                        class=move || if sub_tab.get() == 1 { "tab-item tab-item-active" } else { "tab-item" }
+                        on:click=move |_| sub_tab.set(1)
+                    >
+                        {t.upstream_subtab_routing()}
+                    </button>
+                    <button
+                        type="button"
+                        class=move || if sub_tab.get() == 2 { "tab-item tab-item-active" } else { "tab-item" }
+                        on:click=move |_| sub_tab.set(2)
+                    >
+                        {t.upstream_subtab_keys()}
+                    </button>
+                </div>
+            })}
+
+            // Routing & Health tab
+            {move || (!is_creating.get() && sub_tab.get() == 1).then(|| {
+                let pid = active_profile.get();
+                view! { <RoutingTab profile_id=pid /> }
+            })}
+
             <div class="upstream-split">
                 <div class="space-y-6">
                     {move || if is_creating.get() {
-                        // Rendering New Profile — two-step flow
+                        // Show creating flow regardless of sub_tab
                         if creation_step.get() == CreationStep::PickTemplate {
                             // Step 1: Template picker
                             view! {
@@ -846,8 +885,8 @@ pub fn UpstreamPage() -> impl IntoView {
                                 </div>
                             }.into_any()
                         }
-                    } else {
-                        // Rendering Edit Form
+                    } else if sub_tab.get() == 0 {
+                        // Rendering Edit Form (Profiles sub-tab)
                         view! {
                             <div class="glass-card space-y-4">
                                 <div class="flex flex-wrap gap-2">
@@ -1044,9 +1083,12 @@ pub fn UpstreamPage() -> impl IntoView {
                                 </div>
                             </div>
                         }.into_any()
+                    } else {
+                        // Not on Profiles tab and not creating — hide profile form
+                        view! { <span></span> }.into_any()
                     }}
 
-                    {move || if is_creating.get() {
+                    {move || if is_creating.get() || sub_tab.get() != 2 {
                         view! { <span></span> }.into_any()
                     } else {
                         view! {

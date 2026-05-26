@@ -557,4 +557,28 @@ impl GatewayAdminClient {
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
+
+    pub async fn get_profile_routing(
+        &self,
+        profile_id: &str,
+    ) -> Result<ProfileRoutingView, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::GET,
+                &format!("/v1/upstream/profiles/{profile_id}/routing"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_routing_summary(&self) -> Result<RoutingSummaryView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/routing/summary")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
 }

@@ -7,6 +7,7 @@ pub mod gateway_health;
 pub mod histogram_chart;
 pub mod line_chart;
 pub mod page_header;
+pub mod routing_tab;
 pub mod scatter_chart;
 pub mod skeleton;
 pub mod sparkline;

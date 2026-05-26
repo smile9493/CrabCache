@@ -16,3 +16,4 @@ anyhow.workspace = true
 sha2.workspace = true
 hex.workspace = true
 http.workspace = true
+serde.workspace = true

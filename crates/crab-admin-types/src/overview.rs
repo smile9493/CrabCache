@@ -23,6 +23,15 @@ pub struct GatewayHealth {
     pub redis_connected: bool,
     #[serde(default)]
     pub qdrant_connected: bool,
+    /// Number of healthy backends (default profile).
+    #[serde(default)]
+    pub backends_healthy: usize,
+    /// Total number of backends (default profile).
+    #[serde(default)]
+    pub backends_total: usize,
+    /// Number of backends with circuit breaker in Open state.
+    #[serde(default)]
+    pub circuit_open_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

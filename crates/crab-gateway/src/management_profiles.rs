@@ -7,10 +7,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use crab_control::{
-    ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamProfileKeysRequest,
-    PutUpstreamProfileRequest, UpstreamKeyView, UpstreamKeysPutMode, UpstreamProfileKeysView,
-    UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult, parse_upstream_base_url,
-    validate_upstream_key,
+    CircuitBreakerView, ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest,
+    ProfileRoutingBackendView, ProfileRoutingView, PutUpstreamProfileKeysRequest,
+    PutUpstreamProfileRequest, RoutingKeyPoolSummary, UpstreamKeyView, UpstreamKeysPutMode,
+    UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
+    parse_upstream_base_url, validate_upstream_key,
 };
 use crab_proxy::{
     ProfileBuildInput, UpstreamKeyPool, UpstreamKeySpec, build_profile_runtime,
@@ -522,6 +523,83 @@ pub async fn test_upstream_profile_key(
             quota: None,
         })),
     }
+}
+
+pub async fn get_profile_routing(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ProfileRoutingView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let id = id.trim();
+    let profile = state
+        .runtime
+        .profile(id)
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
+
+    let router = &profile.router;
+    let backends = router.backends();
+    let health_map = state.runtime.backend_health.read();
+
+    let backend_views: Vec<ProfileRoutingBackendView> = backends
+        .iter()
+        .map(|b| {
+            let h = health_map.get(&b.name);
+            let (healthy, last_check_ms, latency_ms, circuit_state, consecutive_failures, half_open_successes) =
+                match h {
+                    Some(health) => {
+                        let state_str = serde_json::to_value(&health.circuit_state)
+                            .ok()
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_else(|| "closed".to_string());
+                        (
+                            health.healthy,
+                            health.last_check_ms,
+                            health.latency_ms,
+                            state_str,
+                            health.consecutive_failures,
+                            health.half_open_successes,
+                        )
+                    }
+                    None => (true, 0, 0, "closed".to_string(), 0, 0),
+                };
+            ProfileRoutingBackendView {
+                name: b.name.clone(),
+                addr: b.addr.to_string(),
+                weight: b.weight,
+                tls_sni: if b.tls_sni.is_empty() {
+                    None
+                } else {
+                    Some(b.tls_sni.clone())
+                },
+                healthy,
+                last_check_ms,
+                latency_ms,
+                circuit_state,
+                consecutive_failures,
+                half_open_successes,
+            }
+        })
+        .collect();
+
+    let cb = state.runtime.circuit_breaker_config;
+    let pool = profile.resolve_upstream_pool();
+    let pool_status = pool.list_status();
+    let available = pool_status.iter().filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0).count();
+
+    Ok(Json(ProfileRoutingView {
+        profile_id: id.to_string(),
+        backends: backend_views,
+        circuit_breaker: CircuitBreakerView {
+            failure_threshold: cb.failure_threshold,
+            success_threshold: cb.success_threshold,
+            timeout_ms: cb.timeout_ms,
+        },
+        key_pool: RoutingKeyPoolSummary {
+            total: pool_status.len(),
+            available,
+        },
+    }))
 }
 
 fn bad_request(msg: &str) -> Response {

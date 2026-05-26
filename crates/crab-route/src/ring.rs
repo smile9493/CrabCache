@@ -29,14 +29,15 @@ impl Backend {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CircuitState {
     Closed,
     Open,
     HalfOpen,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct CircuitBreakerConfig {
     pub failure_threshold: u32,
     pub success_threshold: u32,

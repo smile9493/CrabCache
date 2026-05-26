@@ -519,7 +519,7 @@ fn OverviewContent(
                             <HistoryMetaHint metrics=m.clone() />
                         })}
                         {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
-                            <MetricsBento metrics=m.clone() suggestions=s.clone() />
+                            <MetricsBento metrics=m.clone() health=health_memo.get() suggestions=s.clone() />
                         })}
                         {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
                             <TraceCompareBanner trace=tr metrics=m.clone() />
@@ -838,7 +838,7 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) -> impl IntoView {
+fn MetricsBento(metrics: MetricsSnapshot, health: Option<GatewayHealth>, suggestions: Vec<OverviewSuggestion>) -> impl IntoView {
     let t = use_translations();
     let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
     let total_requests = total_hits + metrics.cache_misses;
@@ -1016,6 +1016,43 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
                     </div>
                 </div>
             </div>
+            // Routing Summary Card
+            {move || {
+                let h = health.as_ref()?;
+                let total = h.backends_total;
+                if total == 0 {
+                    return None;
+                }
+                let healthy = h.backends_healthy;
+                let open = h.circuit_open_count;
+                let warning = healthy < total || open > 0;
+                Some(view! {
+                    <div class="bento-cell">
+                        <a href="/upstream?tab=routing" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="metric-card-label">{t.routing_summary_card_title()}</div>
+                                <div class="text-2xl opacity-30">"🔀"</div>
+                            </div>
+                            <div class={if warning { "metric-card-value text-warning" } else { "metric-card-value text-accent" }}>
+                                {format!("{}/{}", healthy, total)}
+                            </div>
+                            <div class="metric-card-sub">{t.routing_summary_healthy_label()}</div>
+                            {if open > 0 {
+                                view! {
+                                    <div class="mt-2 flex items-center gap-1.5">
+                                        <span class="w-2 h-2 rounded-full bg-error"></span>
+                                        <span class="text-xs text-error font-medium">
+                                            {format!("{} {}", open, t.routing_summary_circuit_label())}
+                                        </span>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }}
+                        </a>
+                    </div>
+                })
+            }}
         </div>
     }
 }
