@@ -15,7 +15,7 @@ leptos = { version = "0.7", features = ["csr"] }
 leptos_router = "0.7"
 leptos_meta = "0.7"
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument", "Element", "HtmlElement", "HtmlDivElement", "HtmlTextAreaElement", "console", "Navigator", "Clipboard", "Storage", "KeyboardEvent", "CssStyleDeclaration"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument", "Element", "HtmlElement", "HtmlDivElement", "HtmlTextAreaElement", "console", "Navigator", "Clipboard", "Storage", "KeyboardEvent", "CssStyleDeclaration", "MouseEvent", "SvgsvgElement", "SvgGraphicsElement", "SvgMatrix", "EventSource", "MessageEvent", "Event"] }
 crab-admin-types.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

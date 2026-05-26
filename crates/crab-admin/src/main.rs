@@ -4,7 +4,6 @@ mod key_usage_sync;
 mod live_metrics;
 mod log_management;
 mod metrics_history;
-mod metrics_store;
 mod network;
 mod openresty;
 mod overview;
@@ -12,6 +11,7 @@ mod persist;
 mod pg;
 mod raw_capture;
 mod routes;
+mod sse;
 mod state;
 mod static_cache;
 mod suggestions;
@@ -146,7 +146,6 @@ async fn main() -> anyhow::Result<()> {
                 if let Err(e) = crate::metrics_history::sample_metrics_history(
                     &metrics_state.gateway_metrics_cache,
                     &metrics_state.metrics_history,
-                    metrics_state.metrics_store.as_ref(),
                     uptime,
                     pg_ref.as_ref(),
                 )
@@ -278,6 +277,14 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 if let Err(e) = crate::overview::refresh_overview_core_cache(&bg).await {
                     tracing::debug!(error = %e, "Overview core background refresh failed");
+                } else {
+                    // Broadcast the fresh OverviewCore to SSE clients.
+                    let cache = bg.overview_core_cache.read();
+                    if let Some((_, ref core, _)) = *cache {
+                        if let Ok(json) = serde_json::to_value(core) {
+                            let _ = bg.sse_broadcast.send(crate::sse::SseEvent::Metrics(json));
+                        }
+                    }
                 }
                 tokio::time::sleep(interval).await;
             }

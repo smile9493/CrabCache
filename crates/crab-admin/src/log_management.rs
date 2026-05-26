@@ -541,11 +541,46 @@ fn prune_capture_bodies(dir: &str, max_files: usize, deleted: &mut Vec<String>, 
 }
 
 /// Background loop that enforces the retention policy every 10 minutes.
+/// Also prunes PG trace_logs based on the configured retention period.
 pub async fn log_retention_loop(state: Arc<AppState>) {
     let mut interval = tokio::time::interval(Duration::from_secs(600));
     loop {
         interval.tick().await;
         let policy = state.log_retention.read().clone();
+
+        // PG trace_logs retention (default 7 days).
+        {
+            let pg_ref = state.pg_store.read().clone();
+            if let Some(ref pg) = pg_ref {
+                let retention_days: u64 = std::env::var("CRADMIN_TRACE_RETENTION_DAYS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(7);
+                if retention_days > 0 {
+                    let cutoff_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64
+                        - retention_days * 86_400_000;
+                    match pg.prune_trace_logs(cutoff_ms).await {
+                        Ok(count) if count > 0 => {
+                            info!(deleted = count, cutoff_days = retention_days, "PG trace_logs pruned");
+                        }
+                        Err(e) => warn!(error = %e, "PG trace_logs prune failed"),
+                        _ => {}
+                    }
+                    match pg.prune_request_logs(cutoff_ms).await {
+                        Ok(count) if count > 0 => {
+                            info!(deleted = count, cutoff_days = retention_days, "PG request_logs pruned");
+                        }
+                        Err(e) => warn!(error = %e, "PG request_logs prune failed"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // JSONL file retention.
         if policy.max_age_hours == 0
             && policy.max_disk_mb == 0
             && policy.max_trace_files == 0

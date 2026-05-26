@@ -243,3 +243,55 @@ pub fn Alert(variant: &'static str, message: Signal<String>) -> impl IntoView {
         }}
     }
 }
+
+#[component]
+pub fn Tooltip(
+    text: Signal<String>,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div class="tooltip-wrapper">
+            {children()}
+            <div class="tooltip-content">
+                {move || text.get()}
+            </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn TrendMetricCard(
+    title: &'static str,
+    value: Signal<String>,
+    subtitle: &'static str,
+    #[prop(optional)]
+    trend_pct: Option<f64>,
+    #[prop(optional)]
+    trend_label: Option<&'static str>,
+) -> impl IntoView {
+    view! {
+        <div class="metric-card">
+            <div class="metric-card-label">{title}</div>
+            <div class="metric-card-value">{move || value.get()}</div>
+            <div class="metric-card-footer">
+                <div class="metric-card-sub">{subtitle}</div>
+                {trend_pct.map(|pct| {
+                    let cls = if pct > 0.01 {
+                        "metric-card-trend trend-up"
+                    } else if pct < -0.01 {
+                        "metric-card-trend trend-down"
+                    } else {
+                        "metric-card-trend trend-neutral"
+                    };
+                    let arrow = if pct > 0.01 { "↑" } else if pct < -0.01 { "↓" } else { "→" };
+                    view! {
+                        <span class=cls>
+                            {arrow} {format!("{:+.1}%", pct)}
+                            {trend_label.map(|l| view! { <span class="text-theme-muted ml-1">{l}</span> })}
+                        </span>
+                    }
+                })}
+            </div>
+        </div>
+    }
+}

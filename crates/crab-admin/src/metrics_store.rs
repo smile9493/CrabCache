@@ -6,7 +6,7 @@
 use crate::metrics_history::MetricsCounterSnapshot;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use tracing::warn;
 
 const DB_PATH_ENV: &str = "CRABCACHE_ADMIN_METRICS_DB_PATH";
@@ -80,13 +80,7 @@ impl MetricsStore {
                 return;
             }
         };
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Metrics store mutex poisoned");
-                return;
-            }
-        };
+        let conn = self.conn.lock();
         if let Err(e) = conn.execute(
             "INSERT OR REPLACE INTO metrics_snapshots(sampled_at, gateway_uptime_secs, payload)
              VALUES (?1, ?2, ?3)",
@@ -102,13 +96,7 @@ impl MetricsStore {
 
     /// Load all snapshots with `sampled_at >= cutoff_ts`, ordered ascending.
     pub fn load_snapshots_since(&self, cutoff_ts: u64) -> Vec<MetricsCounterSnapshot> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Metrics store mutex poisoned");
-                return Vec::new();
-            }
-        };
+        let conn = self.conn.lock();
         let mut stmt = match conn.prepare(
             "SELECT payload FROM metrics_snapshots WHERE sampled_at >= ?1 ORDER BY sampled_at ASC",
         ) {
@@ -141,7 +129,7 @@ impl MetricsStore {
     /// Return the `gateway_uptime_secs` column of the most recent row, or
     /// `None` if the database is empty.
     pub fn last_gateway_uptime(&self) -> Option<u64> {
-        let conn = self.conn.lock().ok()?;
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT gateway_uptime_secs FROM metrics_snapshots ORDER BY sampled_at DESC LIMIT 1")
             .ok()?;
@@ -152,13 +140,7 @@ impl MetricsStore {
 
     /// Delete rows older than `cutoff_ts`.
     pub fn prune_older_than(&self, cutoff_ts: u64) {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Metrics store mutex poisoned");
-                return;
-            }
-        };
+        let conn = self.conn.lock();
         if let Err(e) = conn.execute(
             "DELETE FROM metrics_snapshots WHERE sampled_at < ?1",
             params![cutoff_ts as i64],

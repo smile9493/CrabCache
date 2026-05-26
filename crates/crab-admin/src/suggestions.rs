@@ -157,6 +157,14 @@ mod tests {
                 miss: 10,
                 ..Default::default()
             },
+            latency_upstream_p99_ms: 0.0,
+            latency_ttft_p99_ms: 0.0,
+            latency_cache_fetch_p99_ms: 0.0,
+            error_rate_5m: 0.0,
+            http_4xx_5m: 0,
+            http_5xx_5m: 0,
+            qps_prev_1h: 0.0,
+            hit_rate_prev_1h: 0.0,
         }
     }
 
@@ -173,6 +181,8 @@ mod tests {
                 upstream_key_count: 0,
                 upstream_keys_available: 0,
                 error: None,
+                redis_connected: false,
+                qdrant_connected: false,
             },
             prefix_cache: PrefixCacheMetricsSnapshot {
                 hit_tokens: 0,

@@ -22,7 +22,8 @@ use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
@@ -31,6 +32,126 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+// ---------------------------------------------------------------------------
+// PG Trace Writer (gateway-side, independent of Admin Dashboard pool)
+// Uses a single tokio-postgres connection (no pool dependency).
+// ---------------------------------------------------------------------------
+
+struct PgTraceStore {
+    client: tokio::sync::Mutex<tokio_postgres::Client>,
+}
+
+impl PgTraceStore {
+    async fn connect(pg_url: &str) -> anyhow::Result<Self> {
+        use anyhow::Context;
+
+        let (client, connection) = tokio_postgres::connect(pg_url, tokio_postgres::NoTls)
+            .await
+            .context("pg trace connect")?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                tracing::warn!("PG trace connection error: {}", e);
+            }
+        });
+        Ok(Self {
+            client: tokio::sync::Mutex::new(client),
+        })
+    }
+
+    async fn insert_batch(
+        &self,
+        entries: &[crab_proxy::SanitizedLogEntry],
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await.context("pg trace begin tx")?;
+        let stmt = tx
+            .prepare(
+                "INSERT INTO trace_logs
+                    (request_hash, timestamp_ms, content_length, semantic_cluster,
+                     model, prompt_tokens, latency_ms, cache_hit,
+                     conversation_id, consumer, domain, project_id,
+                     upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+                     cache_tier, composition,
+                     request_messages_snapshot, response_preview,
+                     retired_prefix_messages, reasoning_strategy,
+                     prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+                     upstream_model, client_body_user_id, upstream_user_id,
+                     user_id_audit)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                         $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
+                         $26,$27,$28,$29)
+                 ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
+            )
+            .await
+            .context("pg prepare insert_trace_logs")?;
+
+        for e in entries {
+            let composition_json = e
+                .composition
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|err| anyhow::anyhow!("serialize composition: {err}"))?;
+            tx.execute(
+                &stmt,
+                &[
+                    &e.request_hash,
+                    &(e.timestamp_ms as i64),
+                    &(e.content_length as i32),
+                    &(e.semantic_cluster as i32),
+                    &e.model,
+                    &(e.prompt_tokens as i32),
+                    &e.latency_ms,
+                    &e.cache_hit,
+                    &e.conversation_id,
+                    &e.consumer,
+                    &e.domain,
+                    &e.project_id,
+                    &e.upstream_latency_ms,
+                    &e.ttft_ms,
+                    &e.input_tokens.map(|v| v as i64),
+                    &e.output_tokens.map(|v| v as i64),
+                    &e.cache_tier,
+                    &composition_json,
+                    &e.request_messages_snapshot,
+                    &e.response_preview,
+                    &e.retired_prefix_messages.map(|v| v as i32),
+                    &e.reasoning_strategy,
+                    &e.prompt_cache_hit_ratio,
+                    &e.upstream_profile_id,
+                    &e.pipeline,
+                    &e.upstream_model,
+                    &e.client_body_user_id,
+                    &e.upstream_user_id,
+                    &e.user_id_audit,
+                ],
+            )
+            .await
+            .context("pg execute insert_trace_logs")?;
+        }
+
+        tx.commit().await.context("pg commit insert_trace_logs")?;
+        Ok(())
+    }
+}
+
+/// Redact password from PG URL for logging.
+fn redact_pg_url(url: &str) -> String {
+    if let Some(at) = url.find('@') {
+        if let Some(slash) = url[..at].rfind('/') {
+            let prefix = &url[..slash + 2];
+            let suffix = &url[at..];
+            return format!("{}****:****{}", prefix, suffix);
+        }
+    }
+    url.to_string()
+}
 
 struct MetricsServer {
     addr: String,
@@ -141,15 +262,33 @@ fn main() -> Result<()> {
 
     if clear_reasoning_cache {
         let reasoning_config = config.reasoning.clone().unwrap_or_default();
-        let store = ReasoningBackend::from_config(
-            &reasoning_config.backend,
-            &reasoning_config.cache_db_path,
-            reasoning_config.redis_url.as_deref(),
-            &config.cache.l1_redis_url,
-            reasoning_config.cache_max_age_secs,
-            reasoning_config.cache_max_rows,
-            reasoning_config.max_reasoning_entry_bytes,
-        )?;
+        let backend_env = std::env::var("CRABCACHE_REASONING_BACKEND")
+            .ok()
+            .unwrap_or_else(|| reasoning_config.backend.clone());
+        let store = if backend_env == "pg" {
+            let pg_url_env = std::env::var("CRABCACHE_REASONING_PG_URL").ok();
+            let pg_url = reasoning_config
+                .pg_url
+                .as_deref()
+                .or(pg_url_env.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("reasoning.backend = \"pg\" requires pg_url"))?;
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(ReasoningBackend::open_pg(
+                pg_url,
+                reasoning_config.cache_max_age_secs,
+                reasoning_config.cache_max_rows,
+            ))?
+        } else {
+            ReasoningBackend::from_config(
+                &reasoning_config.backend,
+                &reasoning_config.cache_db_path,
+                reasoning_config.redis_url.as_deref(),
+                &config.cache.l1_redis_url,
+                reasoning_config.cache_max_age_secs,
+                reasoning_config.cache_max_rows,
+                reasoning_config.max_reasoning_entry_bytes,
+            )?
+        };
         let deleted = store.clear()?;
         info!(
             deleted,
@@ -274,15 +413,35 @@ fn main() -> Result<()> {
     let conn_config = config.connection.clone().unwrap_or_default();
 
     let reasoning_config = config.reasoning.clone().unwrap_or_default();
-    let reasoning_store = Arc::new(ReasoningBackend::from_config(
-        &reasoning_config.backend,
-        &reasoning_config.cache_db_path,
-        reasoning_config.redis_url.as_deref(),
-        &config.cache.l1_redis_url,
-        reasoning_config.cache_max_age_secs,
-        reasoning_config.cache_max_rows,
-        reasoning_config.max_reasoning_entry_bytes,
-    )?);
+    let reasoning_backend_env = std::env::var("CRABCACHE_REASONING_BACKEND")
+        .ok()
+        .unwrap_or_else(|| reasoning_config.backend.clone());
+    let reasoning_store = if reasoning_backend_env == "pg" {
+        let pg_url_env = std::env::var("CRABCACHE_REASONING_PG_URL").ok();
+        let pg_url = reasoning_config
+            .pg_url
+            .as_deref()
+            .or(pg_url_env.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("reasoning.backend = \"pg\" requires pg_url or CRABCACHE_REASONING_PG_URL"))?;
+        let rt = tokio::runtime::Runtime::new()?;
+        Arc::new(
+            rt.block_on(ReasoningBackend::open_pg(
+                pg_url,
+                reasoning_config.cache_max_age_secs,
+                reasoning_config.cache_max_rows,
+            ))?,
+        )
+    } else {
+        Arc::new(ReasoningBackend::from_config(
+            &reasoning_config.backend,
+            &reasoning_config.cache_db_path,
+            reasoning_config.redis_url.as_deref(),
+            &config.cache.l1_redis_url,
+            reasoning_config.cache_max_age_secs,
+            reasoning_config.cache_max_rows,
+            reasoning_config.max_reasoning_entry_bytes,
+        )?)
+    };
 
     let upstream_base_url = default_profile.base_url.clone();
     let fallback_model = default_profile.fallback_model.clone();
@@ -315,6 +474,69 @@ fn main() -> Result<()> {
 
     let trace_logger = if let Some(trace_config) = &config.trace_logging {
         if trace_config.enabled {
+            // Spawn PG trace writer if configured.
+            let pg_sink = trace_config.pg_url.as_ref().and_then(|pg_url_str| {
+                let (pg_tx, pg_rx) = std::sync::mpsc::channel::<crab_proxy::SanitizedLogEntry>();
+                let pg_url_owned = pg_url_str.clone();
+                match std::thread::Builder::new()
+                    .name("crab-pg-trace-writer".into())
+                    .spawn(move || {
+                        let pg_url = pg_url_owned;
+                        let rt = match tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                        {
+                            Ok(rt) => rt,
+                            Err(e) => {
+                                tracing::warn!("Failed to create PG trace writer runtime: {}", e);
+                                return;
+                            }
+                        };
+                        rt.block_on(async {
+                            let store = match PgTraceStore::connect(&pg_url).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    tracing::warn!("Failed to connect PG trace store: {}", e);
+                                    return;
+                                }
+                            };
+                            let mut buf = Vec::with_capacity(100);
+                            loop {
+                                match pg_rx.recv() {
+                                    Ok(entry) => buf.push(entry),
+                                    Err(_) => {
+                                        if !buf.is_empty() {
+                                            if let Err(e) = store.insert_batch(&buf).await {
+                                                tracing::warn!("PG trace final flush failed: {}", e);
+                                            }
+                                        }
+                                        return;
+                                    }
+                                }
+                                while buf.len() < 100 {
+                                    match pg_rx.try_recv() {
+                                        Ok(entry) => buf.push(entry),
+                                        Err(_) => break,
+                                    }
+                                }
+                                if let Err(e) = store.insert_batch(&buf).await {
+                                    tracing::warn!("PG trace batch insert failed: {}", e);
+                                }
+                                buf.clear();
+                            }
+                        });
+                    }) {
+                    Ok(_) => {
+                        info!(pg_url = %redact_pg_url(pg_url_str), "PG trace writer started");
+                        Some(pg_tx)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to spawn PG trace writer thread: {}", e);
+                        None
+                    }
+                }
+            });
+
             let logger = crab_proxy::TraceLogger::init(crab_proxy::TraceConfig {
                 enabled: trace_config.enabled,
                 path: trace_config.path.clone(),
@@ -323,7 +545,7 @@ fn main() -> Result<()> {
                 composition_debug: trace_config.composition_debug.clone(),
                 max_payload_bytes: trace_config.max_payload_bytes,
                 max_response_preview_bytes: trace_config.max_response_preview_bytes,
-            });
+            }, pg_sink);
 
             info!(
                 path = %trace_config.path,

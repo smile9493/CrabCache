@@ -787,3 +787,13 @@ pub async fn update_retention_policy(
 ) -> Result<crate::types::RetentionPolicy, String> {
     put_json(&format!("{API_BASE}/logs/retention"), policy).await
 }
+
+// ── SSE Connection ──────────────────────────────────────────────────────
+
+/// Create an EventSource connection to the SSE endpoint.
+/// The admin key is passed as a query parameter since EventSource doesn't support custom headers.
+pub fn connect_sse() -> Result<web_sys::EventSource, String> {
+    let key = crate::auth::admin_key_header_value().unwrap_or_default();
+    let url = format!("{API_BASE}/events?key={}", urlencoding::encode(&key));
+    web_sys::EventSource::new(&url).map_err(|e| format!("SSE connect error: {:?}", e))
+}

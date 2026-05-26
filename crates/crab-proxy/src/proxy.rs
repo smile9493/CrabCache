@@ -7,8 +7,14 @@ use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
 use crate::debug_agent_log;
 use crate::error_jsons::{
-    client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
-    upstream_pool_exhausted_error_details,
+    client_concurrency_exceeded_error_json, coalesce_leader_failed_error_json,
+    deepseek_user_concurrency_exceeded_error_json, missing_reasoning_error_json,
+    upstream_error_preview, upstream_pool_exhausted_error_details,
+    upstream_pool_exhausted_error_json,
+};
+use crate::helper_fns::{
+    client_session_from_authorization, is_models_endpoint, last_user_message_fingerprint,
+    sanitize_for_trace, stable_session_log_fields,
 };
 use crate::runtime::RuntimeConfig;
 use crate::send_helpers::{
@@ -56,71 +62,6 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
-
-fn sanitize_for_trace(value: Option<&str>) -> Option<String> {
-    value.map(|s| {
-        if s.len() > 64 {
-            format!("{}...<truncated>", &s[..32])
-        } else {
-            s.to_string()
-        }
-    })
-}
-
-/// Labels which stable ReasoningStore scope source is active (for ops / Cursor sub-agent debugging).
-fn last_user_message_fingerprint(payload: &serde_json::Value) -> Option<String> {
-    let messages = payload.get("messages")?.as_array()?;
-    let content = messages.iter().rev().find_map(|m| {
-        if m.get("role")?.as_str()? != "user" {
-            return None;
-        }
-        match m.get("content") {
-            Some(serde_json::Value::String(s)) => Some(s.as_str()),
-            _ => None,
-        }
-    })?;
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-    Some(hash[..hash.len().min(8)].to_string())
-}
-
-fn client_session_from_authorization(authorization: Option<&str>) -> Option<String> {
-    let auth = authorization?;
-    let token = auth.strip_prefix("Bearer ").unwrap_or(auth).trim();
-    if token.is_empty() {
-        return None;
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-    Some(format!("client:{}", &hash[..hash.len().min(16)]))
-}
-
-fn stable_session_log_fields(
-    conversation_id: Option<&str>,
-    prompt_cache_key: Option<&str>,
-    client_session: Option<&str>,
-    req_hash: Option<&str>,
-) -> (&'static str, Option<String>) {
-    fn prefix8(s: &str) -> String {
-        s.chars().take(8).collect()
-    }
-    if conversation_id.is_some_and(|s| !s.trim().is_empty()) {
-        return ("conversation", conversation_id.map(prefix8));
-    }
-    if prompt_cache_key.is_some_and(|s| !s.trim().is_empty()) {
-        return ("prompt_cache_key", prompt_cache_key.map(prefix8));
-    }
-    if client_session.is_some_and(|s| !s.trim().is_empty()) {
-        return ("client_key", client_session.map(prefix8));
-    }
-    if let Some(hash) = req_hash.filter(|s| !s.trim().is_empty()) {
-        let short: String = hash.chars().take(8).collect();
-        return ("req_hash", Some(short));
-    }
-    ("message_scope", None)
-}
 
 pub struct GatewayProxy {
     state: Arc<GatewayState>,
@@ -364,6 +305,7 @@ impl ProxyHttp for GatewayProxy {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // ─── Phase 1: Routing Gate (CORS, health, models, path/method validation) ───
         if self.state.cors_enabled
             && session.req_header().method == http::Method::OPTIONS
             && send_cors_preflight(session).await
@@ -466,6 +408,7 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        // ─── Phase 2: Auth & Limits (key validation, RPM, concurrency, domain quota) ───
         let (
             is_authorized,
             consumer_from_key,
@@ -631,6 +574,7 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        // ─── Phase 3: Request Parse (body read, JSON parse, pipeline selection) ───
         session.as_mut().enable_retry_buffering();
 
         let mut full_body = Vec::new();
@@ -747,6 +691,7 @@ impl ProxyHttp for GatewayProxy {
             selection.reason.as_str(),
         );
 
+        // ─── Phase 4: Preparation (reasoning preprocessing, composition extraction) ───
         let active_profile = self.active_upstream_profile(ctx);
         let upstream_base_url = active_profile.base_url.clone();
         let profile_fallback = active_profile.fallback_model.clone();
@@ -1077,6 +1022,7 @@ impl ProxyHttp for GatewayProxy {
         }
         // #endregion
 
+        // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
         let fingerprint = self.state.runtime.fingerprint.read().clone();
         let cache_key_body = ctx
             .original_request_body
@@ -1433,6 +1379,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(false)
     }
 
+    #[tracing::instrument(skip_all, fields(request_id = %ctx.request_id))]
     async fn upstream_peer(
         &self,
         session: &mut Session,
@@ -1547,6 +1494,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(Box::new(peer))
     }
 
+    #[tracing::instrument(skip_all, fields(request_id = %ctx.request_id))]
     async fn upstream_request_filter(
         &self,
         _session: &mut Session,
@@ -1662,6 +1610,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, fields(request_id = %ctx.request_id))]
     async fn response_filter(
         &self,
         _session: &mut Session,
@@ -1670,6 +1619,7 @@ impl ProxyHttp for GatewayProxy {
     ) -> Result<()> {
         let status = upstream_response.status.as_u16();
         ctx.upstream.http_status = Some(status);
+        global_metrics().record_http_response(status);
         // #region agent log
         debug_agent_log(
             "UP-SEEN",
@@ -2289,6 +2239,7 @@ impl ProxyHttp for GatewayProxy {
         Ok(None)
     }
 
+    #[tracing::instrument(skip_all, fields(request_id = %ctx.request_id))]
     async fn logging(
         &self,
         session: &mut Session,
@@ -2499,64 +2450,6 @@ pub fn flush_streaming_reasoning(
         .sum()
 }
 
-fn upstream_pool_exhausted_error_json() -> Vec<u8> {
-    let body = serde_json::json!({
-        "error": {
-            "message": "All upstream DeepSeek API keys are rate-limited or disabled. Retry after cooldown or add keys via CRABCACHE_UPSTREAM_KEYS.",
-            "type": "upstream_key_exhausted",
-            "code": "upstream_key_exhausted",
-        }
-    });
-    serde_json::to_vec(&body).unwrap_or_default()
-}
-
-fn coalesce_leader_failed_error_json() -> Vec<u8> {
-    let body = serde_json::json!({
-        "error": {
-            "message": "Upstream request failed while coalesced peers were waiting; no duplicate upstream call was made.",
-            "type": "upstream_error",
-            "code": "coalesce_leader_failed",
-        }
-    });
-    serde_json::to_vec(&body).unwrap_or_default()
-}
-
-/// Sanitized upstream error snippet for debug logs (no secrets).
-fn upstream_error_preview(body: &[u8]) -> String {
-    let s = String::from_utf8_lossy(body);
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-        if let Some(msg) = v
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-        {
-            return msg.chars().take(300).collect();
-        }
-        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
-            return msg.chars().take(300).collect();
-        }
-    }
-    s.chars().take(300).collect()
-}
-
-fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
-    let body = serde_json::json!({
-        "error": {
-            "message": format!(
-                "CrabCache cannot satisfy DeepSeek thinking-mode requirements: reasoning_content is still \
-                 missing for {missing_count} assistant message(s) after ReasoningStore fill and history recover. \
-                 Clear the reasoning cache (DELETE /v1/reasoning/cache), retry once so the gateway can store \
-                 reasoning from a successful response, or temporarily set missing_reasoning_strategy to \"recover\". \
-                 Ensure [reasoning].backend = \"redis\" for multi-instance/sub-agent retries."
-            ),
-            "type": "missing_reasoning_content",
-            "code": "missing_reasoning_content",
-            "missing_reasoning_messages": missing_count,
-        }
-    });
-    serde_json::to_vec(&body).unwrap_or_default()
-}
-
 /// Build a response preview string from the best available source in the context.
 ///
 /// Priority:
@@ -2700,10 +2593,6 @@ fn rewrite_upstream_sse_bytes(
     }
 
     (out, finalized)
-}
-
-fn is_models_endpoint(path: &str, method: &http::Method) -> bool {
-    *method == http::Method::GET && (path == "/models" || path == "/v1/models")
 }
 
 fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions) {

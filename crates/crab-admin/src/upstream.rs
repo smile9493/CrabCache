@@ -29,34 +29,6 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
     }
 
     let url = format!("{}/v1/models", base_url.trim().trim_end_matches('/'));
-    // #region agent log
-    {
-        use std::io::Write;
-        let key_preview = if api_key.len() > 12 {
-            format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
-        } else {
-            "***".to_string()
-        };
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-        {
-            let _ = writeln!(
-                f,
-                "{{\"sessionId\":\"ec43cd\",\"location\":\"upstream.rs:32\",\"message\":\"admin test_upstream_connection: sending request\",\"data\":{{\"base_url\":\"{}\",\"url\":\"{}\",\"key_preview\":\"{}\",\"key_len\":{}}},\"timestamp\":{}}}",
-                base_url,
-                url,
-                key_preview,
-                api_key.len(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-        }
-    }
-    // #endregion
     let start = Instant::now();
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -96,27 +68,6 @@ pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> Upstream
 
     let status_code = resp.status().as_u16();
     let latency_ms = start.elapsed().as_millis() as u64;
-    // #region agent log
-    {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-        {
-            let _ = writeln!(
-                f,
-                "{{\"sessionId\":\"ec43cd\",\"location\":\"upstream.rs:70\",\"message\":\"admin test_upstream_connection: response received\",\"data\":{{\"status_code\":{},\"latency_ms\":{}}},\"timestamp\":{}}}",
-                status_code,
-                latency_ms,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-        }
-    }
-    // #endregion
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
         let msg = match status_code {

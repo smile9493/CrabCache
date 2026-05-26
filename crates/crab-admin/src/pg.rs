@@ -10,7 +10,8 @@ use crate::persist::{
     AdminStateFile, PersistedDomainPolicy, PersistedKeyMetadata, PersistedModel, PersistedModels,
     PersistedUpstreamPoolSecret, PersistedUpstreamSnapshot,
 };
-use crate::state::StoredUpstreamConfig;
+use crate::state::{StoredRequestLog, StoredUpstreamConfig};
+use crate::trace_log::TraceLogEntry;
 use crate::types::UpstreamTestResult;
 use anyhow::{Context, Result};
 use deadpool_postgres::{Config as PoolConfig, Pool, Runtime};
@@ -18,6 +19,18 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio_postgres::NoTls;
 use tracing::info;
+
+/// Aggregated trace analysis results from SQL queries.
+#[derive(Debug, Clone)]
+pub struct TraceAnalysisResult {
+    pub total_requests: i64,
+    pub cache_hits: i64,
+    pub avg_latency_ms: f64,
+    pub total_input_tokens: u64,
+    pub avg_tokens: f64,
+    pub unique_requests: i64,
+    pub model_distribution: Vec<(String, i64)>,
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -241,6 +254,138 @@ impl PgStore {
             .await?;
 
         // Note: sampled_at is PRIMARY KEY so an implicit index already exists.
+
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS trace_logs (
+                    request_hash    TEXT NOT NULL,
+                    timestamp_ms    BIGINT NOT NULL,
+                    content_length  INTEGER NOT NULL,
+                    semantic_cluster INTEGER NOT NULL,
+                    model           TEXT NOT NULL,
+                    prompt_tokens   INTEGER NOT NULL,
+                    latency_ms      DOUBLE PRECISION NOT NULL,
+                    cache_hit       BOOLEAN NOT NULL,
+                    conversation_id TEXT,
+                    consumer        TEXT,
+                    domain          TEXT,
+                    project_id      TEXT,
+                    upstream_latency_ms DOUBLE PRECISION,
+                    ttft_ms         DOUBLE PRECISION,
+                    input_tokens    BIGINT,
+                    output_tokens   BIGINT,
+                    cache_tier      TEXT,
+                    composition     JSONB,
+                    request_messages_snapshot TEXT,
+                    response_preview TEXT,
+                    retired_prefix_messages INTEGER,
+                    reasoning_strategy TEXT,
+                    prompt_cache_hit_ratio DOUBLE PRECISION,
+                    upstream_profile_id TEXT,
+                    pipeline        TEXT,
+                    upstream_model  TEXT,
+                    client_body_user_id TEXT,
+                    upstream_user_id TEXT,
+                    user_id_audit   TEXT,
+                    PRIMARY KEY (request_hash, timestamp_ms)
+                )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_trace_ts
+                 ON trace_logs (timestamp_ms DESC)",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_trace_consumer_ts
+                 ON trace_logs (consumer, timestamp_ms DESC)
+                 WHERE consumer IS NOT NULL",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_trace_model_ts
+                 ON trace_logs (model, timestamp_ms DESC)",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_trace_cache_tier
+                 ON trace_logs (cache_tier, timestamp_ms DESC)
+                 WHERE cache_tier IS NOT NULL",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS reasoning_cache (
+                    key         TEXT PRIMARY KEY,
+                    reasoning   TEXT NOT NULL,
+                    message_json TEXT NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_reasoning_created
+                 ON reasoning_cache (created_at)",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS request_logs (
+                    id              TEXT PRIMARY KEY,
+                    timestamp_ms    BIGINT NOT NULL,
+                    model           TEXT NOT NULL DEFAULT '',
+                    consumer        TEXT NOT NULL DEFAULT '',
+                    duration_ms     DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    input_tokens    BIGINT NOT NULL DEFAULT 0,
+                    output_tokens   BIGINT NOT NULL DEFAULT 0,
+                    cache_status    TEXT NOT NULL DEFAULT '',
+                    cache_tier      TEXT NOT NULL DEFAULT '',
+                    status_code     INTEGER NOT NULL DEFAULT 200,
+                    conversation_id TEXT NOT NULL DEFAULT '',
+                    route_backend   TEXT NOT NULL DEFAULT '',
+                    request_payload JSONB,
+                    response_body   TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_req_logs_ts
+                 ON request_logs (timestamp_ms DESC)",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_req_logs_consumer
+                 ON request_logs (consumer, timestamp_ms DESC)
+                 WHERE consumer != ''",
+                &[],
+            )
+            .await?;
 
         client
             .execute(
@@ -917,12 +1062,457 @@ impl PgStore {
             .await?;
 
         info!(failures, "JSON → PG migration complete");
-        Ok(true)
+        Ok(failures == 0)
     }
 
     /// Return the inner pool (for advanced usage / health checks).
     pub fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    // -----------------------------------------------------------------------
+    // trace_logs CRUD
+    // -----------------------------------------------------------------------
+
+    /// Batch-insert trace log entries. Uses a single transaction for atomicity.
+    pub async fn insert_trace_logs(&self, entries: &[TraceLogEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut client = self.pool.get().await?;
+        let tx = client.transaction().await?;
+        let stmt = tx
+            .prepare_cached(
+                "INSERT INTO trace_logs
+                    (request_hash, timestamp_ms, content_length, semantic_cluster,
+                     model, prompt_tokens, latency_ms, cache_hit,
+                     conversation_id, consumer, domain, project_id,
+                     upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+                     cache_tier, composition,
+                     request_messages_snapshot, response_preview,
+                     retired_prefix_messages, reasoning_strategy,
+                     prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+                     upstream_model, client_body_user_id, upstream_user_id,
+                     user_id_audit)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                         $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
+                         $26,$27,$28,$29)
+                 ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
+            )
+            .await?;
+
+        for e in entries {
+            let composition_json = e
+                .composition
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .context("serialize composition")?;
+            tx.execute(
+                &stmt,
+                &[
+                    &e.request_hash,
+                    &to_pg_bigint(e.timestamp_ms),
+                    &(e.content_length as i32),
+                    &(e.semantic_cluster as i32),
+                    &e.model,
+                    &(e.prompt_tokens as i32),
+                    &e.latency_ms,
+                    &e.cache_hit,
+                    &e.conversation_id,
+                    &e.consumer,
+                    &e.domain,
+                    &e.project_id,
+                    &e.upstream_latency_ms,
+                    &e.ttft_ms,
+                    &e.input_tokens.map(to_pg_bigint),
+                    &e.output_tokens.map(to_pg_bigint),
+                    &e.cache_tier,
+                    &composition_json,
+                    &e.request_messages_snapshot,
+                    &e.response_preview,
+                    &e.retired_prefix_messages.map(|v| v as i32),
+                    &e.reasoning_strategy,
+                    &e.prompt_cache_hit_ratio,
+                    &e.upstream_profile_id,
+                    &e.pipeline,
+                    &e.upstream_model,
+                    &e.client_body_user_id,
+                    &e.upstream_user_id,
+                    &e.user_id_audit,
+                ],
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Load trace log entries with filters, sort, and limit.
+    pub async fn load_trace_logs(
+        &self,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        consumer: Option<&str>,
+        model: Option<&str>,
+        cache_tier: Option<&str>,
+        request_hash: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TraceLogEntry>> {
+        let client = self.pool.get().await?;
+        let mut sql = String::from(
+            "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
+                    model, prompt_tokens, latency_ms, cache_hit,
+                    conversation_id, consumer, domain, project_id,
+                    upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+                    cache_tier, composition,
+                    request_messages_snapshot, response_preview,
+                    retired_prefix_messages, reasoning_strategy,
+                    prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+                    upstream_model, client_body_user_id, upstream_user_id,
+                    user_id_audit
+             FROM trace_logs WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(from) = from_ms {
+            sql.push_str(&format!(" AND timestamp_ms >= ${idx}"));
+            params.push(Box::new(to_pg_bigint(from)));
+            idx += 1;
+        }
+        if let Some(to) = to_ms {
+            sql.push_str(&format!(" AND timestamp_ms <= ${idx}"));
+            params.push(Box::new(to_pg_bigint(to)));
+            idx += 1;
+        }
+        if let Some(c) = consumer {
+            sql.push_str(&format!(" AND consumer = ${idx}"));
+            params.push(Box::new(c.to_string()));
+            idx += 1;
+        }
+        if let Some(m) = model {
+            sql.push_str(&format!(" AND model = ${idx}"));
+            params.push(Box::new(m.to_string()));
+            idx += 1;
+        }
+        if let Some(ct) = cache_tier {
+            sql.push_str(&format!(" AND cache_tier = ${idx}"));
+            params.push(Box::new(ct.to_string()));
+            idx += 1;
+        }
+        if let Some(rh) = request_hash {
+            sql.push_str(&format!(" AND request_hash = ${idx}"));
+            params.push(Box::new(rh.to_string()));
+            idx += 1;
+        }
+
+        sql.push_str(" ORDER BY timestamp_ms DESC");
+        sql.push_str(&format!(" LIMIT ${idx}"));
+        params.push(Box::new(limit as i64));
+
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = client.query(&sql, &param_refs[..]).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let composition_raw: Option<String> = row.get(17);
+            let composition = composition_raw
+                .and_then(|s| serde_json::from_str(&s).ok());
+            out.push(TraceLogEntry {
+                request_hash: row.get(0),
+                timestamp_ms: from_pg_bigint(row.get(1)),
+                content_length: row.get::<_, i32>(2) as usize,
+                semantic_cluster: row.get::<_, i32>(3) as u32,
+                model: row.get(4),
+                prompt_tokens: row.get::<_, i32>(5) as usize,
+                latency_ms: row.get(6),
+                cache_hit: row.get(7),
+                conversation_id: row.get(8),
+                consumer: row.get(9),
+                domain: row.get(10),
+                project_id: row.get(11),
+                upstream_latency_ms: row.get(12),
+                ttft_ms: row.get(13),
+                input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
+                output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
+                cache_tier: row.get(16),
+                composition,
+                request_messages_snapshot: row.get(18),
+                response_preview: row.get(19),
+                retired_prefix_messages: row.get::<_, Option<i32>>(20).map(|v| v as usize),
+                reasoning_strategy: row.get(21),
+                prompt_cache_hit_ratio: row.get(22),
+                upstream_profile_id: row.get(23),
+                pipeline: row.get(24),
+                upstream_model: row.get(25),
+                client_body_user_id: row.get(26),
+                upstream_user_id: row.get(27),
+                user_id_audit: row.get(28),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Find a single trace log entry by composite key (request_hash, timestamp_ms).
+    pub async fn find_trace_log(
+        &self,
+        request_hash: &str,
+        timestamp_ms: u64,
+    ) -> Result<Option<TraceLogEntry>> {
+        let mut results = self
+            .load_trace_logs(
+                Some(timestamp_ms),
+                Some(timestamp_ms),
+                None,
+                None,
+                None,
+                Some(request_hash),
+                1,
+            )
+            .await?;
+        Ok(results.pop())
+    }
+
+    /// Delete trace logs older than the given timestamp.
+    pub async fn prune_trace_logs(&self, cutoff_ms: u64) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM trace_logs WHERE timestamp_ms < $1",
+                &[&to_pg_bigint(cutoff_ms)],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    /// Count total requests and cache hits in a time window (for trace summary).
+    pub async fn trace_log_summary(&self, from_ms: u64) -> Result<(i64, i64)> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*), COUNT(*) FILTER (WHERE cache_hit)
+                 FROM trace_logs WHERE timestamp_ms >= $1",
+                &[&to_pg_bigint(from_ms)],
+            )
+            .await?;
+        Ok((row.get(0), row.get(1)))
+    }
+
+    /// Aggregate trace stats for analysis (within a time window).
+    pub async fn trace_log_analysis(
+        &self,
+        from_ms: u64,
+    ) -> Result<TraceAnalysisResult> {
+        let client = self.pool.get().await?;
+
+        let row = client
+            .query_one(
+                "SELECT
+                    COUNT(*),
+                    COUNT(*) FILTER (WHERE cache_hit),
+                    COALESCE(SUM(latency_ms), 0),
+                    COALESCE(SUM(COALESCE(input_tokens, prompt_tokens::bigint)), 0)
+                 FROM trace_logs WHERE timestamp_ms >= $1",
+                &[&to_pg_bigint(from_ms)],
+            )
+            .await?;
+
+        let total: i64 = row.get(0);
+        let cache_hits: i64 = row.get(1);
+        let total_latency: f64 = row.get(2);
+        let total_tokens: i64 = row.get(3);
+
+        // Model distribution (top 5)
+        let model_rows = client
+            .query(
+                "SELECT model, COUNT(*) FROM trace_logs
+                 WHERE timestamp_ms >= $1
+                 GROUP BY model ORDER BY COUNT(*) DESC LIMIT 5",
+                &[&to_pg_bigint(from_ms)],
+            )
+            .await?;
+        let model_distribution: Vec<(String, i64)> = model_rows
+            .into_iter()
+            .map(|r| (r.get(0), r.get(1)))
+            .collect();
+
+        // Unique requests (for repeat ratio)
+        let unique_row = client
+            .query_one(
+                "SELECT COUNT(DISTINCT request_hash) FROM trace_logs
+                 WHERE timestamp_ms >= $1",
+                &[&to_pg_bigint(from_ms)],
+            )
+            .await?;
+        let unique_requests: i64 = unique_row.get(0);
+
+        Ok(TraceAnalysisResult {
+            total_requests: total,
+            cache_hits,
+            avg_latency_ms: if total > 0 { total_latency / total as f64 } else { 0.0 },
+            total_input_tokens: total_tokens as u64,
+            avg_tokens: if total > 0 { total_tokens as f64 / total as f64 } else { 0.0 },
+            unique_requests,
+            model_distribution,
+        })
+    }
+
+    /// List distinct consumers in a time window (for live-metrics consumer list).
+    pub async fn trace_log_consumers(&self, from_ms: u64) -> Result<Vec<String>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT DISTINCT consumer FROM trace_logs
+                 WHERE timestamp_ms >= $1
+                   AND consumer IS NOT NULL AND consumer != ''
+                 ORDER BY consumer",
+                &[&to_pg_bigint(from_ms)],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|r| r.get(0)).collect())
+    }
+
+    // -----------------------------------------------------------------------
+    // request_logs CRUD
+    // -----------------------------------------------------------------------
+
+    /// Batch-insert request log entries.
+    pub async fn insert_request_logs(&self, logs: &[StoredRequestLog]) -> Result<()> {
+        if logs.is_empty() {
+            return Ok(());
+        }
+        let mut client = self.pool.get().await?;
+        let tx = client.transaction().await?;
+        let stmt = tx
+            .prepare_cached(
+                "INSERT INTO request_logs
+                    (id, timestamp_ms, model, consumer, duration_ms,
+                     input_tokens, output_tokens, cache_status, cache_tier,
+                     status_code, conversation_id, route_backend,
+                     request_payload, response_body)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .await?;
+
+        for log in logs {
+            let payload_json = serde_json::to_string(&log.request_payload)
+                .context("serialize request_payload")?;
+            tx.execute(
+                &stmt,
+                &[
+                    &log.id,
+                    &to_pg_bigint(log.timestamp),
+                    &log.model,
+                    &log.consumer,
+                    &log.duration_ms,
+                    &to_pg_bigint(log.input_tokens),
+                    &to_pg_bigint(log.output_tokens),
+                    &log.cache_status,
+                    &log.cache_tier,
+                    &(log.status_code as i32),
+                    &log.conversation_id,
+                    &log.route_backend,
+                    &payload_json,
+                    &log.response_body,
+                ],
+            )
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Load request logs with optional filters.
+    pub async fn load_request_logs(
+        &self,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        consumer: Option<&str>,
+        model: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<StoredRequestLog>> {
+        let client = self.pool.get().await?;
+        let mut sql = String::from(
+            "SELECT id, timestamp_ms, model, consumer, duration_ms,
+                    input_tokens, output_tokens, cache_status, cache_tier,
+                    status_code, conversation_id, route_backend,
+                    request_payload, response_body
+             FROM request_logs WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(from) = from_ms {
+            sql.push_str(&format!(" AND timestamp_ms >= ${idx}"));
+            params.push(Box::new(to_pg_bigint(from)));
+            idx += 1;
+        }
+        if let Some(to) = to_ms {
+            sql.push_str(&format!(" AND timestamp_ms <= ${idx}"));
+            params.push(Box::new(to_pg_bigint(to)));
+            idx += 1;
+        }
+        if let Some(c) = consumer {
+            sql.push_str(&format!(" AND consumer = ${idx}"));
+            params.push(Box::new(c.to_string()));
+            idx += 1;
+        }
+        if let Some(m) = model {
+            sql.push_str(&format!(" AND model = ${idx}"));
+            params.push(Box::new(m.to_string()));
+            idx += 1;
+        }
+
+        sql.push_str(" ORDER BY timestamp_ms DESC");
+        sql.push_str(&format!(" LIMIT ${idx}"));
+        params.push(Box::new(limit as i64));
+
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = client.query(&sql, &param_refs[..]).await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload_raw: Option<String> = row.get(12);
+            let request_payload: serde_json::Value = payload_raw
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null);
+            out.push(StoredRequestLog {
+                id: row.get(0),
+                timestamp: from_pg_bigint(row.get(1)),
+                model: row.get(2),
+                consumer: row.get(3),
+                duration_ms: row.get(4),
+                input_tokens: from_pg_bigint(row.get(5)),
+                output_tokens: from_pg_bigint(row.get(6)),
+                cache_status: row.get(7),
+                cache_tier: row.get(8),
+                status_code: row.get::<_, i32>(9) as u16,
+                conversation_id: row.get(10),
+                request_payload,
+                response_body: row.get::<_, Option<String>>(13).unwrap_or_default(),
+                cache_path: Vec::new(),
+                route_backend: row.get(11),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Prune request logs older than the given timestamp.
+    pub async fn prune_request_logs(&self, cutoff_ms: u64) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM request_logs WHERE timestamp_ms < $1",
+                &[&to_pg_bigint(cutoff_ms)],
+            )
+            .await?;
+        Ok(count)
     }
 }
 

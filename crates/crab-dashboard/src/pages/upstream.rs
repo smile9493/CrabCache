@@ -12,10 +12,74 @@ use crate::types::{
     UpstreamKeysView, UpstreamProfileAdminView, UpstreamTestBody, UpstreamTestResult,
 };
 
-const OFFICIAL_BASE: &str = "https://api.deepseek.com";
-const DEFAULT_MODEL: &str = "deepseek-v4-pro";
-const MIMO_BASE: &str = "https://api.xiaomimimo.com";
-const MIMO_MODEL: &str = "xiaomi/mimo-v2.5-pro";
+struct PresetTemplate {
+    id: &'static str,
+    label_zh: &'static str,
+    label_en: &'static str,
+    provider: &'static str,
+    base_url: &'static str,
+    models: &'static [&'static str],
+    default_model: &'static str,
+    tls_sni: &'static str,
+}
+
+const PRESETS: &[PresetTemplate] = &[
+    PresetTemplate {
+        id: "deepseek",
+        label_zh: "DeepSeek 官方",
+        label_en: "DeepSeek Official",
+        provider: "deepseek",
+        base_url: "https://api.deepseek.com",
+        models: &[
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-max",
+            "deepseek-chat",
+        ],
+        default_model: "deepseek-v4-pro",
+        tls_sni: "api.deepseek.com",
+    },
+    PresetTemplate {
+        id: "mimo",
+        label_zh: "MiMo",
+        label_en: "MiMo",
+        provider: "mimo",
+        base_url: "https://api.xiaomimimo.com",
+        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
+        default_model: "xiaomi/mimo-v2.5-pro",
+        tls_sni: "api.xiaomimimo.com",
+    },
+    PresetTemplate {
+        id: "mimo-tp-cn",
+        label_zh: "MiMo TP CN",
+        label_en: "MiMo TP CN",
+        provider: "mimo",
+        base_url: "https://token-plan-cn.xiaomimimo.com",
+        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
+        default_model: "xiaomi/mimo-v2.5-pro",
+        tls_sni: "token-plan-cn.xiaomimimo.com",
+    },
+    PresetTemplate {
+        id: "mimo-tp-sgp",
+        label_zh: "MiMo TP SGP",
+        label_en: "MiMo TP SGP",
+        provider: "mimo",
+        base_url: "https://token-plan-sgp.xiaomimimo.com",
+        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
+        default_model: "xiaomi/mimo-v2.5-pro",
+        tls_sni: "token-plan-sgp.xiaomimimo.com",
+    },
+    PresetTemplate {
+        id: "custom",
+        label_zh: "自定义",
+        label_en: "Custom",
+        provider: "custom",
+        base_url: "",
+        models: &[],
+        default_model: "",
+        tls_sni: "",
+    },
+];
 
 fn parse_upstream_pool_line(line: &str) -> (String, String) {
     let t = line.trim();
@@ -66,6 +130,26 @@ fn first_key_from_text(text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn preset_for_id(id: &str) -> Option<&'static PresetTemplate> {
+    PRESETS.iter().find(|p| p.id == id)
+}
+
+fn models_for_provider(provider: &str) -> &'static [&'static str] {
+    PRESETS
+        .iter()
+        .find(|p| p.provider == provider && !p.models.is_empty())
+        .map(|p| p.models)
+        .unwrap_or(&[])
+}
+
+const CUSTOM_MODEL_SENTINEL: &str = "__custom_model__";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CreationStep {
+    PickTemplate,
+    FillForm,
+}
+
 #[component]
 pub fn UpstreamPage() -> impl IntoView {
     let t = use_translations();
@@ -78,14 +162,15 @@ pub fn UpstreamPage() -> impl IntoView {
 
     // Form inputs
     let provider = RwSignal::new("deepseek".to_string());
-    let base_url = RwSignal::new(OFFICIAL_BASE.to_string());
-    let model = RwSignal::new(DEFAULT_MODEL.to_string());
+    let base_url = RwSignal::new("https://api.deepseek.com".to_string());
+    let model = RwSignal::new("deepseek-v4-pro".to_string());
     let endpoints_text = RwSignal::new(String::new());
     let tls_sni = RwSignal::new(String::new());
     let show_advanced = RwSignal::new(false);
 
     // Inline creation state
     let new_profile_id = RwSignal::new(String::new());
+    let creation_step = RwSignal::new(CreationStep::PickTemplate);
 
     // Connection testing state
     let testing = RwSignal::new(false);
@@ -507,11 +592,12 @@ pub fn UpstreamPage() -> impl IntoView {
                     class=move || if is_creating.get() { "tab-item tab-item-active" } else { "tab-item" }
                     on:click=move |_| {
                         is_creating.set(true);
+                        creation_step.set(CreationStep::PickTemplate);
                         // Reset forms to fresh new profile state
                         new_profile_id.set(String::new());
                         provider.set("custom".to_string());
                         base_url.set(String::new());
-                        model.set("deepseek-v4-pro".to_string());
+                        model.set(String::new());
                         endpoints_text.set(String::new());
                         tls_sni.set(String::new());
                         save_error.set(String::new());
@@ -524,138 +610,261 @@ pub fn UpstreamPage() -> impl IntoView {
             <div class="upstream-split">
                 <div class="space-y-6">
                     {move || if is_creating.get() {
-                        // Rendering New Profile Form
-                        view! {
-                            <div class="glass-card space-y-4">
-                                <h3 class="text-base font-semibold text-theme">
-                                    {t.upstream_tab_new_profile()}
-                                </h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                            {t.upstream_new_profile_id()}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            class="input font-mono text-sm"
-                                            placeholder="e.g. mimo"
-                                            prop:value=move || new_profile_id.get()
-                                            on:input=move |ev| new_profile_id.set(event_target_value(&ev))
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                            {t.upstream_provider_label()}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            class="input text-sm"
-                                            placeholder="e.g. mimo"
-                                            prop:value=move || provider.get()
-                                            on:input=move |ev| provider.set(event_target_value(&ev))
-                                        />
-                                    </div>
-                                    <div class="md:col-span-2">
-                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                            {t.upstream_base_url_label()}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            class="input font-mono text-sm"
-                                            placeholder="https://..."
-                                            prop:value=move || base_url.get()
-                                            on:input=move |ev| base_url.set(event_target_value(&ev))
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                            {t.upstream_model_label()}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            class="input font-mono text-sm"
-                                            placeholder="deepseek-v4-pro"
-                                            prop:value=move || model.get()
-                                            on:input=move |ev| model.set(event_target_value(&ev))
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-semibold text-theme-muted mb-1">
-                                            {t.upstream_tls_sni_label()}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            class="input font-mono text-sm"
-                                            placeholder="e.g. api.deepseek.com"
-                                            prop:value=move || tls_sni.get()
-                                            on:input=move |ev| tls_sni.set(event_target_value(&ev))
-                                        />
+                        // Rendering New Profile — two-step flow
+                        if creation_step.get() == CreationStep::PickTemplate {
+                            // Step 1: Template picker
+                            view! {
+                                <div class="glass-card space-y-4">
+                                    <h3 class="text-base font-semibold text-theme">
+                                        {t.upstream_pick_template()}
+                                    </h3>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        {PRESETS.iter().map(|preset| {
+                                            let pid = preset.id;
+                                            let label = match t.locale {
+                                                crate::locale::Locale::ZhCN => preset.label_zh,
+                                                _ => preset.label_en,
+                                            };
+                                            let models_count = preset.models.len();
+                                            let is_custom = preset.id == "custom";
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    class="glass-card text-left p-4 hover:border-accent/50 transition-colors cursor-pointer space-y-2"
+                                                    on:click=move |_| {
+                                                        let p = preset_for_id(pid).unwrap();
+                                                        new_profile_id.set(p.id.to_string());
+                                                        provider.set(p.provider.to_string());
+                                                        base_url.set(p.base_url.to_string());
+                                                        model.set(p.default_model.to_string());
+                                                        tls_sni.set(p.tls_sni.to_string());
+                                                        endpoints_text.set(String::new());
+                                                        save_error.set(String::new());
+                                                        creation_step.set(CreationStep::FillForm);
+                                                    }
+                                                >
+                                                    <div class="font-semibold text-sm text-theme">{label}</div>
+                                                    {if !is_custom {
+                                                        view! {
+                                                            <div class="text-xs text-theme-muted font-mono truncate">
+                                                                {preset.base_url}
+                                                            </div>
+                                                            <div class="text-xs text-accent">
+                                                                {format!("{} {}", models_count, t.upstream_template_models_count())}
+                                                            </div>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <div class="text-xs text-theme-muted">
+                                                                {t.upstream_preset_custom()}
+                                                            </div>
+                                                        }.into_any()
+                                                    }}
+                                                </button>
+                                            }
+                                        }).collect_view()}
                                     </div>
                                 </div>
+                            }.into_any()
+                        } else {
+                            // Step 2: Fill form
+                            let current_models = move || {
+                                let prov = provider.get();
+                                models_for_provider(&prov).to_vec()
+                            };
+                            let is_custom_model = move || {
+                                let m = model.get();
+                                m == CUSTOM_MODEL_SENTINEL || (!m.is_empty() && {
+                                    let prov = provider.get();
+                                    let models = models_for_provider(&prov);
+                                    !models.is_empty() && !models.contains(&m.as_str())
+                                })
+                            };
+                            view! {
+                                <div class="glass-card space-y-4">
+                                    <div class="flex items-center justify-between">
+                                        <h3 class="text-base font-semibold text-theme">
+                                            {t.upstream_tab_new_profile()}
+                                        </h3>
+                                        <button
+                                            type="button"
+                                            class="text-xs text-accent cursor-pointer"
+                                            on:click=move |_| creation_step.set(CreationStep::PickTemplate)
+                                        >
+                                            {t.upstream_back_to_templates()}
+                                        </button>
+                                    </div>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_new_profile_id()}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                class="input font-mono text-sm"
+                                                placeholder="e.g. mimo"
+                                                prop:value=move || new_profile_id.get()
+                                                on:input=move |ev| new_profile_id.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_provider_label()}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                class="input text-sm"
+                                                placeholder="e.g. mimo"
+                                                prop:value=move || provider.get()
+                                                on:input=move |ev| provider.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                        <div class="md:col-span-2">
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_base_url_label()}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                class="input font-mono text-sm"
+                                                placeholder="https://..."
+                                                prop:value=move || base_url.get()
+                                                on:input=move |ev| base_url.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_model_label()}
+                                            </label>
+                                            {move || {
+                                                let models = current_models();
+                                                if models.is_empty() {
+                                                    // No known models for this provider — freeform input
+                                                    view! {
+                                                        <input
+                                                            type="text"
+                                                            class="input font-mono text-sm"
+                                                            placeholder="model-name"
+                                                            prop:value=move || model.get()
+                                                            on:input=move |ev| model.set(event_target_value(&ev))
+                                                        />
+                                                    }.into_any()
+                                                } else {
+                                                    view! {
+                                                        <select
+                                                            class="input font-mono text-sm"
+                                                            prop:value=move || {
+                                                                let m = model.get();
+                                                                if m == CUSTOM_MODEL_SENTINEL {
+                                                                    CUSTOM_MODEL_SENTINEL.to_string()
+                                                                } else if models_for_provider(&provider.get()).contains(&m.as_str()) {
+                                                                    m
+                                                                } else {
+                                                                    CUSTOM_MODEL_SENTINEL.to_string()
+                                                                }
+                                                            }
+                                                            on:change=move |ev| {
+                                                                let v = event_target_value(&ev);
+                                                                if v != CUSTOM_MODEL_SENTINEL {
+                                                                    model.set(v);
+                                                                } else {
+                                                                    model.set(String::new());
+                                                                }
+                                                            }
+                                                        >
+                                                            {models.iter().map(|m| view! {
+                                                                <option value=*m>{*m}</option>
+                                                            }).collect_view()}
+                                                            <option value=CUSTOM_MODEL_SENTINEL>
+                                                                {t.upstream_model_custom()}
+                                                            </option>
+                                                        </select>
+                                                    }.into_any()
+                                                }
+                                            }}
+                                            {move || is_custom_model().then(|| view! {
+                                                <input
+                                                    type="text"
+                                                    class="input font-mono text-sm mt-2"
+                                                    placeholder="model-name"
+                                                    prop:value=move || {
+                                                        let m = model.get();
+                                                        if m == CUSTOM_MODEL_SENTINEL { String::new() } else { m }
+                                                    }
+                                                    on:input=move |ev| model.set(event_target_value(&ev))
+                                                />
+                                            })}
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-theme-muted mb-1">
+                                                {t.upstream_tls_sni_label()}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                class="input font-mono text-sm"
+                                                placeholder="e.g. api.deepseek.com"
+                                                prop:value=move || tls_sni.get()
+                                                on:input=move |ev| tls_sni.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                    </div>
 
-                                {move || if !save_error.get().is_empty() {
-                                    view! {
-                                        <div class="text-xs text-error mt-2">{save_error.get()}</div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }}
+                                    {move || if !save_error.get().is_empty() {
+                                        view! {
+                                            <div class="text-xs text-error mt-2">{save_error.get()}</div>
+                                        }.into_any()
+                                    } else {
+                                        view! { <span></span> }.into_any()
+                                    }}
 
-                                <div class="flex justify-end gap-2 pt-4 border-t border-theme/10">
-                                    <button
-                                        type="button"
-                                        class="btn btn-secondary text-xs"
-                                        on:click=move |_| is_creating.set(false)
-                                    >
-                                        "Cancel"
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="btn btn-primary text-xs"
-                                        on:click=on_create_profile
-                                        disabled=move || saving.get()
-                                    >
-                                        "Create Profile"
-                                    </button>
+                                    <div class="flex justify-end gap-2 pt-4 border-t border-theme/10">
+                                        <button
+                                            type="button"
+                                            class="btn btn-secondary text-xs"
+                                            on:click=move |_| is_creating.set(false)
+                                        >
+                                            "Cancel"
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-primary text-xs"
+                                            on:click=on_create_profile
+                                            disabled=move || saving.get()
+                                        >
+                                            "Create Profile"
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        }.into_any()
+                            }.into_any()
+                        }
                     } else {
                         // Rendering Edit Form
                         view! {
                             <div class="glass-card space-y-4">
                                 <div class="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        class="btn btn-secondary text-xs"
-                                        on:click=move |_| {
-                                            base_url.set(OFFICIAL_BASE.into());
-                                            model.set(DEFAULT_MODEL.into());
-                                            provider.set("deepseek".into());
+                                    {PRESETS.iter().map(|preset| {
+                                        let pid = preset.id;
+                                        let label = match t.locale {
+                                            crate::locale::Locale::ZhCN => preset.label_zh,
+                                            _ => preset.label_en,
+                                        };
+                                        view! {
+                                            <button
+                                                type="button"
+                                                class="btn btn-secondary text-xs"
+                                                on:click=move |_| {
+                                                    let p = preset_for_id(pid).unwrap();
+                                                    base_url.set(p.base_url.to_string());
+                                                    model.set(p.default_model.to_string());
+                                                    provider.set(p.provider.to_string());
+                                                    if !p.tls_sni.is_empty() {
+                                                        tls_sni.set(p.tls_sni.to_string());
+                                                    }
+                                                }
+                                            >
+                                                {label}
+                                            </button>
                                         }
-                                    >
-                                        {t.upstream_preset_official()}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="btn btn-secondary text-xs"
-                                        on:click=move |_| {
-                                            base_url.set(MIMO_BASE.into());
-                                            model.set(MIMO_MODEL.into());
-                                            provider.set("mimo".into());
-                                        }
-                                    >
-                                        {t.upstream_preset_mimo()}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="btn btn-secondary text-xs"
-                                        on:click=move |_| {
-                                            base_url.set(String::new());
-                                        }
-                                    >
-                                        {t.upstream_preset_custom()}
-                                    </button>
+                                    }).collect_view()}
                                 </div>
 
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -680,20 +889,76 @@ pub fn UpstreamPage() -> impl IntoView {
                                             prop:value=move || base_url.get()
                                             on:input=move |ev| base_url.set(event_target_value(&ev))
                                             class="input font-mono text-sm"
-                                            placeholder=OFFICIAL_BASE
+                                            placeholder="https://api.deepseek.com"
                                         />
                                     </div>
                                     <div>
                                         <label class="block text-xs font-semibold text-theme-muted mb-1">
                                             {t.upstream_model_label()}
                                         </label>
-                                        <input
-                                            type="text"
-                                            prop:value=move || model.get()
-                                            on:input=move |ev| model.set(event_target_value(&ev))
-                                            class="input font-mono text-sm"
-                                            placeholder=DEFAULT_MODEL
-                                        />
+                                        {move || {
+                                            let models = models_for_provider(&provider.get());
+                                            if models.is_empty() {
+                                                view! {
+                                                    <input
+                                                        type="text"
+                                                        prop:value=move || model.get()
+                                                        on:input=move |ev| model.set(event_target_value(&ev))
+                                                        class="input font-mono text-sm"
+                                                        placeholder="model-name"
+                                                    />
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <select
+                                                        class="input font-mono text-sm"
+                                                        prop:value=move || {
+                                                            let m = model.get();
+                                                            if m == CUSTOM_MODEL_SENTINEL {
+                                                                CUSTOM_MODEL_SENTINEL.to_string()
+                                                            } else if models_for_provider(&provider.get()).contains(&m.as_str()) {
+                                                                m
+                                                            } else {
+                                                                CUSTOM_MODEL_SENTINEL.to_string()
+                                                            }
+                                                        }
+                                                        on:change=move |ev| {
+                                                            let v = event_target_value(&ev);
+                                                            if v != CUSTOM_MODEL_SENTINEL {
+                                                                model.set(v);
+                                                            } else {
+                                                                model.set(String::new());
+                                                            }
+                                                        }
+                                                    >
+                                                        {models.iter().map(|m| view! {
+                                                            <option value=*m>{*m}</option>
+                                                        }).collect_view()}
+                                                        <option value=CUSTOM_MODEL_SENTINEL>
+                                                            {t.upstream_model_custom()}
+                                                        </option>
+                                                    </select>
+                                                }.into_any()
+                                            }
+                                        }}
+                                        {move || {
+                                            let m = model.get();
+                                            let models = models_for_provider(&provider.get());
+                                            let is_custom = m == CUSTOM_MODEL_SENTINEL
+                                                || (!m.is_empty() && !models.is_empty() && !models.contains(&m.as_str()));
+                                            is_custom.then(|| view! {
+                                                <input
+                                                    type="text"
+                                                    class="input font-mono text-sm mt-2"
+                                                    placeholder="model-name"
+                                                    prop:value=move || {
+                                                        let m = model.get();
+                                                        if m == CUSTOM_MODEL_SENTINEL { String::new() } else { m }
+                                                    }
+                                                    on:input=move |ev| model.set(event_target_value(&ev))
+                                                />
+                                            })
+                                        }}
                                     </div>
                                     {move || (active_profile.get() != "deepseek").then(|| view! {
                                         <div>

@@ -1591,12 +1591,6 @@ impl Translations {
             Locale::EnUS => "Provider",
         }
     }
-    pub fn upstream_preset_mimo(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "MiMo 预设",
-            Locale::EnUS => "MiMo preset",
-        }
-    }
     pub fn upstream_new_profile_id(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "新建 Profile ID",
@@ -3661,16 +3655,34 @@ impl Translations {
             Locale::EnUS => "Testing...",
         }
     }
-    pub fn upstream_preset_official(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "DeepSeek 官方",
-            Locale::EnUS => "DeepSeek official",
-        }
-    }
     pub fn upstream_preset_custom(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "自定义中转",
             Locale::EnUS => "Custom relay",
+        }
+    }
+    pub fn upstream_pick_template(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择预设模板",
+            Locale::EnUS => "Pick a template",
+        }
+    }
+    pub fn upstream_template_models_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "个模型可选",
+            Locale::EnUS => "models available",
+        }
+    }
+    pub fn upstream_model_custom(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "自定义模型...",
+            Locale::EnUS => "Custom model...",
+        }
+    }
+    pub fn upstream_back_to_templates(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "返回模板选择",
+            Locale::EnUS => "Back to templates",
         }
     }
     pub fn upstream_show_advanced(self) -> &'static str {
@@ -3959,6 +3971,55 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "刷新",
             Locale::EnUS => "Refresh",
+        }
+    }
+
+    pub fn overview_tab_status(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态",
+            Locale::EnUS => "Status",
+        }
+    }
+
+    pub fn overview_tab_analytics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "分析",
+            Locale::EnUS => "Analytics",
+        }
+    }
+
+    pub fn anomaly_hit_rate_drop(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率骤降：从 {:.1}% 降至 {:.1}%",
+            Locale::EnUS => "Hit rate dropped: {:.1}% to {:.1}%",
+        }
+    }
+
+    pub fn anomaly_qps_spike(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "QPS 突增：从 {:.1} 升至 {:.1}",
+            Locale::EnUS => "QPS spiked: {:.1} to {:.1}",
+        }
+    }
+
+    pub fn anomaly_latency_spike(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游延迟飙升：{:.0}ms",
+            Locale::EnUS => "Upstream latency spike: {:.0}ms",
+        }
+    }
+
+    pub fn anomaly_health_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关健康检查失败",
+            Locale::EnUS => "Gateway health check failed",
+        }
+    }
+
+    pub fn anomaly_health_recovered(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关已恢复",
+            Locale::EnUS => "Gateway recovered",
         }
     }
 

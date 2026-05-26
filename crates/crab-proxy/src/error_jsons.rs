@@ -18,6 +18,7 @@ pub fn upstream_error_preview(body: &[u8]) -> String {
     s.chars().take(300).collect()
 }
 
+#[inline]
 pub fn upstream_pool_exhausted_error_json() -> Vec<u8> {
     let (body, _, _) = upstream_pool_exhausted_error_details(PoolAcquireFailure::Unavailable);
     body

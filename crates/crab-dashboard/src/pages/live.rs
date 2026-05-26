@@ -4,11 +4,12 @@ use leptos::prelude::*;
 use crate::api;
 use crate::components::line_chart::{ChartSeries, LineChart, TokenLineChart};
 use crate::components::page_header::PageHeader;
-use crate::components::ui::*;
+use crate::components::skeleton::SkeletonLive;
 use crate::locale::use_translations;
 use crate::page_visible::page_visible;
 use crate::pages::overview::format_number;
 use crate::types::{LiveMetricsBucket, LiveMetricsResponse};
+use crate::view_state;
 
 const MAX_CHART_POINTS: usize = 36;
 
@@ -37,15 +38,26 @@ fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucke
 #[component]
 pub fn LivePage() -> impl IntoView {
     let t = use_translations();
+    let vs = view_state::load_view_state();
     let consumers: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
-    let selected_consumer: RwSignal<Option<String>> = RwSignal::new(None);
-    let window_secs: RwSignal<u32> = RwSignal::new(300);
+    let selected_consumer: RwSignal<Option<String>> = RwSignal::new(vs.live_consumer.clone());
+    let window_secs: RwSignal<u32> = RwSignal::new(vs.live_window_secs.unwrap_or(300));
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
     let consumers_loaded = RwSignal::new(false);
     let consumers_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
+
+    // Persist live view state on change
+    Effect::new(move |_| {
+        let consumer = selected_consumer.get();
+        let window = window_secs.get();
+        let mut state = view_state::load_view_state();
+        state.live_consumer = consumer;
+        state.live_window_secs = Some(window);
+        view_state::save_view_state(&state);
+    });
 
     // Fetch consumers from live-metrics/consumers endpoint (lightweight).
     // Falls back to fetch_keys if consumers endpoint is not available.
@@ -233,9 +245,7 @@ pub fn LivePage() -> impl IntoView {
             {move || {
                 if !consumers_loaded.get() {
                     return view! {
-                        <div class="glass-card p-8 flex justify-center">
-                            <Spinner />
-                        </div>
+                        <SkeletonLive />
                     }.into_any();
                 }
                 if let Some(err) = consumers_error.get() {
@@ -255,9 +265,7 @@ pub fn LivePage() -> impl IntoView {
                 }
                 match live_data.get() {
                 None => view! {
-                    <div class="glass-card p-8 flex justify-center">
-                        <Spinner />
-                    </div>
+                    <SkeletonLive />
                 }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card p-6 text-error text-sm">{e}</div>
@@ -375,18 +383,21 @@ fn LiveLatencyCharts(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                     })
                     .collect(),
                 dashed: false,
+                fill: false,
             },
             ChartSeries {
                 label: upstream_label.clone(),
                 color: "var(--warning)",
                 values: b.iter().map(|x| x.upstream_latency_ms).collect(),
                 dashed: true,
+                fill: false,
             },
             ChartSeries {
                 label: ttft_label.clone(),
                 color: "var(--info)",
                 values: b.iter().map(|x| x.ttft_ms).collect(),
                 dashed: false,
+                fill: false,
             },
         ]
     });

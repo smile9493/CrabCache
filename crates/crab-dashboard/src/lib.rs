@@ -1,3 +1,4 @@
+pub mod anomaly;
 pub mod api;
 pub mod app;
 pub mod auth;
@@ -8,6 +9,7 @@ pub mod page_visible;
 pub mod pages;
 pub mod theme;
 pub mod types;
+pub mod view_state;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

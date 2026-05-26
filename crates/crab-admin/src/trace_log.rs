@@ -759,6 +759,147 @@ pub fn find_trace_entry(path: &str, id: &str) -> Option<TraceLogEntry> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// PG-backed query functions (used when pg_store is available)
+// ---------------------------------------------------------------------------
+
+/// Load trace entries from PG with the same options as `load_trace_with_opts`.
+pub async fn load_trace_with_opts_pg(
+    pg: &crate::pg::PgStore,
+    opts: &TraceLoadOpts,
+) -> Vec<TraceLogEntry> {
+    // Convert cursor to from_ms bound.
+    let from_ms = if let Some(ref cursor) = opts.cursor {
+        if !cursor.is_empty() {
+            let (cursor_ts, _) = parse_cursor(cursor);
+            if cursor_ts < u64::MAX {
+                Some(cursor_ts.saturating_sub(1))
+            } else {
+                opts.from_ms
+            }
+        } else {
+            opts.from_ms
+        }
+    } else {
+        opts.from_ms
+    };
+
+    // Fetch limit + 1 to detect has_more.
+    let fetch_limit = opts.limit.saturating_add(1).min(5000);
+
+    match pg
+        .load_trace_logs(
+            from_ms,
+            opts.to_ms,
+            opts.consumer.as_deref(),
+            opts.model.as_deref(),
+            opts.cache_tier.as_deref(),
+            opts.request_hash.as_deref(),
+            fetch_limit,
+        )
+        .await
+    {
+        Ok(mut entries) => {
+            // Apply client-side filters that PG doesn't support directly.
+            if let (Some(lat_min), Some(lat_max)) = (opts.latency_min, opts.latency_max) {
+                entries.retain(|e| e.latency_ms >= lat_min && e.latency_ms <= lat_max);
+            }
+            if let (Some(tok_min), Some(tok_max)) = (opts.token_min, opts.token_max) {
+                entries.retain(|e| {
+                    let total = e.resolved_input_tokens() + e.resolved_output_tokens();
+                    total >= tok_min && total <= tok_max
+                });
+            }
+            // PG returns DESC order already.
+            entries
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "PG trace query failed, falling back to empty");
+            Vec::new()
+        }
+    }
+}
+
+/// Find a single trace entry from PG by composite key.
+pub async fn find_trace_entry_pg(
+    pg: &crate::pg::PgStore,
+    id: &str,
+) -> Option<TraceLogEntry> {
+    let (hash, ts_str) = id.split_once('-')?;
+    let ts: u64 = ts_str.parse().ok()?;
+    pg.find_trace_log(hash, ts).await.ok().flatten()
+}
+
+/// Load trace entries from PG for a time window (hours).
+pub async fn load_trace_entries_async_pg(
+    pg: &crate::pg::PgStore,
+    hours: u32,
+) -> Vec<TraceLogEntry> {
+    let from_ms = if hours > 0 {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Some(now_ms.saturating_sub(u64::from(hours) * 3_600_000))
+    } else {
+        None
+    };
+
+    match pg
+        .load_trace_logs(from_ms, None, None, None, None, None, 100_000)
+        .await
+    {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(error = %e, "PG trace analysis query failed");
+            Vec::new()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-detect helpers (PG-first, JSONL fallback)
+// These wrap the PG/JSONL dispatch so route handler bodies don't reference
+// PgStore directly, avoiding axum version-conflict type leakage.
+// ---------------------------------------------------------------------------
+
+pub async fn load_trace_with_opts_auto(
+    pg: Option<crate::pg::PgStore>,
+    trace_path: &str,
+    opts: &TraceLoadOpts,
+) -> Vec<TraceLogEntry> {
+    if let Some(ref pg) = pg {
+        load_trace_with_opts_pg(pg, opts).await
+    } else {
+        load_trace_with_opts(trace_path, opts)
+    }
+}
+
+pub async fn find_trace_entry_auto(
+    pg: Option<crate::pg::PgStore>,
+    id: &str,
+    trace_path: &str,
+) -> Option<TraceLogEntry> {
+    if let Some(ref pg) = pg {
+        if let Some(entry) = find_trace_entry_pg(pg, id).await {
+            return Some(entry);
+        }
+    }
+    find_trace_entry(trace_path, id)
+}
+
+pub async fn load_trace_entries_auto(
+    pg: Option<crate::pg::PgStore>,
+    trace_path: &str,
+    hours: u32,
+) -> Vec<TraceLogEntry> {
+    if let Some(ref pg) = pg {
+        load_trace_entries_async_pg(pg, hours).await
+    } else {
+        load_trace_entries_async(trace_path, hours).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

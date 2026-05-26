@@ -457,7 +457,7 @@ pub fn composition_debug_tx() -> Option<mpsc::Sender<CompositionDebugEntry>> {
     COMPOSITION_DEBUG_TX.get().cloned().unwrap_or(None)
 }
 
-// ── TraceLogger (main trace + optional debug) ────────────────────────
+// ── TraceLogger (main trace + optional debug + optional PG sink) ─────
 
 pub struct TraceLogger {
     sender: mpsc::Sender<SanitizedLogEntry>,
@@ -467,7 +467,12 @@ pub struct TraceLogger {
 }
 
 impl TraceLogger {
-    pub fn init(config: TraceConfig) -> Self {
+    /// Initialize the trace logger.
+    ///
+    /// `pg_sink`: optional external sender for PG batch insertion.
+    /// When provided, entries are forwarded to this sender after JSONL write.
+    /// The gateway creates the PG writer task and passes its sender here.
+    pub fn init(config: TraceConfig, pg_sink: Option<mpsc::Sender<SanitizedLogEntry>>) -> Self {
         let max_payload_bytes = config.max_payload_bytes;
         let max_response_preview_bytes = config.max_response_preview_bytes;
         let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
@@ -508,20 +513,27 @@ impl TraceLogger {
             None
         };
 
+        // Spawn writer thread. When pg_sink is provided, entries are forwarded
+        // to the PG writer after JSONL write.
         std::thread::Builder::new()
             .name("crab-trace-writer".into())
             .spawn(move || {
-                let mut writer = match LogWriter::new(&config) {
-                    Ok(w) => w,
+                let mut jsonl_writer = match LogWriter::new(&config) {
+                    Ok(w) => Some(w),
                     Err(e) => {
                         warn!("Failed to initialize trace logger: {}", e);
-                        return;
+                        None
                     }
                 };
 
                 while let Ok(entry) = rx.recv() {
-                    if let Err(e) = writer.write_entry(&entry) {
-                        warn!("Shadow log write failed: {}", e);
+                    if let Some(ref mut w) = jsonl_writer {
+                        if let Err(e) = w.write_entry(&entry) {
+                            warn!("Shadow log write failed: {}", e);
+                        }
+                    }
+                    if let Some(ref pg_tx) = pg_sink {
+                        let _ = pg_tx.send(entry);
                     }
                 }
             })

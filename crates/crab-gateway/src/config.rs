@@ -262,6 +262,10 @@ pub struct TraceConfig {
     /// Max bytes to capture for response body preview. `0` = disabled.
     #[serde(default)]
     pub max_response_preview_bytes: usize,
+    /// Optional PostgreSQL URL for trace log persistence. When set, trace
+    /// entries are written to both JSONL (if enabled) and PG.
+    #[serde(default)]
+    pub pg_url: Option<String>,
 }
 
 fn default_max_lines() -> usize {
@@ -282,6 +286,7 @@ impl Default for TraceConfig {
             composition_debug: None,
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
+            pg_url: None,
         }
     }
 }
@@ -483,6 +488,12 @@ impl GatewayConfig {
         {
             config.upstream.model = Some(model);
         }
+        if let Ok(url) = std::env::var("CRABCACHE_TRACE_PG_URL")
+            && !url.is_empty()
+        {
+            let tc = config.trace_logging.get_or_insert_with(Default::default);
+            tc.pg_url = Some(url);
+        }
         config.apply_upstream_defaults()?;
         Ok(config)
     }
@@ -625,9 +636,9 @@ impl GatewayConfig {
     pub fn build_upstream_profile_runtimes(
         &self,
         rt: &tokio::runtime::Runtime,
-    ) -> anyhow::Result<HashMap<String, Arc<UpstreamProfileRuntime>>> {
+    ) -> anyhow::Result<indexmap::IndexMap<String, Arc<UpstreamProfileRuntime>>> {
         let cooldown = self.upstream_key_cooldown_secs();
-        let mut map = HashMap::new();
+        let mut map = indexmap::IndexMap::new();
         for profile in self.resolved_upstream_profiles() {
             let backends = self.parse_profile_endpoints(&profile)?;
             let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
@@ -925,10 +936,12 @@ collection_name = ""
         )
         .unwrap();
 
+        // SAFETY: test runs single-threaded; no concurrent env access.
         unsafe {
             std::env::set_var("CRABCACHE_UPSTREAM_BASE_URL", "https://api.openai.com");
         }
         let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        // SAFETY: test runs single-threaded; no concurrent env access.
         unsafe {
             std::env::remove_var("CRABCACHE_UPSTREAM_BASE_URL");
         }
@@ -960,6 +973,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             std::env::set_var("CRABCACHE_L1_REDIS_URL", "redis://redis:6379");
         }
         let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        // SAFETY: test runs single-threaded; no concurrent env access.
         unsafe {
             std::env::remove_var("CRABCACHE_L1_REDIS_URL");
         }

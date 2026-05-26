@@ -23,6 +23,7 @@ crab-control = { path = "../crab-control" }
 crab-metrics = { path = "../crab-metrics" }
 crab-pipeline = { path = "../crab-pipeline" }
 futures-util = "0.3"
+indexmap = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

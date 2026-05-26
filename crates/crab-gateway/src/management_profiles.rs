@@ -140,41 +140,8 @@ pub async fn put_upstream_profile(
         default_weight: req.default_weight.max(1),
     };
 
-    // Resolve key specs with fallback to default/legacy pools instead of passing empty.
+    // Resolve key specs with fallback to existing/default/legacy pools instead of passing empty.
     let resolved_specs = resolve_profile_key_specs(Vec::new(), &state.runtime, &id);
-    // #region agent log
-    {
-        use std::io::Write;
-        let spec_count = resolved_specs.len();
-        let spec_previews: Vec<String> = resolved_specs
-            .iter()
-            .map(|s| {
-                if s.secret.len() > 12 {
-                    format!("{}...{}", &s.secret[..4], &s.secret[s.secret.len() - 4..])
-                } else {
-                    "***".to_string()
-                }
-            })
-            .collect();
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-        {
-            let _ = writeln!(
-                f,
-                "{{\"sessionId\":\"ec43cd\",\"location\":\"management_profiles.rs:144\",\"message\":\"put_upstream_profile: resolved key specs\",\"data\":{{\"profile_id\":\"{}\",\"spec_count\":{},\"spec_previews\":{:?}}},\"timestamp\":{}}}",
-                id,
-                spec_count,
-                spec_previews,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-        }
-    }
-    // #endregion
     let profile = build_profile_runtime(
         input,
         resolved_specs,
@@ -273,39 +240,6 @@ pub async fn put_profile_keys(
             account_id: k.account_id,
         })
         .collect();
-    // #region agent log
-    {
-        use std::io::Write;
-        let spec_previews: Vec<String> = specs
-            .iter()
-            .map(|s| {
-                if s.secret.len() > 12 {
-                    format!("{}...{}", &s.secret[..4], &s.secret[s.secret.len() - 4..])
-                } else {
-                    "***".to_string()
-                }
-            })
-            .collect();
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-        {
-            let _ = writeln!(
-                f,
-                "{{\"sessionId\":\"ec43cd\",\"location\":\"management_profiles.rs:237\",\"message\":\"put_profile_keys: saving keys\",\"data\":{{\"profile_id\":\"{}\",\"key_count\":{},\"key_previews\":{:?},\"mode\":\"{:?}\"}},\"timestamp\":{}}}",
-                id,
-                specs.len(),
-                spec_previews,
-                req.mode,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-        }
-    }
-    // #endregion
     let profile = state
         .runtime
         .profile(id)
@@ -402,33 +336,7 @@ pub async fn test_upstream_profile(
         .profile(id)
         .ok_or_else(|| bad_request("unknown upstream profile"))?;
     let pool = profile.resolve_upstream_pool();
-    let pool_len = pool.len();
-    let pool_avail = pool.available_count();
     let Some(guard) = pool.acquire() else {
-        let diag = pool.diagnose_acquire_failure();
-        // #region agent log
-        {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-            {
-                let _ = writeln!(
-                    f,
-                    "{{\"sessionId\":\"ec43cd\",\"location\":\"management_profiles.rs:339\",\"message\":\"test_upstream_profile: pool.acquire() returned None\",\"data\":{{\"profile_id\":\"{}\",\"pool_len\":{},\"pool_avail\":{},\"diag\":\"{:?}\"}},\"timestamp\":{}}}",
-                    id,
-                    pool_len,
-                    pool_avail,
-                    diag,
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis()
-                );
-            }
-        }
-        // #endregion
         return Ok(Json(UpstreamTestResult {
             ok: false,
             status_code: 0,
@@ -439,42 +347,9 @@ pub async fn test_upstream_profile(
         }));
     };
     let api_key = guard.bearer_secret().to_string();
-    let key_id = guard.key_id().to_string();
     drop(guard);
 
     let url = format!("{}/v1/models", profile.base_url.trim_end_matches('/'));
-    // #region agent log
-    {
-        use std::io::Write;
-        let key_preview = if api_key.len() > 12 {
-            format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
-        } else {
-            "***".to_string()
-        };
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-        {
-            let _ = writeln!(
-                f,
-                "{{\"sessionId\":\"ec43cd\",\"location\":\"management_profiles.rs:360\",\"message\":\"test_upstream_profile: sending request\",\"data\":{{\"profile_id\":\"{}\",\"base_url\":\"{}\",\"url\":\"{}\",\"key_id\":\"{}\",\"key_preview\":\"{}\",\"key_len\":{},\"pool_len\":{},\"pool_avail\":{}}},\"timestamp\":{}}}",
-                id,
-                profile.base_url,
-                url,
-                key_id,
-                key_preview,
-                api_key.len(),
-                pool_len,
-                pool_avail,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            );
-        }
-    }
-    // #endregion
     let start = std::time::Instant::now();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -490,29 +365,6 @@ pub async fn test_upstream_profile(
         Ok(r) => {
             let status = r.status();
             let ok = status.is_success();
-            // #region agent log
-            {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/opt/projct/CrabCache/.cursor/debug-ec43cd.log")
-                {
-                    let _ = writeln!(
-                        f,
-                        "{{\"sessionId\":\"ec43cd\",\"location\":\"management_profiles.rs:375\",\"message\":\"test_upstream_profile: response received\",\"data\":{{\"profile_id\":\"{}\",\"status\":{},\"ok\":{},\"latency_ms\":{}}},\"timestamp\":{}}}",
-                        id,
-                        status.as_u16(),
-                        ok,
-                        latency_ms,
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis()
-                    );
-                }
-            }
-            // #endregion
             let model_count = if ok {
                 r.json::<serde_json::Value>()
                     .await

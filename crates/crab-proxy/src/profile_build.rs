@@ -71,9 +71,9 @@ pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>,
     Ok(backends)
 }
 
-/// Resolve key specs for a profile with fallback to default/legacy pools.
+/// Resolve key specs for a profile with fallback to existing/default/legacy pools.
 ///
-/// Priority: `explicit` > default profile pool > legacy `runtime.upstream_pool()` > empty.
+/// Priority: `explicit` > existing profile pool > default profile pool > legacy `runtime.upstream_pool()` > empty.
 pub fn resolve_profile_key_specs(
     explicit: Vec<UpstreamKeySpec>,
     runtime: &RuntimeConfig,
@@ -82,7 +82,19 @@ pub fn resolve_profile_key_specs(
     if !explicit.is_empty() {
         return explicit;
     }
-    // 1) Default profile pool (if this is not the default, inherit its keys).
+    // 1) Existing profile pool — preserve keys already configured for this profile.
+    if let Some(existing_profile) = runtime.profile(profile_id) {
+        let specs = existing_profile.resolve_upstream_pool().to_specs();
+        if !specs.is_empty() {
+            tracing::debug!(
+                profile_id,
+                key_count = specs.len(),
+                "Profile preserving its existing keys"
+            );
+            return specs;
+        }
+    }
+    // 2) Default profile pool (if this is not the default, inherit its keys).
     let default_id = runtime.default_upstream_profile_id();
     if let Some(default_profile) = runtime.profile(&default_id) {
         let specs = default_profile.resolve_upstream_pool().to_specs();
@@ -98,7 +110,7 @@ pub fn resolve_profile_key_specs(
             return specs;
         }
     }
-    // 2) Legacy global upstream_pool.
+    // 3) Legacy global upstream_pool.
     let legacy = runtime.upstream_pool().to_specs();
     if !legacy.is_empty() {
         tracing::debug!(
@@ -110,7 +122,7 @@ pub fn resolve_profile_key_specs(
     }
     warn!(
         profile_id,
-        "No upstream keys available for profile (explicit, default, and legacy pools are all empty)"
+        "No upstream keys available for profile (explicit, existing, default, and legacy pools are all empty)"
     );
     Vec::new()
 }
