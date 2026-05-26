@@ -545,24 +545,30 @@ pub async fn get_profile_routing(
         .iter()
         .map(|b| {
             let h = health_map.get(&b.name);
-            let (healthy, last_check_ms, latency_ms, circuit_state, consecutive_failures, half_open_successes) =
-                match h {
-                    Some(health) => {
-                        let state_str = serde_json::to_value(&health.circuit_state)
-                            .ok()
-                            .and_then(|v| v.as_str().map(String::from))
-                            .unwrap_or_else(|| "closed".to_string());
-                        (
-                            health.healthy,
-                            health.last_check_ms,
-                            health.latency_ms,
-                            state_str,
-                            health.consecutive_failures,
-                            health.half_open_successes,
-                        )
-                    }
-                    None => (true, 0, 0, "closed".to_string(), 0, 0),
-                };
+            let (
+                healthy,
+                last_check_ms,
+                latency_ms,
+                circuit_state,
+                consecutive_failures,
+                half_open_successes,
+            ) = match h {
+                Some(health) => {
+                    let state_str = serde_json::to_value(&health.circuit_state)
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .unwrap_or_else(|| "closed".to_string());
+                    (
+                        health.healthy,
+                        health.last_check_ms,
+                        health.latency_ms,
+                        state_str,
+                        health.consecutive_failures,
+                        health.half_open_successes,
+                    )
+                }
+                None => (true, 0, 0, "closed".to_string(), 0, 0),
+            };
             ProfileRoutingBackendView {
                 name: b.name.clone(),
                 addr: b.addr.to_string(),
@@ -585,7 +591,10 @@ pub async fn get_profile_routing(
     let cb = state.runtime.circuit_breaker_config;
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
-    let available = pool_status.iter().filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0).count();
+    let available = pool_status
+        .iter()
+        .filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0)
+        .count();
 
     Ok(Json(ProfileRoutingView {
         profile_id: id.to_string(),

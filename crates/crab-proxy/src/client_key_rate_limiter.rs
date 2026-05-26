@@ -79,8 +79,7 @@ impl ClientKeyRateLimiter {
     /// Periodically prune buckets that haven't been used recently.
     pub fn prune_stale(&self, max_age: Duration) {
         let now = Instant::now();
-        self.buckets.retain(|_, inner| {
-            now.duration_since(inner.lock().last_refill) < max_age
-        });
+        self.buckets
+            .retain(|_, inner| now.duration_since(inner.lock().last_refill) < max_age);
     }
 }

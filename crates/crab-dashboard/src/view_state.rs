@@ -40,6 +40,8 @@ pub fn load_view_state() -> ViewState {
 /// Save view state to localStorage. Silently ignores errors.
 pub fn save_view_state(state: &ViewState) {
     let Some(store) = storage() else { return };
-    let Ok(json) = serde_json::to_string(state) else { return };
+    let Ok(json) = serde_json::to_string(state) else {
+        return;
+    };
     let _ = store.set_item(STORAGE_KEY, &json);
 }

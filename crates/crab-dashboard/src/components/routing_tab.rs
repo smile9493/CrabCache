@@ -1,10 +1,10 @@
 //! Routing & Health tab for the Upstream page.
 
-use leptos::prelude::*;
 use crate::api;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::ProfileRoutingView;
+use leptos::prelude::*;
 
 /// Renders the "路由与健康" tab content for a given profile.
 #[component]

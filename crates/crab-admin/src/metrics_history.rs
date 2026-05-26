@@ -1438,7 +1438,10 @@ gateway_deepseek_input_tokens_total{cache_status="hit",model="m",consumer="bob"}
         for p in &points {
             // Requests from the old pair maxed at 50; recent pair goes 100→200.
             // If old data leaked, we'd see a request delta of 50 in a separate bucket.
-            assert!(p.requests <= 200, "old data must not leak into windowed stats");
+            assert!(
+                p.requests <= 200,
+                "old data must not leak into windowed stats"
+            );
         }
     }
 }

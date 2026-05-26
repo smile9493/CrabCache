@@ -110,9 +110,7 @@ impl PgReasoningStore {
 
     pub async fn clear(&self) -> anyhow::Result<usize> {
         let client = self.client.lock().await;
-        let count = client
-            .execute("DELETE FROM reasoning_cache", &[])
-            .await? as usize;
+        let count = client.execute("DELETE FROM reasoning_cache", &[]).await? as usize;
         Ok(count)
     }
 

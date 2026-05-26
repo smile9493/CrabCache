@@ -1,6 +1,6 @@
 use axum::extract::Query;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;

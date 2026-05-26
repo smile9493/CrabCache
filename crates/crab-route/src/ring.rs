@@ -48,7 +48,7 @@ impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
             failure_threshold: 5,
-            success_threshold: 3,  // Increased from 2 to 3 for LLM streaming stability
+            success_threshold: 3, // Increased from 2 to 3 for LLM streaming stability
             timeout_ms: 30_000,
         }
     }

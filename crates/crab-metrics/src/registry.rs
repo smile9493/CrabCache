@@ -114,9 +114,7 @@ impl GatewayMetrics {
                 "gateway_upstream_latency_seconds",
                 "Upstream response latency in seconds",
             )
-            .buckets(vec![
-                0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0,
-            ]),
+            .buckets(vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0]),
             &["model"],
         )?;
 
@@ -125,9 +123,7 @@ impl GatewayMetrics {
                 "gateway_stream_first_token_latency_seconds",
                 "Time to first token latency in seconds for streaming responses",
             )
-            .buckets(vec![
-                0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0,
-            ]),
+            .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0]),
             &["model"],
         )?;
 

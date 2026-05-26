@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::donut_chart::{DonutChart, DonutSegment};
+use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{

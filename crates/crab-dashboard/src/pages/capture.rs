@@ -84,9 +84,7 @@ fn session_short(e: &RawCaptureEntry) -> String {
 }
 
 fn backend_short(e: &RawCaptureEntry) -> String {
-    e.backend_name
-        .clone()
-        .unwrap_or_else(|| "-".to_string())
+    e.backend_name.clone().unwrap_or_else(|| "-".to_string())
 }
 
 // ── Main page ────────────────────────────────────────────────────────

@@ -7,8 +7,8 @@ use crab_proxy::{
 };
 use crab_route::AffinityRouter;
 use crab_state::{ControlPlaneSnapshot, apply_snapshot_to_runtime, build_snapshot_from_runtime};
-use parking_lot::RwLock;
 use indexmap::IndexMap;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 

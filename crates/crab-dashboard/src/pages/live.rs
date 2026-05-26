@@ -18,7 +18,15 @@ fn format_bucket_time(ts_ms: u64) -> String {
 }
 
 fn poll_interval_ms(window_secs: u32) -> u32 {
-    if window_secs >= 3600 { 10000 } else if window_secs >= 1800 { 5000 } else if window_secs >= 900 { 3000 } else { 2000 }
+    if window_secs >= 3600 {
+        10000
+    } else if window_secs >= 1800 {
+        5000
+    } else if window_secs >= 900 {
+        3000
+    } else {
+        2000
+    }
 }
 
 fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucket> {
@@ -176,15 +184,11 @@ pub fn LivePage() -> impl IntoView {
 
     // Immediate refresh when page becomes visible after being hidden
     {
-        use wasm_bindgen::prelude::*;
         use wasm_bindgen::JsCast;
+        use wasm_bindgen::prelude::*;
         let load_live = load_live;
         let vis_cb = Closure::wrap(Box::new(move || {
-            if !web_sys::window()
-                .unwrap()
-                .document()
-                .unwrap()
-                .hidden()
+            if !web_sys::window().unwrap().document().unwrap().hidden()
                 && auto_refresh.get_untracked()
                 && selected_consumer.get_untracked().is_some()
             {
@@ -193,10 +197,7 @@ pub fn LivePage() -> impl IntoView {
         }) as Box<dyn FnMut()>);
         web_sys::window()
             .unwrap()
-            .add_event_listener_with_callback(
-                "visibilitychange",
-                vis_cb.as_ref().unchecked_ref(),
-            )
+            .add_event_listener_with_callback("visibilitychange", vis_cb.as_ref().unchecked_ref())
             .ok();
         vis_cb.forget();
     }

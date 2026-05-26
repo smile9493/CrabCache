@@ -30,10 +30,10 @@ use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 #[path = "management_profiles.rs"]
 mod management_profiles;
@@ -192,10 +192,7 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/upstream/profiles/{id}/routing",
             get(management_profiles::get_profile_routing),
         )
-        .route(
-            "/v1/routing/summary",
-            get(get_routing_summary),
-        )
+        .route("/v1/routing/summary", get(get_routing_summary))
         .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
 }

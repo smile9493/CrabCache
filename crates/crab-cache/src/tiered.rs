@@ -143,10 +143,7 @@ impl TieredCache {
     }
 
     /// Lookup cache without incrementing Prometheus counters (e.g. coalesce follower replay).
-    pub async fn get_silent(
-        &self,
-        key: &str,
-    ) -> Option<(CacheEntry, CacheTier)> {
+    pub async fn get_silent(&self, key: &str) -> Option<(CacheEntry, CacheTier)> {
         self.get_inner(key, None, None, CacheGetMetrics::Silent)
             .await
     }
@@ -189,7 +186,12 @@ impl TieredCache {
         let record_miss = metrics.record_miss();
         if let Some(entry) = self.l0.get(key).await {
             if record_hits {
-                global_metrics().record_cache_hit(CacheTier::L0Moka, &entry.model, consumer, domain);
+                global_metrics().record_cache_hit(
+                    CacheTier::L0Moka,
+                    &entry.model,
+                    consumer,
+                    domain,
+                );
             }
             debug!(key = key, tier = "L0", "Cache hit");
             return Some((entry, CacheTier::L0Moka));

@@ -17,12 +17,14 @@ pub fn DonutChart(
     #[prop(default = 160)] size: u32,
 ) -> impl IntoView {
     if segments.is_empty() {
-        return view! { <div class="text-center py-6 text-theme-muted text-sm">"No data"</div> }.into_any();
+        return view! { <div class="text-center py-6 text-theme-muted text-sm">"No data"</div> }
+            .into_any();
     }
 
     let total: f64 = segments.iter().map(|s| s.value).sum();
     if total <= 0.0 {
-        return view! { <div class="text-center py-6 text-theme-muted text-sm">"No data"</div> }.into_any();
+        return view! { <div class="text-center py-6 text-theme-muted text-sm">"No data"</div> }
+            .into_any();
     }
 
     let r = 40.0_f64;

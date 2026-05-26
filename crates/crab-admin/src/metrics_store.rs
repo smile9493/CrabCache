@@ -4,9 +4,9 @@
 //! here so that restarting `crab-admin` does not clear the Dashboard curves.
 
 use crate::metrics_history::MetricsCounterSnapshot;
+use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use parking_lot::Mutex;
 use tracing::warn;
 
 const DB_PATH_ENV: &str = "CRABCACHE_ADMIN_METRICS_DB_PATH";

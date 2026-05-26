@@ -27,9 +27,7 @@ pub fn session_fingerprint_from_payload(payload: &Value) -> Option<String> {
 
 /// Ketama affinity key prefix: `conv` | `pck` | `user` | `ip` | `unknown`.
 pub fn affinity_kind_from_key(key: &str) -> &str {
-    key.split_once(':')
-        .map(|(k, _)| k)
-        .unwrap_or("unknown")
+    key.split_once(':').map(|(k, _)| k).unwrap_or("unknown")
 }
 
 #[cfg(test)]

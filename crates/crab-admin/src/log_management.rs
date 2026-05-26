@@ -564,14 +564,22 @@ pub async fn log_retention_loop(state: Arc<AppState>) {
                         - retention_days * 86_400_000;
                     match pg.prune_trace_logs(cutoff_ms).await {
                         Ok(count) if count > 0 => {
-                            info!(deleted = count, cutoff_days = retention_days, "PG trace_logs pruned");
+                            info!(
+                                deleted = count,
+                                cutoff_days = retention_days,
+                                "PG trace_logs pruned"
+                            );
                         }
                         Err(e) => warn!(error = %e, "PG trace_logs prune failed"),
                         _ => {}
                     }
                     match pg.prune_request_logs(cutoff_ms).await {
                         Ok(count) if count > 0 => {
-                            info!(deleted = count, cutoff_days = retention_days, "PG request_logs pruned");
+                            info!(
+                                deleted = count,
+                                cutoff_days = retention_days,
+                                "PG request_logs pruned"
+                            );
                         }
                         Err(e) => warn!(error = %e, "PG request_logs prune failed"),
                         _ => {}

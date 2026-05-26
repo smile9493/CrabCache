@@ -64,15 +64,24 @@ impl LogsFilterForm {
         }
         fn parse_datetime_to_ms(s: &str) -> Option<u64> {
             let t = s.trim();
-            if t.is_empty() { return None; }
+            if t.is_empty() {
+                return None;
+            }
             // datetime-local format: "YYYY-MM-DDTHH:MM" → parse as Beijing time (UTC+8)
-            let dt_str = if t.len() == 16 { format!("{}:00", t) } else { t.to_string() };
+            let dt_str = if t.len() == 16 {
+                format!("{}:00", t)
+            } else {
+                t.to_string()
+            };
             chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S")
                 .ok()
                 .map(|ndt| {
                     use chrono::TimeZone;
                     let beijing = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
-                    beijing.from_local_datetime(&ndt).unwrap().timestamp_millis() as u64
+                    beijing
+                        .from_local_datetime(&ndt)
+                        .unwrap()
+                        .timestamp_millis() as u64
                 })
         }
         LogsFilterQuery {

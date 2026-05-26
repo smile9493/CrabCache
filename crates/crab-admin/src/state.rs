@@ -2,7 +2,9 @@ use crate::infra::types::ContainerRawSample;
 use crate::metrics_history::{GatewayMetricsCache, MetricsHistory};
 use crate::persist::{self, PersistHandle};
 use crate::types::UpstreamTestResult;
-use crate::types::{DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceAnalysis, TraceSummary};
+use crate::types::{
+    DomainPolicy, OverviewCore, ReasoningConfig, RetentionPolicy, TraceAnalysis, TraceSummary,
+};
 use crab_control::{GatewayAdminClient, GatewayStatus, PutUpstreamKeysRequest, UpstreamKeyInput};
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -90,7 +92,8 @@ pub struct AppState {
     pub overview_core_cache: RwLock<Option<(Instant, OverviewCore, String)>>,
     pub overview_core_build_lock: AsyncMutex<()>,
     /// Cached timeseries per window + ETag for `/api/admin/overview/timeseries`.
-    pub overview_timeseries_cache: RwLock<HashMap<String, (Instant, Vec<crate::types::TimeSeriesPoint>, String)>>,
+    pub overview_timeseries_cache:
+        RwLock<HashMap<String, (Instant, Vec<crate::types::TimeSeriesPoint>, String)>>,
     pub overview_timeseries_lock: AsyncMutex<()>,
     pub gateway_metrics_cache: GatewayMetricsCache,
     /// Shared parsed trace tail for live-metrics (incremental tail, configurable TTL via CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS).
@@ -657,8 +660,7 @@ impl AppState {
         );
 
         // Snapshot request logs for PG dual-write (take before releasing lock).
-        let pg_request_logs: Vec<StoredRequestLog> =
-            self.request_logs.read().clone();
+        let pg_request_logs: Vec<StoredRequestLog> = self.request_logs.read().clone();
 
         // Dual-write to PostgreSQL if available (extract data before moving file).
         let pg_task = if let Some(ref pg) = *self.pg_store.read() {

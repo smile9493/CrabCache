@@ -2845,11 +2845,7 @@ async fn get_trace_analysis(
         let cached = state.trace_analysis_cache.read();
         if let Some((instant, ref analysis)) = *cached {
             if instant.elapsed() < Duration::from_secs(60) {
-                let etag_val = format!(
-                    "\"ta-{}-{}\"",
-                    analysis.total_requests,
-                    query.hours
-                );
+                let etag_val = format!("\"ta-{}-{}\"", analysis.total_requests, query.hours);
                 if let Some(if_none_match) = headers
                     .get(header::IF_NONE_MATCH)
                     .and_then(|v| v.to_str().ok())
@@ -2989,11 +2985,7 @@ async fn get_trace_analysis(
     // Store in cache
     *state.trace_analysis_cache.write() = Some((std::time::Instant::now(), analysis.clone()));
 
-    let etag_val = format!(
-        "\"ta-{}-{}\"",
-        analysis.total_requests,
-        query.hours
-    );
+    let etag_val = format!("\"ta-{}-{}\"", analysis.total_requests, query.hours);
     if let Some(if_none_match) = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -3055,9 +3047,7 @@ fn compute_zipf_alpha(freqs: &[usize]) -> f64 {
 
 /// Compute log-log data points and OLS regression line for Zipf visualization.
 /// Returns (points, slope, intercept) where slope ≈ -alpha.
-fn compute_zipf_regression_data(
-    freqs: &[usize],
-) -> (Vec<crate::types::ZipfLogPoint>, f64, f64) {
+fn compute_zipf_regression_data(freqs: &[usize]) -> (Vec<crate::types::ZipfLogPoint>, f64, f64) {
     use crate::types::ZipfLogPoint;
 
     let mut points = Vec::new();

@@ -96,7 +96,10 @@ pub(crate) fn y_range(series: &[ChartSeries]) -> (f64, f64) {
 
 /// Convert a mouse event's client X to SVG viewBox X coordinate.
 /// Uses the inverse of the SVG's screen CTM (SvgMatrix).
-pub(crate) fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Option<f64> {
+pub(crate) fn mouse_to_svg_x(
+    ev: &web_sys::MouseEvent,
+    svg: &web_sys::SvgsvgElement,
+) -> Option<f64> {
     let ctm = svg.get_screen_ctm()?;
     let inv = ctm.inverse().ok()?;
     let cx = ev.client_x() as f64;

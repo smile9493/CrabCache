@@ -2,8 +2,8 @@
 
 use crate::metrics_history::{
     self, WINDOW_5M_SECS, avg_prometheus_histogram_ms, build_prefix_cache_snapshot,
-    consumer_token_buckets, domain_token_buckets, percentile_from_buckets,
-    scrape_gateway_counters, scrape_ops_metrics,
+    consumer_token_buckets, domain_token_buckets, percentile_from_buckets, scrape_gateway_counters,
+    scrape_ops_metrics,
 };
 use crate::state::{AppState, GatewayProbe};
 use crate::suggestions::build_overview_suggestions;
@@ -26,7 +26,10 @@ const DEFAULT_OVERVIEW_TIMESERIES_CACHE_TTL: Duration = Duration::from_secs(60);
 use crate::metrics_history::BucketKind;
 
 /// Align overview key-pool counts with upstream profile list (same as Dashboard upstream tabs).
-async fn enrich_ops_upstream_keys(state: &Arc<AppState>, ops: &mut crate::types::OverviewOpsMetrics) {
+async fn enrich_ops_upstream_keys(
+    state: &Arc<AppState>,
+    ops: &mut crate::types::OverviewOpsMetrics,
+) {
     let Ok(resp) = state.gateway.list_upstream_profiles().await else {
         return;
     };
@@ -118,10 +121,10 @@ pub async fn get_overview_timeseries_cached(
     };
 
     let etag = timeseries_etag(window, &points)?;
-    state
-        .overview_timeseries_cache
-        .write()
-        .insert(window.to_string(), (Instant::now(), points.clone(), etag.clone()));
+    state.overview_timeseries_cache.write().insert(
+        window.to_string(),
+        (Instant::now(), points.clone(), etag.clone()),
+    );
     Ok((points, etag))
 }
 
@@ -215,7 +218,12 @@ pub async fn fetch_gateway_probe_cached(state: &Arc<AppState>) -> GatewayProbe {
     let detail = state.gateway.ready_detail().await;
     let (ready_ok, ready_error, redis_status, l2_status) = match detail {
         Ok(d) => (d.ready, None, d.redis, d.l2),
-        Err(e) => (false, Some(e.to_string()), "unavailable".to_string(), "unavailable".to_string()),
+        Err(e) => (
+            false,
+            Some(e.to_string()),
+            "unavailable".to_string(),
+            "unavailable".to_string(),
+        ),
     };
 
     let status_result = state.gateway.status().await;
@@ -523,18 +531,13 @@ pub async fn build_metrics_snapshot_core(
         &[],
         0.99,
     );
-    let latency_cache_fetch_p99_ms = percentile_from_buckets(
-        body,
-        "gateway_cache_fetch_latency_seconds",
-        &[],
-        0.99,
-    );
+    let latency_cache_fetch_p99_ms =
+        percentile_from_buckets(body, "gateway_cache_fetch_latency_seconds", &[], 0.99);
 
     // Error rate: 5-minute counter deltas (not cumulative process totals).
     let http_4xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_4xx_total);
     let http_5xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_5xx_total);
-    let total_http_5m =
-        history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_responses_total);
+    let total_http_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_responses_total);
     let error_rate_5m = if total_http_5m > 0 {
         (http_4xx_5m + http_5xx_5m) as f64 / total_http_5m as f64
     } else {

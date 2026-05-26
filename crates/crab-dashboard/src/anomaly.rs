@@ -19,7 +19,7 @@ pub(crate) struct Anomaly {
 /// Tracks previous snapshot and cooldown timestamps.
 pub struct AnomalyDetector {
     prev: Option<Snapshot>,
-    last_hit_rate_alert: f64,   // js_sys::Date::now() timestamp
+    last_hit_rate_alert: f64, // js_sys::Date::now() timestamp
     last_qps_alert: f64,
     last_latency_alert: f64,
     last_health_alert: f64,
@@ -96,9 +96,7 @@ impl AnomalyDetector {
         }
 
         // Latency spike (absolute threshold, no previous needed)
-        if curr.latency_upstream_ms > 5000.0
-            && now - self.last_latency_alert > COOLDOWN_MS
-        {
+        if curr.latency_upstream_ms > 5000.0 && now - self.last_latency_alert > COOLDOWN_MS {
             self.last_latency_alert = now;
             anomalies.push(Anomaly {
                 kind: ToastKind::Error,

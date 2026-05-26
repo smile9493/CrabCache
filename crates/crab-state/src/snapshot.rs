@@ -5,8 +5,8 @@ use crab_proxy::{
     ConnectionConfig, DomainPolicy, ProfileBuildInput, RuntimeConfig, StoredKey, UpstreamKeyPool,
     UpstreamKeySpec, build_profile_runtime, resolve_profile_key_specs,
 };
-use serde::{Deserialize, Serialize};
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 

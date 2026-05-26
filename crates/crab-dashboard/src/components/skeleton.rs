@@ -7,7 +7,11 @@ pub fn SkeletonBlock(
     #[prop(default = "1rem")] height: &'static str,
     #[prop(default = false)] rounded: bool,
 ) -> impl IntoView {
-    let cls = if rounded { "skeleton-block skeleton-block-rounded" } else { "skeleton-block" };
+    let cls = if rounded {
+        "skeleton-block skeleton-block-rounded"
+    } else {
+        "skeleton-block"
+    };
     view! {
         <div class=cls style=format!("width: {}; height: {}", width, height)></div>
     }
@@ -88,9 +92,7 @@ pub fn SkeletonGrid(
 
 /// Skeleton for a chart area (timeseries or latency chart).
 #[component]
-pub fn SkeletonChart(
-    #[prop(default = "240px")] height: &'static str,
-) -> impl IntoView {
+pub fn SkeletonChart(#[prop(default = "240px")] height: &'static str) -> impl IntoView {
     view! {
         <div class="glass-card skeleton-card-inner">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">

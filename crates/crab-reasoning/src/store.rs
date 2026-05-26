@@ -1,9 +1,9 @@
 use crate::keys::{portable_reasoning_keys, scoped_reasoning_keys};
 use crab_metrics::global_metrics;
+use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::Path;
-use parking_lot::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
 

@@ -225,8 +225,8 @@ fn canonical_write(value: &Value, out: &mut String) {
                 // serde_json keys are already valid JSON strings; write the raw key
                 // and let the serializer handle escaping via to_writer if needed.
                 // For simplicity, use serde_json::to_string for the key part.
-                let key_json = serde_json::to_string(k.as_str())
-                    .unwrap_or_else(|_| format!("\"{k}\""));
+                let key_json =
+                    serde_json::to_string(k.as_str()).unwrap_or_else(|_| format!("\"{k}\""));
                 out.push_str(&key_json[1..key_json.len() - 1]); // strip outer quotes
                 out.push_str("\":");
                 canonical_write(&map[*k], out);

@@ -41,8 +41,7 @@ pub fn debug_agent_log(
     let Some(Some(tx)) = DEBUG_WRITER.get() else {
         return;
     };
-    let run_id =
-        std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
+    let run_id = std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
     let mut line = serde_json::json!({
         "runId": run_id,
         "hypothesisId": hypothesis_id,

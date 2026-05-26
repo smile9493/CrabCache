@@ -10,9 +10,13 @@ pub fn Sparkline(
     #[prop(default = 64)] width: u32,
     #[prop(default = 24)] height: u32,
 ) -> impl IntoView {
-    let valid: Vec<f64> = values.into_iter().filter(|v| v.is_finite() && *v >= 0.0).collect();
+    let valid: Vec<f64> = values
+        .into_iter()
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .collect();
     if valid.len() < 2 {
-        return view! { <div style=format!("width: {}px; height: {}px", width, height)></div> }.into_any();
+        return view! { <div style=format!("width: {}px; height: {}px", width, height)></div> }
+            .into_any();
     }
 
     let min = valid.iter().cloned().fold(f64::MAX, f64::min);
@@ -58,5 +62,6 @@ pub fn Sparkline(
                 stroke-linecap="round"
             />
         </svg>
-    }.into_any()
+    }
+    .into_any()
 }

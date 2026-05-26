@@ -1219,8 +1219,7 @@ impl PgStore {
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let composition_raw: Option<String> = row.get(17);
-            let composition = composition_raw
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
             out.push(TraceLogEntry {
                 request_hash: row.get(0),
                 timestamp_ms: from_pg_bigint(row.get(1)),
@@ -1302,10 +1301,7 @@ impl PgStore {
     }
 
     /// Aggregate trace stats for analysis (within a time window).
-    pub async fn trace_log_analysis(
-        &self,
-        from_ms: u64,
-    ) -> Result<TraceAnalysisResult> {
+    pub async fn trace_log_analysis(&self, from_ms: u64) -> Result<TraceAnalysisResult> {
         let client = self.pool.get().await?;
 
         let row = client
@@ -1352,9 +1348,17 @@ impl PgStore {
         Ok(TraceAnalysisResult {
             total_requests: total,
             cache_hits,
-            avg_latency_ms: if total > 0 { total_latency / total as f64 } else { 0.0 },
+            avg_latency_ms: if total > 0 {
+                total_latency / total as f64
+            } else {
+                0.0
+            },
             total_input_tokens: total_tokens as u64,
-            avg_tokens: if total > 0 { total_tokens as f64 / total as f64 } else { 0.0 },
+            avg_tokens: if total > 0 {
+                total_tokens as f64 / total as f64
+            } else {
+                0.0
+            },
             unique_requests,
             model_distribution,
         })
@@ -1399,8 +1403,8 @@ impl PgStore {
             .await?;
 
         for log in logs {
-            let payload_json = serde_json::to_string(&log.request_payload)
-                .context("serialize request_payload")?;
+            let payload_json =
+                serde_json::to_string(&log.request_payload).context("serialize request_payload")?;
             tx.execute(
                 &stmt,
                 &[

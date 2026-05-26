@@ -1,7 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
-use std::collections::HashMap;
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
@@ -19,15 +18,16 @@ use crab_state::{
 };
 use parking_lot::RwLock;
 use pingora_core::server::Server;
-use tracing_subscriber::Layer;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
-use std::sync::atomic::AtomicBool;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tracing::info;
+use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -61,10 +61,7 @@ impl PgTraceStore {
         })
     }
 
-    async fn insert_batch(
-        &self,
-        entries: &[crab_proxy::SanitizedLogEntry],
-    ) -> anyhow::Result<()> {
+    async fn insert_batch(&self, entries: &[crab_proxy::SanitizedLogEntry]) -> anyhow::Result<()> {
         use anyhow::Context;
 
         if entries.is_empty() {
@@ -442,15 +439,17 @@ fn main() -> Result<()> {
             .pg_url
             .as_deref()
             .or(pg_url_env.as_deref())
-            .ok_or_else(|| anyhow::anyhow!("reasoning.backend = \"pg\" requires pg_url or CRABCACHE_REASONING_PG_URL"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "reasoning.backend = \"pg\" requires pg_url or CRABCACHE_REASONING_PG_URL"
+                )
+            })?;
         let rt = tokio::runtime::Runtime::new()?;
-        Arc::new(
-            rt.block_on(ReasoningBackend::open_pg(
-                pg_url,
-                reasoning_config.cache_max_age_secs,
-                reasoning_config.cache_max_rows,
-            ))?,
-        )
+        Arc::new(rt.block_on(ReasoningBackend::open_pg(
+            pg_url,
+            reasoning_config.cache_max_age_secs,
+            reasoning_config.cache_max_rows,
+        ))?)
     } else {
         Arc::new(ReasoningBackend::from_config(
             &reasoning_config.backend,
@@ -496,7 +495,8 @@ fn main() -> Result<()> {
         if trace_config.enabled {
             // Spawn PG trace writer if configured.
             let pg_sink = trace_config.pg_url.as_ref().and_then(|pg_url_str| {
-                let (pg_tx, pg_rx) = std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(10_000);
+                let (pg_tx, pg_rx) =
+                    std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(10_000);
                 let pg_url_owned = pg_url_str.clone();
                 match std::thread::Builder::new()
                     .name("crab-pg-trace-writer".into())
@@ -527,7 +527,10 @@ fn main() -> Result<()> {
                                     Err(_) => {
                                         if !buf.is_empty() {
                                             if let Err(e) = store.insert_batch(&buf).await {
-                                                tracing::warn!("PG trace final flush failed: {}", e);
+                                                tracing::warn!(
+                                                    "PG trace final flush failed: {}",
+                                                    e
+                                                );
                                             }
                                         }
                                         return;

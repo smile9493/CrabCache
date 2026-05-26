@@ -821,10 +821,7 @@ pub async fn load_trace_with_opts_pg(
 }
 
 /// Find a single trace entry from PG by composite key.
-pub async fn find_trace_entry_pg(
-    pg: &crate::pg::PgStore,
-    id: &str,
-) -> Option<TraceLogEntry> {
+pub async fn find_trace_entry_pg(pg: &crate::pg::PgStore, id: &str) -> Option<TraceLogEntry> {
     let (hash, ts_str) = id.split_once('-')?;
     let ts: u64 = ts_str.parse().ok()?;
     pg.find_trace_log(hash, ts).await.ok().flatten()

@@ -14,7 +14,8 @@ use crate::error_jsons::{
 };
 use crate::helper_fns::{
     build_capture_request_meta, client_session_from_authorization, fingerprint_client_key,
-    is_models_endpoint, last_user_message_fingerprint, sanitize_for_trace, stable_session_log_fields,
+    is_models_endpoint, last_user_message_fingerprint, sanitize_for_trace,
+    stable_session_log_fields,
 };
 use crate::runtime::RuntimeConfig;
 use crate::send_helpers::{
@@ -1065,11 +1066,7 @@ impl ProxyHttp for GatewayProxy {
             let tiered_exact = if may_try_l2 {
                 self.state
                     .tiered_cache
-                    .get_defer_miss(
-                        &cache_key,
-                        ctx.consumer.as_deref(),
-                        ctx.domain.as_deref(),
-                    )
+                    .get_defer_miss(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
                     .await
             } else {
                 self.state
@@ -1235,11 +1232,8 @@ impl ProxyHttp for GatewayProxy {
                     if !guard.is_leader() {
                         ctx.is_coalesced_follower = true;
 
-                        if let Some((entry, tier)) = self
-                            .state
-                            .tiered_cache
-                            .get_silent(&cache_key)
-                            .await
+                        if let Some((entry, tier)) =
+                            self.state.tiered_cache.get_silent(&cache_key).await
                         {
                             if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                                 debug!(

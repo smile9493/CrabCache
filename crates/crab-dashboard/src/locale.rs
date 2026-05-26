@@ -3255,8 +3255,12 @@ impl Translations {
     }
     pub fn trace_estimated_hit_rate_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "公式: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio。语义命中假设所有同 cluster 请求均命中 L2，实际受相似度阈值限制。",
-            Locale::EnUS => "Formula: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio. Assumes all same-cluster requests hit L2; actual hit rate is bounded by similarity threshold.",
+            Locale::ZhCN => {
+                "公式: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio。语义命中假设所有同 cluster 请求均命中 L2，实际受相似度阈值限制。"
+            }
+            Locale::EnUS => {
+                "Formula: repeat_ratio + (1 - repeat_ratio) * semantic_cluster_ratio. Assumes all same-cluster requests hit L2; actual hit rate is bounded by similarity threshold."
+            }
         }
     }
     pub fn trace_semantic_ratio(self) -> &'static str {
@@ -4301,9 +4305,7 @@ impl Translations {
     }
     pub fn keys_upstream_profile_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => {
-                "留空则按模型自动选择上游 Profile；多租户场景请同时配置 project_id。"
-            }
+            Locale::ZhCN => "留空则按模型自动选择上游 Profile；多租户场景请同时配置 project_id。",
             Locale::EnUS => {
                 "Leave empty for auto profile by model; for multi-tenant also set project_id."
             }

@@ -121,8 +121,9 @@ pub fn OverviewPage() -> impl IntoView {
                 // Wrap sender in Rc<RefCell<Option>> so both closures can drop it
                 // to signal the receiver that the connection is closed.
                 let (tx, mut rx) = futures::channel::mpsc::unbounded::<String>();
-                let tx_shared: Rc<RefCell<Option<futures::channel::mpsc::UnboundedSender<String>>>> =
-                    Rc::new(RefCell::new(Some(tx)));
+                let tx_shared: Rc<
+                    RefCell<Option<futures::channel::mpsc::UnboundedSender<String>>>,
+                > = Rc::new(RefCell::new(Some(tx)));
 
                 let tx_msg = Rc::clone(&tx_shared);
                 let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
@@ -140,12 +141,11 @@ pub fn OverviewPage() -> impl IntoView {
 
                 // On error, take the sender to close the channel and exit the rx loop
                 let tx_err = Rc::clone(&tx_shared);
-                let error_closure = wasm_bindgen::closure::Closure::wrap(Box::new(
-                    move |_: web_sys::Event| {
+                let error_closure =
+                    wasm_bindgen::closure::Closure::wrap(Box::new(move |_: web_sys::Event| {
                         tx_err.borrow_mut().take();
-                    },
-                )
-                    as Box<dyn FnMut(web_sys::Event)>);
+                    })
+                        as Box<dyn FnMut(web_sys::Event)>);
                 es.set_onerror(Some(error_closure.as_ref().unchecked_ref()));
                 error_closure.forget();
 
@@ -838,7 +838,11 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn MetricsBento(metrics: MetricsSnapshot, health: Option<GatewayHealth>, suggestions: Vec<OverviewSuggestion>) -> impl IntoView {
+fn MetricsBento(
+    metrics: MetricsSnapshot,
+    health: Option<GatewayHealth>,
+    suggestions: Vec<OverviewSuggestion>,
+) -> impl IntoView {
     let t = use_translations();
     let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
     let total_requests = total_hits + metrics.cache_misses;
@@ -1337,7 +1341,10 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
             }
             ConsumerSortField::Ratio => {
                 buckets.sort_by(|a, b| {
-                    let ord = a.hit_ratio.partial_cmp(&b.hit_ratio).unwrap_or(std::cmp::Ordering::Equal);
+                    let ord = a
+                        .hit_ratio
+                        .partial_cmp(&b.hit_ratio)
+                        .unwrap_or(std::cmp::Ordering::Equal);
                     if desc { ord.reverse() } else { ord }
                 });
             }
@@ -1497,14 +1504,10 @@ pub fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
         .upstream_default_profile_id
         .as_deref()
         .map(|id| t.overview_upstream_keys_hint(id))
-        .unwrap_or_else(|| {
-            match locale.get() {
-                crate::locale::Locale::ZhCN => {
-                    "与上游配置页默认 Profile 的 Key 池一致".to_string()
-                }
-                crate::locale::Locale::EnUS => {
-                    "Matches the default profile key pool on Upstream page".to_string()
-                }
+        .unwrap_or_else(|| match locale.get() {
+            crate::locale::Locale::ZhCN => "与上游配置页默认 Profile 的 Key 池一致".to_string(),
+            crate::locale::Locale::EnUS => {
+                "Matches the default profile key pool on Upstream page".to_string()
             }
         });
     view! {

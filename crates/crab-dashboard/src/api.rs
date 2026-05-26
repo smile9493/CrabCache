@@ -247,8 +247,10 @@ pub async fn fetch_overview_timeseries_etag(
         return Err(http_error(resp, epoch).await);
     }
 
-    let data: crate::types::OverviewTimeseriesResponse =
-        resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    let data: crate::types::OverviewTimeseriesResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
     Ok(TimeseriesResult {
         points: Some(data.points),
         etag: new_etag,
@@ -516,9 +518,7 @@ pub async fn patch_upstream_profile_key(
     .await
 }
 
-pub async fn fetch_profile_routing(
-    profile_id: &str,
-) -> Result<ProfileRoutingView, String> {
+pub async fn fetch_profile_routing(profile_id: &str) -> Result<ProfileRoutingView, String> {
     fetch_json(&format!(
         "{}/upstream/profiles/{}/routing",
         API_BASE,
@@ -853,7 +853,10 @@ pub async fn fetch_capture_list(
         path.push_str(&format!("&request_hash={}", percent_encode_query(rh)));
     }
     if let Some(sf) = session_fingerprint.filter(|s| !s.is_empty()) {
-        path.push_str(&format!("&session_fingerprint={}", percent_encode_query(sf)));
+        path.push_str(&format!(
+            "&session_fingerprint={}",
+            percent_encode_query(sf)
+        ));
     }
     if let Some(bn) = backend_name.filter(|s| !s.is_empty()) {
         path.push_str(&format!("&backend_name={}", percent_encode_query(bn)));

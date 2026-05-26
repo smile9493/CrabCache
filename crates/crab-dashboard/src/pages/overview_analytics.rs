@@ -3,11 +3,11 @@
 //! Extracted from `overview.rs` to keep the main page component lean and
 //! allow Leptos to defer DOM/JS initialization until the tab is activated.
 
-use leptos::prelude::*;
 use crate::types::{
     MetricsSnapshot, OverviewOpsMetrics, OverviewSuggestion, PrefixCacheMetricsSnapshot,
     SemanticConfig, TimeSeriesPoint,
 };
+use leptos::prelude::*;
 
 #[component]
 pub fn OverviewAnalytics(
