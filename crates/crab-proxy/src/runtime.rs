@@ -303,9 +303,9 @@ impl RuntimeConfig {
             .ok_or_else(|| "unknown upstream profile".to_string())?
             .clone();
         drop(profiles);
-        *profile.upstream_pool.write() = pool;
+        *profile.upstream_pool.write() = pool.clone();
         if profile_id == self.default_upstream_profile_id() {
-            self.replace_upstream_pool(profile.upstream_pool.read().clone());
+            self.replace_upstream_pool(pool);
         }
         Ok(())
     }
