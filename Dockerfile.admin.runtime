@@ -1,0 +1,15 @@
+FROM ubuntu:latest
+
+RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY crab-admin/crab-admin /app/crab-admin
+COPY crab-admin/dashboard/ /app/crates/crab-dashboard/dist/
+
+ENV CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
+ENV CRABCACHE_ADMIN_KEY=admin
+
+EXPOSE 3000
+
+CMD ["/app/crab-admin", "--listen", "0.0.0.0:3000"]
