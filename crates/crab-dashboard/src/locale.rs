@@ -3974,6 +3974,55 @@ impl Translations {
         }
     }
 
+    pub fn overview_tab_status(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态",
+            Locale::EnUS => "Status",
+        }
+    }
+
+    pub fn overview_tab_analytics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "分析",
+            Locale::EnUS => "Analytics",
+        }
+    }
+
+    pub fn anomaly_hit_rate_drop(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率骤降：从 {:.1}% 降至 {:.1}%",
+            Locale::EnUS => "Hit rate dropped: {:.1}% to {:.1}%",
+        }
+    }
+
+    pub fn anomaly_qps_spike(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "QPS 突增：从 {:.1} 升至 {:.1}",
+            Locale::EnUS => "QPS spiked: {:.1} to {:.1}",
+        }
+    }
+
+    pub fn anomaly_latency_spike(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游延迟飙升：{:.0}ms",
+            Locale::EnUS => "Upstream latency spike: {:.0}ms",
+        }
+    }
+
+    pub fn anomaly_health_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关健康检查失败",
+            Locale::EnUS => "Gateway health check failed",
+        }
+    }
+
+    pub fn anomaly_health_recovered(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关已恢复",
+            Locale::EnUS => "Gateway recovered",
+        }
+    }
+
     pub fn keys_search_placeholder(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "搜索密钥...",

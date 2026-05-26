@@ -40,11 +40,12 @@ crab-control.workspace = true
 crab-composition.workspace = true
 crab-capture.workspace = true
 crab-proxy.workspace = true
-rusqlite.workspace = true
 tokio-postgres.workspace = true
 deadpool-postgres.workspace = true
 sha2.workspace = true
 hex.workspace = true
 bollard = "0.17"
 futures = "0.3"
+async-stream = "0.3"
 libc = "0.2"
+subtle = { workspace = true }

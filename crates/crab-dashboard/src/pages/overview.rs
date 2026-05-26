@@ -102,6 +102,8 @@ pub fn OverviewPage() -> impl IntoView {
         let sse_active = sse_active;
         leptos::task::spawn_local(async move {
             use futures::StreamExt;
+            use std::cell::RefCell;
+            use std::rc::Rc;
             loop {
                 let es = match api::connect_sse() {
                     Ok(es) => es,
@@ -113,13 +115,20 @@ pub fn OverviewPage() -> impl IntoView {
                 };
                 sse_active.set(true);
 
-                // Bridge EventSource callbacks to an async channel
+                // Bridge EventSource callbacks to an async channel.
+                // Wrap sender in Rc<RefCell<Option>> so both closures can drop it
+                // to signal the receiver that the connection is closed.
                 let (tx, mut rx) = futures::channel::mpsc::unbounded::<String>();
-                let tx_onmessage = tx.clone();
+                let tx_shared: Rc<RefCell<Option<futures::channel::mpsc::UnboundedSender<String>>>> =
+                    Rc::new(RefCell::new(Some(tx)));
+
+                let tx_msg = Rc::clone(&tx_shared);
                 let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
                     move |ev: web_sys::MessageEvent| {
                         if let Some(data) = ev.data().as_string() {
-                            let _ = tx_onmessage.unbounded_send(data);
+                            if let Some(ref sender) = *tx_msg.borrow() {
+                                let _ = sender.unbounded_send(data);
+                            }
                         }
                     },
                 )
@@ -127,18 +136,18 @@ pub fn OverviewPage() -> impl IntoView {
                 es.set_onmessage(Some(closure.as_ref().unchecked_ref()));
                 closure.forget();
 
-                // On error, drop sender to end the rx loop
-                let tx_err = tx.clone();
+                // On error, take the sender to close the channel and exit the rx loop
+                let tx_err = Rc::clone(&tx_shared);
                 let error_closure = wasm_bindgen::closure::Closure::wrap(Box::new(
                     move |_: web_sys::Event| {
-                        drop(tx_err.clone());
+                        tx_err.borrow_mut().take();
                     },
                 )
                     as Box<dyn FnMut(web_sys::Event)>);
                 es.set_onerror(Some(error_closure.as_ref().unchecked_ref()));
                 error_closure.forget();
 
-                // Process incoming messages
+                // Process incoming messages until the channel closes
                 while let Some(data) = rx.next().await {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
                         if parsed.get("type").and_then(|t| t.as_str()) == Some("metrics") {
@@ -459,7 +468,7 @@ fn OverviewContent(
                 {move || metrics_memo.get().map(|m| {
                     let qps_val = Signal::derive(move || format!("{:.1}", m.qps_5m));
                     let hit_val = Signal::derive(move || format!("{:.1}%", m.hit_rate_5m * 100.0));
-                    let cost_val = Signal::derive(move || format!("${:.2}", 0.0f64)); // placeholder
+                    let _cost_val = Signal::derive(move || format!("${:.2}", 0.0f64)); // placeholder
                     view! {
                         <div class="mobile-kpi-grid">
                             <MetricCard title=t.overview_hit_rate() value=hit_val subtitle="5m window" />

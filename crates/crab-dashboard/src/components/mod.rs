@@ -1,11 +1,15 @@
 pub mod auth_gate;
 pub mod brand_logo;
 pub mod confirm;
+pub mod donut_chart;
 pub mod gateway_health;
 pub mod line_chart;
 pub mod page_header;
+pub mod skeleton;
+pub mod sparkline;
 pub mod sync_result;
 pub mod theme_switcher;
 pub mod toast;
 pub mod topnav;
 pub mod ui;
+pub mod waterfall;

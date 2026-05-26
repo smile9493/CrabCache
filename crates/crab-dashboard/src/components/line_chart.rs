@@ -95,14 +95,27 @@ fn y_range(series: &[ChartSeries]) -> (f64, f64) {
 }
 
 /// Convert a mouse event's client X to SVG viewBox X coordinate.
+/// Uses the inverse of the SVG's screen CTM (SvgMatrix).
 fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Option<f64> {
     let ctm = svg.get_screen_ctm()?;
     let inv = ctm.inverse().ok()?;
-    let pt = svg.create_svg_point();
-    pt.set_x(ev.client_x() as f32);
-    pt.set_y(ev.client_y() as f32);
-    let transformed = pt.matrix_transform(&inv);
-    Some(transformed.x() as f64)
+    let cx = ev.client_x() as f64;
+    let cy = ev.client_y() as f64;
+    // Apply 2D affine inverse: [a c e; b d f; 0 0 1]
+    // screen_x = a*svg_x + c*svg_y + e
+    // screen_y = b*svg_x + d*svg_y + f
+    // Solve for svg_x: svg_x = (d*(cx-e) - c*(cy-f)) / (a*d - b*c)
+    let a = inv.a() as f64;
+    let b = inv.b() as f64;
+    let c = inv.c() as f64;
+    let d = inv.d() as f64;
+    let e = inv.e() as f64;
+    let f = inv.f() as f64;
+    let det = a * d - b * c;
+    if det.abs() < 1e-10 {
+        return None;
+    }
+    Some((d * (cx - e) - c * (cy - f)) / det)
 }
 
 /// Format a numeric value for tooltip display.

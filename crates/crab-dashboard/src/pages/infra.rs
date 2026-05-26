@@ -253,12 +253,14 @@ fn InfraHistoryChart(
                 color: "var(--accent-primary)",
                 values: ts.cpu.iter().map(|p| Some(p.value)).collect(),
                 dashed: false,
+                fill: true,
             },
             ChartSeries {
                 label: "Mem %".to_string(),
                 color: "var(--info)",
                 values: ts.memory.iter().map(|p| Some(p.value)).collect(),
                 dashed: false,
+                fill: true,
             },
         ]
     });

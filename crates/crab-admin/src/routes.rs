@@ -14,7 +14,8 @@ use axum::{
 };
 use crab_control::{
     CreateGatewayKeyRequest, CursorModelsConfigView, FingerprintConfigRequest,
-    InvalidateCacheRequest, PutTtlConfigRequest, parse_upstream_base_url, validate_deepseek_key,
+    InvalidateCacheRequest, PutTtlConfigRequest, constant_time_eq_str, parse_upstream_base_url,
+    validate_deepseek_key,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -33,7 +34,7 @@ async fn admin_auth(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if provided_key != expected_key {
+    if !constant_time_eq_str(provided_key, &expected_key) {
         tracing::warn!("Admin API authentication failed");
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -240,7 +241,7 @@ async fn put_admin_key(
     Json(req): Json<ChangeAdminKeyRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let current = state.admin_key.read().clone();
-    if req.old_key != current {
+    if !constant_time_eq_str(&req.old_key, &current) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     if req.new_key.is_empty() || req.new_key.len() < 4 {

@@ -79,8 +79,6 @@ pub struct AppState {
     pub backends: RwLock<Vec<StoredBackend>>,
     pub metrics: RwLock<StoredMetrics>,
     pub metrics_history: RwLock<MetricsHistory>,
-    /// SQLite-backed cold storage for Prometheus counter snapshots.
-    pub metrics_store: Option<crate::metrics_store::MetricsStore>,
     pub trace_entries: RwLock<Vec<StoredTraceEntry>>,
     pub trace_summary_cache: RwLock<Option<(Instant, TraceSummary)>>,
     pub domain_policies: RwLock<Vec<DomainPolicy>>,
@@ -115,6 +113,45 @@ pub struct AppState {
     pub pg_write_lock: Arc<AsyncMutex<()>>,
     /// Cached PG health probe (TTL-based, like GatewayProbe).
     pub pg_health_cache: RwLock<Option<(Instant, crate::types::PgHealth)>>,
+    /// SSE broadcast channel for real-time metric push to dashboard.
+    pub sse_broadcast: tokio::sync::broadcast::Sender<crate::sse::SseEvent>,
+}
+
+impl AppState {
+    /// Returns `true` when a PG store is configured and connected.
+    pub fn has_pg(&self) -> bool {
+        self.pg_store.read().is_some()
+    }
+
+    /// Load trace entries from PG if available, otherwise from JSONL.
+    pub async fn load_trace_entries(
+        &self,
+        trace_path: &str,
+        hours: u32,
+    ) -> Vec<crate::trace_log::TraceLogEntry> {
+        let pg = self.pg_store.read().clone();
+        crate::trace_log::load_trace_entries_auto(pg, trace_path, hours).await
+    }
+
+    /// Load trace entries with opts from PG if available, otherwise from JSONL.
+    pub async fn load_trace_with_opts(
+        &self,
+        trace_path: &str,
+        opts: &crate::trace_log::TraceLoadOpts,
+    ) -> Vec<crate::trace_log::TraceLogEntry> {
+        let pg = self.pg_store.read().clone();
+        crate::trace_log::load_trace_with_opts_auto(pg, trace_path, opts).await
+    }
+
+    /// Find a single trace entry by id, trying PG first then JSONL.
+    pub async fn find_trace_entry(
+        &self,
+        id: &str,
+        trace_path: &str,
+    ) -> Option<crate::trace_log::TraceLogEntry> {
+        let pg = self.pg_store.read().clone();
+        crate::trace_log::find_trace_entry_auto(pg, id, trace_path).await
+    }
 }
 
 /// Cached result of gateway `/v1/ready` + `/v1/status` for overview and health endpoints.
@@ -357,21 +394,7 @@ impl AppState {
             upstream_cfg.endpoints = snap.endpoints;
         }
 
-        // Open MetricsStore and hydrate memory ring from SQLite.
-        let metrics_store = crate::metrics_store::MetricsStore::open().ok();
-        let mut history = MetricsHistory::new();
-        // Note: PG hydration may override this below if PG has more data.
-        if let Some(ref store) = metrics_store {
-            let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
-            let snapshots = store.load_snapshots_since(cutoff);
-            for s in snapshots {
-                history.append(s);
-            }
-            tracing::info!(
-                hydrated = history.sample_count(),
-                "Metrics history restored from SQLite"
-            );
-        }
+        let history = MetricsHistory::new();
 
         let state = Self {
             start_time: now,
@@ -438,7 +461,6 @@ impl AppState {
             backends: RwLock::new(Vec::new()),
             metrics: RwLock::new(StoredMetrics::default()),
             metrics_history: RwLock::new(history),
-            metrics_store,
             trace_entries: RwLock::new(Vec::new()),
             trace_summary_cache: RwLock::new(None),
             upstream_reconcile_at: RwLock::new(None),
@@ -475,6 +497,7 @@ impl AppState {
             pg_pending_config: parking_lot::RwLock::new(None),
             pg_write_lock: Arc::new(AsyncMutex::new(())),
             pg_health_cache: RwLock::new(None),
+            sse_broadcast: crate::sse::create_broadcast(),
         };
 
         // Initialize PostgreSQL store (async) if configured.
@@ -616,6 +639,10 @@ impl AppState {
             &pool_secrets,
         );
 
+        // Snapshot request logs for PG dual-write (take before releasing lock).
+        let pg_request_logs: Vec<StoredRequestLog> =
+            self.request_logs.read().clone();
+
         // Dual-write to PostgreSQL if available (extract data before moving file).
         let pg_task = if let Some(ref pg) = *self.pg_store.read() {
             let pg = pg.clone();
@@ -698,6 +725,12 @@ impl AppState {
                         .await
                     {
                         tracing::warn!(error = %e, "PG dual-write: save_upstream failed");
+                    }
+                }
+                // Dual-write request logs.
+                if !pg_request_logs.is_empty() {
+                    if let Err(e) = pg.insert_request_logs(&pg_request_logs).await {
+                        tracing::warn!(error = %e, count = pg_request_logs.len(), "PG dual-write: insert_request_logs failed");
                     }
                 }
             });
