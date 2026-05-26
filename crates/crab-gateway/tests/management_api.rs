@@ -16,8 +16,8 @@ use crab_semantic::SemanticGateConfig;
 use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use parking_lot::RwLock as ParkingRwLock;
 use parking_lot::RwLock;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
