@@ -729,6 +729,9 @@ async fn client_key_persisted_in_redis_state() {
     let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let token = created["key_full"].as_str().expect("key_full");
 
+    // schedule_persist_state spawns an async task; give it time to flush to Redis.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
     let (_, snap) = store.load_all().await.expect("load redis state");
     assert!(
         snap.keys.contains_key(token),
