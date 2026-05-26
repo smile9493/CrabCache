@@ -17,7 +17,8 @@ use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use parking_lot::RwLock as ParkingRwLock;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 async fn test_management_state() -> Option<ManagementState> {

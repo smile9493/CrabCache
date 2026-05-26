@@ -3,8 +3,8 @@
 use crab_cache::{FingerprintConfig, TtlConfig};
 use crab_pipeline::{PipelineGlobals, UpstreamProvider};
 use crab_proxy::{ConnectionConfig, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Create a minimal `RuntimeConfig` for integration tests.
@@ -20,7 +20,7 @@ pub fn test_runtime() -> Arc<RuntimeConfig> {
     let upstream_pool =
         UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
-    let mut profiles = HashMap::new();
+    let mut profiles = IndexMap::new();
     profiles.insert(
         "deepseek".to_string(),
         Arc::new(UpstreamProfileRuntime {
