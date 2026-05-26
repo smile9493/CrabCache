@@ -1670,6 +1670,7 @@ impl ProxyHttp for GatewayProxy {
     ) -> Result<()> {
         let status = upstream_response.status.as_u16();
         ctx.upstream.http_status = Some(status);
+        global_metrics().record_http_response(status);
         // #region agent log
         debug_agent_log(
             "UP-SEEN",

@@ -74,6 +74,11 @@ pub struct MetricsCounterSnapshot {
     pub reasoning_store_misses: u64,
     pub stream_cache_sse_omitted: u64,
     pub domain_tokens: HashMap<String, (u64, u64)>,
+    pub upstream_p99_latency_ms: f64,
+    pub ttft_p99_latency_ms: f64,
+    pub cache_fetch_p99_latency_ms: f64,
+    pub http_4xx_total: u64,
+    pub http_5xx_total: u64,
 }
 
 impl MetricsCounterSnapshot {
@@ -578,6 +583,34 @@ pub fn scrape_gateway_counters(body: &str, sampled_at: u64) -> MetricsCounterSna
             &[],
         ),
         domain_tokens: parse_domain_tokens_from_body(body),
+        upstream_p99_latency_ms: percentile_from_buckets(
+            body,
+            "gateway_upstream_latency_seconds",
+            &[],
+            0.99,
+        ),
+        ttft_p99_latency_ms: percentile_from_buckets(
+            body,
+            "gateway_stream_first_token_latency_seconds",
+            &[],
+            0.99,
+        ),
+        cache_fetch_p99_latency_ms: percentile_from_buckets(
+            body,
+            "gateway_cache_fetch_latency_seconds",
+            &[],
+            0.99,
+        ),
+        http_4xx_total: sum_prometheus_counter(
+            body,
+            "gateway_http_responses_total",
+            &[("status_class", "4xx")],
+        ),
+        http_5xx_total: sum_prometheus_counter(
+            body,
+            "gateway_http_responses_total",
+            &[("status_class", "5xx")],
+        ),
     }
 }
 
@@ -1003,7 +1036,6 @@ fn parse_domain_tokens_from_body(body: &str) -> HashMap<String, (u64, u64)> {
 pub async fn sample_metrics_history(
     cache: &GatewayMetricsCache,
     history: &parking_lot::RwLock<MetricsHistory>,
-    store: Option<&crate::metrics_store::MetricsStore>,
     gateway_uptime_secs: u64,
     pg_store: Option<&crate::pg::PgStore>,
 ) -> Result<(), String> {
@@ -1015,24 +1047,17 @@ pub async fn sample_metrics_history(
     let snapshot = scrape_gateway_counters(&body, now);
     history.write().append(snapshot.clone());
 
-    // Write through to SQLite cold store.
-    if let Some(store) = store {
-        store.insert_snapshot(&snapshot, gateway_uptime_secs);
-        let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());
-        store.prune_older_than(cutoff);
-    }
-
-    // Dual-write to PostgreSQL.
+    // Write to PostgreSQL.
     if let Some(pg) = pg_store {
         if let Err(e) = pg
             .insert_metric_snapshot(&snapshot, gateway_uptime_secs)
             .await
         {
-            tracing::warn!(error = %e, "PG dual-write: insert_metric_snapshot failed");
+            tracing::warn!(error = %e, "PG metrics insert_metric_snapshot failed");
         }
-        let cutoff = now.saturating_sub(crate::metrics_store::MetricsStore::retention_secs());
+        let cutoff = now.saturating_sub(30 * 86400); // 30 days retention
         if let Err(e) = pg.prune_metric_snapshots(cutoff).await {
-            tracing::warn!(error = %e, "PG dual-write: prune_metric_snapshots failed");
+            tracing::warn!(error = %e, "PG metrics prune_metric_snapshots failed");
         }
     }
 
@@ -1094,6 +1119,125 @@ pub fn avg_prometheus_histogram_ms(body: &str, metric: &str, required: &[(&str, 
     } else {
         0.0
     }
+}
+
+/// Calculate a percentile from Prometheus histogram `_bucket` lines using linear interpolation.
+///
+/// Parses `{le="..."}` boundaries and corresponding `_bucket` cumulative counts,
+/// then interpolates at the requested percentile (0.0–1.0).  Returns milliseconds.
+pub fn percentile_from_buckets(
+    body: &str,
+    metric_prefix: &str,
+    required: &[(&str, &str)],
+    percentile: f64,
+) -> f64 {
+    let bucket_metric = format!("{metric_prefix}_bucket");
+    let count_metric = format!("{metric_prefix}_count");
+
+    // Collect (le_boundary, cumulative_count) pairs and the total count.
+    let mut buckets: Vec<(f64, f64)> = Vec::new();
+    let mut total_count = 0.0_f64;
+
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse _count line (only for the total, not per-bucket).
+        if line.starts_with(&count_metric) {
+            let value_part = if let Some(open) = line.find('{') {
+                if let Some(close) = line.find('}') {
+                    let labels = &line[open + 1..close];
+                    if !labels_match(labels, required) {
+                        continue;
+                    }
+                    line[close + 1..].trim()
+                } else {
+                    continue;
+                }
+            } else if required.is_empty() {
+                line[count_metric.len()..].trim()
+            } else {
+                continue;
+            };
+            if let Ok(v) = value_part.parse::<f64>() {
+                total_count = v;
+            }
+            continue;
+        }
+
+        // Parse _bucket line.
+        if !line.starts_with(&bucket_metric) {
+            continue;
+        }
+        let Some(open) = line.find('{') else {
+            continue;
+        };
+        let Some(close) = line.find('}') else {
+            continue;
+        };
+        let labels = &line[open + 1..close];
+        if !labels_match(labels, required) {
+            continue;
+        }
+
+        // Extract le="..." value.
+        let le_start = match labels.find("le=\"") {
+            Some(i) => i + 4,
+            None => continue,
+        };
+        let le_end = match labels[le_start..].find('"') {
+            Some(i) => le_start + i,
+            None => continue,
+        };
+        let le_str = &labels[le_start..le_end];
+        let le = if le_str == "+Inf" {
+            f64::INFINITY
+        } else {
+            match le_str.parse::<f64>() {
+                Ok(v) => v,
+                Err(_) => continue,
+            }
+        };
+
+        let value_part = line[close + 1..].trim();
+        if let Ok(v) = value_part.parse::<f64>() {
+            buckets.push((le, v));
+        }
+    }
+
+    if buckets.is_empty() || total_count <= 0.0 {
+        return 0.0;
+    }
+
+    // Sort by boundary ascending.
+    buckets.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let target = total_count * percentile;
+    let mut prev_count = 0.0_f64;
+    for &(le, count) in &buckets {
+        if count >= target {
+            // Interpolate within this bucket.
+            let prev_le = buckets
+                .iter()
+                .filter(|(l, _)| *l < le)
+                .map(|(l, _)| *l)
+                .last()
+                .unwrap_or(0.0);
+            let bucket_range = le - prev_le;
+            let bucket_count = count - prev_count;
+            let fraction = if bucket_count > 0.0 {
+                (target - prev_count) / bucket_count
+            } else {
+                0.0
+            };
+            return (prev_le + bucket_range * fraction) * 1000.0; // seconds → ms
+        }
+        prev_count = count;
+    }
+
+    0.0
 }
 
 fn sum_prometheus_sample(body: &str, metric: &str, required: &[(&str, &str)]) -> f64 {

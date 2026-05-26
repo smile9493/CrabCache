@@ -484,6 +484,21 @@ body {
 .trend.up { color: var(--cc-success); }
 .metric-card-trend.trend-down,
 .trend.down { color: var(--cc-error); }
+.trend-neutral { color: var(--cc-text-muted); }
+
+.tooltip-wrapper { position: relative; display: inline-block; }
+.tooltip-wrapper .tooltip-content {
+  visibility: hidden; opacity: 0;
+  position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+  padding: 4px 8px; border-radius: 4px; font-size: 0.75rem;
+  background: var(--cc-bg-elevated, var(--cc-bg-card)); color: var(--cc-text);
+  border: 1px solid var(--cc-border);
+  white-space: nowrap; z-index: 50;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.tooltip-wrapper:hover .tooltip-content { visibility: visible; opacity: 1; }
+.metric-card-footer { display: flex; align-items: baseline; justify-content: space-between; margin-top: 0.25rem; }
 
 .brand-gradient-text {
   background: var(--cc-brand-gradient);
@@ -1066,6 +1081,28 @@ body {
 .line-chart-legend-item  { display: inline-flex; align-items: center; gap: 0.35rem; }
 .line-chart-legend-swatch { width: 0.65rem; height: 0.65rem; border-radius: 2px; }
 
+/* Chart Tooltip */
+.chart-tooltip {
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.625rem;
+  box-shadow: 0 4px 12px var(--cc-shadow);
+  min-width: 140px;
+  max-width: 240px;
+  backdrop-filter: blur(8px);
+  animation: tooltip-fade-in 0.12s ease-out;
+}
+@keyframes tooltip-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.chart-tooltip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ==============================================================
    UPSTREAM PAGE
    ============================================================== */
@@ -1231,12 +1268,93 @@ body {
 }
 
 /* ==============================================================
+   LOADING ANIMATIONS
+   ============================================================== */
+
+@keyframes loading-bar {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-spin-slow {
+  animation: spin 2s linear infinite;
+}
+
+/* ==============================================================
+   SKELETON LOADING
+   ============================================================== */
+
+.skeleton-block {
+  background: var(--cc-bg-elevated);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+.skeleton-block:empty::before { content: "\200b"; }
+.skeleton-block-rounded { border-radius: var(--radius-sm); }
+
+.skeleton-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ==============================================================
+   DONUT CHART
+   ============================================================== */
+
+.donut-chart-container { padding: 0.5rem 0; }
+.donut-chart-svg { display: block; }
+.donut-chart-center-label {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==============================================================
+   SPARKLINE
+   ============================================================== */
+
+.sparkline-svg { display: block; opacity: 0.7; }
+
+/* ==============================================================
+   WATERFALL CHART
+   ============================================================== */
+
+.waterfall-chart { padding: 0.25rem 0; }
+
+/* ==============================================================
    RESPONSIVE
    ============================================================== */
 
 @media (max-width: 768px) {
   .page-content { padding: 20px 16px 32px; }
   .topnav { padding: 0 1rem; }
+  .bento-grid { grid-template-columns: 1fr 1fr !important; }
+  .bento-cell-hero { grid-column: 1 / -1 !important; }
+}
+
+@media (max-width: 480px) {
+  .bento-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Mobile visibility utilities */
+.mobile-only  { display: none !important; }
+.desktop-only { display: block; }
+
+@media (max-width: 640px) {
+  .mobile-only  { display: block !important; }
+  .desktop-only { display: none !important; }
+  .mobile-kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  .mobile-kpi-grid .metric-card-value {
+    font-size: 2.25rem;
+  }
+  .mobile-kpi-grid .metric-card {
+    padding: 1.5rem 1.75rem;
+  }
 }
 
 /* Respect user preference */

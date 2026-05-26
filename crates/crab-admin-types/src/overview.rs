@@ -19,6 +19,10 @@ pub struct GatewayHealth {
     pub upstream_keys_available: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default)]
+    pub redis_connected: bool,
+    #[serde(default)]
+    pub qdrant_connected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -134,6 +138,22 @@ pub struct MetricsSnapshot {
     pub history_meta: MetricsHistoryMeta,
     #[serde(default)]
     pub tier_deltas_5m: TierDeltas5m,
+    #[serde(default)]
+    pub latency_upstream_p99_ms: f64,
+    #[serde(default)]
+    pub latency_ttft_p99_ms: f64,
+    #[serde(default)]
+    pub latency_cache_fetch_p99_ms: f64,
+    #[serde(default)]
+    pub error_rate_5m: f64,
+    #[serde(default)]
+    pub http_4xx_5m: u64,
+    #[serde(default)]
+    pub http_5xx_5m: u64,
+    #[serde(default)]
+    pub qps_prev_1h: f64,
+    #[serde(default)]
+    pub hit_rate_prev_1h: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,6 +209,22 @@ pub struct MetricsSnapshotCore {
     pub history_meta: MetricsHistoryMeta,
     #[serde(default)]
     pub tier_deltas_5m: TierDeltas5m,
+    #[serde(default)]
+    pub latency_upstream_p99_ms: f64,
+    #[serde(default)]
+    pub latency_ttft_p99_ms: f64,
+    #[serde(default)]
+    pub latency_cache_fetch_p99_ms: f64,
+    #[serde(default)]
+    pub error_rate_5m: f64,
+    #[serde(default)]
+    pub http_4xx_5m: u64,
+    #[serde(default)]
+    pub http_5xx_5m: u64,
+    #[serde(default)]
+    pub qps_prev_1h: f64,
+    #[serde(default)]
+    pub hit_rate_prev_1h: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -309,6 +345,14 @@ mod tests {
                 metrics_sample_insufficient: false,
                 history_meta: MetricsHistoryMeta::default(),
                 tier_deltas_5m: TierDeltas5m::default(),
+                latency_upstream_p99_ms: 0.0,
+                latency_ttft_p99_ms: 0.0,
+                latency_cache_fetch_p99_ms: 0.0,
+                error_rate_5m: 0.0,
+                http_4xx_5m: 0,
+                http_5xx_5m: 0,
+                qps_prev_1h: 0.0,
+                hit_rate_prev_1h: 0.0,
             },
             health: GatewayHealth::default(),
             prefix_cache: PrefixCacheMetricsSnapshot {

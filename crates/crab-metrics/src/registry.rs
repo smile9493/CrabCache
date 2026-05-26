@@ -80,6 +80,7 @@ pub struct GatewayMetrics {
     pub composition_tool_count: HistogramVec,
     pub deepseek_user_id_concurrency_rejected: IntCounterVec,
     pub deepseek_user_id_inflight: IntGaugeVec,
+    pub http_responses: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -324,6 +325,14 @@ impl GatewayMetrics {
             &["tier"],
         )?;
 
+        let http_responses = IntCounterVec::new(
+            Opts::new(
+                "gateway_http_responses_total",
+                "Total HTTP responses by status class",
+            ),
+            &["status_class"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -356,6 +365,7 @@ impl GatewayMetrics {
             composition_tool_count,
             deepseek_user_id_concurrency_rejected,
             deepseek_user_id_inflight,
+            http_responses,
         })
     }
 
@@ -391,6 +401,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.composition_tool_count.clone()))?;
         registry.register(Box::new(self.deepseek_user_id_concurrency_rejected.clone()))?;
         registry.register(Box::new(self.deepseek_user_id_inflight.clone()))?;
+        registry.register(Box::new(self.http_responses.clone()))?;
         Ok(())
     }
 
@@ -410,6 +421,16 @@ impl GatewayMetrics {
         self.pipeline_selected
             .with_label_values(&[pipeline, profile, reason])
             .inc();
+    }
+
+    pub fn record_http_response(&self, status: u16) {
+        let class = match status / 100 {
+            2 => "2xx",
+            3 => "3xx",
+            4 => "4xx",
+            _ => "5xx",
+        };
+        self.http_responses.with_label_values(&[class]).inc();
     }
 
     pub fn record_composition_metrics(&self, comp: &crab_composition::RequestComposition) {

@@ -1,9 +1,12 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
 
+use crate::anomaly::detect_and_toast;
 use crate::api;
 use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
+use crate::components::skeleton::SkeletonOverview;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
@@ -12,6 +15,7 @@ use crate::types::{
     GatewayHealth, MetricsSnapshot, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics,
     OverviewSuggestion, PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
 };
+use crate::view_state;
 
 fn metrics_from_core(
     core: &MetricsSnapshotCore,
@@ -62,26 +66,110 @@ fn metrics_from_core(
         metrics_sample_insufficient: core.metrics_sample_insufficient,
         history_meta: core.history_meta.clone(),
         tier_deltas_5m: core.tier_deltas_5m,
+        latency_upstream_p99_ms: core.latency_upstream_p99_ms,
+        latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
+        error_rate_5m: core.error_rate_5m,
+        http_4xx_5m: core.http_4xx_5m,
+        http_5xx_5m: core.http_5xx_5m,
+        qps_prev_1h: core.qps_prev_1h,
+        hit_rate_prev_1h: core.hit_rate_prev_1h,
     }
 }
 
 #[component]
 pub fn OverviewPage() -> impl IntoView {
     let t = use_translations();
+    let vs = view_state::load_view_state();
     let overview_core: RwSignal<Option<Result<OverviewCore, String>>> = RwSignal::new(None);
     let trace_summary: RwSignal<Option<TraceSummary>> = RwSignal::new(None);
     let ts_points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
-    let ts_window = RwSignal::new("1h".to_string());
-    let auto_refresh = RwSignal::new(true);
+    let ts_window = RwSignal::new(vs.ts_window.clone().unwrap_or_else(|| "1h".to_string()));
+    let auto_refresh = RwSignal::new(vs.auto_refresh.unwrap_or(true));
     let last_update = RwSignal::new(String::new());
+    let is_loading = RwSignal::new(false);
+    let last_update_ts = RwSignal::new(0u64);
     let load_generation = RwSignal::new(0u64);
     let ts_generation = RwSignal::new(0u64);
     let etag = RwSignal::new(String::new());
+
+    // SSE connection — receives pushed metrics, reducing polling overhead.
+    let sse_active = RwSignal::new(false);
+    {
+        let overview_core = overview_core;
+        let last_update = last_update;
+        let last_update_ts = last_update_ts;
+        let sse_active = sse_active;
+        leptos::task::spawn_local(async move {
+            use futures::StreamExt;
+            loop {
+                let es = match api::connect_sse() {
+                    Ok(es) => es,
+                    Err(_) => {
+                        sse_active.set(false);
+                        gloo_timers::future::TimeoutFuture::new(5_000).await;
+                        continue;
+                    }
+                };
+                sse_active.set(true);
+
+                // Bridge EventSource callbacks to an async channel
+                let (tx, mut rx) = futures::channel::mpsc::unbounded::<String>();
+                let tx_onmessage = tx.clone();
+                let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
+                    move |ev: web_sys::MessageEvent| {
+                        if let Some(data) = ev.data().as_string() {
+                            let _ = tx_onmessage.unbounded_send(data);
+                        }
+                    },
+                )
+                    as Box<dyn FnMut(web_sys::MessageEvent)>);
+                es.set_onmessage(Some(closure.as_ref().unchecked_ref()));
+                closure.forget();
+
+                // On error, drop sender to end the rx loop
+                let tx_err = tx.clone();
+                let error_closure = wasm_bindgen::closure::Closure::wrap(Box::new(
+                    move |_: web_sys::Event| {
+                        drop(tx_err.clone());
+                    },
+                )
+                    as Box<dyn FnMut(web_sys::Event)>);
+                es.set_onerror(Some(error_closure.as_ref().unchecked_ref()));
+                error_closure.forget();
+
+                // Process incoming messages
+                while let Some(data) = rx.next().await {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                        if parsed.get("type").and_then(|t| t.as_str()) == Some("metrics") {
+                            if let Some(metrics_data) = parsed.get("data") {
+                                if let Ok(core) =
+                                    serde_json::from_value::<OverviewCore>(metrics_data.clone())
+                                {
+                                    detect_and_toast(&core);
+                                    overview_core.set(Some(Ok(core)));
+                                    last_update
+                                        .set(chrono::Local::now().format("%H:%M:%S").to_string());
+                                    last_update_ts.set(js_sys::Date::now() as u64);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Connection lost — retry after delay
+                sse_active.set(false);
+                es.close();
+                gloo_timers::future::TimeoutFuture::new(3_000).await;
+            }
+        });
+    }
 
     let load_core = move || {
         load_generation.update(|g| *g += 1);
         let request_id = load_generation.get();
         let current_etag = etag.get();
+        is_loading.set(true);
         leptos::task::spawn_local(async move {
             match api::fetch_overview_core(&current_etag).await {
                 Ok(result) => {
@@ -89,8 +177,10 @@ pub fn OverviewPage() -> impl IntoView {
                     if load_generation.get() == request_id
                         && let Some(core) = result.core
                     {
+                        detect_and_toast(&core);
                         overview_core.set(Some(Ok(core)));
                         last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                        last_update_ts.set(js_sys::Date::now() as u64);
                     }
                 }
                 Err(e) => {
@@ -99,6 +189,7 @@ pub fn OverviewPage() -> impl IntoView {
                     }
                 }
             }
+            is_loading.set(false);
         });
     };
 
@@ -153,16 +244,61 @@ pub fn OverviewPage() -> impl IntoView {
         }
     });
 
+    // Persist view state on change
+    Effect::new(move |_| {
+        let w = ts_window.get();
+        let ar = auto_refresh.get();
+        let mut state = view_state::load_view_state();
+        state.ts_window = Some(w);
+        state.auto_refresh = Some(ar);
+        view_state::save_view_state(&state);
+    });
+
     leptos::task::spawn_local(async move {
         loop {
             TimeoutFuture::new(10_000).await;
-            if auto_refresh.get() && page_visible() {
+            // Skip polling when SSE is actively pushing updates
+            if auto_refresh.get() && page_visible() && !sse_active.get() {
                 load_core();
             }
         }
     });
 
+    // Relative time updater
+    let relative_time = RwSignal::new(String::new());
+    leptos::task::spawn_local(async move {
+        loop {
+            TimeoutFuture::new(1_000).await;
+            let ts = last_update_ts.get();
+            if ts > 0 {
+                let now = js_sys::Date::now() as u64;
+                let elapsed_ms = now.saturating_sub(ts);
+                let text = if elapsed_ms < 1000 {
+                    "just now".to_string()
+                } else if elapsed_ms < 60_000 {
+                    format!("{}s ago", elapsed_ms / 1000)
+                } else if elapsed_ms < 3_600_000 {
+                    format!("{}m ago", elapsed_ms / 60_000)
+                } else {
+                    format!("{}h ago", elapsed_ms / 3_600_000)
+                };
+                relative_time.set(text);
+            }
+        }
+    });
+
     view! {
+        // Progress bar at top
+        <div class="fixed top-0 left-0 right-0 z-50 h-0.5 bg-transparent"
+            style:opacity=move || if is_loading.get() { "1" } else { "0" }
+            style:transition="opacity 0.3s"
+        >
+            <div class="h-full bg-accent animate-pulse"
+                style:width="100%"
+                style:animation="loading-bar 1.5s ease-in-out infinite"
+            ></div>
+        </div>
+
         <div class="page-content space-y-6">
             <PageHeader
                 title=move || t.overview_title()
@@ -170,7 +306,14 @@ pub fn OverviewPage() -> impl IntoView {
             >
                 <div class="flex items-center gap-3 flex-wrap justify-end">
                     <span class="text-xs text-theme-muted">
-                        {move || format!("{}: {}", t.overview_last_update(), last_update.get())}
+                        {move || {
+                            let rt = relative_time.get();
+                            if rt.is_empty() {
+                                format!("{}: {}", t.overview_last_update(), last_update.get())
+                            } else {
+                                format!("{}: {}", t.overview_last_update(), rt)
+                            }
+                        }}
                     </span>
                     <label class="flex items-center gap-2 text-xs text-theme-secondary">
                         <input
@@ -187,7 +330,13 @@ pub fn OverviewPage() -> impl IntoView {
                             load_trace();
                             load_timeseries();
                         }
-                        class="btn btn-secondary text-xs"
+                        class=move || {
+                            if is_loading.get() {
+                                "btn btn-secondary text-xs animate-spin-slow"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
                     >
                         {t.overview_refresh()}
                     </button>
@@ -195,7 +344,7 @@ pub fn OverviewPage() -> impl IntoView {
             </PageHeader>
 
             {move || match overview_core.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <SkeletonOverview /> }.into_any(),
                 Some(Err(e)) => {
                     let t = use_translations();
                     let hint = overview_error_hint(&e, &t);
@@ -290,6 +439,9 @@ fn OverviewContent(
         })
     });
 
+    let active_tab = RwSignal::new(0usize);
+    init_tab_from_query(active_tab, &[("status", 0), ("analytics", 1)]);
+
     view! {
         <div class="space-y-6">
             {move || show_cta.get().then(|| view! {
@@ -300,72 +452,119 @@ fn OverviewContent(
                     </a>
                 </div>
             })}
-            <MetricsLegend />
-            {move || health_memo.get().map(|h| view! { <OverviewHealthStrip health=h /> })}
-            {move || metrics_memo.get().map(|m| view! {
-                <HistoryMetaHint metrics=m.clone() />
-            })}
-            {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
-                <MetricsBento metrics=m.clone() suggestions=s.clone() />
-            })}
-            {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
-                <TraceCompareBanner trace=tr metrics=m.clone() />
-            })}
-            {move || ops_memo.get().map(|ops| view! {
-                <OpsMetricsRow ops=ops.clone() />
-            })}
-            {move || prefix_memo.get().zip(metrics_memo.get()).map(|(pref, _m)| view! {
-                <PrefixCacheCard prefix=pref.clone() />
-            })}
-            {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
-                <TokenStats metrics=m.clone() prefix=pref.clone() />
-            })}
-            {move || suggestions_memo.get().map(|s| {
+
+            // Mobile-only: condensed KPI summary (always visible on small screens)
+            <div class="mobile-only">
+                {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
+                {move || metrics_memo.get().map(|m| {
+                    let qps_val = Signal::derive(move || format!("{:.1}", m.qps_5m));
+                    let hit_val = Signal::derive(move || format!("{:.1}%", m.hit_rate_5m * 100.0));
+                    let cost_val = Signal::derive(move || format!("${:.2}", 0.0f64)); // placeholder
+                    view! {
+                        <div class="mobile-kpi-grid">
+                            <MetricCard title=t.overview_hit_rate() value=hit_val subtitle="5m window" />
+                            <MetricCard title=Translations::overview_qps() value=qps_val subtitle="5m avg" />
+                        </div>
+                    }
+                })}
+            </div>
+
+            // Desktop: full tabbed view
+            <div class="desktop-only">
+            <TabBar
+                tabs=vec![t.overview_tab_status().to_string(), t.overview_tab_analytics().to_string()]
+                active=active_tab
+            />
+            </div>
+
+            // === STATUS TAB (index 0) — desktop only ===
+            <div class="desktop-only">
+            {move || if active_tab.get() == 0 {
                 view! {
-                    <TimeSeriesChart
-                        points=ts_points
-                        selected_view=ts_window
-                        suggestions=s
-                    />
-                }
-            })}
-            {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                <div class="bento-grid-2">
-                    <CoalescingCard metrics=m.clone() ops=ops.clone() />
-                    <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
-                </div>
-            })}
-            {move || metrics_memo.get().map(|m| view! {
-                <ConsumerHitTable metrics=m.clone() />
-            })}
-            {move || metrics_memo.get().map(|m| {
-                let cb = Callback::new(move |domain: String| {
-                    selected_domain.set(Some(domain));
-                });
+                    <div class="space-y-6">
+                        <MetricsLegend />
+                        {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
+                        {move || metrics_memo.get().map(|m| view! {
+                            <HistoryMetaHint metrics=m.clone() />
+                        })}
+                        {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
+                            <MetricsBento metrics=m.clone() suggestions=s.clone() />
+                        })}
+                        {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
+                            <TraceCompareBanner trace=tr metrics=m.clone() />
+                        })}
+                        {move || ops_memo.get().map(|ops| view! {
+                            <OpsMetricsRow ops=ops.clone() />
+                        })}
+                    </div>
+                }.into_any()
+            } else {
+                ().into_any()
+            }}
+
+            // === ANALYTICS TAB (index 1) ===
+            {move || if active_tab.get() == 1 {
                 view! {
-                    <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
-                }
-            })}
-            <crate::pages::domains::DomainDetailDrawer domain=selected_domain />
-            {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                <div class="bento-grid-3">
-                    <div class="bento-cell">
-                        <CacheHitSection metrics=m.clone() />
+                    <div class="space-y-6">
+                        {move || suggestions_memo.get().map(|s| {
+                            view! {
+                                <TimeSeriesChart
+                                    points=ts_points
+                                    selected_view=ts_window
+                                    suggestions=s
+                                />
+                            }
+                        })}
+                        {move || prefix_memo.get().zip(metrics_memo.get()).map(|(pref, _m)| view! {
+                            <PrefixCacheCard prefix=pref.clone() />
+                        })}
+                        {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
+                            <TokenStats metrics=m.clone() prefix=pref.clone() />
+                        })}
+                        {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                            <div class="bento-grid-2">
+                                <CoalescingCard metrics=m.clone() ops=ops.clone() />
+                                <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
+                            </div>
+                        })}
+                        {move || metrics_memo.get().map(|m| view! {
+                            <ConsumerHitTable metrics=m.clone() />
+                        })}
+                        {move || metrics_memo.get().map(|m| {
+                            let cb = Callback::new(move |domain: String| {
+                                selected_domain.set(Some(domain));
+                            });
+                            view! {
+                                <crate::pages::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
+                            }
+                        })}
+                        <crate::pages::domains::DomainDetailDrawer domain=selected_domain />
+                        {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                            <div class="bento-grid-3">
+                                <div class="bento-cell">
+                                    <CacheHitSection metrics=m.clone() />
+                                </div>
+                                <div class="bento-cell">
+                                    <CostSavingsSection ops=ops.clone() />
+                                </div>
+                                <div class="bento-cell">
+                                    <LatencySection metrics=m.clone() />
+                                </div>
+                            </div>
+                        })}
+                        {move || ops_memo.get().map(|ops| view! {
+                            <div class="bento-grid-2">
+                                <UpstreamKeyStrip ops=ops.clone() />
+                                <PrefixHealthCard ops=ops.clone() />
+                            </div>
+                        })}
                     </div>
-                    <div class="bento-cell">
-                        <CostSavingsSection ops=ops.clone() />
-                    </div>
-                    <div class="bento-cell">
-                        <LatencySection metrics=m.clone() />
-                    </div>
-                </div>
-            })}
-            {move || ops_memo.get().map(|ops| view! {
-                <div class="bento-grid-2">
-                    <UpstreamKeyStrip ops=ops.clone() />
-                    <PrefixHealthCard ops=ops.clone() />
-                </div>
-            })}
+                }.into_any()
+            } else {
+                ().into_any()
+            }}
+            </div> // end desktop-only
+
             <ObservabilityFooter />
         </div>
     }
@@ -419,7 +618,7 @@ fn MetricsLegend() -> impl IntoView {
 }
 
 #[component]
-fn OverviewHealthStrip(health: GatewayHealth) -> impl IntoView {
+fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoView {
     let t = use_translations();
     let healthy = health.healthy;
     let stream_on = health.stream_cache_enabled;
@@ -444,6 +643,18 @@ fn OverviewHealthStrip(health: GatewayHealth) -> impl IntoView {
                     {if stream_on { "on" } else { "off" }}
                 </span>
             </span>
+            {move || {
+                if error_rate > 0.001 {
+                    view! {
+                        <span class="flex items-center gap-1.5 text-error">
+                            <span class="w-2 h-2 rounded-full bg-error"></span>
+                            <span class="font-mono text-xs">{format!("err: {:.1}%", error_rate * 100.0)}</span>
+                        </span>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
             {err_msg.map(|e| {
                 let tip = e.clone();
                 view! {
@@ -633,6 +844,18 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
     let token_hit_5m = metrics.token_hit_rate_5m * 100.0;
     let insufficient = metrics.metrics_sample_insufficient;
 
+    // Trend calculations vs 1h ago
+    let qps_trend = if metrics.qps_prev_1h > 0.01 {
+        (metrics.qps_5m - metrics.qps_prev_1h) / metrics.qps_prev_1h * 100.0
+    } else {
+        0.0
+    };
+    let hit_rate_trend = if metrics.hit_rate_prev_1h > 0.001 {
+        (metrics.hit_rate_5m - metrics.hit_rate_prev_1h) / metrics.hit_rate_prev_1h * 100.0
+    } else {
+        0.0
+    };
+
     view! {
         <div class="bento-grid">
             <div class="bento-cell-hero">
@@ -640,8 +863,18 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
                     <div class="flex items-start justify-between mb-4">
                         <div>
                             <div class="metric-card-label">{t.overview_qps_5m()}</div>
-                            <div class="metric-card-value">
-                                {format!("{:.2}", metrics.qps_5m)}
+                            <div class="flex items-baseline gap-2">
+                                <div class="metric-card-value">
+                                    {format!("{:.2}", metrics.qps_5m)}
+                                </div>
+                                {move || {
+                                    if qps_trend.abs() > 0.1 {
+                                        let cls = if qps_trend > 0.0 { "metric-card-trend trend-up" } else { "metric-card-trend trend-down" };
+                                        view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }
+                                }}
                             </div>
                             <div class="text-xs text-theme-muted mt-1">
                                 {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
@@ -652,11 +885,21 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
                     <div class="grid grid-cols-2 gap-4 mt-auto">
                         <div>
                             <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate_5m()}</div>
-                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
-                                {if insufficient {
-                                    "—".to_string()
-                                } else {
-                                    format!("{hit_rate_5m:.1}%")
+                            <div class="flex items-baseline gap-1.5">
+                                <div class="text-lg font-mono tabular-nums text-accent font-semibold">
+                                    {if insufficient {
+                                        "—".to_string()
+                                    } else {
+                                        format!("{hit_rate_5m:.1}%")
+                                    }}
+                                </div>
+                                {move || {
+                                    if !insufficient && hit_rate_trend.abs() > 0.01 {
+                                        let cls = if hit_rate_trend > 0.0 { "metric-card-trend trend-up" } else { "metric-card-trend trend-down" };
+                                        view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }
                                 }}
                             </div>
                             <div class="text-xs text-theme-muted mt-0.5">
@@ -712,9 +955,11 @@ fn MetricsBento(metrics: MetricsSnapshot, suggestions: Vec<OverviewSuggestion>) 
                     <div class="mt-3 pt-3 border-t border-theme space-y-1">
                         <div class="flex justify-between text-xs">
                             <span class="text-theme-muted">{t.overview_cache_hits()}</span>
-                            <span class="font-mono tabular-nums text-accent">
-                                {format!("{}", total_hits)}
-                            </span>
+                            <Tooltip text=Signal::derive(move || format!("{total_hits}"))>
+                                <span class="font-mono tabular-nums text-accent">
+                                    {format_number(total_hits)}
+                                </span>
+                            </Tooltip>
                         </div>
                         <div class="flex justify-between text-xs text-theme-muted" title=t.overview_semantic_hint()>
                             <span>{t.overview_semantic_guard()}</span>
@@ -850,12 +1095,14 @@ fn TimeSeriesChart(
                 color: "var(--accent-primary)",
                 values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
                 dashed: false,
+                fill: true,
             },
             ChartSeries {
                 label: t.overview_requests().to_string(),
                 color: "var(--info)",
                 values: points.iter().map(|p| Some(p.requests as f64)).collect(),
                 dashed: false,
+                fill: false,
             },
         ]
     });
@@ -1006,46 +1253,120 @@ fn SemanticCacheCard(metrics: MetricsSnapshot, semantic: SemanticConfig) -> impl
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsumerSortField {
+    Consumer,
+    HitTokens,
+    MissTokens,
+    Ratio,
+}
+
 #[component]
 fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
-    let buckets = metrics.consumer_buckets.clone();
+    let sort_by = RwSignal::new(ConsumerSortField::HitTokens);
+    let sort_desc = RwSignal::new(true);
+
+    let sorted_buckets = Memo::new(move |_| {
+        let mut buckets = metrics.consumer_buckets.clone();
+        let desc = sort_desc.get();
+        match sort_by.get() {
+            ConsumerSortField::Consumer => {
+                buckets.sort_by(|a, b| {
+                    let ord = a.consumer.cmp(&b.consumer);
+                    if desc { ord.reverse() } else { ord }
+                });
+            }
+            ConsumerSortField::HitTokens => {
+                buckets.sort_by(|a, b| {
+                    let ord = a.hit_tokens.cmp(&b.hit_tokens);
+                    if desc { ord.reverse() } else { ord }
+                });
+            }
+            ConsumerSortField::MissTokens => {
+                buckets.sort_by(|a, b| {
+                    let ord = a.miss_tokens.cmp(&b.miss_tokens);
+                    if desc { ord.reverse() } else { ord }
+                });
+            }
+            ConsumerSortField::Ratio => {
+                buckets.sort_by(|a, b| {
+                    let ord = a.hit_ratio.partial_cmp(&b.hit_ratio).unwrap_or(std::cmp::Ordering::Equal);
+                    if desc { ord.reverse() } else { ord }
+                });
+            }
+        }
+        buckets
+    });
+
+    let sort_icon = move |field: ConsumerSortField| {
+        move || {
+            if sort_by.get() == field {
+                if sort_desc.get() { " ▼" } else { " ▲" }
+            } else {
+                ""
+            }
+        }
+    };
+
+    let toggle_sort = move |field: ConsumerSortField| {
+        move |_| {
+            if sort_by.get() == field {
+                sort_desc.update(|d| *d = !*d);
+            } else {
+                sort_by.set(field);
+                sort_desc.set(true);
+            }
+        }
+    };
+
     view! {
         <div class="glass-card">
             <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_consumer_table_title()}</h3>
-            {if buckets.is_empty() {
-                view! {
-                    <p class="text-sm text-theme-muted">{t.overview_no_data()}</p>
-                }.into_any()
-            } else {
-                view! {
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                            <thead>
-                                <tr class="text-left text-xs text-theme-muted border-b border-theme">
-                                    <th class="pb-2 pr-4">{t.overview_consumer_col()}</th>
-                                    <th class="pb-2 pr-4">"hit tokens"</th>
-                                    <th class="pb-2 pr-4">"miss tokens"</th>
-                                    <th class="pb-2">"ratio"</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {buckets.into_iter().map(|b| {
-                                    view! {
-                                        <tr class="border-b border-theme/50">
-                                            <td class="py-2 pr-4 font-mono text-theme">{b.consumer}</td>
-                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.hit_tokens)}</td>
-                                            <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.miss_tokens)}</td>
-                                            <td class="py-2 font-mono tabular-nums text-accent">
-                                                {format!("{:.1}%", b.hit_ratio * 100.0)}
-                                            </td>
-                                        </tr>
-                                    }
-                                }).collect::<Vec<_>>()}
-                            </tbody>
-                        </table>
-                    </div>
-                }.into_any()
+            {move || {
+                let buckets = sorted_buckets.get();
+                if buckets.is_empty() {
+                    view! {
+                        <p class="text-sm text-theme-muted">{t.overview_no_data()}</p>
+                    }.into_any()
+                } else {
+                    view! {
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-left text-xs text-theme-muted border-b border-theme">
+                                        <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::Consumer)>
+                                            {t.overview_consumer_col()}<span class="text-accent">{sort_icon(ConsumerSortField::Consumer)}</span>
+                                        </th>
+                                        <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::HitTokens)>
+                                            "hit tokens"<span class="text-accent">{sort_icon(ConsumerSortField::HitTokens)}</span>
+                                        </th>
+                                        <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::MissTokens)>
+                                            "miss tokens"<span class="text-accent">{sort_icon(ConsumerSortField::MissTokens)}</span>
+                                        </th>
+                                        <th class="pb-2 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::Ratio)>
+                                            "ratio"<span class="text-accent">{sort_icon(ConsumerSortField::Ratio)}</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {buckets.into_iter().map(|b| {
+                                        view! {
+                                            <tr class="border-b border-theme/50">
+                                                <td class="py-2 pr-4 font-mono text-theme">{b.consumer}</td>
+                                                <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.hit_tokens)}</td>
+                                                <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.miss_tokens)}</td>
+                                                <td class="py-2 font-mono tabular-nums text-accent">
+                                                    {format!("{:.1}%", b.hit_ratio * 100.0)}
+                                                </td>
+                                            </tr>
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </tbody>
+                            </table>
+                        </div>
+                    }.into_any()
+                }
             }}
         </div>
     }
@@ -1056,29 +1377,41 @@ fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let d = metrics.tier_deltas_5m;
     let total = (d.l0 + d.l1 + d.l2 + d.miss).max(1) as f64;
+    let hit_rate = (d.l0 + d.l1 + d.l2) as f64 / total * 100.0;
 
-    let l0 = RwSignal::new(d.l0 as f64);
-    let l1 = RwSignal::new(d.l1 as f64);
-    let l2 = RwSignal::new(d.l2 as f64);
-    let miss = RwSignal::new(d.miss as f64);
-
-    let hit_rate = RwSignal::new((d.l0 + d.l1 + d.l2) as f64 / total * 100.0);
+    let segments = vec![
+        crate::components::donut_chart::DonutSegment {
+            label: crate::locale::Translations::overview_l0_label().to_string(),
+            value: d.l0 as f64,
+            color: "var(--cc-accent)",
+        },
+        crate::components::donut_chart::DonutSegment {
+            label: crate::locale::Translations::overview_l1_label().to_string(),
+            value: d.l1 as f64,
+            color: "var(--cc-info)",
+        },
+        crate::components::donut_chart::DonutSegment {
+            label: crate::locale::Translations::overview_l2_label().to_string(),
+            value: d.l2 as f64,
+            color: "var(--cc-warning)",
+        },
+        crate::components::donut_chart::DonutSegment {
+            label: t.overview_miss_label().to_string(),
+            value: d.miss as f64,
+            color: "var(--cc-error-muted)",
+        },
+    ];
 
     view! {
         <div class="glass-card h-full">
             <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_gateway_cache_title()}</h3>
             <p class="text-xs text-theme-muted mb-4">{t.overview_tier_5m_hint()}</p>
-            <div class="space-y-3">
-                <ProgressBar label=crate::locale::Translations::overview_l0_label() value=l0.into() max=total />
-                <ProgressBar label=crate::locale::Translations::overview_l1_label() value=l1.into() max=total />
-                <ProgressBar label=crate::locale::Translations::overview_l2_label() value=l2.into() max=total />
-                <ProgressBar label=t.overview_miss_label() value=miss.into() max=total />
-            </div>
-            <div class="mt-4 pt-3 border-t border-theme flex justify-between text-sm">
-                <span class="text-theme-secondary">{t.overview_hit_rate()}</span>
-                <span class="font-mono tabular-nums text-accent font-semibold">
-                    {move || format!("{:.1}%", hit_rate.get())}
-                </span>
+            <div class="flex justify-center">
+                <crate::components::donut_chart::DonutChart
+                    segments=segments
+                    center_label=format!("{:.1}%", hit_rate)
+                    size=160
+                />
             </div>
         </div>
     }
@@ -1197,46 +1530,78 @@ fn ObservabilityFooter() -> impl IntoView {
 #[component]
 fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
-    let stages: Vec<(&str, f64)> = vec![
+    // (label, avg_ms, p99_ms)
+    let stages: Vec<(&str, f64, f64)> = vec![
         (
             crate::locale::Translations::overview_latency_l0(),
             metrics.latency_l0_ms,
+            0.0,
         ),
         (
             crate::locale::Translations::overview_latency_l1(),
             metrics.latency_l1_ms,
+            0.0,
         ),
         (
             crate::locale::Translations::overview_latency_l2(),
             metrics.latency_l2_ms,
+            0.0,
         ),
-        (t.overview_latency_upstream(), metrics.latency_upstream_ms),
+        (
+            t.overview_latency_upstream(),
+            metrics.latency_upstream_ms,
+            metrics.latency_upstream_p99_ms,
+        ),
     ];
 
     let max_latency = stages
         .iter()
-        .map(|&(_, v)| v)
+        .map(|&(_, avg, p99)| avg.max(p99))
         .fold(0.0f64, f64::max)
         .max(1.0);
+
+    // SLO thresholds (ms)
+    let upstream_slo = 2000.0_f64;
 
     view! {
         <div class="glass-card h-full">
             <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_latency_title()}</h3>
             <div class="space-y-3">
-                {stages.into_iter().map(|(label, value)| {
-                    let pct = value / max_latency * 100.0;
+                {stages.into_iter().map(|(label, avg, p99)| {
+                    let pct = avg / max_latency * 100.0;
+                    let over_slo = label == t.overview_latency_upstream() && p99 > upstream_slo;
+                    let bar_class = if over_slo { "progress-bar-fill bg-warning" } else { "progress-bar-fill" };
                     view! {
-                        <div class="flex items-center gap-3">
-                            <span class="w-20 text-xs text-theme-secondary shrink-0">{label}</span>
-                            <div class="flex-1 progress-bar h-2">
-                                <div
-                                    class="progress-bar-fill"
-                                    style=format!("width: {}%", pct.min(100.0))
-                                ></div>
+                        <div>
+                            <div class="flex items-center gap-3">
+                                <span class="w-20 text-xs text-theme-secondary shrink-0">{label}</span>
+                                <div class="flex-1 progress-bar h-2">
+                                    <div
+                                        class=bar_class
+                                        style=format!("width: {}%", pct.min(100.0))
+                                    ></div>
+                                </div>
+                                <span class="w-20 text-xs font-mono tabular-nums text-theme text-right">
+                                    {format!("{:.1}ms", avg)}
+                                </span>
                             </div>
-                            <span class="w-16 text-xs font-mono tabular-nums text-theme text-right">
-                                {format!("{:.1}ms", value)}
-                            </span>
+                            {if p99 > 0.0 {
+                                view! {
+                                    <div class="flex items-center gap-3 mt-1">
+                                        <span class="w-20 text-xs text-theme-muted shrink-0 text-right">"P99"</span>
+                                        <div class="flex-1 text-xs font-mono tabular-nums text-theme-muted">
+                                            {format!("{:.1}ms", p99)}
+                                            {if over_slo {
+                                                view! { <span class="text-warning ml-2">"over SLO"</span> }.into_any()
+                                            } else {
+                                                ().into_any()
+                                            }}
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }}
                         </div>
                     }
                 }).collect::<Vec<_>>()}

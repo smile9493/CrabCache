@@ -2,7 +2,8 @@
 
 use crate::metrics_history::{
     self, WINDOW_5M_SECS, avg_prometheus_histogram_ms, build_prefix_cache_snapshot,
-    consumer_token_buckets, domain_token_buckets, scrape_gateway_counters, scrape_ops_metrics,
+    consumer_token_buckets, domain_token_buckets, percentile_from_buckets,
+    scrape_gateway_counters, scrape_ops_metrics,
 };
 use crate::state::{AppState, GatewayProbe};
 use crate::suggestions::build_overview_suggestions;
@@ -308,6 +309,14 @@ fn metrics_snapshot_from_core(
         metrics_sample_insufficient: core.metrics_sample_insufficient,
         history_meta: core.history_meta.clone(),
         tier_deltas_5m: core.tier_deltas_5m,
+        latency_upstream_p99_ms: core.latency_upstream_p99_ms,
+        latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
+        error_rate_5m: core.error_rate_5m,
+        http_4xx_5m: core.http_4xx_5m,
+        http_5xx_5m: core.http_5xx_5m,
+        qps_prev_1h: core.qps_prev_1h,
+        hit_rate_prev_1h: core.hit_rate_prev_1h,
     }
 }
 
@@ -400,6 +409,52 @@ pub async fn build_metrics_snapshot_core(
             }
         }
     }
+
+    // P99 latency from histogram buckets
+    let latency_upstream_p99_ms =
+        percentile_from_buckets(body, "gateway_upstream_latency_seconds", &[], 0.99);
+    let latency_ttft_p99_ms = percentile_from_buckets(
+        body,
+        "gateway_stream_first_token_latency_seconds",
+        &[],
+        0.99,
+    );
+    let latency_cache_fetch_p99_ms = percentile_from_buckets(
+        body,
+        "gateway_cache_fetch_latency_seconds",
+        &[],
+        0.99,
+    );
+
+    // Error rate from gateway_http_responses_total
+    let http_4xx_5m = metrics_history::sum_prometheus_counter_public(
+        body,
+        "gateway_http_responses_total",
+        &[("status_class", "4xx")],
+    );
+    let http_5xx_5m = metrics_history::sum_prometheus_counter_public(
+        body,
+        "gateway_http_responses_total",
+        &[("status_class", "5xx")],
+    );
+    let total_http = metrics_history::sum_prometheus_counter_public(
+        body,
+        "gateway_http_responses_total",
+        &[],
+    );
+    let error_rate_5m = if total_http > 0 {
+        (http_4xx_5m + http_5xx_5m) as f64 / total_http as f64
+    } else {
+        0.0
+    };
+
+    // Trend: compare current 5m window with 1h ago
+    let (qps_prev_1h, hit_rate_prev_1h) = {
+        let one_hour_ago = now.saturating_sub(3600);
+        let prev = history.window_rates_5m(one_hour_ago);
+        (prev.qps, prev.hit_rate)
+    };
+
     drop(history);
 
     Ok(MetricsSnapshotCore {
@@ -455,6 +510,14 @@ pub async fn build_metrics_snapshot_core(
         metrics_sample_insufficient,
         history_meta,
         tier_deltas_5m,
+        latency_upstream_p99_ms,
+        latency_ttft_p99_ms,
+        latency_cache_fetch_p99_ms,
+        error_rate_5m,
+        http_4xx_5m,
+        http_5xx_5m,
+        qps_prev_1h,
+        hit_rate_prev_1h,
     })
 }
 
@@ -511,6 +574,14 @@ pub async fn build_metrics_snapshot(
         metrics_sample_insufficient: core.metrics_sample_insufficient,
         history_meta: core.history_meta,
         tier_deltas_5m: core.tier_deltas_5m,
+        latency_upstream_p99_ms: core.latency_upstream_p99_ms,
+        latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
+        error_rate_5m: core.error_rate_5m,
+        http_4xx_5m: core.http_4xx_5m,
+        http_5xx_5m: core.http_5xx_5m,
+        qps_prev_1h: core.qps_prev_1h,
+        hit_rate_prev_1h: core.hit_rate_prev_1h,
     })
 }
 
@@ -529,6 +600,8 @@ fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
             upstream_key_count: 0,
             upstream_keys_available: 0,
             error: probe.ready_error.clone(),
+            redis_connected: false,
+            qdrant_connected: false,
         };
     }
     match &probe.status {
@@ -547,6 +620,8 @@ fn gateway_health_from_status(s: GatewayStatus, error: Option<String>) -> Gatewa
         upstream_key_count: s.upstream_key_count as u32,
         upstream_keys_available: s.upstream_keys_available as u32,
         error,
+        redis_connected: false,
+        qdrant_connected: false,
     }
 }
 
@@ -627,6 +702,14 @@ mod tests {
             metrics_sample_insufficient: false,
             history_meta: MetricsHistoryMeta::default(),
             tier_deltas_5m: TierDeltas5m::default(),
+            latency_upstream_p99_ms: 0.0,
+            latency_ttft_p99_ms: 0.0,
+            latency_cache_fetch_p99_ms: 0.0,
+            error_rate_5m: 0.0,
+            http_4xx_5m: 0,
+            http_5xx_5m: 0,
+            qps_prev_1h: 0.0,
+            hit_rate_prev_1h: 0.0,
         }
     }
 
