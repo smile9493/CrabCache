@@ -452,8 +452,12 @@ fn main() -> Result<()> {
                 "Loaded control plane state from Redis"
             );
         }
+        let state_config = Arc::new(RedisStateConfig::new(
+            state_redis_url.clone(),
+            config.state.key_prefix.clone(),
+        ));
         spawn_state_refresh_task(
-            store.clone(),
+            state_config,
             runtime.clone(),
             config.upstream.key_cooldown_secs,
             config.state.refresh_interval_secs,

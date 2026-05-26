@@ -524,8 +524,7 @@ impl PgStore {
         last_test: Option<&UpstreamTestResult>,
     ) -> Result<()> {
         let client = self.pool.get().await?;
-        let endpoints_json =
-            serde_json::to_string(endpoints).context("serialize endpoints")?;
+        let endpoints_json = serde_json::to_string(endpoints).context("serialize endpoints")?;
         let last_test_json = last_test
             .map(serde_json::to_string)
             .transpose()

@@ -175,9 +175,8 @@ async fn main() -> anyhow::Result<()> {
                     Ok(pg) => {
                         info!("PostgreSQL connection established on retry");
                         if migrate {
-                            if let Ok(true) = pg
-                                .maybe_import_from_json(&retry_state.persist.load())
-                                .await
+                            if let Ok(true) =
+                                pg.maybe_import_from_json(&retry_state.persist.load()).await
                             {
                                 info!("JSON state imported into PostgreSQL (retry)");
                             }
@@ -187,11 +186,9 @@ async fn main() -> anyhow::Result<()> {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        let cutoff = now
-                            .saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+                        let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
                         if let Ok(snaps) = pg.load_metric_snapshots_since(cutoff).await {
-                            let sqlite_count =
-                                retry_state.metrics_history.read().sample_count();
+                            let sqlite_count = retry_state.metrics_history.read().sample_count();
                             if snaps.len() > sqlite_count {
                                 let mut hist = retry_state.metrics_history.write();
                                 *hist = crate::metrics_history::MetricsHistory::new();

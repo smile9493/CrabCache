@@ -518,11 +518,8 @@ impl AppState {
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "Failed to initialize PostgreSQL; will retry in background");
-                        *state.pg_pending_config.write() = Some((
-                            url.clone(),
-                            pg_cfg.max_pool_size,
-                            pg_cfg.migrate_from_json,
-                        ));
+                        *state.pg_pending_config.write() =
+                            Some((url.clone(), pg_cfg.max_pool_size, pg_cfg.migrate_from_json));
                     }
                 }
             }
@@ -630,14 +627,35 @@ impl AppState {
             let upstream_snap = file.upstream_snapshot.clone();
             let notes = file.upstream_notes.clone();
             let last_test = file.last_upstream_test.clone();
-            Some((pg, pg_keys, pg_policies, pg_pool, pg_profiles, models_snap, upstream_snap, notes, last_test))
+            Some((
+                pg,
+                pg_keys,
+                pg_policies,
+                pg_pool,
+                pg_profiles,
+                models_snap,
+                upstream_snap,
+                notes,
+                last_test,
+            ))
         } else {
             None
         };
 
         self.persist.save_debounced(file);
 
-        if let Some((pg, pg_keys, pg_policies, pg_pool, pg_profiles, models_snap, upstream_snap, notes, last_test)) = pg_task {
+        if let Some((
+            pg,
+            pg_keys,
+            pg_policies,
+            pg_pool,
+            pg_profiles,
+            models_snap,
+            upstream_snap,
+            notes,
+            last_test,
+        )) = pg_task
+        {
             let write_lock = self.pg_write_lock.clone();
             tokio::spawn(async move {
                 let _guard = write_lock.lock().await;
