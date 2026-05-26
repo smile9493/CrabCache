@@ -158,6 +158,10 @@ fn default_enabled() -> bool {
     true
 }
 
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGatewayKeyResponse {
     pub id: String,
@@ -175,6 +179,8 @@ pub struct CreateGatewayKeyResponse {
     pub upstream_profile: Option<String>,
     #[serde(default)]
     pub max_concurrent: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub rpm_limit: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -990,6 +990,7 @@ async fn create_key(
         pipeline: req.pipeline,
         upstream_profile: req.upstream_profile,
         max_concurrent,
+        rpm_limit: stored.rpm_limit,
     }))
 }
 
