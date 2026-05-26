@@ -7,6 +7,7 @@ use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode};
 use crab_route::{AffinityRouter, BackendHealth, CircuitBreakerConfig};
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -36,12 +37,12 @@ pub struct RuntimeConfig {
     pub router: RwLock<AffinityRouter>,
     pub conn_config: RwLock<Arc<ConnectionConfig>>,
     pub stream_cache_enabled: AtomicBool,
-    pub fingerprint: RwLock<FingerprintConfig>,
+    pub fingerprint: RwLock<Arc<FingerprintConfig>>,
     pub upstream_base_url: RwLock<String>,
     pub fallback_model: RwLock<String>,
     /// DeepSeek upstream API key pool (outbound Bearer).
     pub upstream_pool: Arc<RwLock<Arc<UpstreamKeyPool>>>,
-    pub upstream_profiles: RwLock<HashMap<String, Arc<UpstreamProfileRuntime>>>,
+    pub upstream_profiles: RwLock<IndexMap<String, Arc<UpstreamProfileRuntime>>>,
     pub default_upstream_profile_id: RwLock<String>,
     pub pipeline_globals: RwLock<PipelineGlobals>,
     /// When true, tokens in `legacy_client_tokens` may authenticate as clients.
@@ -49,10 +50,10 @@ pub struct RuntimeConfig {
     /// When true and the client key has no `project_id`, derive one from `sk-cc-*` (see `tenant::derive_project_id_from_client_key`).
     pub auto_project_id_from_client_key: bool,
     pub legacy_client_tokens: HashSet<String>,
-    pub domain_policies: Arc<RwLock<HashMap<String, DomainPolicy>>>,
+    pub domain_policies: Arc<RwLock<IndexMap<String, DomainPolicy>>>,
     domain_usage: Mutex<HashMap<String, DomainUsage>>,
     pub started_at: Instant,
-    pub backend_health: Arc<RwLock<std::collections::HashMap<String, BackendHealth>>>,
+    pub backend_health: Arc<RwLock<IndexMap<String, BackendHealth>>>,
     pub circuit_breaker_config: CircuitBreakerConfig,
 }
 
@@ -66,7 +67,7 @@ impl RuntimeConfig {
         upstream_base_url: String,
         fallback_model: String,
         upstream_pool: Arc<RwLock<Arc<UpstreamKeyPool>>>,
-        upstream_profiles: HashMap<String, Arc<UpstreamProfileRuntime>>,
+        upstream_profiles: IndexMap<String, Arc<UpstreamProfileRuntime>>,
         default_upstream_profile_id: String,
         pipeline_globals: PipelineGlobals,
         legacy_api_key_as_client_auth: bool,
@@ -77,7 +78,7 @@ impl RuntimeConfig {
             .backends()
             .iter()
             .map(|b| (b.name.clone(), BackendHealth::new_healthy()))
-            .collect::<std::collections::HashMap<_, _>>();
+            .collect::<IndexMap<_, _>>();
 
         Arc::new(Self {
             keys: DashMap::new(),
@@ -85,7 +86,7 @@ impl RuntimeConfig {
             router: RwLock::new(router),
             conn_config: RwLock::new(Arc::new(conn_config)),
             stream_cache_enabled: AtomicBool::new(stream_cache_enabled),
-            fingerprint: RwLock::new(fingerprint),
+            fingerprint: RwLock::new(Arc::new(fingerprint)),
             upstream_base_url: RwLock::new(upstream_base_url),
             fallback_model: RwLock::new(fallback_model),
             upstream_pool,
@@ -95,7 +96,7 @@ impl RuntimeConfig {
             legacy_api_key_as_client_auth,
             auto_project_id_from_client_key,
             legacy_client_tokens,
-            domain_policies: Arc::new(RwLock::new(HashMap::new())),
+            domain_policies: Arc::new(RwLock::new(IndexMap::new())),
             domain_usage: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
             backend_health: Arc::new(RwLock::new(backends)),
@@ -103,11 +104,12 @@ impl RuntimeConfig {
         })
     }
 
+    #[inline]
     pub fn effective_domain_label(domain: Option<&str>) -> &str {
         domain.unwrap_or("unclassified")
     }
 
-    pub fn replace_domain_policies(&self, policies: HashMap<String, DomainPolicy>) {
+    pub fn replace_domain_policies(&self, policies: IndexMap<String, DomainPolicy>) {
         *self.domain_policies.write() = policies;
     }
 
@@ -175,10 +177,12 @@ impl RuntimeConfig {
                 .any(|k| full_auth.ends_with(k))
     }
 
+    #[inline]
     pub fn stream_cache_enabled(&self) -> bool {
         self.stream_cache_enabled.load(Ordering::Relaxed)
     }
 
+    #[inline]
     pub fn set_stream_cache_enabled(&self, enabled: bool) {
         self.stream_cache_enabled.store(enabled, Ordering::Relaxed);
     }

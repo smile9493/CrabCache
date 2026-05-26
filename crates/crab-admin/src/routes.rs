@@ -620,15 +620,17 @@ async fn get_overview_core(
     {
         let mut resp = Response::new(axum::body::Body::empty());
         *resp.status_mut() = StatusCode::NOT_MODIFIED;
-        resp.headers_mut()
-            .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
+        if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+            resp.headers_mut().insert(header::ETAG, hv);
+        }
         return Ok(resp);
     }
 
     // 200 with ETag header for client-side caching.
     let mut resp = Json(core).into_response();
-    resp.headers_mut()
-        .insert(header::ETAG, HeaderValue::from_str(&etag_val).unwrap());
+    if let Ok(hv) = HeaderValue::from_str(&etag_val) {
+        resp.headers_mut().insert(header::ETAG, hv);
+    }
     Ok(resp)
 }
 

@@ -15,7 +15,8 @@ use crab_control::{
     PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
     SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode,
-    UpstreamKeysView, UpstreamRelayConfigView, parse_backend_endpoints, parse_upstream_base_url,
+    UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str, parse_backend_endpoints,
+    parse_upstream_base_url,
 };
 use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
@@ -28,10 +29,10 @@ use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "management_profiles.rs"]
@@ -221,11 +222,7 @@ async fn get_invalidate_status(
 ) -> Result<Json<InvalidateStatusResponse>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let job = state
-        .invalidate_job
-        .lock()
-        .map_err(|_| internal_error("invalidate job lock poisoned"))?
-        .clone();
+    let job = state.invalidate_job.lock().await.clone();
 
     Ok(Json(InvalidateStatusResponse {
         all_in_progress: state.invalidate_all_in_progress.load(Ordering::SeqCst),
@@ -305,15 +302,7 @@ async fn invalidate_cache(
     let is_all = matches!(action, InvalidateAction::All);
 
     {
-        let mut rate = state.invalidate_rate.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "invalidate rate limit lock poisoned".to_string(),
-                }),
-            )
-                .into_response()
-        })?;
+        let mut rate = state.invalidate_rate.lock().await;
         rate.check(is_all).map_err(|e| {
             (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -346,7 +335,8 @@ async fn invalidate_cache(
     let started_at_secs = now_secs();
     let scan_opts = InvalidateScanOptions::from_timeout_secs(state.invalidate_scan_timeout_secs);
 
-    if let Ok(mut slot) = invalidate_job.lock() {
+    {
+        let mut slot = invalidate_job.lock().await;
         *slot = Some(InvalidateJobSnapshot {
             scope: scope_label.clone(),
             phase: "running".to_string(),
@@ -403,7 +393,8 @@ async fn invalidate_cache(
             in_progress.store(false, Ordering::SeqCst);
         }
 
-        if let Ok(mut slot) = invalidate_job.lock() {
+        {
+            let mut slot = invalidate_job.lock().await;
             let completed_at_secs = now_secs();
             let snapshot = match &result {
                 Ok(_) => InvalidateJobSnapshot {
@@ -454,9 +445,10 @@ async fn put_fingerprint(
 ) -> Result<Json<FingerprintRequest>, Response> {
     authorize(&headers, &state.admin_key)?;
 
-    let mut cfg = state.runtime.fingerprint.write();
-    cfg.version = req.version;
-    cfg.normalize_content = req.normalize_content;
+    let old = state.runtime.fingerprint.read().clone();
+    let mut new_cfg = (*old).clone();
+    new_cfg.version = req.version;
+    new_cfg.normalize_content = req.normalize_content;
 
     tracing::info!(
         version = req.version,
@@ -465,9 +457,10 @@ async fn put_fingerprint(
     );
 
     let resp = FingerprintRequest {
-        version: cfg.version,
-        normalize_content: cfg.normalize_content,
+        version: new_cfg.version,
+        normalize_content: new_cfg.normalize_content,
     };
+    *state.runtime.fingerprint.write() = std::sync::Arc::new(new_cfg);
     schedule_persist_state(&state);
     Ok(Json(resp))
 }
@@ -519,7 +512,7 @@ pub(crate) fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Respo
         .get(GATEWAY_ADMIN_KEY_HEADER)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if provided != expected {
+    if !constant_time_eq_str(provided, expected) {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
@@ -1074,7 +1067,7 @@ async fn put_domain_policies(
     Json(req): Json<PutDomainPoliciesRequest>,
 ) -> Result<Json<Vec<DomainPolicySpec>>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let mut map = HashMap::new();
+    let mut map = indexmap::IndexMap::new();
     for p in req.policies {
         map.insert(
             p.domain.clone(),

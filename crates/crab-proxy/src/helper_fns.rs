@@ -55,6 +55,7 @@ pub fn stable_session_log_fields(
     ("message_scope", None)
 }
 
+#[inline]
 pub fn is_models_endpoint(path: &str, method: &http::Method) -> bool {
     *method == http::Method::GET && (path == "/models" || path == "/v1/models")
 }

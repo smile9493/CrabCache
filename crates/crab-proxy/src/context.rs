@@ -98,12 +98,15 @@ pub struct ReasoningConfig {
     pub missing_reasoning_strategy: String,
     pub display_reasoning: bool,
     pub collapsible_reasoning: bool,
-    /// `sqlite` (default) or `redis` (required for multi-instance gateway).
+    /// `sqlite` (default), `redis`, or `pg` (PostgreSQL).
     #[serde(default = "default_reasoning_backend")]
     pub backend: String,
     pub cache_db_path: String,
     #[serde(default)]
     pub redis_url: Option<String>,
+    /// PostgreSQL URL for `backend = "pg"`.
+    #[serde(default)]
+    pub pg_url: Option<String>,
     #[serde(default = "default_max_reasoning_entry_bytes")]
     pub max_reasoning_entry_bytes: usize,
     pub cache_max_age_secs: Option<u64>,
@@ -135,6 +138,7 @@ impl Default for ReasoningConfig {
             backend: default_reasoning_backend(),
             cache_db_path: ":memory:".to_string(),
             redis_url: None,
+            pg_url: None,
             max_reasoning_entry_bytes: default_max_reasoning_entry_bytes(),
             cache_max_age_secs: Some(30 * 24 * 3600),
             cache_max_rows: Some(100_000),

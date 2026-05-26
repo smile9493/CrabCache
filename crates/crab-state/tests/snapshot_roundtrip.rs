@@ -8,6 +8,7 @@ use crab_proxy::{
 use crab_route::AffinityRouter;
 use crab_state::{ControlPlaneSnapshot, apply_snapshot_to_runtime, build_snapshot_from_runtime};
 use parking_lot::RwLock;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
-    let mut profiles = HashMap::new();
+    let mut profiles = IndexMap::new();
     profiles.insert(
         "deepseek".to_string(),
         Arc::new(UpstreamProfileRuntime {
@@ -56,7 +57,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
 #[test]
 fn domain_policies_roundtrip() {
     let runtime = test_runtime();
-    let mut policies = HashMap::new();
+    let mut policies = IndexMap::new();
     policies.insert(
         "team-a".to_string(),
         DomainPolicy {
@@ -95,7 +96,7 @@ fn empty_upstream_keys_replaces_pool() {
         runtime: None,
         upstream_keys: Some(vec![]),
         upstream_profiles: None,
-        domain_policies: HashMap::new(),
+        domain_policies: IndexMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_none());
@@ -129,7 +130,7 @@ fn missing_upstream_keys_preserves_pool() {
         runtime: None,
         upstream_keys: None,
         upstream_profiles: None,
-        domain_policies: HashMap::new(),
+        domain_policies: IndexMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_some());
@@ -181,7 +182,7 @@ fn upstream_profiles_snapshot_roundtrip() {
                 account_id: String::new(),
             }],
         }]),
-        domain_policies: HashMap::new(),
+        domain_policies: IndexMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.profile("mimo").is_some());
@@ -219,7 +220,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
         runtime: None,
         upstream_keys: None,
         upstream_profiles: Some(vec![mimo_snap.clone()]),
-        domain_policies: HashMap::new(),
+        domain_policies: IndexMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &with_mimo, 60).expect("apply mimo");
     assert!(runtime.profile("mimo").is_some());
@@ -247,7 +248,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
                 account_id: String::new(),
             }],
         }]),
-        domain_policies: HashMap::new(),
+        domain_policies: IndexMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &deepseek_only, 60).expect("apply deepseek only");
     assert!(runtime.profile("deepseek").is_some());

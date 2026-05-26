@@ -6,6 +6,7 @@ use crab_proxy::{
     UpstreamKeySpec, build_profile_runtime, resolve_profile_key_specs,
 };
 use serde::{Deserialize, Serialize};
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -97,7 +98,7 @@ pub struct ControlPlaneSnapshot {
     #[serde(default)]
     pub upstream_profiles: Option<Vec<UpstreamProfileSnapshot>>,
     #[serde(default)]
-    pub domain_policies: HashMap<String, DomainPolicy>,
+    pub domain_policies: IndexMap<String, DomainPolicy>,
 }
 
 pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnapshot {
@@ -165,7 +166,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         })
         .collect();
 
-    let domain_policies: HashMap<String, DomainPolicy> =
+    let domain_policies: IndexMap<String, DomainPolicy> =
         runtime.list_domain_policies().into_iter().collect();
 
     let upstream_profiles: Vec<UpstreamProfileSnapshot> = {
@@ -257,9 +258,11 @@ pub fn apply_snapshot_to_runtime(
     if let Some(rt) = &snap.runtime {
         *runtime.ttl.write() = rt.ttl.clone();
         {
-            let mut fp = runtime.fingerprint.write();
-            fp.version = rt.fingerprint.version;
-            fp.normalize_content = rt.fingerprint.normalize_content;
+            let old = runtime.fingerprint.read().clone();
+            let mut new_fp = (*old).clone();
+            new_fp.version = rt.fingerprint.version;
+            new_fp.normalize_content = rt.fingerprint.normalize_content;
+            *runtime.fingerprint.write() = std::sync::Arc::new(new_fp);
         }
         runtime.set_stream_cache_enabled(rt.stream_cache_enabled);
         let _ = runtime.set_pipeline_runtime(
