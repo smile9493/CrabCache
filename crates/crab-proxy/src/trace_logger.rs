@@ -116,7 +116,7 @@ impl SanitizedLogEntry {
             } else {
                 raw.to_string()
             };
-            Some(mask_snapshot_sensitive(&raw))
+            Some(crate::masking::mask_api_keys(&raw))
         } else {
             None
         };
@@ -158,41 +158,6 @@ impl SanitizedLogEntry {
     }
 }
 
-/// Light masking for sensitive patterns in snapshot text.
-/// Currently masks `sk-` / `sk-cc-` bearer tokens (partial reveal of last 4 chars).
-fn mask_snapshot_sensitive(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        // Look for "sk-" pattern
-        if i + 2 < len && bytes[i] == b's' && bytes[i + 1] == b'k' && bytes[i + 2] == b'-' {
-            // Find the end of the token (non-alphanumeric or end)
-            let start = i;
-            i += 3; // skip "sk-"
-            while i < len
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')
-            {
-                i += 1;
-            }
-            let token = &text[start..i];
-            if token.len() > 8 {
-                result.push_str(&token[..4]);
-                result.push_str("...");
-                result.push_str(&token[token.len() - 4..]);
-            } else {
-                result.push_str(&token[..1]);
-                result.push_str("***");
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    result
-}
-
 /// Configuration for the debug composition JSONL log file.
 /// When enabled, stores full (unhashed) system message text and tools definitions
 /// for composition analysis.
@@ -215,17 +180,34 @@ impl Default for CompositionDebugConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceConfig {
     pub enabled: bool,
     pub path: String,
+    #[serde(default = "default_max_lines")]
     pub max_lines: usize,
+    #[serde(default = "default_max_files")]
     pub max_files: usize,
+    #[serde(default)]
     pub composition_debug: Option<CompositionDebugConfig>,
     /// Max bytes to capture for `request_messages_snapshot`. `0` = disabled (default).
+    #[serde(default)]
     pub max_payload_bytes: usize,
     /// Max bytes to capture for `response_preview`. `0` = disabled (default).
+    #[serde(default)]
     pub max_response_preview_bytes: usize,
+    /// Optional PostgreSQL URL for trace log persistence. When set, trace
+    /// entries are written to both JSONL (if enabled) and PG.
+    #[serde(default)]
+    pub pg_url: Option<String>,
+}
+
+fn default_max_lines() -> usize {
+    10000
+}
+
+fn default_max_files() -> usize {
+    5
 }
 
 impl Default for TraceConfig {
@@ -238,44 +220,51 @@ impl Default for TraceConfig {
             composition_debug: None,
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
+            pg_url: None,
         }
     }
 }
 
-// ── LogWriter for SanitizedLogEntry ──────────────────────────────────
+// ── RotatingJsonlWriter (shared by trace + debug log) ────────────────
 
-struct LogWriter {
+/// Flush interval: flush to disk every N lines to bound data loss on crash.
+const FLUSH_INTERVAL_LINES: usize = 100;
+
+struct RotatingJsonlWriter {
     file: File,
     path: PathBuf,
     max_lines: usize,
     line_count: usize,
+    flush_counter: usize,
     max_files: usize,
 }
 
-impl LogWriter {
-    fn new(config: &TraceConfig) -> std::io::Result<Self> {
-        let path = PathBuf::from(&config.path);
-
+impl RotatingJsonlWriter {
+    fn new(path: PathBuf, max_lines: usize, max_files: usize) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
-
         Ok(Self {
             file,
             path,
-            max_lines: config.max_lines,
+            max_lines,
             line_count: 0,
-            max_files: config.max_files,
+            flush_counter: 0,
+            max_files,
         })
     }
 
-    fn write_entry(&mut self, entry: &SanitizedLogEntry) -> std::io::Result<()> {
+    fn write_entry<T: Serialize>(&mut self, entry: &T) -> std::io::Result<()> {
         let line = serde_json::to_string(entry)? + "\n";
         self.file.write_all(line.as_bytes())?;
         self.line_count += 1;
+        self.flush_counter += 1;
 
+        if self.flush_counter >= FLUSH_INTERVAL_LINES {
+            self.file.flush()?;
+            self.flush_counter = 0;
+        }
         if self.line_count >= self.max_lines {
             self.rotate()?;
         }
@@ -305,106 +294,7 @@ impl LogWriter {
             .append(true)
             .open(&self.path)?;
         self.line_count = 0;
-        Ok(())
-    }
-
-    fn cleanup_old_files(&mut self) -> std::io::Result<()> {
-        let parent = self
-            .path
-            .parent()
-            .expect("path has parent — validated at init");
-        let file_name = self
-            .path
-            .file_name()
-            .expect("path has file_name — validated at init")
-            .to_str()
-            .expect("file_name is valid UTF-8");
-
-        let mut log_files: Vec<PathBuf> = std::fs::read_dir(parent)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .map(|name| name.starts_with(file_name) && name != file_name)
-                    .unwrap_or(false)
-            })
-            .map(|e| e.path())
-            .collect();
-
-        log_files.sort();
-
-        while log_files.len() >= self.max_files {
-            let oldest = log_files.remove(0);
-            std::fs::remove_file(oldest)?;
-        }
-
-        Ok(())
-    }
-}
-
-// ── DebugLogWriter for CompositionDebugEntry ─────────────────────────
-
-struct DebugLogWriter {
-    file: File,
-    path: PathBuf,
-    max_lines: usize,
-    line_count: usize,
-    max_files: usize,
-}
-
-impl DebugLogWriter {
-    fn new(config: &CompositionDebugConfig) -> std::io::Result<Self> {
-        let path = PathBuf::from(&config.path);
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-        Ok(Self {
-            file,
-            path,
-            max_lines: config.max_lines,
-            line_count: 0,
-            max_files: config.max_files,
-        })
-    }
-
-    fn write_entry(&mut self, entry: &CompositionDebugEntry) -> std::io::Result<()> {
-        let line = serde_json::to_string(entry)? + "\n";
-        self.file.write_all(line.as_bytes())?;
-        self.line_count += 1;
-
-        if self.line_count >= self.max_lines {
-            self.rotate()?;
-        }
-        Ok(())
-    }
-
-    fn rotate(&mut self) -> std::io::Result<()> {
-        self.file.sync_all()?;
-
-        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let rotated = self.path.with_file_name(format!(
-            "{}.{}",
-            self.path
-                .file_name()
-                .expect("path has file_name — validated at init")
-                .to_str()
-                .expect("file_name is valid UTF-8"),
-            timestamp
-        ));
-
-        std::fs::rename(&self.path, &rotated)?;
-
-        self.cleanup_old_files()?;
-
-        self.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        self.line_count = 0;
+        self.flush_counter = 0;
         Ok(())
     }
 
@@ -472,7 +362,7 @@ impl TraceLogger {
     /// `pg_sink`: optional external sender for PG batch insertion.
     /// When provided, entries are forwarded to this sender after JSONL write.
     /// The gateway creates the PG writer task and passes its sender here.
-    pub fn init(config: TraceConfig, pg_sink: Option<mpsc::Sender<SanitizedLogEntry>>) -> Self {
+    pub fn init(config: TraceConfig, pg_sink: Option<mpsc::SyncSender<SanitizedLogEntry>>) -> Self {
         let max_payload_bytes = config.max_payload_bytes;
         let max_response_preview_bytes = config.max_response_preview_bytes;
         let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
@@ -485,7 +375,11 @@ impl TraceLogger {
                 std::thread::Builder::new()
                     .name("crab-debug-writer".into())
                     .spawn(move || {
-                        let mut writer = match DebugLogWriter::new(&debug_config_clone) {
+                        let mut writer = match RotatingJsonlWriter::new(
+                            PathBuf::from(&debug_config_clone.path),
+                            debug_config_clone.max_lines,
+                            debug_config_clone.max_files,
+                        ) {
                             Ok(w) => w,
                             Err(e) => {
                                 warn!("Failed to initialize composition debug logger: {}", e);
@@ -518,7 +412,11 @@ impl TraceLogger {
         std::thread::Builder::new()
             .name("crab-trace-writer".into())
             .spawn(move || {
-                let mut jsonl_writer = match LogWriter::new(&config) {
+                let mut jsonl_writer = match RotatingJsonlWriter::new(
+                    PathBuf::from(&config.path),
+                    config.max_lines,
+                    config.max_files,
+                ) {
                     Ok(w) => Some(w),
                     Err(e) => {
                         warn!("Failed to initialize trace logger: {}", e);
@@ -533,7 +431,7 @@ impl TraceLogger {
                         }
                     }
                     if let Some(ref pg_tx) = pg_sink {
-                        let _ = pg_tx.send(entry);
+                        let _ = pg_tx.try_send(entry);
                     }
                 }
             })

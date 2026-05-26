@@ -5,7 +5,7 @@ use crab_capture::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -66,11 +66,15 @@ impl Default for RawCaptureConfig {
 
 // ── Index writer ─────────────────────────────────────────────────────
 
+/// Flush interval for IndexWriter: flush every N entries.
+const RAW_FLUSH_INTERVAL: usize = 50;
+
 struct IndexWriter {
-    file: File,
+    file: BufWriter<File>,
     path: PathBuf,
     max_lines: usize,
     line_count: usize,
+    flush_counter: usize,
 }
 
 impl IndexWriter {
@@ -81,10 +85,11 @@ impl IndexWriter {
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         Ok(Self {
-            file,
+            file: BufWriter::new(file),
             path,
             max_lines,
             line_count: 0,
+            flush_counter: 0,
         })
     }
 
@@ -93,9 +98,13 @@ impl IndexWriter {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
             + "\n";
         self.file.write_all(line.as_bytes())?;
-        self.file.flush()?;
         self.line_count += 1;
+        self.flush_counter += 1;
 
+        if self.flush_counter >= RAW_FLUSH_INTERVAL {
+            self.file.flush()?;
+            self.flush_counter = 0;
+        }
         if self.line_count >= self.max_lines {
             self.rotate()?;
         }
@@ -103,7 +112,8 @@ impl IndexWriter {
     }
 
     fn rotate(&mut self) -> std::io::Result<()> {
-        self.file.sync_all()?;
+        self.file.flush()?;
+        self.file.get_ref().sync_all()?;
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let rotated = self.path.with_file_name(format!(
             "{}.{}",
@@ -115,11 +125,13 @@ impl IndexWriter {
             timestamp
         ));
         fs::rename(&self.path, &rotated)?;
-        self.file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)?;
+        self.file = BufWriter::new(file);
         self.line_count = 0;
+        self.flush_counter = 0;
         Ok(())
     }
 }
@@ -421,55 +433,15 @@ fn apply_body_limit(body: &[u8], max_bytes: usize, mask: bool) -> Vec<u8> {
 
     if mask {
         let text = String::from_utf8_lossy(limited);
-        mask_body_api_keys(&text).into_bytes()
+        crate::masking::mask_api_keys(&text).into_bytes()
     } else {
         limited.to_vec()
     }
 }
 
-/// Mask `sk-*` / `sk-cc-*` tokens in body text.
-fn mask_body_api_keys(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-    while i < len {
-        if i + 2 < len && chars[i] == 's' && chars[i + 1] == 'k' && chars[i + 2] == '-' {
-            let start = i;
-            i += 3;
-            while i < len
-                && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '_')
-            {
-                i += 1;
-            }
-            let token: String = chars[start..i].iter().collect();
-            if token.len() > 8 {
-                result.push_str(&token[..4]);
-                result.push_str("...");
-                result.push_str(&token[token.len() - 4..]);
-            } else {
-                result.push_str(&token[..1]);
-                result.push_str("***");
-            }
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_mask_body_api_keys() {
-        let text = r#"{"api_key": "sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2"}"#;
-        let masked = mask_body_api_keys(text);
-        assert!(!masked.contains("sk-cc-a1b2c3d4e5f6g7h8i9j0k1l2"));
-        assert!(masked.contains("sk-c"));
-    }
 
     #[test]
     fn test_apply_body_limit() {

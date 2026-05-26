@@ -3,6 +3,7 @@ mod client_key_rate_limiter;
 mod context;
 mod debug_log;
 mod error;
+mod masking;
 mod profile_build;
 mod proxy;
 pub mod raw_capture;
@@ -42,7 +43,7 @@ pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
 };
-pub use debug_log::debug_agent_log;
+pub use debug_log::{debug_agent_log, init_debug_log};
 pub use error::ProxyError;
 pub use profile_build::{
     ProfileBuildInput, build_profile_runtime, parse_profile_backends, resolve_profile_key_specs,

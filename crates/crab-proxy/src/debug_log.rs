@@ -3,17 +3,32 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 
-static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
+static DEBUG_WRITER: OnceLock<Option<mpsc::SyncSender<String>>> = OnceLock::new();
 
-fn debug_path() -> Option<&'static String> {
-    DEBUG_PATH
-        .get_or_init(|| {
-            std::env::var("CRABCACHE_DEBUG_LOG_PATH")
-                .ok()
-                .filter(|s| !s.is_empty())
-        })
-        .as_ref()
+/// Initialize the debug log writer. Must be called once at startup.
+/// Spawns a dedicated writer thread with a persistent file handle.
+pub fn init_debug_log(path: Option<&str>) {
+    let tx = path.filter(|p| !p.is_empty()).map(|p| {
+        let (tx, rx) = mpsc::sync_channel::<String>(4096);
+        let path = p.to_string();
+        std::thread::Builder::new()
+            .name("crab-debug-log".into())
+            .spawn(move || {
+                let mut f = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .expect("debug log open");
+                for line in rx {
+                    let _ = writeln!(f, "{line}");
+                }
+            })
+            .expect("debug log thread");
+        tx
+    });
+    let _ = DEBUG_WRITER.set(tx);
 }
 
 /// Append one NDJSON line for debug-mode hypothesis testing. Never log secrets.
@@ -23,10 +38,11 @@ pub fn debug_agent_log(
     message: &str,
     data: serde_json::Value,
 ) {
-    let Some(path) = debug_path() else {
+    let Some(Some(tx)) = DEBUG_WRITER.get() else {
         return;
     };
-    let run_id = std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
+    let run_id =
+        std::env::var("CRABCACHE_DEBUG_RUN_ID").unwrap_or_else(|_| "pre-fix".to_string());
     let mut line = serde_json::json!({
         "runId": run_id,
         "hypothesisId": hypothesis_id,
@@ -40,7 +56,5 @@ pub fn debug_agent_log(
     {
         line["sessionId"] = serde_json::Value::String(session_id);
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{line}");
-    }
+    let _ = tx.try_send(line.to_string()); // non-blocking, drop on full channel
 }

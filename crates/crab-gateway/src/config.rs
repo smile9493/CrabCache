@@ -12,7 +12,7 @@ use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
-pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig};
+pub use crab_proxy::{ConnectionConfig, PricingConfig, ReasoningConfig, TraceConfig};
 pub use crab_state::StateBackendConfig;
 
 /// A wrapper around `String` that redacts its value in `Debug` output
@@ -242,51 +242,6 @@ impl Default for ManagementConfig {
             listen_addr: "127.0.0.1:9080".to_string(),
             admin_key: default_management_admin_key(),
             invalidate_scan_timeout_secs: default_invalidate_scan_timeout_secs(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct TraceConfig {
-    pub enabled: bool,
-    pub path: String,
-    #[serde(default = "default_max_lines")]
-    pub max_lines: usize,
-    #[serde(default = "default_max_files")]
-    pub max_files: usize,
-    #[serde(default)]
-    pub composition_debug: Option<crab_proxy::CompositionDebugConfig>,
-    /// Max bytes to capture for request body snapshot. `0` = disabled.
-    #[serde(default)]
-    pub max_payload_bytes: usize,
-    /// Max bytes to capture for response body preview. `0` = disabled.
-    #[serde(default)]
-    pub max_response_preview_bytes: usize,
-    /// Optional PostgreSQL URL for trace log persistence. When set, trace
-    /// entries are written to both JSONL (if enabled) and PG.
-    #[serde(default)]
-    pub pg_url: Option<String>,
-}
-
-fn default_max_lines() -> usize {
-    10000
-}
-
-fn default_max_files() -> usize {
-    5
-}
-
-impl Default for TraceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            path: "/var/log/crabcache/trace.jsonl".to_string(),
-            max_lines: 10000,
-            max_files: 5,
-            composition_debug: None,
-            max_payload_bytes: 0,
-            max_response_preview_bytes: 0,
-            pg_url: None,
         }
     }
 }

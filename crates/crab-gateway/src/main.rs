@@ -18,6 +18,7 @@ use crab_state::{
 };
 use parking_lot::RwLock;
 use pingora_core::server::Server;
+use tracing_subscriber::Layer;
 use pingora_core::services::background::background_service;
 use pingora_proxy::http_proxy_service;
 use prometheus::Registry;
@@ -240,22 +241,39 @@ fn main() -> Result<()> {
     let file_appender = tracing_appender::rolling::daily("./logs", "gateway.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+    // File layer: JSON format, INFO+ (or RUST_LOG override)
+    let file_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    // Stdout layer: only WARN+ by default (configurable via RUST_LOG_STDOUT)
+    let stdout_filter = tracing_subscriber::EnvFilter::new(
+        std::env::var("RUST_LOG_STDOUT").unwrap_or_else(|_| "warn".to_string()),
+    );
 
     let json_layer = tracing_subscriber::fmt::layer()
         .json()
-        .with_writer(non_blocking);
+        .with_writer(non_blocking)
+        .with_filter(file_filter);
 
-    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_filter(stdout_filter);
 
     tracing_subscriber::registry()
-        .with(env_filter)
         .with(json_layer)
         .with(stdout_layer)
         .init();
 
     let (config_path, clear_reasoning_cache) = parse_cli_args();
+
+    // Initialize the debug log writer (persistent file handle + async channel).
+    // This must happen before any proxy request processing begins.
+    crab_proxy::init_debug_log(
+        std::env::var("CRABCACHE_DEBUG_LOG_PATH")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .as_deref(),
+    );
 
     let config = GatewayConfig::load(&config_path)?;
     info!(config_path = %config_path, "Configuration loaded");
@@ -476,7 +494,7 @@ fn main() -> Result<()> {
         if trace_config.enabled {
             // Spawn PG trace writer if configured.
             let pg_sink = trace_config.pg_url.as_ref().and_then(|pg_url_str| {
-                let (pg_tx, pg_rx) = std::sync::mpsc::channel::<crab_proxy::SanitizedLogEntry>();
+                let (pg_tx, pg_rx) = std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(10_000);
                 let pg_url_owned = pg_url_str.clone();
                 match std::thread::Builder::new()
                     .name("crab-pg-trace-writer".into())
@@ -537,15 +555,7 @@ fn main() -> Result<()> {
                 }
             });
 
-            let logger = crab_proxy::TraceLogger::init(crab_proxy::TraceConfig {
-                enabled: trace_config.enabled,
-                path: trace_config.path.clone(),
-                max_lines: trace_config.max_lines,
-                max_files: trace_config.max_files,
-                composition_debug: trace_config.composition_debug.clone(),
-                max_payload_bytes: trace_config.max_payload_bytes,
-                max_response_preview_bytes: trace_config.max_response_preview_bytes,
-            }, pg_sink);
+            let logger = crab_proxy::TraceLogger::init(trace_config.clone(), pg_sink);
 
             info!(
                 path = %trace_config.path,
