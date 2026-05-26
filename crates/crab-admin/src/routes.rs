@@ -66,11 +66,12 @@ fn gateway_error_message(err: &crab_control::ControlError) -> String {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    let upload_probe = Router::new()
+    let unauthenticated = Router::new()
         .route(
             "/api/admin/infra/speed-test/upload",
             post(post_infra_speed_test_upload),
         )
+        .route("/api/admin/events", get(crate::sse::sse_events))
         .with_state(state.clone());
 
     let protected = Router::new()
@@ -224,7 +225,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
         .with_state(state);
 
-    upload_probe.merge(protected)
+    unauthenticated.merge(protected)
 }
 
 /// Request body for changing the admin API key.
@@ -485,28 +486,13 @@ async fn get_gateway_health(State(state): State<Arc<AppState>>) -> Json<GatewayH
 
 const PG_HEALTH_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
-#[derive(serde::Serialize, Clone)]
-struct PgHealthResponse {
-    configured: bool,
-    connected: bool,
-    pool_available: Option<usize>,
-    pool_max: Option<usize>,
-    error: Option<String>,
-}
-
-async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthResponse> {
+async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<crate::types::PgHealth> {
     // Check TTL cache first.
     {
         let cache = state.pg_health_cache.read();
         if let Some((at, health)) = cache.as_ref() {
             if at.elapsed() < PG_HEALTH_TTL {
-                return Json(PgHealthResponse {
-                    configured: health.configured,
-                    connected: health.connected,
-                    pool_available: health.pool_available,
-                    pool_max: health.pool_max,
-                    error: health.error.clone(),
-                });
+                return Json(health.clone());
             }
         }
     }
@@ -517,7 +503,7 @@ async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthRespo
     let health = match pg_clone {
         None => {
             if state.pg_pending_config.read().is_some() {
-                PgHealthResponse {
+                crate::types::PgHealth {
                     configured: true,
                     connected: false,
                     pool_available: None,
@@ -525,7 +511,7 @@ async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthRespo
                     error: Some("connection pending (retry in progress)".to_string()),
                 }
             } else {
-                PgHealthResponse {
+                crate::types::PgHealth {
                     configured: false,
                     connected: false,
                     pool_available: None,
@@ -538,14 +524,14 @@ async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthRespo
             let pool = pg.pool();
             let status = pool.status();
             match pool.get().await {
-                Ok(_client) => PgHealthResponse {
+                Ok(_client) => crate::types::PgHealth {
                     configured: true,
                     connected: true,
                     pool_available: Some(status.available),
                     pool_max: Some(status.max_size),
                     error: None,
                 },
-                Err(e) => PgHealthResponse {
+                Err(e) => crate::types::PgHealth {
                     configured: true,
                     connected: false,
                     pool_available: Some(status.available),
@@ -556,15 +542,8 @@ async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<PgHealthRespo
         }
     };
 
-    // Update cache with PgHealth type for consistency.
-    let cache_health = crate::types::PgHealth {
-        configured: health.configured,
-        connected: health.connected,
-        pool_available: health.pool_available,
-        pool_max: health.pool_max,
-        error: health.error.clone(),
-    };
-    *state.pg_health_cache.write() = Some((std::time::Instant::now(), cache_health));
+    // Update cache and return.
+    *state.pg_health_cache.write() = Some((std::time::Instant::now(), health.clone()));
     Json(health)
 }
 
@@ -636,7 +615,7 @@ async fn get_overview_core(
     if let Some(if_none_match) = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        && if_none_match == etag_val
+        && if_none_match == etag_val.as_str()
     {
         let mut resp = Response::new(axum::body::Body::empty());
         *resp.status_mut() = StatusCode::NOT_MODIFIED;
