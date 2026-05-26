@@ -3,7 +3,7 @@ site_url: https://smile9493.github.io/CrabCache/
 repo_url: https://github.com/smile9493/CrabCache
 repo_name: smile9493/CrabCache
 edit_uri: edit/main/docs/
-site_description: CrabCache - 基于 Pingora 的 DeepSeek V4 高性能 Rust API 网关文档
+site_description: CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点
 
 theme:
   name: material
@@ -59,7 +59,7 @@ nav:
       - Cursor + DeepSeek 接入: CURSOR_SETUP.md
       - 从 new-api 迁移: NEW_API_MIGRATION.md
       - Agent Key 迁移: AGENT_CLIENT_KEY_MIGRATION.md
-  - DeepSeek 集成:
+  - 供应商集成:
       - 上游前缀缓存 L3: DEEPSEEK_PREFIX_CACHE.md
       - Cursor Proxy 对照: DEEPSEEK_CURSOR_PROXY_PARITY.md
       - 功能吸收计划: CURSOR_DEEPSEEK_ABSORPTION_PLAN.md

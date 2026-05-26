@@ -1,6 +1,6 @@
 # CrabCache 文档
 
-欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现 DeepSeek V4 / Cursor 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。多轮对话降本主要看 DeepSeek **L3 前缀缓存**，与网关 L0–L2 响应缓存是两套指标，详见 [DeepSeek 上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md)。
+欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现多供应商 LLM API 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。以 DeepSeek V4 为重点参考实现，专注缓存优化与可观测透明分析。详见 [上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md)。
 
 ## 快速导航
 
@@ -12,7 +12,7 @@
 | [从 new-api 迁移](NEW_API_MIGRATION.md) | 从 new-api + deepseek-cursor-proxy 双栈迁移到单栈 CrabCache |
 | [Agent 客户端 Key 迁移](AGENT_CLIENT_KEY_MIGRATION.md) | 客户端 API Key 迁移与升级说明 |
 
-### 🧠 DeepSeek 深度集成
+### 🧠 供应商集成
 
 | 文档 | 说明 |
 |------|------|

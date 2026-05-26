@@ -1,8 +1,8 @@
-# CrabCache - DeepSeek V4 高性能 Rust API 网关
+# CrabCache - 多供应商 LLM API 高性能网关
 
 ## 项目概述
 
-CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API 网关，专为 DeepSeek V4 大语言模型 API 设计。通过多级缓存架构（L0/L1/L2）、会话亲和性路由和请求合并（Coalescing），实现极致的成本优化和低延迟响应。
+CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API 网关，面向多供应商 LLM（大语言模型）API 的缓存优化与可观测透明分析。以 DeepSeek V4 为重点参考实现（当前唯一支持 Reasoning/thinking 的供应商），同时兼容 OpenAI、Anthropic 等主流供应商。通过多级缓存架构（L0/L1/L2）、会话亲和性路由和请求合并（Coalescing），实现极致的成本优化和低延迟响应。
 
 ### 核心特性
 
@@ -11,14 +11,14 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
   - L0: Moka 进程内存缓存（P99 < 100ns）
   - L1: Redis 分布式精确缓存（P99 < 5ms）
   - L2: Qdrant 语义向量缓存（相似度阈值 0.95，含模型守卫）
-- **Ketama 一致性哈希路由**：最大化 DeepSeek V4 前缀缓存命中率
+- **Ketama 一致性哈希路由**：会话亲和，最大化上游前缀缓存命中率
 - **请求合并 (Request Coalescing)**：同一缓存键的并发请求合并为一次上游调用，Leader/Follower 模式
 - **API 密钥管理**：动态密钥创建/吊销/启停，DashMap 存储，支持消费者标签
 - **Management HTTP API**：运行时管理——密钥 CRUD、TTL 动态调整、后端路由热更新
 - **DeepSeek Reasoning 处理管线**：思考链提取、SSE 块改写、Cursor 折叠显示适配、SQLite 缓存
 - **SSE 流式响应优化**：缓存命中时合成 SSE 流返回，流式响应可选缓存
 - **缓存键指纹 (Fingerprint)**：版本化、Unicode NFC 标准化，安全失效旧缓存
-- **多租户隔离**：`project_id` / `X-Project-Id` → DeepSeek `user_id` + 动态缓存命名空间（见 [docs/MULTI_TENANT.md](docs/MULTI_TENANT.md)）
+- **多租户隔离**：`project_id` / `X-Project-Id` → 上游 `user_id` 映射 + 动态缓存命名空间（见 [docs/MULTI_TENANT.md](docs/MULTI_TENANT.md)）
 - **配置验证**：启动时全面校验配置合法性（API Key、端点、地址等）
 - **SecretString 安全处理**：密钥自动遮盖，杜绝日志泄漏
 - **Prometheus 可观测性**：Token 成本追踪、延迟监控、成本节省估算
@@ -93,13 +93,13 @@ CrabCache/
 │   │   └── src/cache.rs             # SemanticCache（搜索 + 插入）
 │   ├── crab-metrics/                # Prometheus 指标
 │   │   └── src/registry.rs          # GatewayMetrics + global_metrics()
-│   ├── crab-reasoning/              # DeepSeek Reasoning 处理
+│   ├── crab-reasoning/              # DeepSeek Reasoning 处理管线
 │   │   ├── src/normalize.rs         # 请求准备、消息规范化
 │   │   ├── src/streaming.rs         # 流式 SSE 改写、Cursor 适配器
 │   │   ├── src/transform.rs         # 响应体重写、SSE chunk 改写
 │   │   ├── src/keys.rs              # Reasoning 键生成
 │   │   └── src/store.rs             # ReasoningStore（SQLite 存储）
-│   ├── crab-pipeline/               # 请求管线选择（Cursor/DeepSeek/Generic）
+│   ├── crab-pipeline/               # 请求管线选择与多供应商路由
 │   │   ├── src/lib.rs               # Pipeline 类型、select_request_pipeline
 │   │   ├── src/select.rs            # 管线选择逻辑
 │   │   ├── src/types.rs             # PipelineOverride / PipelineRequestContext
@@ -188,7 +188,7 @@ cp config/gateway.example.toml config/gateway.toml
 - `listen_addr`: 网关监听地址（默认 0.0.0.0:8080）
 - `metrics_addr`: Prometheus 指标端口（默认 0.0.0.0:9090）
 - `[management]`: Management API 地址和密钥（默认 127.0.0.1:9080）
-- `[upstream]`: DeepSeek 上游配置（base_url、model、端点列表、TLS SNI）
+- `[upstream]`: 上游供应商配置（base_url、model、端点列表、TLS SNI）
 - `[cache]`: L0/L1 缓存配置（容量、TTL、Redis 连接、Fingerprint、命名空间）
 - `[cache.model_ttl_overrides]`: 按模型 TTL 覆盖
 - `[cache.consumer_overrides]`: 按消费者 TTL 覆盖
@@ -368,7 +368,7 @@ Admin Dashboard 分为后端（`crab-admin`，Axum HTTP 服务器）和前端（
 
 ### Reasoning 处理管线
 
-针对 DeepSeek V4 的 reasoning/thinking 内容处理：
+针对支持 reasoning/thinking 的 LLM 供应商（如 DeepSeek V4）的内容处理：
 
 1. **请求预处理**: 注入 `thinking_mode`/`reasoning_effort` 参数，处理缺失 reasoning 恢复
 2. **SSE Chunk 改写** (`rewrite_sse_chunk`): 拦截 reasoning 事件 → 提取内容 → 折叠到 assistant content 中
@@ -393,7 +393,7 @@ Admin Dashboard 分为后端（`crab-admin`，Axum HTTP 服务器）和前端（
 
 ### 为什么使用 Ketama 路由？
 
-DeepSeek V4 的硬盘级前缀缓存要求请求必须路由到同一后端节点。Ketama 一致性哈希确保：
+支持前缀缓存的 LLM 供应商（如 DeepSeek）要求请求必须路由到同一后端节点。Ketama 一致性哈希确保：
 - 相同 conversation_id 的请求始终路由到同一节点
 - 节点扩缩容时，仅影响 K/N 的请求（最小重分配）
 - 保护已建立的 KV 缓存前缀
@@ -407,7 +407,7 @@ DeepSeek V4 的硬盘级前缀缓存要求请求必须路由到同一后端节�
 - **缓存命中率**: > 98%（综合 L0+L1+L2）
 - **网关延迟**: P99 < 1ms（缓存命中）
 - **缓存获取延迟**: L0 P99 < 100μs、L1 P99 < 5ms、L2 P99 < 50ms
-- **首字延迟 (TTFT)**: 与直连 DeepSeek 相比增加 < 5ms
+- **首字延迟 (TTFT)**: 网关层附加延迟 < 5ms
 - **吞吐量**: 单实例 > 10K QPS（缓存命中场景）
 
 ## 监控指标

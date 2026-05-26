@@ -1,6 +1,6 @@
-# CrabCache — DeepSeek V4 高性能 Rust API 网关架构设计
+# CrabCache — 多供应商 LLM API 高性能网关架构设计
 
-基于《面向 DeepSeek V4 的高性能 Rust API 网关全链路生产级方案》，设计 Cargo Workspace 多 crate 项目架构。
+基于多供应商 LLM API 网关方案，以 DeepSeek V4 为重点参考实现，设计 Cargo Workspace 多 crate 项目架构。
 
 ## 项目总览
 

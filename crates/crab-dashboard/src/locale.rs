@@ -33,8 +33,8 @@ impl Translations {
     }
     pub fn sidebar_subtitle(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "DeepSeek V4 网关",
-            Locale::EnUS => "DeepSeek V4 Gateway",
+            Locale::ZhCN => "多供应商 LLM API 网关 · DeepSeek V4",
+            Locale::EnUS => "Multi-Provider LLM API Gateway · DeepSeek V4",
         }
     }
     pub fn sidebar_overview(self) -> &'static str {
@@ -1603,8 +1603,8 @@ impl Translations {
     }
     pub fn pipeline_mode_force(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "强制 Cursor DeepSeek V4",
-            Locale::EnUS => "Force Cursor DeepSeek V4",
+            Locale::ZhCN => "强制 Cursor 管线",
+            Locale::EnUS => "Force Cursor pipeline",
         }
     }
     pub fn pipeline_mode_hint(self) -> &'static str {
@@ -2458,8 +2458,8 @@ impl Translations {
     }
     pub fn reasoning_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "管理 DeepSeek 推理处理管线",
-            Locale::EnUS => "Manage DeepSeek reasoning pipeline",
+            Locale::ZhCN => "管理推理处理管线",
+            Locale::EnUS => "Manage reasoning pipeline",
         }
     }
     pub fn reasoning_thinking_mode(self) -> &'static str {
@@ -2524,8 +2524,8 @@ impl Translations {
     }
     pub fn auth_tagline(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "DeepSeek V4 高性能 API 网关控制台",
-            Locale::EnUS => "Control plane for the DeepSeek V4 API gateway",
+            Locale::ZhCN => "多供应商 LLM API 高性能网关控制台 · DeepSeek V4",
+            Locale::EnUS => "Control plane for the multi-provider LLM API gateway · DeepSeek V4",
         }
     }
 
@@ -2749,8 +2749,8 @@ impl Translations {
     }
     pub fn models_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "查看与同步 DeepSeek 上游可用模型",
-            Locale::EnUS => "View and sync available DeepSeek upstream models",
+            Locale::ZhCN => "查看与同步上游可用模型",
+            Locale::EnUS => "View and sync available upstream models",
         }
     }
     pub fn models_sync_btn(self) -> &'static str {
@@ -3315,8 +3315,8 @@ impl Translations {
     }
     pub fn trace_deepseek_user_id_title(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "DeepSeek user_id 隔离审计",
-            Locale::EnUS => "DeepSeek user_id isolation audit",
+            Locale::ZhCN => "上游 user_id 隔离审计",
+            Locale::EnUS => "Upstream user_id isolation audit",
         }
     }
     pub fn trace_deepseek_user_id_hint(self) -> &'static str {
@@ -3331,8 +3331,8 @@ impl Translations {
     }
     pub fn trace_deepseek_requests(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "DeepSeek 请求数",
-            Locale::EnUS => "DeepSeek requests",
+            Locale::ZhCN => "上游请求数",
+            Locale::EnUS => "Upstream requests",
         }
     }
     pub fn trace_upstream_user_id_ratio(self) -> &'static str {
@@ -3565,8 +3565,8 @@ impl Translations {
     }
     pub fn upstream_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "配置 DeepSeek 官方或 OpenAI 兼容中转的 relay 地址与 Key 池",
-            Locale::EnUS => "Configure DeepSeek official or OpenAI-compatible relay and key pool.",
+            Locale::ZhCN => "配置上游供应商的 relay 地址与 Key 池",
+            Locale::EnUS => "Configure upstream provider relay and key pool.",
         }
     }
     pub fn upstream_base_url_label(self) -> &'static str {
@@ -3943,11 +3943,152 @@ impl Translations {
             Locale::EnUS => "SNI Server Name Indication for upstream TLS handshake (optional)",
         }
     }
+    pub fn upstream_subtab_profiles(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Profiles",
+            Locale::EnUS => "Profiles",
+        }
+    }
+    pub fn upstream_subtab_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由与健康",
+            Locale::EnUS => "Routing & Health",
+        }
+    }
+    pub fn upstream_subtab_keys(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Key 池",
+            Locale::EnUS => "Key Pool",
+        }
+    }
+    pub fn routing_backend_name(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "名称",
+            Locale::EnUS => "Name",
+        }
+    }
+    pub fn routing_backend_addr(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "地址",
+            Locale::EnUS => "Address",
+        }
+    }
+    pub fn routing_backend_weight(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "权重",
+            Locale::EnUS => "Weight",
+        }
+    }
+    pub fn routing_backend_health(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "健康",
+            Locale::EnUS => "Health",
+        }
+    }
+    pub fn routing_backend_circuit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "熔断",
+            Locale::EnUS => "Circuit",
+        }
+    }
+    pub fn routing_backend_failures(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连续失败",
+            Locale::EnUS => "Failures",
+        }
+    }
+    pub fn routing_circuit_closed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正常",
+            Locale::EnUS => "Closed",
+        }
+    }
+    pub fn routing_circuit_open(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "熔断",
+            Locale::EnUS => "Open",
+        }
+    }
+    pub fn routing_circuit_half_open(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "半开",
+            Locale::EnUS => "HalfOpen",
+        }
+    }
+    pub fn routing_key_pool_summary(self, available: usize, total: usize) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("Key 池: {}/{} 可用", available, total),
+            Locale::EnUS => format!("Key Pool: {}/{} available", available, total),
+        }
+    }
+    pub fn routing_circuit_breaker_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "熔断参数",
+            Locale::EnUS => "Circuit Breaker Config",
+        }
+    }
+    pub fn routing_circuit_breaker_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "以下为只读展示，修改请编辑 gateway.toml",
+            Locale::EnUS => "Read-only display; edit gateway.toml to change",
+        }
+    }
+    pub fn routing_no_backends(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无后端节点，请先在 Profiles Tab 配置 endpoints",
+            Locale::EnUS => "No backends configured. Add endpoints in the Profiles tab.",
+        }
+    }
+    pub fn routing_manage_keys_link(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理 Key 池 →",
+            Locale::EnUS => "Manage Key Pool →",
+        }
+    }
+    pub fn routing_health_healthy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "健康",
+            Locale::EnUS => "Healthy",
+        }
+    }
+    pub fn routing_health_unhealthy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "不健康",
+            Locale::EnUS => "Unhealthy",
+        }
+    }
+    pub fn routing_last_check(self, ms_ago: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{}s 前", ms_ago),
+            Locale::EnUS => format!("{}s ago", ms_ago),
+        }
+    }
+    pub fn routing_latency_ms(self, ms: u64) -> String {
+        format!("{}ms", ms)
+    }
+    pub fn routing_summary_card_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由健康",
+            Locale::EnUS => "Routing Health",
+        }
+    }
+    pub fn routing_summary_healthy_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "健康节点",
+            Locale::EnUS => "Healthy Backends",
+        }
+    }
+    pub fn routing_summary_circuit_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "熔断中",
+            Locale::EnUS => "Circuit Open",
+        }
+    }
 
     pub fn overview_setup_upstream_cta(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "尚未配置 DeepSeek 上游 Key 池，请前往上游配置。",
-            Locale::EnUS => "DeepSeek upstream key pool is empty. Configure upstream.",
+            Locale::ZhCN => "尚未配置上游 Key 池，请前往上游配置。",
+            Locale::EnUS => "Upstream key pool is empty. Configure upstream.",
         }
     }
     pub fn overview_setup_upstream_link(self) -> &'static str {
@@ -4144,8 +4285,8 @@ impl Translations {
     }
     pub fn keys_project_id_label(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "project_id（DeepSeek user_id）",
-            Locale::EnUS => "project_id (DeepSeek user_id)",
+            Locale::ZhCN => "project_id（上游 user_id）",
+            Locale::EnUS => "project_id (upstream user_id)",
         }
     }
     pub fn keys_project_id_hint(self) -> &'static str {
@@ -4161,10 +4302,10 @@ impl Translations {
     pub fn keys_upstream_profile_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => {
-                "留空则按模型自动选择上游 Profile；DeepSeek 场景请同时配置 project_id。"
+                "留空则按模型自动选择上游 Profile；多租户场景请同时配置 project_id。"
             }
             Locale::EnUS => {
-                "Leave empty for auto profile by model; for DeepSeek also set project_id."
+                "Leave empty for auto profile by model; for multi-tenant also set project_id."
             }
         }
     }

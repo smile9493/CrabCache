@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CrabCache — 基于 Cloudflare Pingora 的 DeepSeek API 网关</title>
-  <meta name="description" content="以 Cloudflare Pingora 为代理核心的 Rust API 网关，面向 DeepSeek V4 与 Cursor：无锁连接池、SSE 流式管线与可编程过滤器链。">
+  <title>CrabCache — 基于 Pingora 的多供应商 LLM API 高性能网关</title>
+  <meta name="description" content="基于 Cloudflare Pingora 的高性能 Rust API 网关，以 DeepSeek V4 为重点，面向多供应商 LLM 的缓存优化与可观测透明分析：无锁连接池、SSE 流式管线与可编程过滤器链。">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
   <style>
     :root {
@@ -287,14 +287,14 @@
     <div class="logo">🦀</div>
     <h1>CrabCache</h1>
     <p class="subtitle">
-      以 <strong>Cloudflare Pingora</strong> 为网络与代理核心构建的 Rust API 网关；在 Pingora <code>ProxyHttp</code> 过滤器链上扩展 DeepSeek V4 / Cursor 能力。
+      以 <strong>Cloudflare Pingora</strong> 为网络与代理核心构建的高性能 Rust API 网关；以 DeepSeek V4 为重点参考实现，专注多供应商 LLM 缓存优化与可观测透明分析。
     </p>
     <div class="badges">
       <span class="badge"><span class="dot rust"></span> Rust 2024</span>
       <span class="badge" style="border-color:#8B5CFE;color:#bc8cff">Pingora 0.8</span>
       <span class="badge"><span class="dot live"></span> ProxyHttp</span>
       <span class="badge"><span class="dot mit"></span> MIT License</span>
-      <span class="badge">DeepSeek V4</span>
+      <span class="badge">多供应商 LLM</span>
     </div>
   </div>
 </header>
@@ -318,7 +318,7 @@
         <div class="label">零拷贝 Bytes · jemalloc</div>
       </div>
       <div class="stat">
-        <div class="value">DeepSeek</div>
+        <div class="value">多供应商</div>
         <div class="label">业务层：路由 · Reasoning · 控制面</div>
       </div>
     </div>
@@ -334,7 +334,7 @@
     <div class="cache-tier">
       <div class="tier-header">
         <span class="tier-badge l0">L3</span>
-        <strong>DeepSeek 服务端前缀缓存</strong>
+        <strong>上游服务端前缀缓存（如 DeepSeek L3）</strong>
         <div class="tier-stats">
           <span>计费 Token 折扣</span>
           <span>依赖 <strong>稳定 messages 前缀</strong> + 粘滞路由</span>
@@ -381,7 +381,7 @@
 <section>
   <div class="container">
     <h2>核心特性</h2>
-    <p class="section-desc">为 DeepSeek V4 场景深度定制的代理网关</p>
+    <p class="section-desc">高性能多供应商 LLM API 代理网关，以 DeepSeek V4 为重点，专注缓存优化与可观测分析</p>
     <div class="grid">
       <div class="card">
         <div class="icon">⚡</div>
@@ -396,7 +396,7 @@
       <div class="card">
         <div class="icon">🎯</div>
         <h3>智能路由</h3>
-        <p>Ketama 粘滞路由提高 DeepSeek L3 前缀命中，支持 x-conversation-id / x-prompt-cache-key。</p>
+        <p>Ketama 粘滞路由提高上游前缀缓存命中率，支持 x-conversation-id / x-prompt-cache-key。</p>
       </div>
       <div class="card">
         <div class="icon">🛡️</div>
@@ -421,7 +421,7 @@
 <section class="alt">
   <div class="container">
     <h2>请求处理架构</h2>
-    <p class="section-desc">从客户端请求到上游 DeepSeek 的完整处理管线</p>
+    <p class="section-desc">从客户端请求到上游供应商的完整处理管线</p>
     <div class="arch-flow">
       <div class="arch-row">
         <div class="arch-box">客户端请求</div>
@@ -436,7 +436,7 @@
       <div class="arch-row">
         <div class="arch-box miss">Request Coalescing</div>
         <div class="arch-arrow">→</div>
-        <div class="arch-box hit">Ketama → DeepSeek（L3 前缀）</div>
+        <div class="arch-box hit">Ketama → 上游供应商（L3 前缀）</div>
       </div>
       <div class="arch-arrow">↓</div>
       <div class="arch-row">

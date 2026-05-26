@@ -74,7 +74,7 @@ lcov.info
 # --- Reference clones (not shipped) ---
 dsv4-cc-proxy/
 deepseek-cursor-proxy/
-
+gateway/
 # --- Misc local scratch ---
 site/
 .cache/
