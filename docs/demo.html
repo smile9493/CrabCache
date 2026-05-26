@@ -9,235 +9,295 @@
 </head>
 <body>
 
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <span class="logo">🦀</span>
-    <h2 class="brand-gradient-text">CrabCache</h2>
+<!-- Top Navigation Bar (matches actual dashboard TopNav) -->
+<header class="topnav">
+  <div class="topnav-brand">
+    <svg class="brand-logo" width="24" height="24" viewBox="0 0 32 32" fill="none">
+      <rect width="32" height="32" rx="8" fill="url(#logo-grad)"/>
+      <path d="M8 16c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z" fill="none" stroke="#fff" stroke-width="1.5" opacity="0.6"/>
+      <circle cx="12" cy="14" r="2" fill="#fff" opacity="0.9"/>
+      <circle cx="20" cy="14" r="2" fill="#fff" opacity="0.9"/>
+      <path d="M12 20c1.5 1.5 6.5 1.5 8 0" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+      <defs><linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#c4841a"/><stop offset="1" stop-color="#d9952e"/></linearGradient></defs>
+    </svg>
+    <span class="topnav-brand-name brand-gradient-text">CrabCache</span>
+    <span class="topnav-brand-version">v0.1.0</span>
   </div>
-  <nav class="sidebar-nav">
-    <div class="nav-group-label">主菜单</div>
-    <a class="nav-item active" href="#"><span class="icon">📊</span> 概览</a>
-    <a class="nav-item" href="#"><span class="icon">🔑</span> API 密钥</a>
-    <a class="nav-item" href="#"><span class="icon">🗄️</span> 缓存配置</a>
-    <a class="nav-item" href="#"><span class="icon">🧠</span> Reasoning</a>
-    <div class="nav-group-label">监控</div>
-    <a class="nav-item" href="#"><span class="icon">📈</span> 实时指标</a>
-    <a class="nav-item" href="#"><span class="icon">📋</span> 请求日志</a>
-    <a class="nav-item" href="#"><span class="icon">🔍</span> Trace 分析</a>
-    <div class="nav-group-label">管理</div>
-    <a class="nav-item" href="#"><span class="icon">🔗</span> 路由管理</a>
-    <a class="nav-item" href="#"><span class="icon">⚙️</span> 系统配置</a>
+
+  <nav class="topnav-nav">
+    <span class="topnav-group-label">监控</span>
+    <a class="topnav-item active" href="#overview"><span class="topnav-icon">◉</span> 概览</a>
+    <a class="topnav-item" href="#live"><span class="topnav-icon">◔</span> 实时</a>
+    <a class="topnav-item" href="#infra"><span class="topnav-icon">⊞</span> 基础设施</a>
+    <a class="topnav-item" href="#requests"><span class="topnav-icon">▣</span> 请求</a>
+
+    <span class="topnav-group-label">配置</span>
+    <a class="topnav-item" href="#keys"><span class="topnav-icon">◆</span> API 密钥</a>
+    <a class="topnav-item" href="#upstream"><span class="topnav-icon">⬡</span> 上游配置</a>
+    <a class="topnav-item" href="#models"><span class="topnav-icon">◇</span> 模型目录</a>
+    <a class="topnav-item" href="#cache"><span class="topnav-icon">◈</span> 缓存</a>
+    <a class="topnav-item" href="#system"><span class="topnav-icon">⚙</span> 系统</a>
   </nav>
-  <div class="demo-watermark">
-    界面规范预览 · 数据为示意（非 Dashboard API）<br>
-    规范见 <a href="DESIGN.md" style="color:var(--cc-info)">docs/DESIGN.md</a>
+
+  <div class="topnav-actions">
+    <span class="gateway-health">
+      <span class="online-dot"></span>
+      <span class="online-label">网关在线</span>
+    </span>
+    <button class="icon-btn" title="切换语言">🌐</button>
+    <button class="icon-btn" title="切换主题">🌑</button>
+    <button class="icon-btn" title="退出登录">⏻</button>
   </div>
-</aside>
+</header>
 
 <main class="main-content">
-  <header class="page-header">
-    <h1 class="page-header-title">📊 仪表盘概览</h1>
-    <div class="topbar-right">
-      <span class="status-dot"></span> 网关运行中 · 已运行 <strong>14d 6h</strong>
+  <div class="page-content">
+    <!-- Page Header -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-header-title">仪表盘概览</h1>
+        <p class="page-header-desc">网关运行状态与核心指标总览</p>
+      </div>
+      <div class="page-header-actions">
+        <span class="text-xs text-theme-muted">最近更新: 刚刚</span>
+        <label class="flex items-center gap-2 text-xs text-theme-muted">
+          <input type="checkbox" checked class="rounded"> 自动刷新
+        </label>
+        <button class="btn btn-secondary text-xs">刷新</button>
+      </div>
     </div>
-  </header>
 
-  <div class="stats-row">
-    <div class="metric-card">
-      <div class="metric-card-label">📈 请求速率 (5min)</div>
-      <div class="metric-card-value value accent">1,247</div>
-      <div class="metric-card-trend trend up">▲ 12.3% QPS</div>
+    <!-- Health Strip -->
+    <div class="glass-card health-strip">
+      <span class="font-medium text-theme-secondary">网关健康</span>
+      <span class="flex items-center gap-2 text-accent">
+        <span class="online-dot"></span> 运行中
+      </span>
+      <span class="text-theme-muted">上游密钥: <span class="font-mono text-theme">2/2</span></span>
+      <span class="text-theme-muted">流式缓存: <span class="font-mono text-theme">on</span></span>
     </div>
-    <div class="metric-card">
-      <div class="metric-card-label">🎯 L3 前缀命中率 (5min)</div>
-      <div class="metric-card-value value green">示例</div>
-      <div class="metric-card-trend trend up">▲ 见 Prometheus / Dashboard</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-card-label">⚡ P99 代理延迟</div>
-      <div class="metric-card-value value blue">19.2ms</div>
-      <div class="metric-card-trend trend down">▼ 示意数据</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-card-label">🗄️ 网关 L0–L2 命中 (5min)</div>
-      <div class="metric-card-value">低</div>
-      <div class="metric-card-trend trend up">▲ 典型聊天场景占比小</div>
-    </div>
-  </div>
 
-  <div class="demo-grid-2-1">
+    <!-- Bento Grid Metrics -->
+    <div class="bento-grid">
+      <!-- Hero Cell: QPS + Hit Rate -->
+      <div class="bento-cell-hero">
+        <div class="metric-card h-full">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <div class="metric-card-label">5 分钟 QPS</div>
+              <div class="flex items-baseline gap-2">
+                <div class="metric-card-value">0.02</div>
+              </div>
+              <div class="text-xs text-theme-muted mt-1">进程累计: 0.02</div>
+            </div>
+            <div class="text-3xl opacity-30">⚡</div>
+          </div>
+          <div class="grid grid-cols-2 gap-4 mt-auto">
+            <div>
+              <div class="text-xs text-theme-muted mb-1">5 分钟命中率</div>
+              <div class="flex items-baseline gap-1.5">
+                <div class="text-lg font-mono tabular-nums text-accent font-semibold">0.0%</div>
+              </div>
+              <div class="text-xs text-theme-muted mt-0.5">累计: 0.0%</div>
+            </div>
+            <div>
+              <div class="text-xs text-theme-muted mb-1">5 分钟 Token 命中率</div>
+              <div class="text-lg font-mono tabular-nums text-theme">0.0%</div>
+              <div class="text-xs text-theme-muted mt-0.5">TPS: 0.03</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Keys -->
+      <div class="bento-cell">
+        <div class="metric-card h-full">
+          <div class="flex items-start justify-between mb-3">
+            <div class="metric-card-label">活跃密钥</div>
+            <div class="text-2xl opacity-30">🔑</div>
+          </div>
+          <div class="metric-card-value">0</div>
+          <div class="metric-card-sub">已启用的 API Key 数量</div>
+          <div class="mt-3 flex items-center gap-2">
+            <div class="online-dot"></div>
+            <span class="online-label">已启用</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Uptime -->
+      <div class="bento-cell">
+        <div class="metric-card h-full">
+          <div class="flex items-start justify-between mb-3">
+            <div class="metric-card-label">运行时间</div>
+            <div class="text-2xl opacity-30">⏱</div>
+          </div>
+          <div class="metric-card-value">7h 16m</div>
+          <div class="metric-card-sub">自上次重启</div>
+          <div class="mt-3 pt-3 border-t border-theme space-y-1">
+            <div class="flex justify-between text-xs">
+              <span class="text-theme-muted">缓存命中</span>
+              <span class="font-mono tabular-nums text-accent">41</span>
+            </div>
+            <div class="flex justify-between text-xs text-theme-muted">
+              <span title="语义缓存命中/拒绝/跳过">语义守卫</span>
+              <span class="font-mono tabular-nums">18 / 0 / 18</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cache Tokens -->
+      <div class="bento-cell">
+        <div class="metric-card h-full">
+          <div class="flex items-start justify-between mb-3">
+            <div class="metric-card-label">缓存 Token 统计</div>
+            <div class="text-2xl opacity-30">💾</div>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between items-baseline">
+              <span class="text-xs text-theme-muted">Token 命中</span>
+              <span class="text-lg font-mono tabular-nums text-accent">252,016</span>
+            </div>
+            <div class="flex justify-between items-baseline">
+              <span class="text-xs text-theme-muted">Token 未命中</span>
+              <span class="text-lg font-mono tabular-nums text-theme">1,482,279</span>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-theme">
+            <div class="progress-bar h-2">
+              <div class="progress-bar-fill" style="width: 14.5%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Routing Summary -->
+      <div class="bento-cell">
+        <a href="#upstream" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
+          <div class="flex items-start justify-between mb-3">
+            <div class="metric-card-label">路由后端</div>
+            <div class="text-2xl opacity-30">🔀</div>
+          </div>
+          <div class="metric-card-value text-accent">3/3</div>
+          <div class="metric-card-sub">健康后端 / 总数</div>
+        </a>
+      </div>
+
+      <!-- Gateway Cache Donut -->
+      <div class="bento-cell-wide">
+        <div class="glass-card h-full">
+          <h3 class="text-sm font-semibold text-theme mb-1">网关缓存分层 (L0-L2)</h3>
+          <p class="text-xs text-theme-muted mb-4">5 分钟窗口各层级请求占比</p>
+          <div class="donut-chart-container">
+            <svg class="donut-chart-svg" width="160" height="160" viewBox="0 0 160 160">
+              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-bg-elevated)" stroke-width="20"/>
+              <!-- L0: small segment -->
+              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-accent)" stroke-width="20"
+                stroke-dasharray="18 358" stroke-dashoffset="0" transform="rotate(-90 80 80)"/>
+              <!-- L1: small segment -->
+              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-info)" stroke-width="20"
+                stroke-dasharray="6 370" stroke-dashoffset="-18" transform="rotate(-90 80 80)"/>
+              <!-- Miss: large segment -->
+              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-error-muted, #f8514933)" stroke-width="20"
+                stroke-dasharray="352 24" stroke-dashoffset="-24" transform="rotate(-90 80 80)"/>
+              <text x="80" y="75" text-anchor="middle" class="donut-chart-center-label" fill="var(--cc-text)" font-size="18" font-weight="700">4.2%</text>
+              <text x="80" y="95" text-anchor="middle" fill="var(--cc-text-muted)" font-size="10">命中率</text>
+            </svg>
+          </div>
+          <div class="donut-legend">
+            <span><span class="legend-dot" style="background:var(--cc-accent)"></span>L0</span>
+            <span><span class="legend-dot" style="background:var(--cc-info)"></span>L1</span>
+            <span><span class="legend-dot" style="background:var(--cc-warning)"></span>L2</span>
+            <span><span class="legend-dot" style="background:var(--cc-error-muted, #f8514933)"></span>未命中</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Latency Section -->
     <div class="glass-card">
-      <div class="panel-header">
-        <span>L3 前缀命中趋势（近 12 小时）</span>
-        <span class="panel-header-meta">示例数据 · 非实测</span>
-      </div>
-      <div class="cache-chart">
-        <div class="chart-row">
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:155px"></div><div class="chart-bar miss" style="height:2px"></div></div><div class="chart-label">12:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:153px"></div><div class="chart-bar miss" style="height:3px"></div></div><div class="chart-label">13:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:150px"></div><div class="chart-bar miss" style="height:6px"></div></div><div class="chart-label">14:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:156px"></div><div class="chart-bar miss" style="height:1px"></div></div><div class="chart-label">15:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:154px"></div><div class="chart-bar miss" style="height:2px"></div></div><div class="chart-label">16:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:148px"></div><div class="chart-bar miss" style="height:8px"></div></div><div class="chart-label">17:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:152px"></div><div class="chart-bar miss" style="height:4px"></div></div><div class="chart-label">18:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:157px"></div><div class="chart-bar miss" style="height:1px"></div></div><div class="chart-label">19:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:151px"></div><div class="chart-bar miss" style="height:5px"></div></div><div class="chart-label">20:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:155px"></div><div class="chart-bar miss" style="height:2px"></div></div><div class="chart-label">21:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:153px"></div><div class="chart-bar miss" style="height:3px"></div></div><div class="chart-label">22:00</div></div>
-          <div class="chart-bar-group"><div class="chart-bar-wrap"><div class="chart-bar hit" style="height:156px"></div><div class="chart-bar miss" style="height:1px"></div></div><div class="chart-label">23:00</div></div>
+      <h3 class="text-sm font-semibold text-theme mb-4">延迟分布</h3>
+      <div class="space-y-3">
+        <div class="latency-row">
+          <span class="latency-label">L0</span>
+          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 1%"></div></div>
+          <span class="latency-value">0.0ms</span>
         </div>
-        <div class="chart-legend">
-          <span><span class="legend-dot hit"></span>命中</span>
-          <span><span class="legend-dot miss"></span>未命中</span>
+        <div class="latency-row">
+          <span class="latency-label">L1</span>
+          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 4%"></div></div>
+          <span class="latency-value">0.6ms</span>
+        </div>
+        <div class="latency-row">
+          <span class="latency-label">L2</span>
+          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 100%"></div></div>
+          <span class="latency-value">19.2ms</span>
+        </div>
+        <div class="latency-row">
+          <span class="latency-label">上游</span>
+          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 38%"></div></div>
+          <span class="latency-value">780.9ms</span>
+          <span class="text-xs text-theme-muted ml-2">P99: 2,858ms</span>
         </div>
       </div>
     </div>
 
+    <!-- Trace Compare Banner -->
+    <div class="glass-card flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 class="text-sm font-semibold text-theme mb-1">Trace 对照面板</h3>
+        <p class="text-xs text-theme-muted mb-2">对比 24h 影子日志实测命中率与 5 分钟网关指标窗口</p>
+        <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
+          <span>24h trace: <span class="text-accent">0.0%</span> (1,532 req)</span>
+          <span>5m gateway: <span class="text-accent">0.0%</span></span>
+          <span class="text-theme-muted">+0.0%</span>
+        </div>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <a href="#cache" class="btn btn-secondary text-xs">Trace 分析</a>
+        <a href="#live" class="btn btn-secondary text-xs">实时监控</a>
+      </div>
+    </div>
+
+    <!-- Ops Metrics -->
     <div class="glass-card">
-      <div class="panel-header"><span>缓存层级分布</span></div>
-      <div class="tier-row" style="grid-template-columns:1fr;">
-        <div class="tier-card">
-          <div class="tier-name c0">L3 · DeepSeek 前缀</div>
-          <div class="tier-val c0">主路径</div>
-          <div class="tier-sub">prompt_cache_hit_tokens · 多轮对话降本</div>
-          <div class="progress-bar"><div class="progress-fill fill-accent" style="width:72%"></div></div>
+      <h3 class="text-sm font-semibold text-theme mb-4">运维指标</h3>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+          <div class="text-xs text-theme-muted">TTFT</div>
+          <div class="text-xl font-mono tabular-nums text-accent">4,891ms</div>
         </div>
-        <div class="tier-card">
-          <div class="tier-name c1">L0–L1 · 网关精确缓存</div>
-          <div class="tier-val c1">低</div>
-          <div class="tier-sub">需请求 body 完全一致</div>
-          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:8%"></div></div>
+        <div>
+          <div class="text-xs text-theme-muted">5 分钟合并</div>
+          <div class="text-xl font-mono tabular-nums text-accent">0</div>
+          <div class="text-xs text-theme-muted">Σ 1</div>
         </div>
-        <div class="tier-card">
-          <div class="tier-name c2">L2 · 语义（可选）</div>
-          <div class="tier-val c2">可选</div>
-          <div class="tier-sub">相似 ≠ 可复用输出，收益有限</div>
-          <div class="progress-bar"><div class="progress-fill fill-blue" style="width:5%"></div></div>
+        <div>
+          <div class="text-xs text-theme-muted">5 分钟拒绝</div>
+          <div class="text-xl font-mono tabular-nums text-warning">0</div>
+          <div class="text-xs text-theme-muted">Σ 0</div>
+        </div>
+        <div>
+          <div class="text-xs text-theme-muted">5 分钟成本节省</div>
+          <div class="text-xl font-mono tabular-nums text-warning">$0.0000</div>
+          <div class="text-xs text-theme-muted">$0.0057</div>
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="glass-card">
-    <div class="panel-header">
-      <span>🔑 API 密钥管理</span>
-      <span class="panel-header-meta">共 24 个密钥 · 21 启用 · 3 已吊销</span>
+    <!-- Observability Footer -->
+    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-theme-muted pt-2 border-t border-theme">
+      <a href="OBSERVABILITY.md" target="_blank" class="text-accent hover:underline">可观测性文档</a>
+      <span class="font-mono truncate">Prometheus: http://127.0.0.1:9090/metrics</span>
     </div>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>名称 / 标签</th>
-          <th>Token</th>
-          <th>状态</th>
-          <th>今日用量</th>
-          <th>创建时间</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><strong>production-default</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">主生产密钥</span></td>
-          <td><code>sk-cc-a1b2c3d4e5f6...</code></td>
-          <td><span class="badge badge-success">活跃</span></td>
-          <td><span class="mono">1.2M tokens</span></td>
-          <td>2026-03-15</td>
-          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
-        </tr>
-        <tr>
-          <td><strong>cursor-agent-team</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">Cursor IDE 团队</span></td>
-          <td><code>sk-cc-f7a8b9c0d1e2...</code></td>
-          <td><span class="badge badge-success">活跃</span></td>
-          <td><span class="mono">847K tokens</span></td>
-          <td>2026-04-02</td>
-          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
-        </tr>
-        <tr>
-          <td><strong>dev-testing</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">开发测试</span></td>
-          <td><code>sk-cc-9a8b7c6d5e4f...</code></td>
-          <td><span class="badge badge-warning">限额</span></td>
-          <td><span class="mono">32K tokens</span></td>
-          <td>2026-05-10</td>
-          <td style="color:var(--cc-text-muted);font-size:0.82em;">编辑 · 吊销</td>
-        </tr>
-        <tr>
-          <td><strong>deprecated-v1</strong><br><span style="font-size:0.75em;color:var(--cc-text-muted)">旧版密钥</span></td>
-          <td><code>sk-cc-ffff00001111...</code></td>
-          <td><span class="badge badge-error">已吊销</span></td>
-          <td><span class="mono">0 tokens</span></td>
-          <td>2026-02-20</td>
-          <td style="color:var(--cc-text-muted);font-size:0.82em;">重新启用</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
 
-  <div class="glass-card">
-    <div class="panel-header">
-      <span>📋 实时请求日志</span>
-      <span class="panel-header-meta">最近 25 条 · 自动刷新</span>
+    <!-- Demo Watermark -->
+    <div class="demo-watermark">
+      界面规范预览 · 数据为示意（非 Dashboard API）<br>
+      规范见 <a href="DESIGN.md" style="color:var(--cc-info)">docs/DESIGN.md</a>
     </div>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>模型</th>
-          <th>缓存</th>
-          <th>延迟</th>
-          <th>Token 输入</th>
-          <th>Token 输出</th>
-          <th>请求 ID</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="mono">20:44:12</span></td>
-          <td>deepseek-v4-pro</td>
-          <td><span class="badge badge-success">L0 命中</span></td>
-          <td><span class="mono">0.8ms</span></td>
-          <td><span class="mono">1,247</span></td>
-          <td><span class="mono">384</span></td>
-          <td><code style="font-size:0.72em">req-x7k2m...</code></td>
-        </tr>
-        <tr>
-          <td><span class="mono">20:44:11</span></td>
-          <td>deepseek-v4-pro</td>
-          <td><span class="badge badge-info">L2 命中</span></td>
-          <td><span class="mono">14.2ms</span></td>
-          <td><span class="mono">892</span></td>
-          <td><span class="mono">156</span></td>
-          <td><code style="font-size:0.72em">req-a3b9f...</code></td>
-        </tr>
-        <tr>
-          <td><span class="mono">20:44:11</span></td>
-          <td>deepseek-v4-pro</td>
-          <td><span class="badge badge-success">L0 命中</span></td>
-          <td><span class="mono">0.6ms</span></td>
-          <td><span class="mono">2,103</span></td>
-          <td><span class="mono">512</span></td>
-          <td><code style="font-size:0.72em">req-p5q8r...</code></td>
-        </tr>
-        <tr>
-          <td><span class="mono">20:44:10</span></td>
-          <td>deepseek-v4-pro</td>
-          <td><span class="badge badge-warning">未命中</span></td>
-          <td><span class="mono">847ms</span></td>
-          <td><span class="mono">3,456</span></td>
-          <td><span class="mono">1,024</span></td>
-          <td><code style="font-size:0.72em">req-m2n4w...</code></td>
-        </tr>
-        <tr>
-          <td><span class="mono">20:44:09</span></td>
-          <td>deepseek-v4-pro</td>
-          <td><span class="badge badge-success">L0 命中</span></td>
-          <td><span class="mono">0.7ms</span></td>
-          <td><span class="mono">567</span></td>
-          <td><span class="mono">234</span></td>
-          <td><code style="font-size:0.72em">req-d9e1h...</code></td>
-        </tr>
-      </tbody>
-    </table>
   </div>
-
 </main>
 
 </body>

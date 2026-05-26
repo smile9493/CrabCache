@@ -264,6 +264,46 @@ docker compose up -d --build
 
 ### 管理面板
 
+基于 **Leptos WASM + Axum** 的现代 Web 管理界面，暖琥珀色主题，支持深色/浅色/极夜三种主题切换。[在线演示](https://smile9493.github.io/CrabCache/demo)
+
+**登录页面** — 安全的 Admin Key 认证：
+
+![登录页面](screenshots/auth-page.png)
+
+**仪表盘概览** — 核心指标 Bento Grid 布局，包含 QPS、命中率、延迟分布、缓存分层等：
+
+![仪表盘概览](screenshots/overview.png)
+
+**API 密钥管理** — 创建、吊销、批量操作，支持多租户与行内编辑：
+
+![API 密钥管理](screenshots/keys.png)
+
+**实时监控** — 近实时 QPS/TPS 与 Token 趋势图，支持多窗口切换：
+
+![实时监控](screenshots/live.png)
+
+**上游配置** — 多厂商 Profile 管理、Key 池轮换、端点热更新：
+
+![上游配置](screenshots/upstream.png)
+
+**缓存配置** — L0/L1/L2 TTL、语义缓存、失效管理、Trace 分析：
+
+![缓存配置](screenshots/cache.png)
+
+管理面板功能概览：
+
+| 功能 | 说明 |
+|------|------|
+| **仪表盘概览** | Bento Grid 指标布局、SSE 实时推送、5 分钟/累计命中率 |
+| **实时监控** | QPS/TPS 趋势图、Token 使用量、多消费者/域名维度 |
+| **基础设施** | Docker 容器监控、带宽测试、系统资源 |
+| **请求日志** | 结构化日志查看、多维过滤、详情面板 |
+| **API Key 管理** | 创建、吊销、批量操作、行内编辑，支持多租户 |
+| **上游配置** | 多 Profile 管理、Key 池、端点热更新、连通性测试 |
+| **模型目录** | 按 Profile 同步上游模型、别名管理 |
+| **缓存配置** | L0/L1 TTL、模型/消费者覆盖、语义缓存、失效、指纹 |
+| **系统配置** | Reasoning 管线、连接参数、Cursor 模型别名 |
+
 可选 Web 管理界面（需要先构建前端）：
 
 ```bash
@@ -274,19 +314,6 @@ bash scripts/build_dashboard.sh
 docker compose --profile admin up -d --build
 # 访问 http://127.0.0.1:3000
 ```
-
-管理面板功能：
-
-| 功能 | 说明 |
-|------|------|
-| **API Key 管理** | 创建、吊销、批量操作、行内编辑，支持多租户 |
-| **缓存配置** | L0/L1 TTL、模型/消费者覆盖、语义缓存、失效、指纹 |
-| **Reasoning 配置** | 推理管线参数热更新 |
-| **Cursor 模型别名** | 管理 `gpt-4o` → `deepseek-v4-pro` 映射 |
-| **路由管理** | 查看与热更新后端端点 |
-| **监控指标** | QPS、TPS、命中率、延迟，支持时间范围选择 |
-| **请求日志** | 实时日志，支持多维过滤 |
-| **Trace 分析** | 影子日志分析面板 |
 
 ### 密钥体系
 
