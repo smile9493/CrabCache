@@ -6,10 +6,15 @@
   <title>CrabCache Admin Dashboard — 在线演示</title>
   <link rel="stylesheet" href="assets/design-tokens.css">
   <link rel="stylesheet" href="assets/demo-layout.css">
+  <style>
+    .page-section { display: none; }
+    .page-section.active { display: block; }
+    .topnav-item.active { background: var(--cc-nav-active-bg); color: var(--cc-accent-bright); font-weight: 600; }
+  </style>
 </head>
 <body>
 
-<!-- Top Navigation Bar (matches actual dashboard TopNav) -->
+<!-- Top Navigation Bar -->
 <header class="topnav">
   <div class="topnav-brand">
     <svg class="brand-logo" width="24" height="24" viewBox="0 0 32 32" fill="none">
@@ -24,26 +29,22 @@
     <span class="topnav-brand-version">v0.1.0</span>
   </div>
 
-  <nav class="topnav-nav">
+  <nav class="topnav-nav" id="main-nav">
     <span class="topnav-group-label">监控</span>
-    <a class="topnav-item active" href="#overview"><span class="topnav-icon">◉</span> 概览</a>
-    <a class="topnav-item" href="#live"><span class="topnav-icon">◔</span> 实时</a>
-    <a class="topnav-item" href="#infra"><span class="topnav-icon">⊞</span> 基础设施</a>
-    <a class="topnav-item" href="#requests"><span class="topnav-icon">▣</span> 请求</a>
-
+    <a class="topnav-item active" href="#overview" data-page="overview"><span class="topnav-icon">◉</span> 概览</a>
+    <a class="topnav-item" href="#live" data-page="live"><span class="topnav-icon">◔</span> 实时</a>
+    <a class="topnav-item" href="#infra" data-page="infra"><span class="topnav-icon">⊞</span> 基础设施</a>
+    <a class="topnav-item" href="#requests" data-page="requests"><span class="topnav-icon">▣</span> 请求</a>
     <span class="topnav-group-label">配置</span>
-    <a class="topnav-item" href="#keys"><span class="topnav-icon">◆</span> API 密钥</a>
-    <a class="topnav-item" href="#upstream"><span class="topnav-icon">⬡</span> 上游配置</a>
-    <a class="topnav-item" href="#models"><span class="topnav-icon">◇</span> 模型目录</a>
-    <a class="topnav-item" href="#cache"><span class="topnav-icon">◈</span> 缓存</a>
-    <a class="topnav-item" href="#system"><span class="topnav-icon">⚙</span> 系统</a>
+    <a class="topnav-item" href="#keys" data-page="keys"><span class="topnav-icon">◆</span> API 密钥</a>
+    <a class="topnav-item" href="#upstream" data-page="upstream"><span class="topnav-icon">⬡</span> 上游配置</a>
+    <a class="topnav-item" href="#models" data-page="models"><span class="topnav-icon">◇</span> 模型目录</a>
+    <a class="topnav-item" href="#cache" data-page="cache"><span class="topnav-icon">◈</span> 缓存</a>
+    <a class="topnav-item" href="#system" data-page="system"><span class="topnav-icon">⚙</span> 系统</a>
   </nav>
 
   <div class="topnav-actions">
-    <span class="gateway-health">
-      <span class="online-dot"></span>
-      <span class="online-label">网关在线</span>
-    </span>
+    <span class="gateway-health"><span class="online-dot"></span><span class="online-label">网关在线</span></span>
     <button class="icon-btn" title="切换语言">🌐</button>
     <button class="icon-btn" title="切换主题">🌑</button>
     <button class="icon-btn" title="退出登录">⏻</button>
@@ -52,253 +53,607 @@
 
 <main class="main-content">
   <div class="page-content">
-    <!-- Page Header -->
-    <div class="page-header">
-      <div>
-        <h1 class="page-header-title">仪表盘概览</h1>
-        <p class="page-header-desc">网关运行状态与核心指标总览</p>
-      </div>
-      <div class="page-header-actions">
-        <span class="text-xs text-theme-muted">最近更新: 刚刚</span>
-        <label class="flex items-center gap-2 text-xs text-theme-muted">
-          <input type="checkbox" checked class="rounded"> 自动刷新
-        </label>
-        <button class="btn btn-secondary text-xs">刷新</button>
-      </div>
-    </div>
 
-    <!-- Health Strip -->
-    <div class="glass-card health-strip">
-      <span class="font-medium text-theme-secondary">网关健康</span>
-      <span class="flex items-center gap-2 text-accent">
-        <span class="online-dot"></span> 运行中
-      </span>
-      <span class="text-theme-muted">上游密钥: <span class="font-mono text-theme">2/2</span></span>
-      <span class="text-theme-muted">流式缓存: <span class="font-mono text-theme">on</span></span>
-    </div>
+    <!-- ======================== OVERVIEW ======================== -->
+    <div class="page-section active" id="page-overview">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">仪表盘概览</h1>
+          <p class="page-header-desc">网关运行状态与核心指标总览</p>
+        </div>
+        <div class="page-header-actions">
+          <span class="text-xs text-theme-muted">最近更新: 刚刚</span>
+          <label class="flex items-center gap-2 text-xs text-theme-muted"><input type="checkbox" checked class="rounded"> 自动刷新</label>
+          <button class="btn btn-secondary text-xs">刷新</button>
+        </div>
+      </div>
 
-    <!-- Bento Grid Metrics -->
-    <div class="bento-grid">
-      <!-- Hero Cell: QPS + Hit Rate -->
-      <div class="bento-cell-hero">
-        <div class="metric-card h-full">
-          <div class="flex items-start justify-between mb-4">
-            <div>
-              <div class="metric-card-label">5 分钟 QPS</div>
-              <div class="flex items-baseline gap-2">
-                <div class="metric-card-value">0.02</div>
+      <div class="glass-card health-strip">
+        <span class="font-medium text-theme-secondary">网关健康</span>
+        <span class="flex items-center gap-2 text-accent"><span class="online-dot"></span> 运行中</span>
+        <span class="text-theme-muted">上游密钥: <span class="font-mono text-theme">2/2</span></span>
+        <span class="text-theme-muted">流式缓存: <span class="font-mono text-theme">on</span></span>
+      </div>
+
+      <div class="bento-grid">
+        <div class="bento-cell-hero">
+          <div class="metric-card h-full">
+            <div class="flex items-start justify-between mb-4">
+              <div>
+                <div class="metric-card-label">5 分钟 QPS</div>
+                <div class="flex items-baseline gap-2"><div class="metric-card-value">0.02</div></div>
+                <div class="text-xs text-theme-muted mt-1">进程累计: 0.02</div>
               </div>
-              <div class="text-xs text-theme-muted mt-1">进程累计: 0.02</div>
+              <div class="text-3xl opacity-30">⚡</div>
             </div>
-            <div class="text-3xl opacity-30">⚡</div>
-          </div>
-          <div class="grid grid-cols-2 gap-4 mt-auto">
-            <div>
-              <div class="text-xs text-theme-muted mb-1">5 分钟命中率</div>
-              <div class="flex items-baseline gap-1.5">
+            <div class="grid grid-cols-2 gap-4 mt-auto">
+              <div>
+                <div class="text-xs text-theme-muted mb-1">5 分钟命中率</div>
                 <div class="text-lg font-mono tabular-nums text-accent font-semibold">0.0%</div>
+                <div class="text-xs text-theme-muted mt-0.5">累计: 0.0%</div>
               </div>
-              <div class="text-xs text-theme-muted mt-0.5">累计: 0.0%</div>
+              <div>
+                <div class="text-xs text-theme-muted mb-1">5 分钟 Token 命中率</div>
+                <div class="text-lg font-mono tabular-nums text-theme">0.0%</div>
+                <div class="text-xs text-theme-muted mt-0.5">TPS: 0.03</div>
+              </div>
             </div>
-            <div>
-              <div class="text-xs text-theme-muted mb-1">5 分钟 Token 命中率</div>
-              <div class="text-lg font-mono tabular-nums text-theme">0.0%</div>
-              <div class="text-xs text-theme-muted mt-0.5">TPS: 0.03</div>
+          </div>
+        </div>
+        <div class="bento-cell">
+          <div class="metric-card h-full">
+            <div class="flex items-start justify-between mb-3"><div class="metric-card-label">活跃密钥</div><div class="text-2xl opacity-30">🔑</div></div>
+            <div class="metric-card-value">0</div>
+            <div class="metric-card-sub">已启用的 API Key 数量</div>
+            <div class="mt-3 flex items-center gap-2"><div class="online-dot"></div><span class="online-label">已启用</span></div>
+          </div>
+        </div>
+        <div class="bento-cell">
+          <div class="metric-card h-full">
+            <div class="flex items-start justify-between mb-3"><div class="metric-card-label">运行时间</div><div class="text-2xl opacity-30">⏱</div></div>
+            <div class="metric-card-value">7h 16m</div>
+            <div class="metric-card-sub">自上次重启</div>
+            <div class="mt-3 pt-3 border-t border-theme space-y-1">
+              <div class="flex justify-between text-xs"><span class="text-theme-muted">缓存命中</span><span class="font-mono tabular-nums text-accent">41</span></div>
+              <div class="flex justify-between text-xs text-theme-muted"><span>语义守卫</span><span class="font-mono tabular-nums">18 / 0 / 18</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="bento-cell">
+          <div class="metric-card h-full">
+            <div class="flex items-start justify-between mb-3"><div class="metric-card-label">缓存 Token 统计</div><div class="text-2xl opacity-30">💾</div></div>
+            <div class="space-y-2">
+              <div class="flex justify-between items-baseline"><span class="text-xs text-theme-muted">Token 命中</span><span class="text-lg font-mono tabular-nums text-accent">252,016</span></div>
+              <div class="flex justify-between items-baseline"><span class="text-xs text-theme-muted">Token 未命中</span><span class="text-lg font-mono tabular-nums text-theme">1,482,279</span></div>
+            </div>
+            <div class="mt-3 pt-3 border-t border-theme"><div class="progress-bar h-2"><div class="progress-bar-fill" style="width:14.5%"></div></div></div>
+          </div>
+        </div>
+        <div class="bento-cell">
+          <a href="#upstream" onclick="switchPage('upstream')" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
+            <div class="flex items-start justify-between mb-3"><div class="metric-card-label">路由后端</div><div class="text-2xl opacity-30">🔀</div></div>
+            <div class="metric-card-value text-accent">3/3</div>
+            <div class="metric-card-sub">健康后端 / 总数</div>
+          </a>
+        </div>
+        <div class="bento-cell-wide">
+          <div class="glass-card h-full">
+            <h3 class="text-sm font-semibold text-theme mb-1">网关缓存分层 (L0-L2)</h3>
+            <p class="text-xs text-theme-muted mb-4">5 分钟窗口各层级请求占比</p>
+            <div class="donut-chart-container">
+              <svg class="donut-chart-svg" width="160" height="160" viewBox="0 0 160 160">
+                <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-bg-elevated)" stroke-width="20"/>
+                <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-accent)" stroke-width="20" stroke-dasharray="18 358" stroke-dashoffset="0" transform="rotate(-90 80 80)"/>
+                <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-info)" stroke-width="20" stroke-dasharray="6 370" stroke-dashoffset="-18" transform="rotate(-90 80 80)"/>
+                <circle cx="80" cy="80" r="60" fill="none" stroke="#f8514933" stroke-width="20" stroke-dasharray="352 24" stroke-dashoffset="-24" transform="rotate(-90 80 80)"/>
+                <text x="80" y="75" text-anchor="middle" class="donut-chart-center-label" fill="var(--cc-text)" font-size="18" font-weight="700">4.2%</text>
+                <text x="80" y="95" text-anchor="middle" fill="var(--cc-text-muted)" font-size="10">命中率</text>
+              </svg>
+            </div>
+            <div class="donut-legend">
+              <span><span class="legend-dot" style="background:var(--cc-accent)"></span>L0</span>
+              <span><span class="legend-dot" style="background:var(--cc-info)"></span>L1</span>
+              <span><span class="legend-dot" style="background:var(--cc-warning)"></span>L2</span>
+              <span><span class="legend-dot" style="background:#f8514933"></span>未命中</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Active Keys -->
-      <div class="bento-cell">
-        <div class="metric-card h-full">
-          <div class="flex items-start justify-between mb-3">
-            <div class="metric-card-label">活跃密钥</div>
-            <div class="text-2xl opacity-30">🔑</div>
-          </div>
-          <div class="metric-card-value">0</div>
-          <div class="metric-card-sub">已启用的 API Key 数量</div>
-          <div class="mt-3 flex items-center gap-2">
-            <div class="online-dot"></div>
-            <span class="online-label">已启用</span>
-          </div>
+      <div class="glass-card">
+        <h3 class="text-sm font-semibold text-theme mb-4">延迟分布</h3>
+        <div class="space-y-3">
+          <div class="latency-row"><span class="latency-label">L0</span><div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width:1%"></div></div><span class="latency-value">0.0ms</span></div>
+          <div class="latency-row"><span class="latency-label">L1</span><div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width:4%"></div></div><span class="latency-value">0.6ms</span></div>
+          <div class="latency-row"><span class="latency-label">L2</span><div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width:100%"></div></div><span class="latency-value">19.2ms</span></div>
+          <div class="latency-row"><span class="latency-label">上游</span><div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width:38%"></div></div><span class="latency-value">780.9ms</span><span class="text-xs text-theme-muted ml-2">P99: 2,858ms</span></div>
         </div>
       </div>
 
-      <!-- Uptime -->
-      <div class="bento-cell">
-        <div class="metric-card h-full">
-          <div class="flex items-start justify-between mb-3">
-            <div class="metric-card-label">运行时间</div>
-            <div class="text-2xl opacity-30">⏱</div>
+      <div class="glass-card flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-theme mb-1">Trace 对照面板</h3>
+          <p class="text-xs text-theme-muted mb-2">对比 24h 影子日志实测命中率与 5 分钟网关指标窗口</p>
+          <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
+            <span>24h trace: <span class="text-accent">0.0%</span> (1,532 req)</span>
+            <span>5m gateway: <span class="text-accent">0.0%</span></span>
+            <span class="text-theme-muted">+0.0%</span>
           </div>
-          <div class="metric-card-value">7h 16m</div>
-          <div class="metric-card-sub">自上次重启</div>
-          <div class="mt-3 pt-3 border-t border-theme space-y-1">
-            <div class="flex justify-between text-xs">
-              <span class="text-theme-muted">缓存命中</span>
-              <span class="font-mono tabular-nums text-accent">41</span>
+        </div>
+        <div class="flex gap-2 shrink-0">
+          <a href="#cache" onclick="switchPage('cache')" class="btn btn-secondary text-xs">Trace 分析</a>
+          <a href="#live" onclick="switchPage('live')" class="btn btn-secondary text-xs">实时监控</a>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <h3 class="text-sm font-semibold text-theme mb-4">运维指标</h3>
+        <div class="grid grid-cols-4 gap-4">
+          <div><div class="text-xs text-theme-muted">TTFT</div><div class="text-xl font-mono tabular-nums text-accent">4,891ms</div></div>
+          <div><div class="text-xs text-theme-muted">5 分钟合并</div><div class="text-xl font-mono tabular-nums text-accent">0</div><div class="text-xs text-theme-muted">Σ 1</div></div>
+          <div><div class="text-xs text-theme-muted">5 分钟拒绝</div><div class="text-xl font-mono tabular-nums text-warning">0</div><div class="text-xs text-theme-muted">Σ 0</div></div>
+          <div><div class="text-xs text-theme-muted">5 分钟成本节省</div><div class="text-xl font-mono tabular-nums text-warning">$0.0000</div><div class="text-xs text-theme-muted">$0.0057</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================== INFRA ======================== -->
+    <div class="page-section" id="page-infra">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">基础设施</h1>
+          <p class="page-header-desc">Docker 容器与系统资源监控</p>
+        </div>
+      </div>
+
+      <!-- Tab Bar -->
+      <div class="tab-bar">
+        <button class="tab-item tab-item-active">总览</button>
+        <button class="tab-item">容器</button>
+      </div>
+
+      <!-- Quick Check -->
+      <div class="glass-card flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-theme">快速检查</h3>
+          <p class="text-xs text-theme-muted">一键测试从当前服务器到各目标的连通性和延迟</p>
+        </div>
+        <button class="btn btn-primary text-xs">开始快速检查</button>
+      </div>
+
+      <!-- Infra Grid -->
+      <div class="dashboard-grid infra-grid">
+        <!-- Active Containers -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <div class="dash-card-title"><span>🐳</span> 活跃容器</div>
+            <div class="dash-card-actions"><span class="badge badge-success badge-sm">5</span></div>
+          </div>
+          <div class="dash-card-body-flush">
+            <div class="dash-list">
+              <div class="dash-item">
+                <div class="dash-item-left">
+                  <div>
+                    <div class="dash-item-name">crabcache-redis</div>
+                    <div class="dash-item-meta">Up 7h · redis:7-alpine</div>
+                  </div>
+                </div>
+                <div class="dash-item-actions">
+                  <span class="badge badge-success badge-sm">healthy</span>
+                </div>
+              </div>
+              <div class="dash-item">
+                <div class="dash-item-left">
+                  <div>
+                    <div class="dash-item-name">crabcache-gateway-1</div>
+                    <div class="dash-item-meta">Up 7h · crabcache:latest</div>
+                  </div>
+                </div>
+                <div class="dash-item-actions">
+                  <span class="badge badge-success badge-sm">healthy</span>
+                </div>
+              </div>
+              <div class="dash-item">
+                <div class="dash-item-left">
+                  <div>
+                    <div class="dash-item-name">crabcache-admin</div>
+                    <div class="dash-item-meta">Up 7h · crabcache-admin:latest</div>
+                  </div>
+                </div>
+                <div class="dash-item-actions">
+                  <span class="badge badge-success badge-sm">healthy</span>
+                </div>
+              </div>
+              <div class="dash-item">
+                <div class="dash-item-left">
+                  <div>
+                    <div class="dash-item-name">crabcache-postgres</div>
+                    <div class="dash-item-meta">Up 7h · postgres:17-alpine</div>
+                  </div>
+                </div>
+                <div class="dash-item-actions">
+                  <span class="badge badge-success badge-sm">healthy</span>
+                </div>
+              </div>
+              <div class="dash-item">
+                <div class="dash-item-left">
+                  <div>
+                    <div class="dash-item-name">1Panel-openresty-yLy6</div>
+                    <div class="dash-item-meta">Up 7h · openresty/openresty:...</div>
+                  </div>
+                </div>
+                <div class="dash-item-actions">
+                  <span class="badge badge-sm">running</span>
+                </div>
+              </div>
             </div>
-            <div class="flex justify-between text-xs text-theme-muted">
-              <span title="语义缓存命中/拒绝/跳过">语义守卫</span>
-              <span class="font-mono tabular-nums">18 / 0 / 18</span>
+          </div>
+        </div>
+
+        <!-- System Resources -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <div class="dash-card-title"><span>📊</span> 系统资源</div>
+          </div>
+          <div class="dash-card-body">
+            <div class="space-y-4">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-theme-muted">CPU 使用率</span>
+                  <span class="font-mono text-theme">5.6%</span>
+                </div>
+                <div class="progress-bar h-2"><div class="progress-bar-fill" style="width:5.6%"></div></div>
+                <div class="text-xs text-theme-muted mt-1">24 核 · 6.12.85+deb13-amd64</div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-theme-muted">内存</span>
+                  <span class="font-mono text-theme">21.3 GiB / 62.6 GiB</span>
+                </div>
+                <div class="progress-bar h-2"><div class="progress-bar-fill bg-warning" style="width:34%"></div></div>
+                <div class="text-xs text-theme-muted mt-1">使用率: 34.0%</div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-theme-muted">磁盘 /</span>
+                  <span class="font-mono text-theme">916.7 GB / 1.9 TB</span>
+                </div>
+                <div class="progress-bar h-2"><div class="progress-bar-fill" style="width:48%"></div></div>
+                <div class="text-xs text-theme-muted mt-1">可用: 1 TB · 使用率: 48%</div>
+              </div>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Cache Tokens -->
-      <div class="bento-cell">
-        <div class="metric-card h-full">
-          <div class="flex items-start justify-between mb-3">
-            <div class="metric-card-label">缓存 Token 统计</div>
-            <div class="text-2xl opacity-30">💾</div>
-          </div>
-          <div class="space-y-2">
-            <div class="flex justify-between items-baseline">
-              <span class="text-xs text-theme-muted">Token 命中</span>
-              <span class="text-lg font-mono tabular-nums text-accent">252,016</span>
-            </div>
-            <div class="flex justify-between items-baseline">
-              <span class="text-xs text-theme-muted">Token 未命中</span>
-              <span class="text-lg font-mono tabular-nums text-theme">1,482,279</span>
-            </div>
-          </div>
-          <div class="mt-3 pt-3 border-t border-theme">
-            <div class="progress-bar h-2">
-              <div class="progress-bar-fill" style="width: 14.5%"></div>
-            </div>
-          </div>
+    <!-- ======================== KEYS ======================== -->
+    <div class="page-section" id="page-keys">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">API 密钥管理</h1>
+          <p class="page-header-desc">管理网关 API 密钥的创建、吊销和配置</p>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-primary text-xs">创建 API Key</button>
         </div>
       </div>
 
-      <!-- Routing Summary -->
-      <div class="bento-cell">
-        <a href="#upstream" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
-          <div class="flex items-start justify-between mb-3">
-            <div class="metric-card-label">路由后端</div>
-            <div class="text-2xl opacity-30">🔀</div>
-          </div>
-          <div class="metric-card-value text-accent">3/3</div>
-          <div class="metric-card-sub">健康后端 / 总数</div>
-        </a>
+      <div class="glass-card">
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>Token</th>
+                <th>启用</th>
+                <th>RPM 限制</th>
+                <th>最大并发</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="font-medium text-theme">agent-default</div><div class="text-xs text-theme-muted">默认 Agent 密钥</div></td>
+                <td><code class="font-mono text-xs">sk-cc-350d14165a92f38b37e87...</code></td>
+                <td><span class="badge badge-success badge-sm">启用</span></td>
+                <td class="font-mono text-xs">0</td>
+                <td class="font-mono text-xs">0</td>
+                <td class="text-theme-muted text-xs">编辑 · 吊销</td>
+              </tr>
+              <tr>
+                <td><div class="font-medium text-theme">mify-agent</div><div class="text-xs text-theme-muted">mify 代理密钥</div></td>
+                <td><code class="font-mono text-xs">sk-cc-b92dc767607e5a4a312f3...</code></td>
+                <td><span class="badge badge-success badge-sm">启用</span></td>
+                <td class="font-mono text-xs">0</td>
+                <td class="font-mono text-xs">0</td>
+                <td class="text-theme-muted text-xs">编辑 · 吊销</td>
+              </tr>
+              <tr>
+                <td><div class="font-medium text-theme">cursor-agent</div><div class="text-xs text-theme-muted">cursor 代理密钥</div></td>
+                <td><code class="font-mono text-xs">sk-cc-fa62c753472cb1aa551d1...</code></td>
+                <td><span class="badge badge-success badge-sm">启用</span></td>
+                <td class="font-mono text-xs">0</td>
+                <td class="font-mono text-xs">0</td>
+                <td class="text-theme-muted text-xs">编辑 · 吊销</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================== LIVE ======================== -->
+    <div class="page-section" id="page-live">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">实时监控</h1>
+          <p class="page-header-desc">近实时网关请求指标，基于 trace 日志增量聚合</p>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-sm active">5 分钟</button>
+          <button class="btn btn-secondary btn-sm">15 分钟</button>
+          <button class="btn btn-secondary btn-sm">30 分钟</button>
+          <button class="btn btn-secondary btn-sm">1 小时</button>
+        </div>
       </div>
 
-      <!-- Gateway Cache Donut -->
-      <div class="bento-cell-wide">
-        <div class="glass-card h-full">
-          <h3 class="text-sm font-semibold text-theme mb-1">网关缓存分层 (L0-L2)</h3>
-          <p class="text-xs text-theme-muted mb-4">5 分钟窗口各层级请求占比</p>
-          <div class="donut-chart-container">
-            <svg class="donut-chart-svg" width="160" height="160" viewBox="0 0 160 160">
-              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-bg-elevated)" stroke-width="20"/>
-              <!-- L0: small segment -->
-              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-accent)" stroke-width="20"
-                stroke-dasharray="18 358" stroke-dashoffset="0" transform="rotate(-90 80 80)"/>
-              <!-- L1: small segment -->
-              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-info)" stroke-width="20"
-                stroke-dasharray="6 370" stroke-dashoffset="-18" transform="rotate(-90 80 80)"/>
-              <!-- Miss: large segment -->
-              <circle cx="80" cy="80" r="60" fill="none" stroke="var(--cc-error-muted, #f8514933)" stroke-width="20"
-                stroke-dasharray="352 24" stroke-dashoffset="-24" transform="rotate(-90 80 80)"/>
-              <text x="80" y="75" text-anchor="middle" class="donut-chart-center-label" fill="var(--cc-text)" font-size="18" font-weight="700">4.2%</text>
-              <text x="80" y="95" text-anchor="middle" fill="var(--cc-text-muted)" font-size="10">命中率</text>
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="glass-card">
+          <h3 class="text-sm font-semibold text-theme mb-3">近实时 QPS / TPS</h3>
+          <div class="chart-placeholder">
+            <svg width="100%" height="120" viewBox="0 0 500 120" preserveAspectRatio="none">
+              <line x1="0" y1="60" x2="500" y2="60" stroke="var(--cc-border)" stroke-width="0.5" stroke-dasharray="4"/>
+              <polyline fill="none" stroke="var(--cc-accent)" stroke-width="1.5" points="0,110 50,105 100,90 150,95 200,80 250,85 300,70 350,75 400,60 450,65 500,50"/>
+              <polyline fill="none" stroke="var(--cc-info)" stroke-width="1.5" points="0,115 50,110 100,100 150,105 200,95 250,100 300,85 350,90 400,80 450,85 500,70"/>
             </svg>
           </div>
-          <div class="donut-legend">
-            <span><span class="legend-dot" style="background:var(--cc-accent)"></span>L0</span>
-            <span><span class="legend-dot" style="background:var(--cc-info)"></span>L1</span>
-            <span><span class="legend-dot" style="background:var(--cc-warning)"></span>L2</span>
-            <span><span class="legend-dot" style="background:var(--cc-error-muted, #f8514933)"></span>未命中</span>
+        </div>
+        <div class="glass-card">
+          <h3 class="text-sm font-semibold text-theme mb-3">近实时 Token 用量</h3>
+          <div class="chart-placeholder">
+            <svg width="100%" height="120" viewBox="0 0 500 120" preserveAspectRatio="none">
+              <line x1="0" y1="60" x2="500" y2="60" stroke="var(--cc-border)" stroke-width="0.5" stroke-dasharray="4"/>
+              <polyline fill="none" stroke="var(--cc-accent)" stroke-width="1.5" points="0,100 50,90 100,70 150,80 200,50 250,60 300,40 350,55 400,30 450,45 500,20"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <h3 class="text-sm font-semibold text-theme mb-3">消费 / 域名 维度</h3>
+        <div class="flex gap-2 mb-3">
+          <button class="btn btn-primary btn-sm text-xs">按域名</button>
+          <button class="btn btn-secondary btn-sm text-xs">按消费方</button>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button class="btn btn-secondary btn-sm text-xs active">all-domains</button>
+          <button class="btn btn-secondary btn-sm text-xs">cursor.com</button>
+          <button class="btn btn-secondary btn-sm text-xs">api.cursor.com</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================== REQUESTS ======================== -->
+    <div class="page-section" id="page-requests">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">请求日志</h1>
+          <p class="page-header-desc">网关请求日志查看与分析</p>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2">
+            <input class="input" style="width:200px" placeholder="搜索请求 ID / 消费方...">
+            <select class="input" style="width:120px"><option>全部状态</option></select>
+          </div>
+          <button class="btn btn-secondary text-xs">刷新</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead><tr><th>时间</th><th>模型</th><th>消费方</th><th>缓存</th><th>延迟</th><th>Token</th></tr></thead>
+            <tbody>
+              <tr><td class="font-mono text-xs">07:28:01</td><td>DeepSeek-V3.2</td><td>mify-agent</td><td><span class="badge badge-success badge-sm">L0 hit</span></td><td class="font-mono text-xs">0.2ms</td><td class="font-mono text-xs">1,838 / 13</td></tr>
+              <tr><td class="font-mono text-xs">07:27:59</td><td>DeepSeek-V3.2</td><td>mify-agent</td><td><span class="badge badge-success badge-sm">L1 hit</span></td><td class="font-mono text-xs">1.8ms</td><td class="font-mono text-xs">2,105 / 11</td></tr>
+              <tr><td class="font-mono text-xs">07:27:57</td><td>DeepSeek-V3.2</td><td>cursor-agent</td><td><span class="badge badge-warning badge-sm">miss</span></td><td class="font-mono text-xs">3.7s</td><td class="font-mono text-xs">174,885 / 169</td></tr>
+              <tr><td class="font-mono text-xs">07:27:42</td><td>DeepSeek-V3.2</td><td>mify-agent</td><td><span class="badge badge-info badge-sm">L2 hit</span></td><td class="font-mono text-xs">22.6ms</td><td class="font-mono text-xs">77,781 / 13</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================== UPSTREAM ======================== -->
+    <div class="page-section" id="page-upstream">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">上游配置</h1>
+          <p class="page-header-desc">管理多厂商上游 Profile、API Key 池和端点路由</p>
+        </div>
+      </div>
+      <div class="tab-bar">
+        <button class="tab-item tab-item-active">配置</button>
+        <button class="tab-item">端点路由</button>
+      </div>
+      <div class="glass-card">
+        <h3 class="text-sm font-semibold text-theme mb-4">Profile 列表</h3>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div>
+              <div class="text-sm font-medium text-theme">deepseek</div>
+              <div class="text-xs text-theme-muted">https://api.deepseek.com · deepseek-chat · 1 个端点</div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <span class="badge badge-success badge-sm">默认</span>
+              <span class="text-xs text-theme-muted">1 个 Key</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div>
+              <div class="text-sm font-medium text-theme">mify</div>
+              <div class="text-xs text-theme-muted">http://model.mify.ai.srv · deepseek-v3.2 · 2 个端点</div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <span class="text-xs text-theme-muted">0 个 Key</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div>
+              <div class="text-sm font-medium text-theme">siliconflow</div>
+              <div class="text-xs text-theme-muted">http://siliconflow.siliconflow.cn · deepseek-ai/DeepSeek-V3.2 · 2 个端点</div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <span class="text-xs text-theme-muted">0 个 Key</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div>
+              <div class="text-sm font-medium text-theme">volcengine</div>
+              <div class="text-xs text-theme-muted">http://ark-cn-beijing.volces.com · doubao-seed-1.1 · 1 个端点</div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <span class="text-xs text-theme-muted">0 个 Key</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Latency Section -->
-    <div class="glass-card">
-      <h3 class="text-sm font-semibold text-theme mb-4">延迟分布</h3>
-      <div class="space-y-3">
-        <div class="latency-row">
-          <span class="latency-label">L0</span>
-          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 1%"></div></div>
-          <span class="latency-value">0.0ms</span>
+    <!-- ======================== MODELS ======================== -->
+    <div class="page-section" id="page-models">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">模型目录</h1>
+          <p class="page-header-desc">查看网关识别的模型名及上游别名映射</p>
         </div>
-        <div class="latency-row">
-          <span class="latency-label">L1</span>
-          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 4%"></div></div>
-          <span class="latency-value">0.6ms</span>
+        <div class="page-header-actions">
+          <select class="input" style="width:140px"><option>全部 Profile</option></select>
+          <button class="btn btn-secondary text-xs">同步</button>
+          <button class="btn btn-secondary text-xs">添加</button>
         </div>
-        <div class="latency-row">
-          <span class="latency-label">L2</span>
-          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 100%"></div></div>
-          <span class="latency-value">19.2ms</span>
+      </div>
+      <div class="glass-card">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-sm text-theme-muted">共 3 个模型</span>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm text-xs active">别名</button>
+            <button class="btn btn-secondary btn-sm text-xs">参数</button>
+            <button class="btn btn-secondary btn-sm text-xs">上游原始</button>
+          </div>
         </div>
-        <div class="latency-row">
-          <span class="latency-label">上游</span>
-          <div class="progress-bar h-2 flex-1"><div class="progress-bar-fill" style="width: 38%"></div></div>
-          <span class="latency-value">780.9ms</span>
-          <span class="text-xs text-theme-muted ml-2">P99: 2,858ms</span>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div class="font-mono text-sm text-theme">mify/deepseek-v3.2</div>
+            <div class="flex gap-2"><span class="badge badge-sm">alias</span><button class="btn btn-ghost btn-sm text-xs">移除</button></div>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div class="font-mono text-sm text-theme">siliconflow/deepseek-ai/DeepSeek-V3.2</div>
+            <div class="flex gap-2"><span class="badge badge-sm">alias</span><button class="btn btn-ghost btn-sm text-xs">移除</button></div>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-lg" style="background:var(--cc-bg-elevated)">
+            <div class="font-mono text-sm text-theme">volcengine/doubao-seed-1.1-thinking</div>
+            <div class="flex gap-2"><span class="badge badge-sm">alias</span><button class="btn btn-ghost btn-sm text-xs">移除</button></div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Trace Compare Banner -->
-    <div class="glass-card flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h3 class="text-sm font-semibold text-theme mb-1">Trace 对照面板</h3>
-        <p class="text-xs text-theme-muted mb-2">对比 24h 影子日志实测命中率与 5 分钟网关指标窗口</p>
-        <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
-          <span>24h trace: <span class="text-accent">0.0%</span> (1,532 req)</span>
-          <span>5m gateway: <span class="text-accent">0.0%</span></span>
-          <span class="text-theme-muted">+0.0%</span>
+    <!-- ======================== CACHE ======================== -->
+    <div class="page-section" id="page-cache">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">缓存配置</h1>
+          <p class="page-header-desc">管理 L0/L1/L2 语义缓存配置和策略</p>
         </div>
       </div>
-      <div class="flex gap-2 shrink-0">
-        <a href="#cache" class="btn btn-secondary text-xs">Trace 分析</a>
-        <a href="#live" class="btn btn-secondary text-xs">实时监控</a>
+      <div class="tab-bar">
+        <button class="tab-item tab-item-active">策略</button>
+        <button class="tab-item">失效</button>
+        <button class="tab-item">Trace</button>
+        <button class="tab-item">日志分析</button>
       </div>
-    </div>
-
-    <!-- Ops Metrics -->
-    <div class="glass-card">
-      <h3 class="text-sm font-semibold text-theme mb-4">运维指标</h3>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div>
-          <div class="text-xs text-theme-muted">TTFT</div>
-          <div class="text-xl font-mono tabular-nums text-accent">4,891ms</div>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="glass-card">
+          <h3 class="text-sm font-semibold text-theme mb-1">TTL 设置</h3>
+          <p class="text-xs text-theme-muted mb-3">缓存条目过期时间（较大 TTL 保留更久但占更多内存）</p>
+          <div class="space-y-3">
+            <div class="flex justify-between items-center"><span class="text-xs text-theme-secondary">L0</span><div class="flex items-center gap-2"><input class="input" style="width:80px;text-align:right" value="3600"><span class="text-xs text-theme-muted">s</span></div></div>
+            <div class="flex justify-between items-center"><span class="text-xs text-theme-secondary">L1</span><div class="flex items-center gap-2"><input class="input" style="width:80px;text-align:right" value="3600"><span class="text-xs text-theme-muted">s</span></div></div>
+            <div class="flex justify-between items-center"><span class="text-xs text-theme-secondary">默认 TTL</span><div class="flex items-center gap-2"><input class="input" style="width:80px;text-align:right" value="3600"><span class="text-xs text-theme-muted">s</span></div></div>
+          </div>
+          <div class="mt-4 flex justify-end"><button class="btn btn-primary text-xs">保存</button></div>
         </div>
-        <div>
-          <div class="text-xs text-theme-muted">5 分钟合并</div>
-          <div class="text-xl font-mono tabular-nums text-accent">0</div>
-          <div class="text-xs text-theme-muted">Σ 1</div>
-        </div>
-        <div>
-          <div class="text-xs text-theme-muted">5 分钟拒绝</div>
-          <div class="text-xl font-mono tabular-nums text-warning">0</div>
-          <div class="text-xs text-theme-muted">Σ 0</div>
-        </div>
-        <div>
-          <div class="text-xs text-theme-muted">5 分钟成本节省</div>
-          <div class="text-xl font-mono tabular-nums text-warning">$0.0000</div>
-          <div class="text-xs text-theme-muted">$0.0057</div>
+        <div class="glass-card">
+          <h3 class="text-sm font-semibold text-theme mb-1">语义缓存</h3>
+          <p class="text-xs text-theme-muted mb-3">基于向量相似度的缓存匹配（需 ONNX + Qdrant）</p>
+          <div class="flex justify-between items-center mb-3">
+            <span class="text-xs text-theme-secondary">启用语义缓存</span>
+            <span class="badge badge-warning badge-sm">OFF</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-theme-secondary">相似度阈值</span>
+            <div class="flex items-center gap-2"><input class="input" style="width:80px;text-align:right" value="0.95"><span class="text-xs text-theme-muted">0-1</span></div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Observability Footer -->
-    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-theme-muted pt-2 border-t border-theme">
+    <!-- ======================== SYSTEM ======================== -->
+    <div class="page-section" id="page-system">
+      <div class="page-header">
+        <div>
+          <h1 class="page-header-title">系统配置</h1>
+          <p class="page-header-desc">网关系统配置和参数管理</p>
+        </div>
+      </div>
+      <div class="glass-card">
+        <h3 class="text-sm font-semibold text-theme mb-4">网关信息</h3>
+        <div class="grid grid-cols-2 gap-4">
+          <div><div class="text-xs text-theme-muted">版本</div><div class="text-sm font-mono text-theme">v0.1.0</div></div>
+          <div><div class="text-xs text-theme-muted">运行时间</div><div class="text-sm font-mono text-theme">7h 16m</div></div>
+          <div><div class="text-xs text-theme-muted">监听地址</div><div class="text-sm font-mono text-theme">0.0.0.0:8080</div></div>
+          <div><div class="text-xs text-theme-muted">管理 API</div><div class="text-sm font-mono text-theme">0.0.0.0:9080</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================== COMMON FOOTER ======================== -->
+    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-theme-muted pt-2 border-t border-theme" style="margin-top:1.5rem">
       <a href="OBSERVABILITY.md" target="_blank" class="text-accent hover:underline">可观测性文档</a>
       <span class="font-mono truncate">Prometheus: http://127.0.0.1:9090/metrics</span>
     </div>
-
-    <!-- Demo Watermark -->
     <div class="demo-watermark">
       界面规范预览 · 数据为示意（非 Dashboard API）<br>
-      规范见 <a href="DESIGN.md" style="color:var(--cc-info)">docs/DESIGN.md</a>
+      规范见 <a href="DESIGN.md">docs/DESIGN.md</a>
     </div>
   </div>
 </main>
+
+<script>
+function switchPage(name) {
+  document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.topnav-item[data-page]').forEach(a => a.classList.remove('active'));
+  var page = document.getElementById('page-' + name);
+  if (page) page.classList.add('active');
+  var link = document.querySelector('.topnav-item[data-page="' + name + '"]');
+  if (link) link.classList.add('active');
+}
+
+document.querySelectorAll('.topnav-item[data-page]').forEach(function(a) {
+  a.addEventListener('click', function(e) {
+    e.preventDefault();
+    switchPage(this.getAttribute('data-page'));
+    history.replaceState(null, '', '#' + this.getAttribute('data-page'));
+  });
+});
+
+// Handle initial hash
+var hash = location.hash.replace('#', '');
+if (hash && document.getElementById('page-' + hash)) {
+  switchPage(hash);
+}
+</script>
 
 </body>
 </html>
