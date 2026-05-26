@@ -55,73 +55,70 @@ pub fn spawn_state_refresh_task(
     let store_sub = store.clone();
     let runtime_sub = runtime.clone();
 
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("state refresh runtime");
-        rt.block_on(async move {
-            let store_poll = store.clone();
-            let runtime_poll = runtime.clone();
-            let poll_secs = interval_secs.max(1);
+    let store_poll = store.clone();
+    let runtime_poll = runtime.clone();
+    let poll_secs = interval_secs.max(1);
 
-            tokio::spawn(async move {
-                let mut last_version = store_poll.current_version().await.unwrap_or(0);
-                let mut interval = tokio::time::interval(Duration::from_secs(poll_secs));
-                loop {
-                    interval.tick().await;
-                    refresh_from_store(
-                        &store_poll,
-                        &runtime_poll,
-                        upstream_cooldown_secs,
-                        &mut last_version,
-                    )
-                    .await;
-                }
-            });
+    tokio::spawn(async move {
+        let mut last_version = store_poll.current_version().await.unwrap_or(0);
+        let mut interval = tokio::time::interval(Duration::from_secs(poll_secs));
+        loop {
+            interval.tick().await;
+            refresh_from_store(
+                &store_poll,
+                &runtime_poll,
+                upstream_cooldown_secs,
+                &mut last_version,
+            )
+            .await;
+        }
+    });
 
-            let mut last_version = store_sub.current_version().await.unwrap_or(0);
-            loop {
-                let client = match redis::Client::open(redis_url.as_str()) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!(error = %e, "State pub/sub: redis client open failed, retrying");
-                        tokio::time::sleep(Duration::from_secs(poll_secs)).await;
-                        continue;
-                    }
-                };
-                let conn = match client.get_async_connection().await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!(error = %e, "State pub/sub: connection failed, retrying");
-                        tokio::time::sleep(Duration::from_secs(poll_secs)).await;
-                        continue;
-                    }
-                };
-                let mut pubsub = conn.into_pubsub();
-                if let Err(e) = pubsub.subscribe(&rev_channel).await {
-                    warn!(error = %e, channel = %rev_channel, "State pub/sub subscribe failed");
+    tokio::spawn(async move {
+        let mut last_version = store_sub.current_version().await.unwrap_or(0);
+        loop {
+            let client = match redis::Client::open(redis_url.as_str()) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(error = %e, "State pub/sub: redis client open failed, retrying");
                     tokio::time::sleep(Duration::from_secs(poll_secs)).await;
                     continue;
                 }
-                debug!(channel = %rev_channel, "State pub/sub subscribed");
-                let mut stream = pubsub.on_message();
-                while let Some(msg) = stream.next().await {
-                    let _payload: String = match msg.get_payload() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!(error = %e, "State pub/sub invalid payload");
-                            continue;
-                        }
-                    };
-                    refresh_from_store(
-                        &store_sub,
-                        &runtime_sub,
-                        upstream_cooldown_secs,
-                        &mut last_version,
-                    )
-                    .await;
+            };
+            let conn = match client.get_async_connection().await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(error = %e, "State pub/sub: connection failed, retrying");
+                    tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+                    continue;
                 }
-                warn!(channel = %rev_channel, "State pub/sub stream ended, reconnecting");
+            };
+            let mut pubsub = conn.into_pubsub();
+            if let Err(e) = pubsub.subscribe(&rev_channel).await {
+                warn!(error = %e, channel = %rev_channel, "State pub/sub subscribe failed");
+                tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+                continue;
             }
-        });
+            debug!(channel = %rev_channel, "State pub/sub subscribed");
+            let mut stream = pubsub.on_message();
+            while let Some(msg) = stream.next().await {
+                let _payload: String = match msg.get_payload() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(error = %e, "State pub/sub invalid payload");
+                        continue;
+                    }
+                };
+                refresh_from_store(
+                    &store_sub,
+                    &runtime_sub,
+                    upstream_cooldown_secs,
+                    &mut last_version,
+                )
+                .await;
+            }
+            warn!(channel = %rev_channel, "State pub/sub stream ended, reconnecting");
+        }
     });
 }
 

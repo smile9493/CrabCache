@@ -329,6 +329,7 @@ impl AppState {
 
         let persist = Arc::new(PersistHandle::new());
         let loaded = persist.load();
+        let loaded_for_pg = loaded.clone(); // clone before partial moves for PG migration
 
         // If no env-driven keys, load persisted upstream pool secrets (v4+).
         if pool_secrets.is_empty() && !loaded.upstream_pool_secrets.is_empty() {
@@ -353,9 +354,7 @@ impl AppState {
         // Open MetricsStore and hydrate memory ring from SQLite.
         let metrics_store = crate::metrics_store::MetricsStore::open().ok();
         let mut history = MetricsHistory::new();
-        // Note: PG hydration happens after pg_store is initialized (below).
-        // For now, hydrate from SQLite as before; PG snapshots will be merged
-        // if PG is available and has more data.
+        // Note: PG hydration may override this below if PG has more data.
         if let Some(ref store) = metrics_store {
             let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
             let snapshots = store.load_snapshots_since(cutoff);
@@ -383,8 +382,8 @@ impl AppState {
             gateway: GatewayAdminClient::from_env(),
             keys_meta: {
                 let map = DashMap::new();
-                for meta in loaded.keys_meta {
-                    let km: KeyMetadata = meta.into();
+                for meta in &loaded.keys_meta {
+                    let km: KeyMetadata = meta.clone().into();
                     map.insert(km.id.clone(), km);
                 }
                 map
@@ -443,21 +442,22 @@ impl AppState {
             gateway_metrics_cache: GatewayMetricsCache::default(),
             live_trace_cache: RwLock::new(crate::trace_log::LiveTraceCache::default()),
             key_usage_last_synced: parking_lot::Mutex::new(0),
-            domain_policies: RwLock::new(
-                loaded
+            domain_policies: RwLock::new({
+                let policies: Vec<DomainPolicy> = loaded
                     .domain_policies
-                    .into_iter()
+                    .iter()
                     .map(|p| DomainPolicy {
-                        domain: p.domain,
+                        domain: p.domain.clone(),
                         monthly_token_budget: p.monthly_token_budget,
                         monthly_cost_budget_usd: p.monthly_cost_budget_usd,
                         min_hit_rate: p.min_hit_rate,
                         enabled: p.enabled,
-                        pipeline: p.pipeline,
-                        upstream_profile: p.upstream_profile,
+                        pipeline: p.pipeline.clone(),
+                        upstream_profile: p.upstream_profile.clone(),
                     })
-                    .collect(),
-            ),
+                    .collect();
+                policies
+            }),
             last_invalidate: RwLock::new(None),
             infra_docker: crate::infra::docker::try_connect(&crate::infra::resolve_docker_host()),
             infra_prev: RwLock::new(HashMap::new()),
@@ -480,7 +480,7 @@ impl AppState {
                         // Attempt one-time JSON → PG migration.
                         if pg_cfg.migrate_from_json {
                             if let Ok(migrated) = tokio::runtime::Handle::current()
-                                .block_on(pg.maybe_import_from_json(&loaded))
+                                .block_on(pg.maybe_import_from_json(&loaded_for_pg))
                             {
                                 if migrated {
                                     tracing::info!("JSON state imported into PostgreSQL");
@@ -492,13 +492,15 @@ impl AppState {
                         if let Ok(pg_snapshots) = tokio::runtime::Handle::current()
                             .block_on(pg.load_metric_snapshots_since(cutoff))
                         {
-                            if pg_snapshots.len() > history.sample_count() {
-                                history = MetricsHistory::new();
+                            let sqlite_count = state.metrics_history.read().sample_count();
+                            if pg_snapshots.len() > sqlite_count {
+                                let mut hist = state.metrics_history.write();
+                                *hist = MetricsHistory::new();
                                 for s in &pg_snapshots {
-                                    history.append(s.clone());
+                                    hist.append(s.clone());
                                 }
                                 tracing::info!(
-                                    hydrated = history.sample_count(),
+                                    hydrated = hist.sample_count(),
                                     "Metrics history restored from PostgreSQL (supersedes SQLite)"
                                 );
                             }
@@ -602,41 +604,43 @@ impl AppState {
             &profile_secrets,
             &pool_secrets,
         );
-        self.persist.save_debounced(file);
 
-        // Dual-write to PostgreSQL if available.
-        if let Some(ref pg) = self.pg_store {
+        // Dual-write to PostgreSQL if available (extract data before moving file).
+        let pg_task = if let Some(ref pg) = self.pg_store {
             let pg = pg.clone();
-            let pg_keys = keys_meta.clone();
-            let pg_policies = domain_policies.clone();
-            let pg_pool = pool_secrets.clone();
-            let pg_profiles = profile_secrets.clone();
+            let pg_keys = keys_meta;
+            let pg_policies = domain_policies;
+            let pg_pool = pool_secrets;
+            let pg_profiles = profile_secrets;
             let models_snap = file.models.clone();
             let upstream_snap = file.upstream_snapshot.clone();
             let notes = file.upstream_notes.clone();
             let last_test = file.last_upstream_test.clone();
+            Some((pg, pg_keys, pg_policies, pg_pool, pg_profiles, models_snap, upstream_snap, notes, last_test))
+        } else {
+            None
+        };
+
+        self.persist.save_debounced(file);
+
+        if let Some((pg, pg_keys, pg_policies, pg_pool, pg_profiles, models_snap, upstream_snap, notes, last_test)) = pg_task {
             tokio::spawn(async move {
-                // Keys
                 for key in &pg_keys {
                     if let Err(e) = pg.upsert_key(key).await {
                         tracing::warn!(error = %e, key_id = %key.id, "PG dual-write: upsert_key failed");
                     }
                 }
-                // Domain policies
                 if let Err(e) = pg.replace_policies(&pg_policies).await {
                     tracing::warn!(error = %e, "PG dual-write: replace_policies failed");
                 }
-                // Pool secrets
                 if let Err(e) = pg.replace_pool_secrets(&pg_pool).await {
                     tracing::warn!(error = %e, "PG dual-write: replace_pool_secrets failed");
                 }
-                // Profile secrets
                 for (pid, secrets) in &pg_profiles.by_profile {
                     if let Err(e) = pg.replace_profile_secrets(pid, secrets).await {
                         tracing::warn!(error = %e, profile_id = %pid, "PG dual-write: replace_profile_secrets failed");
                     }
                 }
-                // Models
                 for (pid, synced_at) in &models_snap.synced_at_by_profile {
                     let profile_models: Vec<_> = models_snap
                         .models
@@ -648,7 +652,6 @@ impl AppState {
                         tracing::warn!(error = %e, profile_id = %pid, "PG dual-write: replace_models failed");
                     }
                 }
-                // Upstream config
                 if let Some(ref snap) = upstream_snap {
                     if let Err(e) = pg
                         .save_upstream(
