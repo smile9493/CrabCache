@@ -277,7 +277,9 @@ pub fn LineChart(
                                 let span = (ymax - ymin).max(1.0);
                                 let norm = ((t.value - ymin) / span).clamp(0.0, 1.0);
                                 let y = H - norm * H;
-                                if y < 0.0 || y > H { return None; }
+                                if !(0.0..=H).contains(&y) {
+                                    return None;
+                                }
                                 let color = t.color;
                                 let label = t.label.clone();
                                 Some(view! {

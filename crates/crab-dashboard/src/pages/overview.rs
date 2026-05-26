@@ -286,7 +286,7 @@ pub fn OverviewPage() -> impl IntoView {
                 load_core();
                 // Timeseries and trace refresh every 60s (every 6th tick)
                 // to align with the 60s backend sampling interval.
-                if tick % 6 == 0 && deferred_loaded.get_untracked() {
+                if tick.is_multiple_of(6) && deferred_loaded.get_untracked() {
                     load_timeseries();
                     load_trace();
                 }

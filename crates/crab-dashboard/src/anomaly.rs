@@ -27,6 +27,12 @@ pub struct AnomalyDetector {
 
 const COOLDOWN_MS: f64 = 60_000.0;
 
+impl Default for AnomalyDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnomalyDetector {
     pub fn new() -> Self {
         Self {

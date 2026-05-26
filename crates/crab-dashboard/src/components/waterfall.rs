@@ -25,7 +25,7 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
     view! {
         <div class="waterfall-chart" style="display: flex; flex-direction: column; gap: 0.5rem">
             {stages.into_iter().map(|stage| {
-                let pct = (stage.duration_ms / max_ms * 100.0).min(100.0).max(0.5);
+                let pct = (stage.duration_ms / max_ms * 100.0).clamp(0.5, 100.0);
                 let color = if stage.duration_ms < 10.0 {
                     "var(--cc-success)"
                 } else if stage.duration_ms < 100.0 {
