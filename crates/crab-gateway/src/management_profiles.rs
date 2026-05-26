@@ -554,7 +554,7 @@ pub async fn get_profile_routing(
                 half_open_successes,
             ) = match h {
                 Some(health) => {
-                    let state_str = serde_json::to_value(&health.circuit_state)
+                    let state_str = serde_json::to_value(health.circuit_state)
                         .ok()
                         .and_then(|v| v.as_str().map(String::from))
                         .unwrap_or_else(|| "closed".to_string());
