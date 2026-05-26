@@ -9,10 +9,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /usr/local/cargo && \
-    echo '[source.crates-io]\n\
-replace-with = "ustc"\n\
-[source.ustc]\n\
-registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' > /usr/local/cargo/config.toml
+    printf '[source.crates-io]\nreplace-with = "ustc"\n[source.ustc]\nregistry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' \
+    > /usr/local/cargo/config.toml
 
 # Install wasm target then pre-built trunk binary (much faster than cargo install)
 RUN rustup target add wasm32-unknown-unknown
