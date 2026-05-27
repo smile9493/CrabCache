@@ -45,7 +45,8 @@ jobs:
         run: |
           mkdir -p site/assets
           cp crates/crab-dashboard/style/design-tokens.css site/assets/design-tokens.css
-          cp docs/demo-layout.css site/assets/demo-layout.css
+          cp docs/assets/demo-layout.css site/assets/demo-layout.css
+          cp docs/demo.html site/demo.html
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

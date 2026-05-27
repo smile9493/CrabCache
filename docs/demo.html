@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="assets/design-tokens.css">
   <link rel="stylesheet" href="assets/demo-layout.css">
   <style>
+    /* Guard against legacy sidebar CSS cached from older deploys */
+    body { display: block !important; }
+    header.topnav { width: 100% !important; flex: none !important; }
+    main.main-content { width: 100% !important; flex: none !important; max-width: none !important; }
     .page-section { display: none; }
     .page-section.active { display: block; }
     .topnav-item.active { background: var(--cc-nav-active-bg); color: var(--cc-accent-bright); font-weight: 600; }

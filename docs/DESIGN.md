@@ -129,7 +129,7 @@ Dashboard 兼容别名（过渡期）：`--bg-primary`、`--accent-primary` 等�
 5. 确认 `docs/demo.html` 在 Dark 下与 Dashboard 一致
 6. PR 勾选：已对照 DESIGN.md / design-tokens.css
 
-GitHub Pages：`deploy-docs.yml` 将 `design-tokens.css` 复制到 `site/assets/`，demo 通过 `/CrabCache/assets/design-tokens.css` 引用。
+GitHub Pages：`deploy-docs.yml` 将 `crates/crab-dashboard/style/design-tokens.css` 与 `docs/assets/demo-layout.css` 复制到 `site/assets/`，demo 通过 `/CrabCache/assets/` 引用。
 
 ## 10. PR 检查清单
 
