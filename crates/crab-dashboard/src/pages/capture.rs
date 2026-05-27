@@ -169,7 +169,7 @@ pub fn CapturePage() -> impl IntoView {
     view! {
         <Style>{include_str!("../../style/output.css")}</Style>
 
-        <div class="page-content space-y-4">
+        <div class="capture-page space-y-4">
             // ── Header ──
             <PageHeader
                 title=move || t.capture_title()

@@ -32,12 +32,14 @@ pub fn RequestsPage() -> impl IntoView {
     view! {
         <div class="page-content space-y-4">
             <TabBar tabs=tab_labels active=active_tab />
-            {move || match active_tab.get() {
-                0 => view! { <LogsPage /> }.into_any(),
-                1 => view! { <CompositionPage /> }.into_any(),
-                2 => view! { <CapturePage /> }.into_any(),
-                _ => view! { <LogsManagePage /> }.into_any(),
-            }}
+            <div class="tab-panel">
+                {move || match active_tab.get() {
+                    0 => view! { <LogsPage /> }.into_any(),
+                    1 => view! { <CompositionPage /> }.into_any(),
+                    2 => view! { <CapturePage /> }.into_any(),
+                    _ => view! { <LogsManagePage /> }.into_any(),
+                }}
+            </div>
         </div>
     }
 }

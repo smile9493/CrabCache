@@ -217,6 +217,9 @@ fn RetentionPolicyCard(
             max_disk_mb: disk_val,
             max_trace_files: trace_val,
             max_capture_body_files: capture_val,
+            pg_retention_days: policy.pg_retention_days,
+            compress_before_delete: policy.compress_before_delete,
+            compressed_retention_days: policy.compressed_retention_days,
         };
 
         saving.set(true);

@@ -201,10 +201,18 @@ body {
   background: var(--cc-bg-card);
   border: 1px solid var(--cc-border);
   border-radius: var(--radius-md);
-  overflow: hidden;
+  padding: 1.25rem;
+  overflow: visible;
   box-shadow: 0 1px 3px var(--cc-shadow);
   transition: box-shadow var(--transition-speed) var(--transition-curve),
               border-color var(--transition-speed) var(--transition-curve);
+}
+
+/* Header/body shells manage their own inset */
+.dash-card:has(> .dash-card-header),
+.dash-card:has(> .dash-card-body),
+.dash-card:has(> .dash-card-body-flush) {
+  padding: 0;
 }
 
 .dash-card:hover {
@@ -241,11 +249,32 @@ body {
 }
 
 .dash-card-body {
-  padding: 1rem;
+  padding: 1.25rem;
 }
 
 .dash-card-body-flush {
   padding: 0;
+}
+
+/* Panel charts: block layout only (avoid flex-shrink squashing titles) */
+.panel-chart {
+  min-height: 16rem;
+}
+
+.panel-chart > h3,
+.panel-chart > h4 {
+  line-height: 1.4;
+  margin: 0 0 0.75rem;
+}
+
+/* Title is in panel header — hide duplicate series legend */
+.panel-chart .line-chart-legend {
+  display: none;
+}
+
+.panel-chart .line-chart-wrap {
+  min-height: 14rem;
+  width: 100%;
 }
 
 /* ==============================================================
@@ -256,12 +285,14 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 .dashboard-grid-2 {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 @media (max-width: 1024px) {
@@ -365,6 +396,7 @@ body {
   border: 1px solid var(--cc-border);
   border-radius: var(--radius-md);
   padding: 1.25rem;
+  overflow: visible;
   transition: border-color var(--transition-speed) var(--transition-curve),
               box-shadow var(--transition-speed) var(--transition-curve);
   box-shadow: 0 1px 2px var(--cc-shadow);
@@ -398,10 +430,12 @@ body {
   box-shadow: 0 2px 12px var(--cc-shadow);
 }
 
-.glass-card-flat {
+.glass-card-flat,
+.dash-card-flat {
   background: var(--cc-bg-card);
   border: 1px solid var(--cc-border);
   border-radius: var(--radius-md);
+  overflow: visible;
 }
 
 .glass-card-flush {
@@ -414,11 +448,31 @@ body {
    ============================================================== */
 
 .bento-grid,
-.bento-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: minmax(120px, auto); gap: 1rem; }
-.bento-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: minmax(120px, auto); gap: 1rem; }
-.bento-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: minmax(120px, auto); gap: 1rem; }
+.bento-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: minmax(10rem, auto); gap: 1rem; align-items: start; }
+.bento-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: minmax(10rem, auto); gap: 1rem; align-items: start; }
+.bento-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: minmax(10rem, auto); gap: 1rem; align-items: start; }
 
-.bento-cell       { grid-column: span 1; grid-row: span 1; }
+.bento-cell {
+  grid-column: span 1;
+  grid-row: span 1;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  min-height: 5.5rem;
+  box-shadow: 0 1px 2px var(--cc-shadow);
+}
+
+/* Cells that already wrap a full card should not double-pad */
+.bento-cell:has(> .glass-card),
+.bento-cell:has(> .metric-card),
+.bento-cell:has(> .dash-card) {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+}
 .bento-cell-wide  { grid-column: span 2; grid-row: span 1; }
 .bento-cell-tall  { grid-column: span 1; grid-row: span 2; }
 .bento-cell-hero  { grid-column: span 2; grid-row: span 2; }
@@ -448,8 +502,10 @@ body {
   transition: border-color var(--transition-speed) var(--transition-curve),
               box-shadow var(--transition-speed) var(--transition-curve),
               background var(--transition-speed) var(--transition-curve);
-  height: 100%;
+  min-height: 8rem;
+  height: auto;
 }
+
 .metric-card:hover {
   border-color: var(--cc-accent-muted);
   background: color-mix(in srgb, var(--cc-accent) 3%, var(--cc-bg-card));
@@ -566,8 +622,8 @@ body {
   }
 }
 .live-detail-card {
-  height: 100%;
-  min-height: 0;
+  min-height: 15rem;
+  height: auto;
 }
 .live-chart-compact {
   min-height: 4.5rem;
@@ -897,6 +953,54 @@ body {
 
 .page-content { padding: 28px 32px 48px; max-width: 1400px; margin: 0 auto; }
 
+/* Tab child panels: single page-content on parent only — no nested padding/overflow */
+.tab-panel {
+  display: block;
+  width: 100%;
+  overflow: visible;
+  min-height: 0;
+}
+
+.tab-panel > .page-content {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+
+/* Prevent grid stretch from squashing card content */
+.page-content .grid,
+.page-content [class*="grid-cols"],
+.tab-panel .grid,
+.tab-panel [class*="grid-cols"] {
+  align-items: start;
+}
+
+/* Grid cells must not collapse below chart/card content */
+.page-content .grid > .glass-card,
+.page-content [class*="grid-cols"] > .glass-card,
+.tab-panel .grid > .glass-card,
+.tab-panel [class*="grid-cols"] > .glass-card {
+  min-height: 14rem;
+  height: auto;
+  align-self: start;
+}
+
+/* All dashboard surfaces: never clip insets at rounded corners */
+.glass-card,
+.dash-card,
+.metric-card,
+.config-card,
+.panel-chart {
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.glass-card-flush,
+.glass-card-flush.dash-card-flat,
+.dash-card:has(> .dash-card-body-flush) {
+  overflow: hidden;
+}
+
 .app-shell { min-height: 100vh; position: relative; }
 
 .page-header {
@@ -976,11 +1080,20 @@ body {
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--cc-text-muted); margin-bottom: 0.75rem;
 }
-.config-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+.config-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .config-grid-2 { grid-template-columns: 1fr; } }
 .config-grid-form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem 1.5rem; }
 @media (max-width: 768px) { .config-grid-form { grid-template-columns: 1fr; } }
-.config-card { display: flex; flex-direction: column; height: 100%; }
+.config-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 12rem;
+}
+
+/* glass-card / dash-card on same node already pad the surface */
+.config-card:not(.glass-card):not(.dash-card) {
+  padding: 1.25rem;
+}
 .config-card-head { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--cc-border-light); }
 .config-card-title { font-size: 0.8125rem; font-weight: 600; color: var(--cc-text); }
 .config-card-desc { font-size: 0.75rem; color: var(--cc-text-muted); margin-top: 0.25rem; line-height: 1.4; }

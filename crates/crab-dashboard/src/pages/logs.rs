@@ -254,7 +254,7 @@ pub fn LogsPage() -> impl IntoView {
     });
 
     view! {
-        <div class="page-content logs-page space-y-6">
+        <div class="logs-page space-y-6">
             <PageHeader
                 title=move || t.logs_title()
                 description=move || t.logs_desc()

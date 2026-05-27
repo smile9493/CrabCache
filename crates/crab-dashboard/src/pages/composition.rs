@@ -68,7 +68,6 @@ fn StatBar(label: String, value: String, pct_val: f64, max_pct: f64) -> impl Int
 #[component]
 fn VerticalBarChart(title: String, bars: Vec<(String, usize)>) -> impl IntoView {
     let title_h = title.clone();
-    let title_series = title.clone();
     let bars_x = bars.clone();
     let bars_s = bars;
     let x_labels = Signal::derive(move || {
@@ -76,7 +75,7 @@ fn VerticalBarChart(title: String, bars: Vec<(String, usize)>) -> impl IntoView 
     });
     let series = Signal::derive(move || {
         vec![ChartSeries {
-            label: title_series.clone(),
+            label: String::new(),
             color: "var(--cc-accent)",
             values: bars_s.iter().map(|(_, c)| Some(*c as f64)).collect(),
             dashed: false,
@@ -120,7 +119,6 @@ fn ComponentRateBar(component: String, present_count: usize, rate: f64) -> impl 
 #[component]
 fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     let title_h = title.clone();
-    let title_series = title.clone();
     let points_x = points.clone();
     let points_s = points;
     let x_labels = Signal::derive(move || {
@@ -128,7 +126,7 @@ fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     });
     let series = Signal::derive(move || {
         vec![ChartSeries {
-            label: title_series.clone(),
+            label: String::new(),
             color: "var(--cc-accent)",
             values: points_s.iter().map(|(_, v)| Some(*v as f64)).collect(),
             dashed: false,
@@ -360,7 +358,7 @@ pub fn CompositionPage() -> impl IntoView {
     fetch_debug();
 
     view! {
-        <div class="page-content">
+        <div class="composition-page space-y-4">
             // ── Debug drawer ──────────────────────────────────────────
             <CompositionDebugDrawer debug_state=debug_state />
 
@@ -447,8 +445,9 @@ pub fn CompositionPage() -> impl IntoView {
                 let s = state.get().summary.unwrap_or_default();
                 let tr = state.get().trends.clone();
                 view! {
+                    <div class="composition-body space-y-4">
                     // ── Summary cards ────────────────────────────────────
-                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                         <SummaryCard
                             label=t.composition_total_entries().to_string()
                             value=s.total_entries.to_string()
@@ -487,7 +486,7 @@ pub fn CompositionPage() -> impl IntoView {
                     </div>
 
                     // ── Model distribution ───────────────────────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                         <VerticalBarChart
                             title=t.composition_model_distribution().to_string()
                             bars=s.model_distribution.iter().map(|n| (n.name.clone(), n.count)).collect()
@@ -501,8 +500,8 @@ pub fn CompositionPage() -> impl IntoView {
                     </div>
 
                     // ── Component rates + message histogram ──────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
-                        <div class="glass-card panel-chart min-h-[14rem]">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                        <div class="glass-card panel-chart">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_component_rates()}
                             </h3>
@@ -524,8 +523,8 @@ pub fn CompositionPage() -> impl IntoView {
                     </div>
 
                     // ── Project / Consumer distribution ─────────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
-                        <div class="glass-card panel-chart min-h-[14rem]">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                        <div class="glass-card panel-chart">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_project_distribution()}
                             </h3>
@@ -552,7 +551,7 @@ pub fn CompositionPage() -> impl IntoView {
                             }}
                         </div>
 
-                        <div class="glass-card panel-chart min-h-[14rem]">
+                        <div class="glass-card panel-chart">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_consumer_distribution()}
                             </h3>
@@ -594,11 +593,12 @@ pub fn CompositionPage() -> impl IntoView {
                             />
                         }
                     })}
+                    </div>
                 }.into_any()
             }}
 
             // ── Debug section ─────────────────────────────────────────
-            <div class="glass-card p-4 mt-6">
+            <div class="glass-card p-4">
                 <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-3">
                     {move || match locale.get() {
                         Locale::ZhCN => "调试详情",
