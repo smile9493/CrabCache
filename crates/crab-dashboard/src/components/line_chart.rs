@@ -2,51 +2,15 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
+pub use super::chart::core::ChartSeries;
+pub use super::chart::core::ThresholdLine;
+pub(super) use super::chart::core::{format_tooltip_value, mouse_to_svg_x, value_segments_indexed, y_range};
+use super::chart::core::downsample_series;
+
 static LINE_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Clone)]
-pub struct ChartSeries {
-    pub label: String,
-    pub color: &'static str,
-    pub values: Vec<Option<f64>>,
-    pub dashed: bool,
-    /// When true, renders a filled area below the line.
-    pub fill: bool,
-}
-
-/// Horizontal threshold reference line.
-#[derive(Clone)]
-pub struct ThresholdLine {
-    pub value: f64,
-    pub label: String,
-    pub color: &'static str,
-}
-
-fn value_segments_indexed(values: &[Option<f64>]) -> Vec<(usize, Vec<f64>)> {
-    let mut segments = Vec::new();
-    let mut start = 0usize;
-    let mut current = Vec::new();
-    for (i, v) in values.iter().enumerate() {
-        match v {
-            Some(x) if x.is_finite() && *x > 0.0 => {
-                if current.is_empty() {
-                    start = i;
-                }
-                current.push(*x);
-            }
-            _ => {
-                if !current.is_empty() {
-                    segments.push((start, current));
-                    current = Vec::new();
-                }
-            }
-        }
-    }
-    if !current.is_empty() {
-        segments.push((start, current));
-    }
-    segments
-}
+/// Maximum data points before downsampling kicks in.
+const MAX_CHART_POINTS: usize = 200;
 
 fn scale_segment(
     values: &[f64],
@@ -73,64 +37,6 @@ fn scale_segment(
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-pub(crate) fn y_range(series: &[ChartSeries]) -> (f64, f64) {
-    let mut ymin = f64::MAX;
-    let mut ymax = f64::MIN;
-    for s in series {
-        for v in &s.values {
-            if let Some(x) = v
-                && *x > 0.0
-                && x.is_finite()
-            {
-                ymin = ymin.min(*x);
-                ymax = ymax.max(*x);
-            }
-        }
-    }
-    if ymax <= ymin {
-        ymin = 0.0;
-        ymax = 1.0;
-    }
-    let pad = (ymax - ymin) * 0.1;
-    ((ymin - pad).max(0.0), ymax + pad)
-}
-
-/// Convert a mouse event's client X to SVG viewBox X coordinate.
-/// Uses the inverse of the SVG's screen CTM (SvgMatrix).
-pub(crate) fn mouse_to_svg_x(
-    ev: &web_sys::MouseEvent,
-    svg: &web_sys::SvgsvgElement,
-) -> Option<f64> {
-    let ctm = svg.get_screen_ctm()?;
-    let inv = ctm.inverse().ok()?;
-    let cx = ev.client_x() as f64;
-    let cy = ev.client_y() as f64;
-    let a = inv.a() as f64;
-    let b = inv.b() as f64;
-    let c = inv.c() as f64;
-    let d = inv.d() as f64;
-    let e = inv.e() as f64;
-    let f = inv.f() as f64;
-    let det = a * d - b * c;
-    if det.abs() < 1e-10 {
-        return None;
-    }
-    Some((d * (cx - e) - c * (cy - f)) / det)
-}
-
-/// Format a numeric value for tooltip display — abbreviated (axis hint).
-pub(crate) fn format_tooltip_value(v: f64) -> String {
-    if v >= 1_000_000.0 {
-        format!("{:.1}M", v / 1_000_000.0)
-    } else if v >= 1_000.0 {
-        format!("{:.1}K", v / 1_000.0)
-    } else if v >= 100.0 {
-        format!("{:.0}", v)
-    } else {
-        format!("{:.1}", v)
-    }
 }
 
 /// Format a numeric value with full precision for the financial tooltip.
@@ -241,7 +147,21 @@ pub fn LineChart(
                 let chart_id = LINE_CHART_ID.fetch_add(1, Ordering::Relaxed);
                 let summary_id = format!("line-chart-summary-{}", chart_id);
                 let labels = x_labels.get();
-                let all_series = series.get();
+                let raw_series = series.get();
+
+                // Downsample large datasets to improve rendering performance.
+                let all_series: Vec<ChartSeries> = if labels.len() > MAX_CHART_POINTS {
+                    raw_series.into_iter().map(|s| ChartSeries {
+                        label: s.label,
+                        color: s.color,
+                        values: downsample_series(&s.values, MAX_CHART_POINTS),
+                        dashed: s.dashed,
+                        fill: s.fill,
+                    }).collect()
+                } else {
+                    raw_series
+                };
+
                 if labels.is_empty() || all_series.is_empty() {
                     return view! {
                         <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
@@ -330,22 +250,9 @@ pub fn LineChart(
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
                             // Horizontal grid lines (subtle Y guides)
-                            {move || {
-                                let steps = 4;
-                                (1..steps).map(|i| {
-                                    let y = H * i as f64 / steps as f64;
-                                    view! {
-                                        <line
-                                            x1="0" y1=y x2="100" y2=y
-                                            stroke="var(--cc-border-light)"
-                                            stroke-width="0.15"
-                                            stroke-dasharray="1 2"
-                                            vector-effect="non-scaling-stroke"
-                                            opacity="0.4"
-                                        />
-                                    }
-                                }).collect_view()
-                            }}
+                            <line x1="0" y1="10" x2="100" y2="10" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
+                            <line x1="0" y1="20" x2="100" y2="20" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
+                            <line x1="0" y1="30" x2="100" y2="30" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
                             // Area fills
                             {all_series.iter().filter(|s| s.fill).flat_map(|s| {
                                 let segs = value_segments_indexed(&s.values);
