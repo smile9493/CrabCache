@@ -11,7 +11,9 @@
 | 响应缓存 L2 | 语义向量 | Qdrant | 共享 |
 | 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、连接参数、上游 relay、**域策略** | Redis `crab:state:*` | 共享（必选） |
 | 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` **+** `admin-state.json` v4 | 共享（`Some([])` 可清空池） |
-| 域用量计数 | `domain_usage`（当月 token/成本累计） | 进程内存 | **不**持久化 |
+| 域用量计数 | `domain_usage`（当月 token/成本累计） | PostgreSQL `domain_usage` 表 + 进程内存 | PG 持久化，Admin 代理同步 |
+| 消费者月度用量 | `consumer_usage_monthly`（聚合 token/请求数） | PostgreSQL `consumer_usage_monthly` 表 | PG 持久化，从 trace_logs 聚合 |
+| 审计日志 | 管理操作记录（密钥创建/吊销/策略变更等） | PostgreSQL `audit_log` 表 | PG 持久化 |
 | Reasoning | 思考链恢复 | SQLite 或 Redis `crab:reasoning:*` | 多实例需 `redis` |
 | 影子日志 | 脱敏 Trace | JSONL 文件 / 卷 | 每实例或集中采集 |
 | Admin UI | 模型元数据、Key 配额、Keys 月度用量 | `data/admin-state.json` | Admin 单实例卷 |
@@ -129,7 +131,6 @@ docker compose --profile admin up -d
 ## 明确不持久化
 
 - L0 Moka、Request Coalescing inflight
-- **`domain_usage`**（域当月用量；策略在 Redis，计数器每实例内存）
 - Prometheus 进程计数器（靠外部 TSDB）
 - Admin `metrics_history` 时序环（现由 SQLite `data/metrics.sqlite` 持久化，重启不丢）
 

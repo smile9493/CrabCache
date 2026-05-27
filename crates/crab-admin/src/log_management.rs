@@ -172,6 +172,39 @@ pub fn clear_logs(request: &ClearLogsRequest) -> Result<ClearLogsResponse, Strin
     })
 }
 
+/// Truncate active JSONL files (trace and/or debug) to zero bytes.
+/// Returns paths of truncated files and bytes freed.
+pub fn truncate_active_logs(
+    trace: bool,
+    debug: bool,
+) -> Vec<(String, u64)> {
+    let mut truncated = Vec::new();
+
+    if trace {
+        let path = trace_log_base_path();
+        if let Ok(meta) = fs::metadata(&path) {
+            let size = meta.len();
+            if size > 0 && fs::OpenOptions::new().write(true).truncate(true).open(&path).is_ok() {
+                info!(path = %path, size, "Truncated active trace log");
+                truncated.push((path, size));
+            }
+        }
+    }
+
+    if debug {
+        let path = debug_trace_log_path();
+        if let Ok(meta) = fs::metadata(&path) {
+            let size = meta.len();
+            if size > 0 && fs::OpenOptions::new().write(true).truncate(true).open(&path).is_ok() {
+                info!(path = %path, size, "Truncated active debug trace log");
+                truncated.push((path, size));
+            }
+        }
+    }
+
+    truncated
+}
+
 /// Delete rotated files for a given base path.
 fn delete_rotated_files(
     base_path: &str,

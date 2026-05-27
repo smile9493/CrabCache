@@ -225,6 +225,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/capture/{request_id}",
             get(crate::raw_capture::get_capture_detail),
         )
+        // ── Audit Log ──
+        .route("/api/admin/audit-log", get(get_audit_log))
         // ── Infra (container / host monitoring) ──
         .route("/api/admin/infra/snapshot", get(get_infra_snapshot))
         .route("/api/admin/infra/status", get(get_infra_status))
@@ -769,6 +771,15 @@ async fn put_domain_policies(
     *state.domain_policies.write() = policies;
     state.flush_persist();
     state.sync_domain_policies_to_gateway().await;
+
+    audit_log(
+        &state,
+        "put_domain_policies",
+        None,
+        Some(serde_json::json!({ "count": state.domain_policies.read().len() })),
+    )
+    .await;
+
     Ok(Json(state.domain_policies.read().clone()))
 }
 
@@ -1425,6 +1436,14 @@ async fn create_key(
     state.keys_meta.insert(created.id.clone(), meta);
     state.flush_persist();
 
+    audit_log(
+        &state,
+        "create_key",
+        Some(&created.id),
+        Some(serde_json::json!({ "name": &created.name })),
+    )
+    .await;
+
     Ok(Json(ApiKey {
         id: created.id,
         name: created.name,
@@ -1459,6 +1478,9 @@ async fn revoke_key(
 
     state.keys_meta.remove(&id);
     state.flush_persist();
+
+    audit_log(&state, "revoke_key", Some(&id), None).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1655,6 +1677,13 @@ async fn post_cache_invalidate(
                 error: None,
             });
             tracing::info!(scope = %resp.scope, status = %resp.status, "Cache invalidation accepted by gateway");
+            audit_log(
+                &state,
+                "cache_invalidate",
+                None,
+                Some(serde_json::json!({ "scope": &resp.scope })),
+            )
+            .await;
             Ok(Json(InvalidateCacheResult {
                 scope: resp.scope,
                 status: resp.status,
@@ -1842,6 +1871,14 @@ async fn update_cache_config(
         config.default_ttl_secs = ttl.default_ttl_secs;
         config.clone()
     };
+
+    audit_log(
+        &state,
+        "update_cache_config",
+        None,
+        Some(serde_json::json!({ "default_ttl_secs": config.default_ttl_secs })),
+    )
+    .await;
 
     Ok(Json(CacheConfig {
         l0_ttl_secs: config.l0_ttl_secs,
@@ -2267,6 +2304,14 @@ async fn post_clear_logs(
             }
         }
     }
+
+    audit_log(
+        &state,
+        "clear_logs",
+        None,
+        Some(serde_json::json!({ "target": format!("{:?}", req.target), "freed_bytes": result.freed_bytes })),
+    )
+    .await;
 
     Ok(Json(result))
 }
@@ -3605,6 +3650,68 @@ async fn post_infra_speed_test_upload(
             _ => StatusCode::BAD_REQUEST,
         })?;
     Ok(StatusCode::OK)
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+/// Helper: insert an audit log entry if PG is available. Fire-and-forget.
+async fn audit_log(state: &AppState, action: &str, target: Option<&str>, detail: Option<serde_json::Value>) {
+    let pg = state.pg_store.read().clone();
+    if let Some(ref pg) = pg {
+        let _ = pg
+            .insert_audit_log(action, "admin", target, detail.as_ref(), None)
+            .await;
+    }
+}
+
+#[derive(Deserialize)]
+struct AuditLogQuery {
+    #[serde(default = "default_audit_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+    action: Option<String>,
+}
+
+fn default_audit_limit() -> i64 {
+    50
+}
+
+async fn get_audit_log(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<AuditLogQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state
+        .pg_store
+        .read()
+        .clone()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "PG not available".to_string()))?;
+
+    let rows = pg
+        .load_audit_logs(query.limit, query.offset, query.action.as_deref())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let entries: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(
+            |(id, timestamp, action, actor, target, detail, ip)| {
+                serde_json::json!({
+                    "id": id,
+                    "timestamp": timestamp,
+                    "action": action,
+                    "actor": actor,
+                    "target": target,
+                    "detail": detail.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()),
+                    "ip_address": ip,
+                })
+            },
+        )
+        .collect();
+
+    Ok(Json(serde_json::json!({ "entries": entries })))
 }
 
 #[cfg(test)]

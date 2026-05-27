@@ -25,10 +25,10 @@ pub struct DomainPolicy {
     pub upstream_profile: Option<String>,
 }
 
-#[derive(Debug, Default)]
-struct DomainUsage {
-    tokens: u64,
-    spend_usd: f64,
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct DomainUsage {
+    pub tokens: u64,
+    pub spend_usd: f64,
 }
 
 pub struct RuntimeConfig {
@@ -155,6 +155,21 @@ impl RuntimeConfig {
             let entry = guard.entry(label).or_default();
             entry.tokens = entry.tokens.saturating_add(tokens);
             entry.spend_usd += spend_usd;
+        }
+    }
+
+    /// Return a snapshot of current per-domain usage counters.
+    pub fn domain_usage_snapshot(&self) -> HashMap<String, DomainUsage> {
+        self.domain_usage
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace all domain usage counters (used by Admin to restore after gateway restart).
+    pub fn replace_domain_usage(&self, usage: HashMap<String, DomainUsage>) {
+        if let Ok(mut guard) = self.domain_usage.lock() {
+            *guard = usage;
         }
     }
 

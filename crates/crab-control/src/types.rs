@@ -222,6 +222,25 @@ pub struct PutDomainPoliciesRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainUsageEntry {
+    pub domain: String,
+    pub tokens: u64,
+    pub spend_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainUsageResponse {
+    pub usage: Vec<DomainUsageEntry>,
+    pub month: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutDomainUsageRequest {
+    pub usage: Vec<DomainUsageEntry>,
+    pub month: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtlConfigView {
     pub default_ttl_secs: u64,
     pub model_overrides: HashMap<String, u64>,

@@ -10,9 +10,10 @@ use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
     ClearReasoningCacheResponse, ConnectionRuntimeView, CreateGatewayKeyRequest,
     CreateGatewayKeyResponse, CursorModelAliasView, CursorModelsConfigView, DomainPolicySpec,
-    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest,
-    PatchUpstreamKeyRequest, PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest,
-    PutDomainPoliciesRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
+    DomainUsageEntry, DomainUsageResponse, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER,
+    GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PipelineProfileView,
+    PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
+    PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
     RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
     UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str,
@@ -126,6 +127,10 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/domains/policies/{domain}",
             delete(delete_domain_policy),
+        )
+        .route(
+            "/v1/domains/usage",
+            get(get_domain_usage).put(put_domain_usage),
         )
         .route("/v1/cache/ttl", get(get_ttl).put(put_ttl))
         .route(
@@ -1121,6 +1126,44 @@ async fn delete_domain_policy(
         }),
     )
         .into_response())
+}
+
+async fn get_domain_usage(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<DomainUsageResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let snapshot = state.runtime.domain_usage_snapshot();
+    let month = chrono::Utc::now().format("%Y-%m").to_string();
+    let usage = snapshot
+        .into_iter()
+        .map(|(domain, u)| DomainUsageEntry {
+            domain,
+            tokens: u.tokens,
+            spend_usd: u.spend_usd,
+        })
+        .collect();
+    Ok(Json(DomainUsageResponse { usage, month }))
+}
+
+async fn put_domain_usage(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PutDomainUsageRequest>,
+) -> Result<StatusCode, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let mut map = std::collections::HashMap::new();
+    for entry in req.usage {
+        map.insert(
+            entry.domain,
+            crab_proxy::DomainUsage {
+                tokens: entry.tokens,
+                spend_usd: entry.spend_usd,
+            },
+        );
+    }
+    state.runtime.replace_domain_usage(map);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn patch_key(

@@ -398,6 +398,67 @@ impl PgStore {
             )
             .await?;
 
+        // Phase 1.3: domain_usage persistence table.
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS domain_usage (
+                    domain      TEXT NOT NULL,
+                    month       TEXT NOT NULL,
+                    tokens      BIGINT NOT NULL DEFAULT 0,
+                    spend_usd   DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (domain, month)
+                )",
+                &[],
+            )
+            .await?;
+
+        // Phase 2.1: consumer_usage_monthly pre-aggregation table.
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS consumer_usage_monthly (
+                    consumer        TEXT NOT NULL,
+                    month           TEXT NOT NULL,
+                    input_tokens    BIGINT NOT NULL DEFAULT 0,
+                    output_tokens   BIGINT NOT NULL DEFAULT 0,
+                    total_tokens    BIGINT NOT NULL DEFAULT 0,
+                    cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    request_count   BIGINT NOT NULL DEFAULT 0,
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (consumer, month)
+                )",
+                &[],
+            )
+            .await?;
+
+        // Phase 2.2: audit_log table.
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS audit_log (
+                    id          BIGSERIAL PRIMARY KEY,
+                    timestamp   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    action      TEXT NOT NULL,
+                    actor       TEXT NOT NULL,
+                    target      TEXT,
+                    detail      JSONB,
+                    ip_address  TEXT
+                )",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (timestamp DESC)",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log (action, timestamp DESC)",
+                &[],
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -1526,6 +1587,281 @@ impl PgStore {
             )
             .await?;
         Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // domain_usage CRUD
+    // -----------------------------------------------------------------------
+
+    /// Upsert domain monthly usage counters.
+    pub async fn upsert_domain_usage(
+        &self,
+        domain: &str,
+        month: &str,
+        tokens: u64,
+        spend_usd: f64,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO domain_usage (domain, month, tokens, spend_usd, updated_at)
+                 VALUES ($1, $2, $3, $4, now())
+                 ON CONFLICT (domain, month) DO UPDATE SET
+                    tokens = EXCLUDED.tokens,
+                    spend_usd = EXCLUDED.spend_usd,
+                    updated_at = now()",
+                &[&domain, &month, &to_pg_bigint(tokens), &spend_usd],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load all domain usage for a given month.
+    pub async fn load_domain_usage(
+        &self,
+        month: &str,
+    ) -> Result<Vec<(String, u64, f64)>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT domain, tokens, spend_usd FROM domain_usage WHERE month = $1",
+                &[&month],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, String>(0),
+                    from_pg_bigint(r.get::<_, i64>(1)),
+                    r.get::<_, f64>(2),
+                )
+            })
+            .collect())
+    }
+
+    /// Aggregate consumer usage from trace_logs for a given month and upsert into consumer_usage_monthly.
+    pub async fn aggregate_consumer_usage(&self, month: &str) -> Result<u64> {
+        let client = self.pool.get().await?;
+        // Compute month boundaries in milliseconds.
+        let month_start = chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+            .and_then(|d| {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                Ok(dt.and_utc().timestamp_millis() as u64)
+            })
+            .map_err(|e| anyhow::anyhow!("parse month: {e}"))?;
+        let next_month = {
+            let parts: Vec<&str> = month.split('-').collect();
+            let y: i32 = parts[0].parse().unwrap_or(2026);
+            let m: u32 = parts[1].parse().unwrap_or(1);
+            let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            format!("{ny:04}-{nm:02}")
+        };
+        let month_end = chrono::NaiveDate::parse_from_str(&format!("{next_month}-01"), "%Y-%m-%d")
+            .and_then(|d| {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                Ok(dt.and_utc().timestamp_millis() as u64)
+            })
+            .map_err(|e| anyhow::anyhow!("parse next month: {e}"))?;
+
+        let count = client
+            .execute(
+                "INSERT INTO consumer_usage_monthly
+                    (consumer, month, input_tokens, output_tokens, total_tokens, cost_usd, request_count, updated_at)
+                 SELECT
+                    COALESCE(consumer, 'unclassified') AS consumer,
+                    $3 AS month,
+                    COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(input_tokens) + SUM(output_tokens), 0),
+                    0.0,
+                    COUNT(*),
+                    now()
+                 FROM trace_logs
+                 WHERE timestamp_ms >= $1 AND timestamp_ms < $2
+                   AND consumer IS NOT NULL AND consumer != ''
+                 GROUP BY consumer
+                 ON CONFLICT (consumer, month) DO UPDATE SET
+                    input_tokens = EXCLUDED.input_tokens,
+                    output_tokens = EXCLUDED.output_tokens,
+                    total_tokens = EXCLUDED.total_tokens,
+                    request_count = EXCLUDED.request_count,
+                    updated_at = now()",
+                &[
+                    &(month_start as i64),
+                    &(month_end as i64),
+                    &month,
+                ],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    /// Delete domain usage older than the given month.
+    pub async fn prune_domain_usage(&self, older_than_month: &str) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM domain_usage WHERE month < $1",
+                &[&older_than_month],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // consumer_usage_monthly CRUD
+    // -----------------------------------------------------------------------
+
+    /// Upsert consumer monthly usage summary.
+    pub async fn upsert_consumer_usage(
+        &self,
+        consumer: &str,
+        month: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: u64,
+        cost_usd: f64,
+        request_count: u64,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO consumer_usage_monthly
+                    (consumer, month, input_tokens, output_tokens, total_tokens, cost_usd, request_count, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                 ON CONFLICT (consumer, month) DO UPDATE SET
+                    input_tokens = EXCLUDED.input_tokens,
+                    output_tokens = EXCLUDED.output_tokens,
+                    total_tokens = EXCLUDED.total_tokens,
+                    cost_usd = EXCLUDED.cost_usd,
+                    request_count = EXCLUDED.request_count,
+                    updated_at = now()",
+                &[
+                    &consumer,
+                    &month,
+                    &to_pg_bigint(input_tokens),
+                    &to_pg_bigint(output_tokens),
+                    &to_pg_bigint(total_tokens),
+                    &cost_usd,
+                    &to_pg_bigint(request_count),
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load all consumer usage for a given month.
+    pub async fn load_consumer_usage(
+        &self,
+        month: &str,
+    ) -> Result<Vec<(String, u64, u64, u64, f64, u64)>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT consumer, input_tokens, output_tokens, total_tokens, cost_usd, request_count
+                 FROM consumer_usage_monthly WHERE month = $1",
+                &[&month],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, String>(0),
+                    from_pg_bigint(r.get::<_, i64>(1)),
+                    from_pg_bigint(r.get::<_, i64>(2)),
+                    from_pg_bigint(r.get::<_, i64>(3)),
+                    r.get::<_, f64>(4),
+                    from_pg_bigint(r.get::<_, i64>(5)),
+                )
+            })
+            .collect())
+    }
+
+    // -----------------------------------------------------------------------
+    // audit_log CRUD
+    // -----------------------------------------------------------------------
+
+    /// Insert an audit log entry.
+    pub async fn insert_audit_log(
+        &self,
+        action: &str,
+        actor: &str,
+        target: Option<&str>,
+        detail: Option<&serde_json::Value>,
+        ip_address: Option<&str>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        let detail_json = detail.map(|v| serde_json::to_string(v).unwrap_or_default());
+        client
+            .execute(
+                "INSERT INTO audit_log (action, actor, target, detail, ip_address)
+                 VALUES ($1, $2, $3, $4::jsonb, $5)",
+                &[
+                    &action,
+                    &actor,
+                    &target,
+                    &detail_json.as_deref(),
+                    &ip_address,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load audit log entries with pagination and optional action filter.
+    /// Returns (id, timestamp_iso, action, actor, target, detail_text, ip_address).
+    pub async fn load_audit_logs(
+        &self,
+        limit: i64,
+        offset: i64,
+        action_filter: Option<&str>,
+    ) -> Result<
+        Vec<(
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        let client = self.pool.get().await?;
+        let rows = if let Some(action) = action_filter {
+            client
+                .query(
+                    "SELECT id, timestamp::text, action, actor, target, detail::text, ip_address
+                     FROM audit_log WHERE action = $1
+                     ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
+                    &[&action, &limit, &offset],
+                )
+                .await?
+        } else {
+            client
+                .query(
+                    "SELECT id, timestamp::text, action, actor, target, detail::text, ip_address
+                     FROM audit_log
+                     ORDER BY timestamp DESC LIMIT $1 OFFSET $2",
+                    &[&limit, &offset],
+                )
+                .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, i64>(0),
+                    r.get::<_, String>(1),
+                    r.get::<_, String>(2),
+                    r.get::<_, String>(3),
+                    r.get::<_, Option<String>>(4),
+                    r.get::<_, Option<String>>(5),
+                    r.get::<_, Option<String>>(6),
+                )
+            })
+            .collect())
     }
 }
 

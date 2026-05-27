@@ -118,8 +118,10 @@ CrabCache/
 │   │   └── src/error.rs             # ControlError
 │   ├── crab-admin/                  # Admin Dashboard 后端
 │   │   ├── src/main.rs              # Axum 服务器（支持 HTTPS）
-│   │   ├── src/routes.rs            # 管理 API 路由
+│   │   ├── src/routes.rs            # 管理 API 路由 + 审计日志
 │   │   ├── src/state.rs             # AppState 和存储结构
+│   │   ├── src/pg.rs                # PostgreSQL 存储（15 张表）
+│   │   ├── src/domain_usage_sync.rs # domain_usage PG 同步任务
 │   │   ├── src/types.rs             # API 请求/响应类型
 │   │   └── src/network.rs           # 网络信息
 │   └── crab-dashboard/              # Leptos WASM 前端
@@ -340,6 +342,8 @@ Management API 监听在 `[management].listen_addr`（默认 `127.0.0.1:9080`）
 | GET/PUT | `/v1/upstream/profiles/{id}/keys` | Profile 独立 API Key 池（`account_id` 可选，429 仅跨账号轮换） |
 | PATCH | `/v1/upstream/profiles/{id}/keys/{key_id}` | 更新 Profile Key（仅 `enabled`） |
 | POST | `/v1/upstream/profiles/{id}/test` | 探测 `GET {base_url}/v1/models` |
+| GET | `/v1/domains/usage` | 获取域名月度用量计数（Admin 代理持久化） |
+| PUT | `/v1/domains/usage` | 恢复域名月度用量计数（重启后从 PG 恢复） |
 
 ### Admin Dashboard
 
@@ -354,6 +358,7 @@ Admin Dashboard 分为后端（`crab-admin`，Axum HTTP 服务器）和前端（
 - 上游配置：多 Profile（DeepSeek / MiMo 等）Base URL、Provider、API Key 池、端点列表（热更新至网关）
 - 模型同步：按 Profile 从各厂商 `GET /v1/models` 同步模型目录（`admin-state.json` 带 `profile_id`）
 - Trace 分析：请求分布、Zipf 参数估计、命中率预测
+- 审计日志：管理操作记录（密钥 CRUD、策略变更、缓存清理等），存储于 PostgreSQL `audit_log` 表
 - 请求日志查看
 
 前端构建产物部署在 `crates/crab-dashboard/dist/` 目录，由 Admin 后端作为静态文件服务。

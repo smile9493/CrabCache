@@ -50,7 +50,7 @@ pub use profile_build::{
 };
 pub use proxy::GatewayProxy;
 pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
-pub use runtime::{DomainPolicy, RuntimeConfig};
+pub use runtime::{DomainPolicy, DomainUsage, RuntimeConfig};
 pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
 pub use sse_rewrite::flush_streaming_reasoning;
 pub use stored_key::StoredKey;

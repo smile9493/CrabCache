@@ -1,4 +1,5 @@
 mod composition;
+mod domain_usage_sync;
 mod infra;
 mod key_usage_sync;
 mod live_metrics;
@@ -283,6 +284,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Start key usage sync (reads trace, accumulates keys_meta monthly counters).
     crate::key_usage_sync::spawn(Arc::clone(&state));
+
+    // Start domain_usage sync (fetches from Gateway, persists to PG, restores on restart).
+    crate::domain_usage_sync::spawn(Arc::clone(&state));
 
     {
         let prefetch = Arc::clone(&state);

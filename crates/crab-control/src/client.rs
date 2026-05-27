@@ -206,6 +206,28 @@ impl GatewayAdminClient {
         Ok(())
     }
 
+    pub async fn get_domain_usage(&self) -> Result<DomainUsageResponse, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/domains/usage")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_domain_usage(
+        &self,
+        req: &PutDomainUsageRequest,
+    ) -> Result<(), ControlError> {
+        let resp = self
+            .authed(reqwest::Method::PUT, "/v1/domains/usage")
+            .json(req)
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
     pub async fn put_ttl(&self, req: &PutTtlConfigRequest) -> Result<TtlConfigView, ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/cache/ttl")
