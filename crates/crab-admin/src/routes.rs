@@ -2217,12 +2217,58 @@ async fn get_log_disk_usage(
 }
 
 async fn post_clear_logs(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<crab_admin_types::ClearLogsRequest>,
 ) -> Result<Json<crab_admin_types::ClearLogsResponse>, (StatusCode, String)> {
-    crate::log_management::clear_logs(&req)
-        .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+    use crab_admin_types::ClearTarget;
+
+    // 1. Clear rotated JSONL files on disk (existing behavior).
+    let mut result = crate::log_management::clear_logs(&req)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // 2. Clear in-memory request logs for All and Capture targets.
+    if matches!(req.target, ClearTarget::All | ClearTarget::Capture) {
+        state.request_logs.write().clear();
+    }
+
+    // 3. Truncate active JSONL trace files.
+    let truncate_trace = matches!(req.target, ClearTarget::All | ClearTarget::TraceRotated);
+    let truncate_debug = matches!(req.target, ClearTarget::All | ClearTarget::DebugRotated);
+    if truncate_trace || truncate_debug {
+        for (path, size) in
+            crate::log_management::truncate_active_logs(truncate_trace, truncate_debug)
+        {
+            result.deleted_files.push(path);
+            result.freed_bytes += size;
+        }
+    }
+
+    // 4. Clear trace summary/analysis caches.
+    if truncate_trace || truncate_debug {
+        state.trace_entries.write().clear();
+        *state.trace_summary_cache.write() = None;
+        *state.trace_analysis_cache.write() = None;
+    }
+
+    // 5. Clear PG trace_logs and request_logs tables if available.
+    if matches!(req.target, ClearTarget::All) {
+        let pg = state.pg_store.read().clone();
+        if let Some(ref pg) = pg {
+            // Use u64::MAX as cutoff to delete all rows.
+            if let Ok(count) = pg.prune_trace_logs(u64::MAX).await {
+                if count > 0 {
+                    tracing::info!(deleted = count, "PG trace_logs cleared");
+                }
+            }
+            if let Ok(count) = pg.prune_request_logs(u64::MAX).await {
+                if count > 0 {
+                    tracing::info!(deleted = count, "PG request_logs cleared");
+                }
+            }
+        }
+    }
+
+    Ok(Json(result))
 }
 
 async fn get_retention_policy(

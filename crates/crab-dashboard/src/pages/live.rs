@@ -10,7 +10,8 @@ use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
 use crate::pages::overview::format_number;
 use crate::types::{
-    KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse, ProfileRoutingView,
+    KeyConcurrencyResponse, KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse,
+    LiveMetricsSummary, ProfileRoutingView,
 };
 use crate::view_state;
 
@@ -117,6 +118,33 @@ fn build_affinity_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Opti
     (labels, values)
 }
 
+fn max_bucket_latencies(buckets: &[LiveMetricsBucket]) -> (f64, Option<f64>, Option<f64>) {
+    let mut max_e2e = 0.0_f64;
+    let mut max_upstream: Option<f64> = None;
+    let mut max_ttft: Option<f64> = None;
+    for b in buckets {
+        if b.request_count > 0 {
+            max_e2e = max_e2e.max(b.e2e_latency_ms);
+        }
+        if let Some(u) = b.upstream_latency_ms {
+            max_upstream = Some(max_upstream.map_or(u, |m| m.max(u)));
+        }
+        if let Some(t) = b.ttft_ms {
+            max_ttft = Some(max_ttft.map_or(t, |m| m.max(t)));
+        }
+    }
+    (max_e2e, max_upstream, max_ttft)
+}
+
+fn format_latency_opt(v: Option<f64>, na: &str) -> String {
+    v.map(|x| format!("{x:.0} ms"))
+        .unwrap_or_else(|| na.to_string())
+}
+
+fn series_has_points(values: &[Option<f64>]) -> bool {
+    values.iter().any(|v| matches!(v, Some(x) if *x > 0.0))
+}
+
 #[derive(Clone, Copy)]
 enum LiveTileVariant {
     Accent,
@@ -156,6 +184,8 @@ pub fn LivePage() -> impl IntoView {
     let routing_key_ids: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
     let selected_routing_key: RwSignal<Option<String>> = RwSignal::new(None);
     let routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>> =
+        RwSignal::new(None);
+    let routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>> =
         RwSignal::new(None);
 
     Effect::new(move |_| {
@@ -269,17 +299,22 @@ pub fn LivePage() -> impl IntoView {
                             .unwrap_or_else(|| ids[0].clone());
                         selected_routing_key.set(Some(chosen.clone()));
                         routing_key_ids.set(ids);
-                        routing_key_data.set(Some(api::fetch_key_routing(&chosen).await));
+                        let routing = api::fetch_key_routing(&chosen).await;
+                        let concurrency = api::fetch_key_concurrency(&chosen).await;
+                        routing_key_data.set(Some(routing));
+                        routing_key_concurrency.set(Some(concurrency));
                     } else {
                         routing_key_ids.set(Vec::new());
                         selected_routing_key.set(None);
                         routing_key_data.set(None);
+                        routing_key_concurrency.set(None);
                     }
                 }
                 Err(e) => {
                     routing_key_ids.set(Vec::new());
                     selected_routing_key.set(None);
                     routing_key_data.set(Some(Err(e)));
+                    routing_key_concurrency.set(None);
                 }
             }
         });
@@ -299,10 +334,16 @@ pub fn LivePage() -> impl IntoView {
 
     Effect::new(move |_| {
         let Some(key_id) = selected_routing_key.get() else {
+            routing_key_concurrency.set(None);
             return;
         };
         leptos::task::spawn_local(async move {
-            routing_key_data.set(Some(api::fetch_key_routing(&key_id).await));
+            let (routing, concurrency) = futures::join!(
+                api::fetch_key_routing(&key_id),
+                api::fetch_key_concurrency(&key_id),
+            );
+            routing_key_data.set(Some(routing));
+            routing_key_concurrency.set(Some(concurrency));
         });
     });
 
@@ -410,6 +451,7 @@ pub fn LivePage() -> impl IntoView {
                                 routing_key_ids=routing_key_ids
                                 selected_routing_key=selected_routing_key
                                 routing_key_data=routing_key_data
+                                routing_key_concurrency=routing_key_concurrency
                             />
                         }.into_any()
                     }
@@ -671,33 +713,40 @@ fn LiveBottomRow(
     routing_key_ids: RwSignal<Vec<String>>,
     selected_routing_key: RwSignal<Option<String>>,
     routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
+    routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>>,
 ) -> impl IntoView {
     view! {
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <LiveRoutingPanel
-                profiles=routing_profiles
-                routing_key_ids=routing_key_ids
-                selected_routing_key=selected_routing_key
-                routing_key_data=routing_key_data
-            />
-            <LiveLatencyPanel buckets=buckets.clone() />
-            <LiveLatestPanel data=data />
+        <div class="space-y-4">
+            <div class="live-detail-row">
+                <LiveRoutingSummaryPanel profiles=routing_profiles />
+                <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() />
+                <LiveLatestPanel data=data />
+            </div>
+            <div class="live-detail-row">
+                <LiveKeyDistributionPanel
+                    routing_key_ids=routing_key_ids
+                    selected_routing_key=selected_routing_key
+                    routing_key_data=routing_key_data
+                />
+                <LiveCacheLayerPanel buckets=buckets.clone() />
+                <LiveKeyActivityPanel
+                    routing_key_data=routing_key_data
+                    routing_key_concurrency=routing_key_concurrency
+                />
+            </div>
+            <LiveTokenPanel buckets=buckets />
         </div>
-        <LiveTokenPanel buckets=buckets />
     }
 }
 
 #[component]
-fn LiveRoutingPanel(
+fn LiveRoutingSummaryPanel(
     profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
-    routing_key_ids: RwSignal<Vec<String>>,
-    selected_routing_key: RwSignal<Option<String>>,
-    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
 ) -> impl IntoView {
     let t = use_translations();
     let selected_profile = RwSignal::new(String::new());
     view! {
-        <div class="glass-card p-4 h-full flex flex-col">
+        <div class="glass-card p-4 live-detail-card flex flex-col">
             <h3 class="text-sm font-semibold text-theme mb-3">{t.live_routing_title()}</h3>
             {move || match profiles.get() {
                 None => view! {
@@ -787,91 +836,7 @@ fn LiveRoutingPanel(
                                 }
                                 pct=circuit_pct
                             />
-                            <div class="space-y-2 pt-2 border-t border-theme">
-                                <div class="text-[11px] font-medium text-theme-muted uppercase tracking-wide">
-                                    "Key / Affinity Distribution"
-                                </div>
-                                <select
-                                    class="input text-xs font-mono"
-                                    prop:value=move || selected_routing_key.get().unwrap_or_default()
-                                    on:change=move |ev| {
-                                        let v = event_target_value(&ev);
-                                        if v.is_empty() {
-                                            selected_routing_key.set(None);
-                                        } else {
-                                            selected_routing_key.set(Some(v));
-                                        }
-                                    }
-                                >
-                                    <option value="">"Select key_id"</option>
-                                    {move || routing_key_ids.get().into_iter().map(|id| {
-                                        let id_val = id.clone();
-                                        view! { <option value=id_val.clone()>{id_val.clone()}</option> }
-                                    }).collect_view()}
-                                </select>
-                                {move || match routing_key_data.get() {
-                                    None => view! { <p class="text-[11px] text-theme-muted">"Loading key routing…"</p> }.into_any(),
-                                    Some(Err(e)) => view! { <p class="text-[11px] text-error">{e}</p> }.into_any(),
-                                    Some(Ok(resp)) => {
-                                        let (backend_labels, backend_values) = build_backend_distribution(&resp);
-                                        let (aff_labels, aff_values) = build_affinity_distribution(&resp);
-                                        let backend_labels_sv = StoredValue::new(backend_labels);
-                                        let backend_values_sv = StoredValue::new(backend_values);
-                                        let aff_labels_sv = StoredValue::new(aff_labels);
-                                        let aff_values_sv = StoredValue::new(aff_values);
-                                        let backend_x = Signal::derive(move || backend_labels_sv.get_value());
-                                        let backend_series = Signal::derive(move || {
-                                            vec![ChartSeries {
-                                                label: "backend".to_string(),
-                                                color: "var(--cc-accent)",
-                                                values: backend_values_sv.get_value(),
-                                                dashed: false,
-                                                fill: false,
-                                            }]
-                                        });
-                                        let aff_x = Signal::derive(move || aff_labels_sv.get_value());
-                                        let aff_series = Signal::derive(move || {
-                                            vec![ChartSeries {
-                                                label: "affinity_kind".to_string(),
-                                                color: "var(--cc-info)",
-                                                values: aff_values_sv.get_value(),
-                                                dashed: false,
-                                                fill: false,
-                                            }]
-                                        });
-                                        view! {
-                                            <div class="space-y-2">
-                                                <div class="text-[11px] text-theme-muted font-mono">
-                                                    {format!("key_id={} · prefix_breaks={}", resp.key_id, resp.prefix_break_count)}
-                                                </div>
-                                                <div class="grid grid-cols-1 gap-2">
-                                                    <div class="border border-theme rounded-md p-2">
-                                                        <div class="text-[11px] text-theme-muted mb-1">"Backend distribution"</div>
-                                                        <BarChart
-                                                            x_labels=backend_x
-                                                            series=backend_series
-                                                            height_px=95
-                                                            y_unit="req"
-                                                            empty_message=t.live_no_data()
-                                                        />
-                                                    </div>
-                                                    <div class="border border-theme rounded-md p-2">
-                                                        <div class="text-[11px] text-theme-muted mb-1">"Affinity kind distribution"</div>
-                                                        <BarChart
-                                                            x_labels=aff_x
-                                                            series=aff_series
-                                                            height_px=85
-                                                            y_unit="req"
-                                                            empty_message=t.live_no_data()
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        }.into_any()
-                                    }
-                                }}
-                            </div>
-                            <div class="space-y-1.5 pt-1 border-t border-theme">
+                            <div class="space-y-1.5 pt-2 border-t border-theme flex-1">
                                 {active.backends.iter().take(4).map(|b| {
                                     let pct = if b.healthy { 100.0 } else { 25.0 };
                                     let state = if b.healthy { "healthy" } else { "unhealthy" };
@@ -902,6 +867,125 @@ fn LiveRoutingPanel(
 }
 
 #[component]
+fn LiveKeyDistributionPanel(
+    routing_key_ids: RwSignal<Vec<String>>,
+    selected_routing_key: RwSignal<Option<String>>,
+    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
+) -> impl IntoView {
+    let t = use_translations();
+    view! {
+        <div class="glass-card p-4 live-detail-card flex flex-col space-y-2">
+            <h3 class="text-sm font-semibold text-theme">"Key / Affinity"</h3>
+            <select
+                class="input text-xs font-mono"
+                prop:value=move || selected_routing_key.get().unwrap_or_default()
+                on:change=move |ev| {
+                    let v = event_target_value(&ev);
+                    if v.is_empty() {
+                        selected_routing_key.set(None);
+                    } else {
+                        selected_routing_key.set(Some(v));
+                    }
+                }
+            >
+                <option value="">"Select key_id"</option>
+                {move || routing_key_ids.get().into_iter().map(|id| {
+                    let id_val = id.clone();
+                    view! { <option value=id_val.clone()>{id_val.clone()}</option> }
+                }).collect_view()}
+            </select>
+            {move || match routing_key_data.get() {
+                None => view! {
+                    <p class="text-[11px] text-theme-muted live-chart-compact">"Loading key routing…"</p>
+                }.into_any(),
+                Some(Err(e)) => view! {
+                    <p class="text-[11px] text-error live-chart-compact">{e}</p>
+                }.into_any(),
+                Some(Ok(resp)) => {
+                    let (backend_labels, backend_values) = build_backend_distribution(&resp);
+                    let (aff_labels, aff_values) = build_affinity_distribution(&resp);
+                    let backend_has = series_has_points(&backend_values);
+                    let aff_has = series_has_points(&aff_values);
+                    let backend_labels_sv = StoredValue::new(backend_labels);
+                    let backend_values_sv = StoredValue::new(backend_values);
+                    let aff_labels_sv = StoredValue::new(aff_labels);
+                    let aff_values_sv = StoredValue::new(aff_values);
+                    let backend_x = Signal::derive(move || backend_labels_sv.get_value());
+                    let backend_series = Signal::derive(move || {
+                        vec![ChartSeries {
+                            label: "backend".to_string(),
+                            color: "var(--cc-accent)",
+                            values: backend_values_sv.get_value(),
+                            dashed: false,
+                            fill: false,
+                        }]
+                    });
+                    let aff_x = Signal::derive(move || aff_labels_sv.get_value());
+                    let aff_series = Signal::derive(move || {
+                        vec![ChartSeries {
+                            label: "affinity_kind".to_string(),
+                            color: "var(--cc-info)",
+                            values: aff_values_sv.get_value(),
+                            dashed: false,
+                            fill: false,
+                        }]
+                    });
+                    view! {
+                        <div class="space-y-2 flex-1 flex flex-col">
+                            <div class="text-[11px] text-theme-muted font-mono">
+                                {format!("prefix_breaks={}", resp.prefix_break_count)}
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
+                                <div class="border border-theme rounded-md p-2 flex flex-col">
+                                    <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
+                                    {if backend_has {
+                                        view! {
+                                            <BarChart
+                                                x_labels=backend_x
+                                                series=backend_series
+                                                height_px=72
+                                                y_unit="req"
+                                                empty_message=t.live_no_data()
+                                            />
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
+                                                {t.live_no_data()}
+                                            </p>
+                                        }.into_any()
+                                    }}
+                                </div>
+                                <div class="border border-theme rounded-md p-2 flex flex-col">
+                                    <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
+                                    {if aff_has {
+                                        view! {
+                                            <BarChart
+                                                x_labels=aff_x
+                                                series=aff_series
+                                                height_px=72
+                                                y_unit="req"
+                                                empty_message=t.live_no_data()
+                                            />
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
+                                                {t.live_no_data()}
+                                            </p>
+                                        }.into_any()
+                                    }}
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+#[component]
 fn RoutingMetricRow(label: &'static str, value: String, pct: f64) -> impl IntoView {
     let width = format!("{:.0}%", pct.clamp(0.0, 100.0));
     view! {
@@ -916,10 +1000,16 @@ fn RoutingMetricRow(label: &'static str, value: String, pct: f64) -> impl IntoVi
 }
 
 #[component]
-fn LiveLatencyPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+fn LiveLatencyPanel(
+    buckets: Vec<LiveMetricsBucket>,
+    summary: LiveMetricsSummary,
+) -> impl IntoView {
     let t = use_translations();
     let stored = StoredValue::new(buckets);
+    let (max_e2e, max_upstream, max_ttft) = max_bucket_latencies(&stored.get_value());
+    let na = t.live_upstream_na();
     let e2e_label = t.live_series_e2e().to_string();
+    let upstream_label = t.live_series_upstream().to_string();
     let ttft_label = t.live_series_ttft().to_string();
     let x_labels = Signal::derive(move || {
         stored
@@ -948,6 +1038,13 @@ fn LiveLatencyPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                 fill: false,
             },
             ChartSeries {
+                label: upstream_label.clone(),
+                color: "var(--warning)",
+                values: b.iter().map(|x| x.upstream_latency_ms).collect(),
+                dashed: true,
+                fill: false,
+            },
+            ChartSeries {
                 label: ttft_label.clone(),
                 color: "var(--cc-info)",
                 values: b.iter().map(|x| x.ttft_ms).collect(),
@@ -957,18 +1054,105 @@ fn LiveLatencyPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         ]
     });
     view! {
-        <div class="glass-card p-4 h-full flex flex-col">
-            <h3 class="text-sm font-semibold text-theme mb-2">{t.live_nodes_title()}</h3>
-            <p class="text-[10px] text-theme-muted mb-2 leading-snug">{t.live_upstream_hint()}</p>
-            <div class="flex-1 min-h-0">
-                <BarChart
-                    x_labels=x_labels
-                    series=series
-                    height_px=140
-                    y_unit="ms"
-                    empty_message=t.live_no_data()
+        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
+            <h3 class="text-sm font-semibold text-theme">{t.live_nodes_title()}</h3>
+            <div class="grid grid-cols-2 gap-2">
+                <LiveStatTile
+                    label=t.live_avg_e2e()
+                    value=format!("{:.0} ms", summary.avg_e2e_latency_ms)
+                    variant=LiveTileVariant::Accent
+                />
+                <LiveStatTile
+                    label="Max E2E"
+                    value=format!("{max_e2e:.0} ms")
+                    variant=LiveTileVariant::Orange
+                />
+                <LiveStatTile
+                    label=t.live_avg_ttft()
+                    value=format!("{:.0} ms", summary.avg_ttft_ms)
+                    variant=LiveTileVariant::Teal
+                />
+                <LiveStatTile
+                    label="Max TTFT"
+                    value=format_latency_opt(max_ttft, na)
+                    variant=LiveTileVariant::Warn
                 />
             </div>
+            <BarChart
+                x_labels=x_labels
+                series=series
+                height_px=130
+                y_unit="ms"
+                empty_message=t.live_no_data()
+            />
+            <p class="text-[10px] text-theme-muted leading-snug">
+                {format!("Max upstream: {}", format_latency_opt(max_upstream, na))}
+                " · "
+                {t.live_upstream_hint()}
+            </p>
+        </div>
+    }
+}
+
+#[component]
+fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+    let t = use_translations();
+    let stored = StoredValue::new(buckets);
+    let x_labels = Signal::derive(move || {
+        stored
+            .get_value()
+            .iter()
+            .map(|b| format_bucket_time(b.timestamp_ms))
+            .collect()
+    });
+    let hit_series = Signal::derive(move || {
+        let b = stored.get_value();
+        vec![
+            ChartSeries {
+                label: "hits".to_string(),
+                color: "var(--cc-success)",
+                values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
+                dashed: false,
+                fill: false,
+            },
+            ChartSeries {
+                label: "miss".to_string(),
+                color: "var(--cc-warning)",
+                values: b
+                    .iter()
+                    .map(|x| {
+                        Some((x.request_count.saturating_sub(x.cache_hit_count)) as f64)
+                    })
+                    .collect(),
+                dashed: false,
+                fill: false,
+            },
+        ]
+    });
+    let total_hits: u32 = stored.get_value().iter().map(|b| b.cache_hit_count).sum();
+    let total_req: u32 = stored
+        .get_value()
+        .iter()
+        .map(|b| b.request_count)
+        .sum();
+    let hit_pct = if total_req > 0 {
+        total_hits as f64 / total_req as f64 * 100.0
+    } else {
+        0.0
+    };
+    view! {
+        <div class="glass-card p-4 live-detail-card space-y-2 flex flex-col">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-theme">{t.live_cache_hit_trend()}</h3>
+                <span class="text-xs font-mono text-theme-muted">{format!("{hit_pct:.1}%")}</span>
+            </div>
+            <BarChart
+                x_labels=x_labels
+                series=hit_series
+                height_px=110
+                y_unit="req"
+                empty_message=t.live_no_data()
+            />
         </div>
     }
 }
@@ -1024,11 +1208,11 @@ fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
     let t = use_translations();
     let s = data.summary;
     view! {
-        <div class="glass-card p-4 h-full flex flex-col">
-            <h3 class="text-sm font-semibold text-theme mb-3">{t.live_latest_request()}</h3>
+        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
+            <h3 class="text-sm font-semibold text-theme">{t.live_latest_request()}</h3>
             {match data.latest {
                 None => view! {
-                    <p class="text-xs text-theme-muted flex-1">{t.live_no_data()}</p>
+                    <p class="text-xs text-theme-muted">{t.live_no_data()}</p>
                     <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
                         <LiveStatTile
                             label=t.live_tokens_input()
@@ -1043,7 +1227,7 @@ fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
                     </div>
                 }.into_any(),
                 Some(latest) => view! {
-                    <dl class="space-y-2 text-xs flex-1">
+                    <dl class="space-y-2 text-xs">
                         <div class="flex justify-between gap-2">
                             <dt class="text-theme-muted">{t.live_latest_model()}</dt>
                             <dd class="font-mono text-theme truncate">{latest.model}</dd>
@@ -1078,6 +1262,128 @@ fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
                         />
                     </div>
                 }.into_any(),
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn LiveKeyActivityPanel(
+    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
+    routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>>,
+) -> impl IntoView {
+    let t = use_translations();
+    view! {
+        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
+            <h3 class="text-sm font-semibold text-theme">"Key activity (5m)"</h3>
+            {move || match (routing_key_concurrency.get(), routing_key_data.get()) {
+                (None, None) => view! {
+                    <p class="text-xs text-theme-muted">"Select a key in load balancing card."</p>
+                }.into_any(),
+                (concurrency, routing) => {
+                    let mut tiles: Vec<(&'static str, String, LiveTileVariant)> = Vec::new();
+                    if let Some(Ok(c)) = &concurrency {
+                        tiles.push((
+                            "Active now",
+                            c.active_now.to_string(),
+                            LiveTileVariant::Accent,
+                        ));
+                        tiles.push((
+                            "Peak concurrent",
+                            c.concurrent_peak.to_string(),
+                            LiveTileVariant::Orange,
+                        ));
+                        tiles.push((
+                            "Window requests",
+                            c.total_requests.to_string(),
+                            LiveTileVariant::Teal,
+                        ));
+                    }
+                    if let Some(Ok(r)) = &routing {
+                        tiles.push((
+                            "Prefix breaks",
+                            r.prefix_break_count.to_string(),
+                            LiveTileVariant::Warn,
+                        ));
+                        tiles.push((
+                            "Migrations",
+                            r.migrations.len().to_string(),
+                            LiveTileVariant::Muted,
+                        ));
+                    }
+                    view! {
+                        <div class="grid grid-cols-2 gap-2">
+                            {tiles.into_iter().map(|(label, value, variant)| {
+                                view! {
+                                    <LiveStatTile label=label value=value variant=variant />
+                                }
+                            }).collect_view()}
+                        </div>
+                        {if let Some(Ok(c)) = concurrency {
+                            let recent: Vec<_> = c.entries.iter().rev().take(5).collect();
+                            view! {
+                                <div class="border-t border-theme pt-2 space-y-1">
+                                    <div class="text-[11px] font-medium text-theme-muted uppercase tracking-wide">
+                                        "Recent requests"
+                                    </div>
+                                    {if recent.is_empty() {
+                                        view! { <p class="text-[11px] text-theme-muted">{t.live_no_data()}</p> }.into_any()
+                                    } else {
+                                        recent.into_iter().map(|e| {
+                                            let cache = if e.cache_hit {
+                                                e.cache_tier.clone().unwrap_or_else(|| "hit".into())
+                                            } else {
+                                                "miss".into()
+                                            };
+                                            let backend = e.backend_name.clone().unwrap_or_else(|| "—".into());
+                                            view! {
+                                                <div class="text-[11px] font-mono flex justify-between gap-2 border-b border-theme/50 py-1 last:border-0">
+                                                    <span class="truncate text-theme">{e.model.clone()}</span>
+                                                    <span class="text-theme-muted shrink-0">
+                                                        {format!("{backend} · {cache} · {:.0}ms", e.latency_ms)}
+                                                    </span>
+                                                </div>
+                                            }
+                                        }).collect_view().into_any()
+                                    }}
+                                </div>
+                            }.into_any()
+                        } else if let Some(Err(e)) = concurrency {
+                            view! { <p class="text-[11px] text-error">{e}</p> }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                        {if let Some(Ok(r)) = routing {
+                            if r.migrations.is_empty() {
+                                view! { <p class="text-[11px] text-theme-muted">"No affinity migrations in window."</p> }.into_any()
+                            } else {
+                                view! {
+                                    <div class="border-t border-theme pt-2 space-y-1">
+                                        <div class="text-[11px] font-medium text-[var(--cc-warning)] uppercase tracking-wide">
+                                            "Affinity migrations"
+                                        </div>
+                                        {r.migrations.iter().rev().take(3).map(|m| {
+                                            view! {
+                                                <div class="text-[11px] font-mono text-[var(--cc-warning)] py-0.5">
+                                                    {format!(
+                                                        "{} → {} ({})",
+                                                        m.from_backend,
+                                                        m.to_backend,
+                                                        crate::datetime::format_ms_china_time(m.timestamp_ms, true)
+                                                    )}
+                                                </div>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                }.into_any()
+                            }
+                        } else if let Some(Err(e)) = routing {
+                            view! { <p class="text-[11px] text-error">{e}</p> }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                    }.into_any()
+                }
             }}
         </div>
     }
