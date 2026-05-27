@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS builder
+FROM rust:1.95-slim AS builder
 
 RUN apt-get update && apt-get install -y \
    build-essential \
@@ -49,7 +49,10 @@ RUN mkdir -p crates/crab-metrics/src && echo "" > crates/crab-metrics/src/lib.rs
     mkdir -p crates/crab-admin/src && echo "fn main() {}" > crates/crab-admin/src/main.rs && \
     mkdir -p crates/crab-dashboard/src && echo "" > crates/crab-dashboard/src/lib.rs
 
-RUN cargo build --release -p crab-gateway 2>/dev/null || true
+# Pre-build deps with BuildKit cache mount (registry + target persist across builds)
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p crab-gateway 2>/dev/null || true
 
 COPY third_party/pingora-proxy third_party/pingora-proxy
 COPY crates/crab-metrics/src crates/crab-metrics/src
@@ -67,8 +70,12 @@ COPY crates/crab-admin-types/src crates/crab-admin-types/src
 COPY crates/crab-capture/src crates/crab-capture/src
 COPY config config
 
-RUN cargo build --release -p crab-gateway \
-    && cargo tree -p crab-proxy -i pingora-proxy | head -5
+# Final build with cache mount — only recompiles changed crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p crab-gateway \
+    && cargo tree -p crab-proxy -i pingora-proxy | head -5 \
+    && cp /app/target/release/crab-gateway /app/crab-gateway
 
 FROM ubuntu:latest
 
@@ -82,7 +89,7 @@ WORKDIR /app
 
 RUN mkdir -p /app/data /app/logs /app/config
 
-COPY --from=builder /app/target/release/crab-gateway /app/crab-gateway
+COPY --from=builder /app/crab-gateway /app/crab-gateway
 COPY config/gateway.docker.toml /app/config/gateway.toml
 
 EXPOSE 8080 9080 9090

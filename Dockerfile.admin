@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS builder
+FROM rust:1.95-slim AS builder
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -13,7 +13,7 @@ RUN mkdir -p /usr/local/cargo && \
     > /usr/local/cargo/config.toml
 
 RUN rustup target add wasm32-unknown-unknown
-RUN curl -fsSL https://github.com/trunk-rs/trunk/releases/download/v0.21.8/trunk-x86_64-unknown-linux-gnu.tar.gz \
+RUN curl -fsSL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
     | tar xzf - -C /usr/local/cargo/bin && \
     chmod +x /usr/local/cargo/bin/trunk
 
@@ -23,7 +23,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY third_party/pingora-proxy third_party/pingora-proxy
 COPY crates crates
 
-RUN cargo build --release -p crab-admin
+# Build admin backend with BuildKit cache mount
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p crab-admin \
+    && cp /app/target/release/crab-admin /app/crab-admin
 
 WORKDIR /app/crates/crab-dashboard
 RUN trunk build --release
@@ -34,7 +38,7 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/crab-admin /app/crab-admin
+COPY --from=builder /app/crab-admin /app/crab-admin
 COPY --from=builder /app/crates/crab-dashboard/dist ./crates/crab-dashboard/dist
 
 ENV CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
