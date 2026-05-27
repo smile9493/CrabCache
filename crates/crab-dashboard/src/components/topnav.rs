@@ -4,6 +4,7 @@ use leptos_router::components::*;
 use crate::auth::{logout, use_admin_key};
 use crate::components::brand_logo::BrandLogo;
 use crate::components::gateway_health::GatewayHealthIndicator;
+use crate::components::icons::{Icon, IconName};
 use crate::components::theme_switcher::ThemeSwitcher;
 use crate::locale::{Translations, use_locale, use_translations};
 
@@ -44,17 +45,17 @@ pub fn TopNav() -> impl IntoView {
                 }
             }>
                 <span class="topnav-group-label">{move || use_translations().sidebar_group_monitor()}</span>
-                <TopNavItem href="/" label=move || use_translations().sidebar_overview() icon="◉" on_navigate=close_on_nav />
-                <TopNavItem href="/live" label=move || use_translations().sidebar_live() icon="◔" on_navigate=close_on_nav />
-                <TopNavItem href="/requests" label=move || use_translations().sidebar_requests() icon="▣" on_navigate=close_on_nav />
-                <TopNavItem href="/sessions" label=move || "Session Monitor" icon="◎" on_navigate=close_on_nav />
+                <TopNavItem href="/" label=move || use_translations().sidebar_overview() icon=IconName::LayoutDashboard on_navigate=close_on_nav />
+                <TopNavItem href="/live" label=move || use_translations().sidebar_live() icon=IconName::Activity on_navigate=close_on_nav />
+                <TopNavItem href="/requests" label=move || use_translations().sidebar_requests() icon=IconName::ListChecks on_navigate=close_on_nav />
+                <TopNavItem href="/sessions" label=move || "Session Monitor" icon=IconName::Radar on_navigate=close_on_nav />
 
                 <span class="topnav-group-label">{move || use_translations().sidebar_group_config()}</span>
-                <TopNavItem href="/keys" label=move || use_translations().sidebar_keys() icon="◆" on_navigate=close_on_nav />
-                <TopNavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon="⬡" on_navigate=close_on_nav />
-                <TopNavItem href="/models" label=move || use_translations().sidebar_models() icon="◇" on_navigate=close_on_nav />
-                <TopNavItem href="/cache" label=move || use_translations().sidebar_cache() icon="◈" on_navigate=close_on_nav />
-                <TopNavItem href="/system" label=move || use_translations().sidebar_system() icon="⚙" on_navigate=close_on_nav />
+                <TopNavItem href="/keys" label=move || use_translations().sidebar_keys() icon=IconName::KeyRound on_navigate=close_on_nav />
+                <TopNavItem href="/upstream" label=move || use_translations().sidebar_upstream() icon=IconName::PlugZap on_navigate=close_on_nav />
+                <TopNavItem href="/models" label=move || use_translations().sidebar_models() icon=IconName::Boxes on_navigate=close_on_nav />
+                <TopNavItem href="/cache" label=move || use_translations().sidebar_cache() icon=IconName::Database on_navigate=close_on_nav />
+                <TopNavItem href="/system" label=move || use_translations().sidebar_system() icon=IconName::Settings on_navigate=close_on_nav />
             </nav>
 
             <div class="topnav-actions">
@@ -64,7 +65,7 @@ pub fn TopNav() -> impl IntoView {
                     class="icon-btn"
                     title=move || locale.get().label()
                 >
-                    "🌐"
+                    <Icon name=IconName::Globe class="icon" />
                 </button>
                 <ThemeSwitcher />
                 <button
@@ -72,7 +73,7 @@ pub fn TopNav() -> impl IntoView {
                     class="icon-btn"
                     title=move || use_translations().sidebar_change_admin_key()
                 >
-                    "⏻"
+                    <Icon name=IconName::Power class="icon" />
                 </button>
                 <button
                     type="button"
@@ -80,7 +81,11 @@ pub fn TopNav() -> impl IntoView {
                     aria-label="Menu"
                     on:click=move |_| nav_open.update(|o| *o = !*o)
                 >
-                    {move || if nav_open.get() { "✕" } else { "☰" }}
+                    {move || if nav_open.get() {
+                        view! { <Icon name=IconName::X class="icon" /> }.into_any()
+                    } else {
+                        view! { <Icon name=IconName::Menu class="icon" /> }.into_any()
+                    }}
                 </button>
             </div>
         </header>
@@ -100,7 +105,7 @@ pub fn TopNav() -> impl IntoView {
 fn TopNavItem(
     href: &'static str,
     label: impl Fn() -> &'static str + Send + 'static,
-    icon: &'static str,
+    icon: IconName,
     on_navigate: impl Fn(web_sys::MouseEvent) + 'static,
 ) -> impl IntoView {
     let location = leptos_router::hooks::use_location();
@@ -118,7 +123,7 @@ fn TopNavItem(
                 }
             }
         >
-            <span class="topnav-icon">{icon}</span>
+            <span class="topnav-icon"><Icon name=icon class="icon" /></span>
             <span>{label()}</span>
         </A>
     }

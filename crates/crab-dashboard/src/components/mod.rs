@@ -7,6 +7,7 @@ pub mod donut_chart;
 pub mod gateway_health;
 pub mod histogram_chart;
 pub mod horizontal_bar_chart;
+pub mod icons;
 pub mod line_chart;
 pub mod page_header;
 pub mod routing_tab;

@@ -123,11 +123,17 @@ body {
 }
 
 .topnav-icon {
-  font-size: 0.75rem;
-  font-family: var(--font-mono);
-  opacity: 0.75;
   width: 1rem;
-  text-align: center;
+  height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.topnav-icon .icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 .topnav-actions {
@@ -380,6 +386,11 @@ body {
   cursor: pointer;
   font-size: 0.75rem;
   transition: all var(--transition-speed) var(--transition-curve);
+}
+
+.icon-btn .icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 .icon-btn:hover {
@@ -1127,8 +1138,17 @@ body {
    MISC UTILITY
    ============================================================== */
 
-.brand-logo    { border-radius: 0.5rem; flex-shrink: 0; display: block; }
-.brand-logo-lg { width: 2.5rem; height: 2.5rem; }
+.brand-logo {
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+  background: transparent;
+}
+.brand-logo-lg {
+  width: 2.5rem;
+  height: 2.5rem;
+}
 
 .alert {
   padding: 0.6rem 1rem; border-radius: 0.5rem;
