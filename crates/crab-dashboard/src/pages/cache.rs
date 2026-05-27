@@ -2,7 +2,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::donut_chart::{DonutChart, DonutSegment};
-use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::scatter_chart::{ScatterChart, ScatterPoint};
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
@@ -919,41 +919,30 @@ fn TraceTab() -> impl IntoView {
                                 let zipf_stored = StoredValue::new(data.zipf_log_points.clone());
                                 let slope = data.zipf_regression_slope;
                                 let intercept = data.zipf_regression_intercept;
-                                let x_labels = Signal::derive(move || {
-                                    zipf_stored.get_value().iter().map(|p| format!("{:.1}", p.log_rank)).collect()
-                                });
-                                let series = Signal::derive(move || {
-                                    let pts = zipf_stored.get_value();
-                                    let regression_line: Vec<Option<f64>> = pts.iter()
-                                        .map(|p| Some(slope * p.log_rank + intercept))
-                                        .collect();
-                                    vec![
-                                        ChartSeries {
-                                            label: "Actual".into(),
+                                let scatter_points = Signal::derive(move || {
+                                    zipf_stored.get_value().iter().enumerate().map(|(i, p)| {
+                                        ScatterPoint {
+                                            x: p.log_rank,
+                                            y: p.log_freq,
                                             color: "var(--accent-primary)",
-                                            values: pts.iter().map(|p| Some(p.log_freq)).collect(),
-                                            dashed: false,
-                                            fill: false,
-                                        },
-                                        ChartSeries {
-                                            label: format!("Fit (slope={:.2})", slope),
-                                            color: "var(--warning)",
-                                            values: regression_line,
-                                            dashed: true,
-                                            fill: false,
-                                        },
-                                    ]
+                                            label: format!("#{}", i + 1),
+                                        }
+                                    }).collect()
                                 });
                                 view! {
-                                    <div class="glass-card p-4 space-y-3">
+                                    <div class="dash-card p-4 space-y-3">
                                         <h3 class="text-sm font-semibold text-theme">{t.trace_zipf_chart()}</h3>
-                                        <LineChart
-                                            x_labels=x_labels
-                                            series=series
+                                        <ScatterChart
+                                            points=scatter_points
+                                            x_label="ln(rank)".to_string()
+                                            y_label="ln(freq)".to_string()
                                             height_px=200
-                                            y_unit="ln(freq)"
                                             empty_message=""
+                                            fit_line=Some((slope, intercept))
                                         />
+                                        <div class="text-xs text-theme-muted font-mono">
+                                            {format!("Fit: slope = {:.2}, intercept = {:.2}", slope, intercept)}
+                                        </div>
                                     </div>
                                 }.into_any()
                             } else {

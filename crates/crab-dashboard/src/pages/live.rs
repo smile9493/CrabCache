@@ -3,7 +3,8 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::bar_chart::BarChart;
-use crate::components::line_chart::ChartSeries;
+use crate::components::horizontal_bar_chart::HorizontalBarChart;
+use crate::components::line_chart::{ChartSeries, TokenLineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
@@ -907,29 +908,15 @@ fn LiveKeyDistributionPanel(
                     let backend_has = series_has_points(&backend_values);
                     let aff_has = series_has_points(&aff_values);
                     let backend_labels_sv = StoredValue::new(backend_labels);
-                    let backend_values_sv = StoredValue::new(backend_values);
+                    let backend_values_f64: Vec<f64> = backend_values.into_iter().filter_map(|v| v).collect();
+                    let backend_values_sv = StoredValue::new(backend_values_f64);
                     let aff_labels_sv = StoredValue::new(aff_labels);
-                    let aff_values_sv = StoredValue::new(aff_values);
-                    let backend_x = Signal::derive(move || backend_labels_sv.get_value());
-                    let backend_series = Signal::derive(move || {
-                        vec![ChartSeries {
-                            label: "backend".to_string(),
-                            color: "var(--cc-accent)",
-                            values: backend_values_sv.get_value(),
-                            dashed: false,
-                            fill: false,
-                        }]
-                    });
-                    let aff_x = Signal::derive(move || aff_labels_sv.get_value());
-                    let aff_series = Signal::derive(move || {
-                        vec![ChartSeries {
-                            label: "affinity_kind".to_string(),
-                            color: "var(--cc-info)",
-                            values: aff_values_sv.get_value(),
-                            dashed: false,
-                            fill: false,
-                        }]
-                    });
+                    let aff_values_f64: Vec<f64> = aff_values.into_iter().filter_map(|v| v).collect();
+                    let aff_values_sv = StoredValue::new(aff_values_f64);
+                    let backend_labels_sig = Signal::derive(move || backend_labels_sv.get_value());
+                    let backend_values_sig = Signal::derive(move || backend_values_sv.get_value());
+                    let aff_labels_sig = Signal::derive(move || aff_labels_sv.get_value());
+                    let aff_values_sig = Signal::derive(move || aff_values_sv.get_value());
                     view! {
                         <div class="space-y-2 flex-1 flex flex-col">
                             <div class="text-[11px] text-theme-muted font-mono">
@@ -940,11 +927,11 @@ fn LiveKeyDistributionPanel(
                                     <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
                                     {if backend_has {
                                         view! {
-                                            <BarChart
-                                                x_labels=backend_x
-                                                series=backend_series
+                                            <HorizontalBarChart
+                                                labels=backend_labels_sig
+                                                values=backend_values_sig
+                                                width=280
                                                 height_px=72
-                                                y_unit="req"
                                                 empty_message=t.live_no_data()
                                             />
                                         }.into_any()
@@ -960,11 +947,11 @@ fn LiveKeyDistributionPanel(
                                     <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
                                     {if aff_has {
                                         view! {
-                                            <BarChart
-                                                x_labels=aff_x
-                                                series=aff_series
+                                            <HorizontalBarChart
+                                                labels=aff_labels_sig
+                                                values=aff_values_sig
+                                                width=280
                                                 height_px=72
-                                                y_unit="req"
                                                 empty_message=t.live_no_data()
                                             />
                                         }.into_any()
@@ -1168,35 +1155,30 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
             .map(|b| format_bucket_time(b.timestamp_ms))
             .collect()
     });
-    let input_label = t.live_tokens_input().to_string();
-    let output_label = t.live_tokens_output().to_string();
-    let series = Signal::derive(move || {
-        let b = stored.get_value();
-        vec![
-            ChartSeries {
-                label: input_label.clone(),
-                color: "var(--cc-accent)",
-                values: b.iter().map(|x| Some(x.input_tokens as f64)).collect(),
-                dashed: false,
-                fill: false,
-            },
-            ChartSeries {
-                label: output_label.clone(),
-                color: "var(--cc-info)",
-                values: b.iter().map(|x| Some(x.output_tokens as f64)).collect(),
-                dashed: false,
-                fill: false,
-            },
-        ]
+    let input_values = Signal::derive(move || {
+        stored
+            .get_value()
+            .iter()
+            .map(|x| Some(x.input_tokens as f64))
+            .collect()
+    });
+    let output_values = Signal::derive(move || {
+        stored
+            .get_value()
+            .iter()
+            .map(|x| Some(x.output_tokens as f64))
+            .collect()
     });
     view! {
         <div class="glass-card p-4">
             <h3 class="text-sm font-semibold text-theme mb-3">{t.live_token_chart()}</h3>
-            <BarChart
+            <TokenLineChart
                 x_labels=x_labels
-                series=series
+                input_values=input_values
+                output_values=output_values
+                input_label=t.live_tokens_input().to_string()
+                output_label=t.live_tokens_output().to_string()
                 height_px=180
-                y_unit="tok"
                 empty_message=t.live_no_data()
             />
         </div>

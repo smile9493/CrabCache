@@ -1,9 +1,11 @@
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::chart::waterfall_stages_from_log;
 use crate::components::histogram_chart::HistogramChart;
 use crate::components::page_header::PageHeader;
 use crate::components::ui::*;
+use crate::components::waterfall::WaterfallChart;
 use crate::locale::use_translations;
 use crate::types::{LogsFilterQuery, RequestDetail, RequestLog};
 
@@ -621,6 +623,8 @@ fn LogDetailPane(
                             let output_str = d.output_tokens
                                 .map(|t| format!("{}", t))
                                 .unwrap_or_default();
+                            let waterfall_stages = waterfall_stages_from_log(&summary, &d);
+                            let has_waterfall = waterfall_stages.len() >= 2;
                             view! {
                                 <div class="logs-detail-sections space-y-4">
                                     <div class="grid grid-cols-2 gap-4">
@@ -628,8 +632,20 @@ fn LogDetailPane(
                                         <DetailField label=t.logs_detail_cache_path() value=d.cache_path.clone() />
                                     </div>
 
-                                    // Upstream/TTFT breakdown row
-                                    {if !upstream_str.is_empty() || !ttft_str.is_empty() {
+                                    // Latency breakdown: WaterfallChart when >= 2 stages, else DetailField rows
+                                    {if has_waterfall {
+                                        view! {
+                                            <div>
+                                                <h4 class="text-xs font-semibold text-theme mb-1">
+                                                    {t.logs_detail_latency_waterfall()}
+                                                </h4>
+                                                <p class="text-[10px] text-theme-muted mb-2">
+                                                    {t.logs_detail_latency_waterfall_note()}
+                                                </p>
+                                                <WaterfallChart stages=waterfall_stages />
+                                            </div>
+                                        }.into_any()
+                                    } else if !upstream_str.is_empty() || !ttft_str.is_empty() {
                                         view! {
                                             <div class="grid grid-cols-2 gap-4">
                                                 {if !upstream_str.is_empty() {

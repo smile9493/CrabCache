@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::bar_chart::BarChart;
-use crate::components::line_chart::ChartSeries;
+use crate::components::horizontal_bar_chart::HorizontalBarChart;
+use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::ui::*;
 use crate::types::{KeyRoutingResponse, SessionTimelineResponse};
 
@@ -97,7 +97,7 @@ pub fn SessionMonitorPage() -> impl IntoView {
                             color: "var(--cc-accent)",
                             values: bucket_values.clone(),
                             dashed: false,
-                            fill: false,
+                            fill: true,
                         }]
                     });
                     view! {
@@ -123,7 +123,7 @@ pub fn SessionMonitorPage() -> impl IntoView {
                             </div>
                             <div>
                                 <p class="text-xs text-theme-muted mb-2">"Session events timeline (minute buckets)"</p>
-                                <BarChart
+                                <LineChart
                                     x_labels=bucket_labels_sig
                                     series=bucket_series_sig
                                     height_px=180
@@ -176,17 +176,10 @@ pub fn SessionMonitorPage() -> impl IntoView {
                 None => ().into_any(),
                 Some(Err(e)) => view! { <div class="glass-card text-error text-sm">{e}</div> }.into_any(),
                 Some(Ok(r)) => {
-                    let (backend_labels, backend_values) = build_backend_distribution(&r);
+                    let backend_labels: Vec<String> = r.backends.iter().map(|b| b.backend_name.clone()).collect();
+                    let backend_values: Vec<f64> = r.backends.iter().map(|b| b.request_count as f64).collect();
                     let backend_labels_sig = Signal::derive(move || backend_labels.clone());
-                    let backend_series_sig = Signal::derive(move || {
-                        vec![ChartSeries {
-                            label: "requests".to_string(),
-                            color: "var(--cc-teal)",
-                            values: backend_values.clone(),
-                            dashed: false,
-                            fill: false,
-                        }]
-                    });
+                    let backend_values_sig = Signal::derive(move || backend_values.clone());
                     view! {
                         <div class="glass-card p-4 space-y-3">
                             <h3 class="text-sm font-semibold text-theme">"Routing Distribution"</h3>
@@ -194,12 +187,12 @@ pub fn SessionMonitorPage() -> impl IntoView {
                                 {format!("prefix breaks: {}  migrations: {}", r.prefix_break_count, r.migrations.len())}
                             </p>
                             <div>
-                                <p class="text-xs text-theme-muted mb-2">"Backend distribution bar chart"</p>
-                                <BarChart
-                                    x_labels=backend_labels_sig
-                                    series=backend_series_sig
+                                <p class="text-xs text-theme-muted mb-2">"Backend distribution"</p>
+                                <HorizontalBarChart
+                                    labels=backend_labels_sig
+                                    values=backend_values_sig
+                                    width=520
                                     height_px=160
-                                    y_unit="req"
                                     empty_message="No backend routing data."
                                 />
                             </div>

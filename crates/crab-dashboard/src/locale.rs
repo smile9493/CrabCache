@@ -3258,6 +3258,18 @@ impl Translations {
             Locale::EnUS => "Latency",
         }
     }
+    pub fn logs_detail_latency_waterfall(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟瀑布图",
+            Locale::EnUS => "Latency Waterfall",
+        }
+    }
+    pub fn logs_detail_latency_waterfall_note(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "展示请求各阶段耗时：网关处理 → 上游响应 → 首字",
+            Locale::EnUS => "Shows per-stage latency: Gateway processing → Upstream response → First token",
+        }
+    }
     pub fn logs_detail_tokens(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "Token",

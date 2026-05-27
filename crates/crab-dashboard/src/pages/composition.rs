@@ -1,4 +1,6 @@
 use crate::api::{fetch_composition_debug, fetch_composition_summary, fetch_composition_trends};
+use crate::components::bar_chart::BarChart;
+use crate::components::line_chart::ChartSeries;
 use crate::locale::{Locale, use_locale, use_translations};
 use crate::types::{CompositionDebugEntry, CompositionSummary, CompositionTrendsResponse};
 use leptos::prelude::*;
@@ -62,36 +64,35 @@ fn StatBar(label: String, value: String, pct_val: f64, max_pct: f64) -> impl Int
     }
 }
 
-/// A simple vertical bar chart component.
+/// Histogram panel using the shared Plotters bar chart (consistent sizing with Overview/Live).
 #[component]
-fn VerticalBarChart(title: String, bars: Vec<(String, usize)>, max_count: usize) -> impl IntoView {
-    let max_h = 120.0;
+fn VerticalBarChart(title: String, bars: Vec<(String, usize)>) -> impl IntoView {
+    let title_h = title.clone();
+    let title_series = title.clone();
+    let bars_x = bars.clone();
+    let bars_s = bars;
+    let x_labels = Signal::derive(move || {
+        bars_x.iter().map(|(l, _)| truncate(l, 10)).collect::<Vec<_>>()
+    });
+    let series = Signal::derive(move || {
+        vec![ChartSeries {
+            label: title_series.clone(),
+            color: "var(--cc-accent)",
+            values: bars_s.iter().map(|(_, c)| Some(*c as f64)).collect(),
+            dashed: false,
+            fill: false,
+        }]
+    });
     view! {
-        <div class="chart-card glass-card">
-            <h3 class="text-sm font-semibold mb-2 text-[var(--text-primary)]">{title}</h3>
-            <div class="flex items-end gap-1.5 h-32 overflow-x-auto pb-1">
-                {bars.into_iter().map(|(label, count)| {
-                    let h = if max_count > 0 {
-                        format!("{:.0}px", (count as f64 / max_count as f64) * max_h)
-                    } else {
-                        "0px".to_string()
-                    };
-                    let label_display = truncate(&label, 8);
-                    view! {
-                        <div class="flex flex-col items-center gap-0.5 min-w-8">
-                            <span class="text-[10px] font-mono text-[var(--text-secondary)]">{count}</span>
-                            <div
-                                class="w-6 rounded-sm bg-[var(--accent)] opacity-80 hover:opacity-100 transition-opacity"
-                                style=format!("height: {}", h)
-                                title=format!("{}: {}", label, count)
-                            ></div>
-                            <span class="text-[9px] text-[var(--text-secondary)] truncate w-8 text-center" title={label.clone()}>
-                                {label_display}
-                            </span>
-                        </div>
-                    }
-                }).collect::<Vec<_>>()}
-            </div>
+        <div class="glass-card panel-chart">
+            <h3 class="text-sm font-semibold text-[var(--text-primary)]">{title_h}</h3>
+            <BarChart
+                x_labels=x_labels
+                series=series
+                height_px=220
+                y_unit=""
+                empty_message=""
+            />
         </div>
     }
 }
@@ -115,49 +116,35 @@ fn ComponentRateBar(component: String, present_count: usize, rate: f64) -> impl 
     }
 }
 
-/// Hourly request trend as vertical bars (matches overview usage chart style).
+/// Hourly request trend (shared bar chart).
 #[component]
 fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
-    let max_v = points.iter().map(|(_, v)| *v).max().unwrap_or(1).max(1);
-    let max_h = 120.0;
-    let point_count = points.len();
-    let show_value_on_bar = point_count <= 24;
-
+    let title_h = title.clone();
+    let title_series = title.clone();
+    let points_x = points.clone();
+    let points_s = points;
+    let x_labels = Signal::derive(move || {
+        points_x.iter().map(|(l, _)| truncate(l, 8)).collect::<Vec<_>>()
+    });
+    let series = Signal::derive(move || {
+        vec![ChartSeries {
+            label: title_series.clone(),
+            color: "var(--cc-accent)",
+            values: points_s.iter().map(|(_, v)| Some(*v as f64)).collect(),
+            dashed: false,
+            fill: false,
+        }]
+    });
     view! {
-        <div class="chart-card glass-card">
-            <h3 class="text-sm font-semibold mb-2 text-[var(--text-primary)]">{title}</h3>
-            <div class="flex items-end gap-1 h-32 overflow-x-auto pb-1 px-0.5">
-                {points.into_iter().enumerate().map(|(i, (label, count))| {
-                    let h = if max_v > 0 {
-                        format!("{:.0}px", (count as f64 / max_v as f64) * max_h)
-                    } else {
-                        "0px".to_string()
-                    };
-                    let label_display = if point_count > 16 && i % 2 == 1 {
-                        String::new()
-                    } else {
-                        truncate(&label, 6)
-                    };
-                    view! {
-                        <div class="flex flex-col items-center gap-0.5 min-w-7 shrink-0">
-                            {show_value_on_bar.then(|| view! {
-                                <span class="text-[10px] font-mono text-[var(--text-secondary)]">{count}</span>
-                            })}
-                            <div
-                                class="w-5 sm:w-6 rounded-sm bg-[var(--accent)] opacity-85 hover:opacity-100 transition-opacity"
-                                style=format!("height: {}", h)
-                                title=format!("{}: {}", label, count)
-                            ></div>
-                            <span
-                                class="text-[9px] text-[var(--text-secondary)] truncate w-8 text-center"
-                                title=label.clone()
-                            >
-                                {label_display}
-                            </span>
-                        </div>
-                    }
-                }).collect::<Vec<_>>()}
-            </div>
+        <div class="glass-card panel-chart">
+            <h3 class="text-sm font-semibold text-[var(--text-primary)]">{title_h}</h3>
+            <BarChart
+                x_labels=x_labels
+                series=series
+                height_px=220
+                y_unit="req"
+                empty_message=""
+            />
         </div>
     }
 }
@@ -166,7 +153,7 @@ fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
 #[component]
 fn SummaryCard(label: String, value: String, subtitle: String) -> impl IntoView {
     view! {
-        <div class="summary-card glass-card text-center p-3 min-w-28">
+        <div class="glass-card text-center p-4 min-w-28 min-h-[5.5rem] flex flex-col justify-center">
             <div class="text-lg font-bold text-[var(--text-primary)]">{value}</div>
             <div class="text-xs text-[var(--text-secondary)] mt-0.5">{label}</div>
             <div class="text-[10px] text-[var(--text-tertiary)]">{subtitle}</div>
@@ -500,24 +487,22 @@ pub fn CompositionPage() -> impl IntoView {
                     </div>
 
                     // ── Model distribution ───────────────────────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
                         <VerticalBarChart
                             title=t.composition_model_distribution().to_string()
                             bars=s.model_distribution.iter().map(|n| (n.name.clone(), n.count)).collect()
-                            max_count=s.model_distribution.first().map(|n| n.count).unwrap_or(0)
                         />
 
                         // ── Tool count histogram ─────────────────────────
                         <VerticalBarChart
                             title=t.composition_tool_histogram().to_string()
                             bars=s.tool_count_histogram.iter().map(|b| (b.bucket_label.clone(), b.count)).collect()
-                            max_count=s.tool_count_histogram.iter().map(|b| b.count).max().unwrap_or(0)
                         />
                     </div>
 
                     // ── Component rates + message histogram ──────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-                        <div class="chart-card glass-card">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
+                        <div class="glass-card panel-chart min-h-[14rem]">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_component_rates()}
                             </h3>
@@ -535,13 +520,12 @@ pub fn CompositionPage() -> impl IntoView {
                         <VerticalBarChart
                             title=t.composition_msg_histogram().to_string()
                             bars=s.message_count_histogram.iter().map(|b| (b.bucket_label.clone(), b.count)).collect()
-                            max_count=s.message_count_histogram.iter().map(|b| b.count).max().unwrap_or(0)
                         />
                     </div>
 
                     // ── Project / Consumer distribution ─────────────────
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-                        <div class="chart-card glass-card">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
+                        <div class="glass-card panel-chart min-h-[14rem]">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_project_distribution()}
                             </h3>
@@ -560,15 +544,15 @@ pub fn CompositionPage() -> impl IntoView {
                                         <StatBar
                                             label=n.name.clone()
                                             value=n.count.to_string()
-                                            pct_val=n.count as f64 / s.total_entries as f64
-                                            max_pct=1.0f64.max(s.project_distribution.first().map(|n| n.count as f64 / s.total_entries as f64).unwrap_or(0.0))
+                                            pct_val=n.count as f64 / (s.total_entries.max(1)) as f64
+                                            max_pct=1.0f64.max(s.project_distribution.first().map(|n| n.count as f64 / (s.total_entries.max(1)) as f64).unwrap_or(0.0))
                                         />
                                     }
                                 }).collect::<Vec<_>>().into_any()
                             }}
                         </div>
 
-                        <div class="chart-card glass-card">
+                        <div class="glass-card panel-chart min-h-[14rem]">
                             <h3 class="text-sm font-semibold mb-3 text-[var(--text-primary)]">
                                 {move || t.composition_consumer_distribution()}
                             </h3>
@@ -587,8 +571,8 @@ pub fn CompositionPage() -> impl IntoView {
                                         <StatBar
                                             label=n.name.clone()
                                             value=n.count.to_string()
-                                            pct_val=n.count as f64 / s.total_entries as f64
-                                            max_pct=1.0f64.max(s.consumer_distribution.first().map(|n| n.count as f64 / s.total_entries as f64).unwrap_or(0.0))
+                                            pct_val=n.count as f64 / (s.total_entries.max(1)) as f64
+                                            max_pct=1.0f64.max(s.consumer_distribution.first().map(|n| n.count as f64 / (s.total_entries.max(1)) as f64).unwrap_or(0.0))
                                         />
                                     }
                                 }).collect::<Vec<_>>().into_any()

@@ -4,8 +4,7 @@ use wasm_bindgen::JsCast;
 
 use crate::anomaly::detect_and_toast;
 use crate::api;
-use crate::components::bar_chart::BarChart;
-use crate::components::line_chart::ChartSeries;
+use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
 use crate::components::ui::*;
@@ -1338,24 +1337,26 @@ pub fn TimeSeriesChart(
             .collect::<Vec<_>>()
     });
 
-    let series = Signal::derive(move || {
+    let token_series = Signal::derive(move || {
         let points = chart_points.get();
-        vec![
-            ChartSeries {
-                label: t.overview_input_tokens().to_string(),
-                color: "var(--accent-primary)",
-                values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
-                dashed: false,
-                fill: false,
-            },
-            ChartSeries {
-                label: t.overview_requests().to_string(),
-                color: "var(--info)",
-                values: points.iter().map(|p| Some(p.requests as f64)).collect(),
-                dashed: false,
-                fill: false,
-            },
-        ]
+        vec![ChartSeries {
+            label: t.overview_input_tokens().to_string(),
+            color: "var(--accent-primary)",
+            values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
+            dashed: false,
+            fill: true,
+        }]
+    });
+
+    let request_series = Signal::derive(move || {
+        let points = chart_points.get();
+        vec![ChartSeries {
+            label: t.overview_requests().to_string(),
+            color: "var(--info)",
+            values: points.iter().map(|p| Some(p.requests as f64)).collect(),
+            dashed: false,
+            fill: false,
+        }]
     });
 
     view! {
@@ -1404,13 +1405,22 @@ pub fn TimeSeriesChart(
 
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
-            <BarChart
-                x_labels=x_labels
-                series=series
-                height_px=220
-                y_unit="tokens"
-                empty_message=t.overview_collecting_timeseries()
-            />
+            <div class="space-y-2">
+                <LineChart
+                    x_labels=x_labels
+                    series=token_series
+                    height_px=180
+                    y_unit="tokens"
+                    empty_message=t.overview_collecting_timeseries()
+                />
+                <LineChart
+                    x_labels=x_labels
+                    series=request_series
+                    height_px=180
+                    y_unit="req"
+                    empty_message=t.overview_collecting_timeseries()
+                />
+            </div>
         </div>
     }
 }
