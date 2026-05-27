@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::ui::*;
+use crate::locale::use_translations;
 
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
@@ -77,6 +78,7 @@ pub fn LogsManagePage() -> impl IntoView {
 
 #[component]
 fn DiskUsageCard(usage: crate::types::LogDiskUsage) -> impl IntoView {
+    let t = use_translations();
     let total = usage.total_bytes as f64;
     let trace_pct = if total > 0.0 {
         usage.trace_bytes as f64 / total * 100.0
@@ -103,34 +105,34 @@ fn DiskUsageCard(usage: crate::types::LogDiskUsage) -> impl IntoView {
     view! {
         <div class="glass-card space-y-4">
             <PanelHeader
-                title=move || "Disk Usage".to_string()
+                title=move || t.logs_manage_disk_usage().to_string()
                 meta=move || total_str.clone()
             />
 
             <div class="space-y-3">
                 <UsageRow
-                    label="Trace Logs"
+                    label=t.logs_manage_trace_logs()
                     bytes=usage.trace_bytes
                     file_count=usage.trace_file_count
                     pct=trace_pct
                     color="var(--cc-accent)"
                 />
                 <UsageRow
-                    label="Debug Trace"
+                    label=t.logs_manage_debug_trace()
                     bytes=usage.debug_trace_bytes
                     file_count=usage.debug_trace_file_count
                     pct=debug_pct
                     color="var(--cc-accent-bright)"
                 />
                 <UsageRow
-                    label="Capture Index"
+                    label=t.logs_manage_capture_index()
                     bytes=usage.capture_index_bytes
                     file_count=0
                     pct=cap_idx_pct
                     color="var(--cc-warning)"
                 />
                 <UsageRow
-                    label="Capture Bodies"
+                    label=t.logs_manage_capture_bodies()
                     bytes=usage.capture_body_bytes
                     file_count=usage.capture_body_file_count
                     pct=cap_body_pct
@@ -169,6 +171,7 @@ fn UsageRow(
     pct: f64,
     color: &'static str,
 ) -> impl IntoView {
+    let t = use_translations();
     let bytes_str = format_bytes(bytes);
     let pct_str = format!("{:.1}%", pct);
     view! {
@@ -177,7 +180,7 @@ fn UsageRow(
                 <span style=format!("width: 10px; height: 10px; border-radius: 2px; background: {}", color)></span>
                 <span class="text-theme">{label}</span>
                 {if file_count > 0 {
-                    let count_str = format!("({} files)", file_count);
+                    let count_str = format!("({} {})", file_count, t.logs_manage_files());
                     view! { <span class="text-theme-muted">{count_str}</span> }.into_any()
                 } else {
                     ().into_any()
@@ -196,6 +199,7 @@ fn RetentionPolicyCard(
     policy: crate::types::RetentionPolicy,
     feedback: RwSignal<String>,
 ) -> impl IntoView {
+    let t = use_translations();
     let max_age = RwSignal::new(policy.max_age_hours.to_string());
     let max_disk = RwSignal::new(policy.max_disk_mb.to_string());
     let max_trace = RwSignal::new(policy.max_trace_files.to_string());
@@ -219,7 +223,7 @@ fn RetentionPolicyCard(
         let feedback = feedback;
         leptos::task::spawn_local(async move {
             match api::update_retention_policy(&req).await {
-                Ok(_) => feedback.set("Retention policy saved.".to_string()),
+                Ok(_) => feedback.set(t.logs_manage_retention_saved().to_string()),
                 Err(e) => feedback.set(e),
             }
             saving.set(false);
@@ -229,13 +233,13 @@ fn RetentionPolicyCard(
     view! {
         <div class="glass-card space-y-4">
             <PanelHeader
-                title=move || "Retention Policy".to_string()
-                meta=move || "Auto-cleanup every 10 min".to_string()
+                title=move || t.logs_manage_retention_policy().to_string()
+                meta=move || t.logs_manage_auto_cleanup().to_string()
             />
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Max Age (hours, 0 = disabled)"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_max_age_label()}</label>
                     <input
                         type="number"
                         class="form-input w-full"
@@ -248,7 +252,7 @@ fn RetentionPolicyCard(
                     />
                 </div>
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Max Disk (MB, 0 = disabled)"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_max_disk_label()}</label>
                     <input
                         type="number"
                         class="form-input w-full"
@@ -261,7 +265,7 @@ fn RetentionPolicyCard(
                     />
                 </div>
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Max Rotated Trace Files"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_max_trace_files()}</label>
                     <input
                         type="number"
                         class="form-input w-full"
@@ -274,7 +278,7 @@ fn RetentionPolicyCard(
                     />
                 </div>
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Max Capture Body Files"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_max_capture_files()}</label>
                     <input
                         type="number"
                         class="form-input w-full"
@@ -293,7 +297,7 @@ fn RetentionPolicyCard(
                 disabled=move || saving.get()
                 class="btn btn-primary text-sm"
             >
-                {move || if saving.get() { "Saving..." } else { "Save Policy" }}
+                {move || if saving.get() { t.logs_manage_save_policy_saving() } else { t.logs_manage_save_policy() }}
             </button>
         </div>
     }
@@ -304,6 +308,7 @@ fn ManualClearCard(
     feedback: RwSignal<String>,
     usage: RwSignal<Option<Result<crate::types::LogDiskUsage, String>>>,
 ) -> impl IntoView {
+    let t = use_translations();
     let target: RwSignal<String> = RwSignal::new("all".to_string());
     let older_than: RwSignal<String> = RwSignal::new(String::new());
     let clearing = RwSignal::new(false);
@@ -322,11 +327,9 @@ fn ManualClearCard(
         leptos::task::spawn_local(async move {
             match api::clear_logs(&target_val, older_val).await {
                 Ok(resp) => {
-                    let msg = format!(
-                        "Cleared {} files, freed {}",
-                        resp.deleted_files.len(),
-                        format_bytes(resp.freed_bytes)
-                    );
+                    let msg = t.logs_manage_cleared_fmt()
+                        .replacen("{}", &resp.deleted_files.len().to_string(), 1)
+                        .replacen("{}", &format_bytes(resp.freed_bytes), 1);
                     feedback.set(msg.clone());
                     last_result.set(Some(msg));
                     // Reload disk usage
@@ -339,7 +342,8 @@ fn ManualClearCard(
                 }
                 Err(e) => {
                     feedback.set(e.clone());
-                    last_result.set(Some(format!("Error: {}", e)));
+                    let err_msg = t.logs_manage_error_fmt().replacen("{}", &e, 1);
+                    last_result.set(Some(err_msg));
                 }
             }
             clearing.set(false);
@@ -348,28 +352,28 @@ fn ManualClearCard(
 
     view! {
         <div class="glass-card space-y-4">
-            <h3 class="text-sm font-medium text-theme">"Manual Cleanup"</h3>
+            <h3 class="text-sm font-medium text-theme">{t.logs_manage_manual_cleanup()}</h3>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Target"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_target_label()}</label>
                     <select
                         class="form-input w-full"
                         on:change=move |ev| target.set(event_target_value(&ev))
                     >
-                        <option value="all" selected=move || target.get() == "all">"All (except active files)"</option>
-                        <option value="trace_rotated" selected=move || target.get() == "trace_rotated">"Trace Logs (rotated only)"</option>
-                        <option value="debug_rotated" selected=move || target.get() == "debug_rotated">"Debug Trace (rotated only)"</option>
-                        <option value="capture" selected=move || target.get() == "capture">"Capture (index + bodies)"</option>
+                        <option value="all" selected=move || target.get() == "all">{t.logs_manage_target_all()}</option>
+                        <option value="trace_rotated" selected=move || target.get() == "trace_rotated">{t.logs_manage_target_trace()}</option>
+                        <option value="debug_rotated" selected=move || target.get() == "debug_rotated">{t.logs_manage_target_debug()}</option>
+                        <option value="capture" selected=move || target.get() == "capture">{t.logs_manage_target_capture()}</option>
                     </select>
                 </div>
                 <div class="space-y-1.5">
-                    <label class="text-xs text-theme-secondary">"Only older than (hours, empty = all)"</label>
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_older_than_label()}</label>
                     <input
                         type="number"
                         class="form-input w-full"
                         min="1"
-                        placeholder="e.g. 24"
+                        placeholder=t.logs_manage_older_than_placeholder().to_string()
                         prop:value=move || older_than.get()
                         on:input=move |ev| older_than.set(event_target_value(&ev))
                     />
@@ -384,20 +388,20 @@ fn ManualClearCard(
                     };
                     view! {
                         <div class="flex items-center gap-3 p-3 rounded-lg" style="background: var(--cc-error-bg, rgba(239,68,68,0.1));">
-                            <span class="text-sm text-theme">"Are you sure? This cannot be undone."</span>
+                            <span class="text-sm text-theme">{t.logs_manage_confirm_msg()}</span>
                             <button
                                 on:click=confirm_clear
                                 disabled=move || clearing.get()
                                 class="btn btn-sm text-sm"
                                 style="background: var(--cc-error); color: white;"
                             >
-                                {move || if clearing.get() { "Clearing..." } else { "Confirm" }}
+                                {move || if clearing.get() { t.logs_manage_clearing() } else { t.cache_ops_confirm_ok() }}
                             </button>
                             <button
                                 on:click=move |_| show_confirm.set(false)
                                 class="btn btn-sm text-sm"
                             >
-                                "Cancel"
+                                {t.cache_ops_confirm_cancel()}
                             </button>
                         </div>
                     }.into_any()
@@ -409,7 +413,7 @@ fn ManualClearCard(
                             class="btn btn-sm text-sm"
                             style="background: var(--cc-error); color: white;"
                         >
-                            "Clear Logs"
+                            {t.logs_manage_clear_btn()}
                         </button>
                     }.into_any()
                 }

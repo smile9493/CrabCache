@@ -4341,6 +4341,176 @@ impl Translations {
             Locale::EnUS => "Failed to update key",
         }
     }
+
+    // --- Logs Manage page ---
+    pub fn logs_manage_disk_usage(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "磁盘使用",
+            Locale::EnUS => "Disk Usage",
+        }
+    }
+    pub fn logs_manage_trace_logs(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "追踪日志",
+            Locale::EnUS => "Trace Logs",
+        }
+    }
+    pub fn logs_manage_debug_trace(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "调试追踪",
+            Locale::EnUS => "Debug Trace",
+        }
+    }
+    pub fn logs_manage_capture_index(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获索引",
+            Locale::EnUS => "Capture Index",
+        }
+    }
+    pub fn logs_manage_capture_bodies(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获正文",
+            Locale::EnUS => "Capture Bodies",
+        }
+    }
+    pub fn logs_manage_files(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "个文件",
+            Locale::EnUS => "files",
+        }
+    }
+    pub fn logs_manage_retention_policy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保留策略",
+            Locale::EnUS => "Retention Policy",
+        }
+    }
+    pub fn logs_manage_auto_cleanup(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "每 10 分钟自动清理",
+            Locale::EnUS => "Auto-cleanup every 10 min",
+        }
+    }
+    pub fn logs_manage_max_age_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大保留时长 (小时，0 = 禁用)",
+            Locale::EnUS => "Max Age (hours, 0 = disabled)",
+        }
+    }
+    pub fn logs_manage_max_disk_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大磁盘占用 (MB，0 = 禁用)",
+            Locale::EnUS => "Max Disk (MB, 0 = disabled)",
+        }
+    }
+    pub fn logs_manage_max_trace_files(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大轮转追踪文件数",
+            Locale::EnUS => "Max Rotated Trace Files",
+        }
+    }
+    pub fn logs_manage_max_capture_files(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大捕获正文文件数",
+            Locale::EnUS => "Max Capture Body Files",
+        }
+    }
+    pub fn logs_manage_retention_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保留策略已保存。",
+            Locale::EnUS => "Retention policy saved.",
+        }
+    }
+    pub fn logs_manage_manual_cleanup(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "手动清理",
+            Locale::EnUS => "Manual Cleanup",
+        }
+    }
+    pub fn logs_manage_target_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "目标",
+            Locale::EnUS => "Target",
+        }
+    }
+    pub fn logs_manage_target_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部（活跃文件除外）",
+            Locale::EnUS => "All (except active files)",
+        }
+    }
+    pub fn logs_manage_target_trace(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "追踪日志（仅轮转）",
+            Locale::EnUS => "Trace Logs (rotated only)",
+        }
+    }
+    pub fn logs_manage_target_debug(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "调试追踪（仅轮转）",
+            Locale::EnUS => "Debug Trace (rotated only)",
+        }
+    }
+    pub fn logs_manage_target_capture(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "捕获（索引 + 正文）",
+            Locale::EnUS => "Capture (index + bodies)",
+        }
+    }
+    pub fn logs_manage_older_than_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "仅早于（小时，留空 = 全部）",
+            Locale::EnUS => "Only older than (hours, empty = all)",
+        }
+    }
+    pub fn logs_manage_confirm_msg(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认操作？此操作不可撤销。",
+            Locale::EnUS => "Are you sure? This cannot be undone.",
+        }
+    }
+    pub fn logs_manage_clearing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清理中...",
+            Locale::EnUS => "Clearing...",
+        }
+    }
+    pub fn logs_manage_clear_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清理日志",
+            Locale::EnUS => "Clear Logs",
+        }
+    }
+    pub fn logs_manage_save_policy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存策略",
+            Locale::EnUS => "Save Policy",
+        }
+    }
+    pub fn logs_manage_save_policy_saving(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存中…",
+            Locale::EnUS => "Saving…",
+        }
+    }
+    pub fn logs_manage_older_than_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "例如：24",
+            Locale::EnUS => "e.g. 24",
+        }
+    }
+    pub fn logs_manage_cleared_fmt(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已清理 {} 个文件，释放 {}",
+            Locale::EnUS => "Cleared {} files, freed {}",
+        }
+    }
+    pub fn logs_manage_error_fmt(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误：{}",
+            Locale::EnUS => "Error: {}",
+        }
+    }
 }
 
 pub fn provide_locale() -> RwSignal<Locale> {
