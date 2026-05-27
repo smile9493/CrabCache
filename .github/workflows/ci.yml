@@ -34,6 +34,7 @@ on:
 permissions:
   contents: read
   checks: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
