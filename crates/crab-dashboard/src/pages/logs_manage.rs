@@ -327,7 +327,8 @@ fn ManualClearCard(
         leptos::task::spawn_local(async move {
             match api::clear_logs(&target_val, older_val).await {
                 Ok(resp) => {
-                    let msg = t.logs_manage_cleared_fmt()
+                    let msg = t
+                        .logs_manage_cleared_fmt()
                         .replacen("{}", &resp.deleted_files.len().to_string(), 1)
                         .replacen("{}", &format_bytes(resp.freed_bytes), 1);
                     feedback.set(msg.clone());

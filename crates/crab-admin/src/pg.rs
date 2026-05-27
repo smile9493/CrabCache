@@ -1253,6 +1253,12 @@ impl PgStore {
                 upstream_user_id: row.get(27),
                 user_id_audit: row.get(28),
                 upstream_key_id: row.get(29),
+                affinity_key: None,
+                affinity_kind: None,
+                backend_name: None,
+                session_fingerprint: None,
+                is_coalesced: false,
+                client_key_id: None,
             });
         }
         Ok(out)

@@ -2,9 +2,9 @@ use crate::trace_log::TraceLogEntry;
 use crate::types::{LiveMetricsBucket, LiveMetricsResponse, LiveRequestPoint};
 use std::collections::HashMap;
 
-const MAX_WINDOW_SECS: u32 = 3600;
-const MAX_BUCKET_SECS: u32 = 60;
-const MIN_BUCKET_SECS: u32 = 1;
+const MAX_WINDOW_SECS: u32 = 30 * 24 * 3600; // 30 days
+const MAX_BUCKET_SECS: u32 = 3600; // 1 hour buckets for long windows
+const MIN_BUCKET_SECS: u32 = 5;
 
 pub fn clamp_live_params(window_secs: u32, bucket_secs: u32) -> (u32, u32) {
     let window = window_secs.clamp(60, MAX_WINDOW_SECS);
@@ -15,6 +15,8 @@ pub fn clamp_live_params(window_secs: u32, bucket_secs: u32) -> (u32, u32) {
 pub fn aggregate_live_metrics(
     entries: &[TraceLogEntry],
     consumer: &str,
+    key_id: &str,
+    session_fingerprint: &str,
     window_secs: u32,
     bucket_secs: u32,
     trace_available: bool,
@@ -35,6 +37,12 @@ pub fn aggregate_live_metrics(
 
     for entry in entries {
         if !consumer_matches(entry, consumer) {
+            continue;
+        }
+        if !key_id_matches(entry, key_id) {
+            continue;
+        }
+        if !session_fingerprint_matches(entry, session_fingerprint) {
             continue;
         }
         if entry.timestamp_ms < start_ms {
@@ -109,6 +117,29 @@ fn consumer_matches(entry: &TraceLogEntry, consumer: &str) -> bool {
         .consumer
         .as_deref()
         .map(|c| c == consumer)
+        .unwrap_or(false)
+}
+
+fn key_id_matches(entry: &TraceLogEntry, key_id: &str) -> bool {
+    if key_id.is_empty() {
+        return true;
+    }
+    entry
+        .upstream_key_id
+        .as_deref()
+        .or(entry.client_key_id.as_deref())
+        .map(|k| k == key_id)
+        .unwrap_or(false)
+}
+
+fn session_fingerprint_matches(entry: &TraceLogEntry, fp: &str) -> bool {
+    if fp.is_empty() {
+        return true;
+    }
+    entry
+        .session_fingerprint
+        .as_deref()
+        .map(|s| s == fp)
         .unwrap_or(false)
 }
 
@@ -269,6 +300,13 @@ mod tests {
             client_body_user_id: None,
             upstream_user_id: None,
             user_id_audit: None,
+            upstream_key_id: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
         }
     }
 
@@ -288,6 +326,8 @@ mod tests {
         let resp = aggregate_live_metrics(
             &entries,
             "client-a",
+            "",
+            "",
             300,
             5,
             true,

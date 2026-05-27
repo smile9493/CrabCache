@@ -328,11 +328,25 @@ pub async fn fetch_live_metrics(
     consumer: &str,
     window_secs: u32,
 ) -> Result<crate::types::LiveMetricsResponse, String> {
+    let bucket_secs = if window_secs <= 3600 {
+        5
+    } else if window_secs <= 12 * 3600 {
+        60
+    } else if window_secs <= 24 * 3600 {
+        300
+    } else if window_secs <= 3 * 24 * 3600 {
+        900
+    } else if window_secs <= 7 * 24 * 3600 {
+        1800
+    } else {
+        3600
+    };
     let url = format!(
-        "{}/live-metrics?consumer={}&window_secs={}&bucket_secs=5",
+        "{}/live-metrics?consumer={}&window_secs={}&bucket_secs={}",
         API_BASE,
         percent_encode_query(consumer),
-        window_secs
+        window_secs,
+        bucket_secs
     );
     fetch_json(&url).await
 }
@@ -364,6 +378,22 @@ pub async fn batch_revoke_keys(ids: &[String]) -> Result<serde_json::Value, Stri
 
 pub async fn patch_key(id: &str, req: &PatchKeyRequest) -> Result<ApiKey, String> {
     patch_json(&format!("{}/keys/{}", API_BASE, id), req).await
+}
+
+pub async fn fetch_key_concurrency(
+    id: &str,
+) -> Result<crate::types::KeyConcurrencyResponse, String> {
+    fetch_json(&format!("{}/keys/{}/concurrency", API_BASE, id)).await
+}
+
+pub async fn fetch_key_routing(id: &str) -> Result<crate::types::KeyRoutingResponse, String> {
+    fetch_json(&format!("{}/keys/{}/routing", API_BASE, id)).await
+}
+
+pub async fn fetch_session_timeline(
+    fingerprint: &str,
+) -> Result<crate::types::SessionTimelineResponse, String> {
+    fetch_json(&format!("{}/sessions/{}", API_BASE, fingerprint)).await
 }
 
 pub async fn fetch_cache_config() -> Result<CacheConfig, String> {
@@ -528,7 +558,74 @@ pub async fn fetch_profile_routing(profile_id: &str) -> Result<ProfileRoutingVie
 }
 
 pub async fn fetch_routing_summary() -> Result<RoutingSummaryView, String> {
-    fetch_json(&format!("{}/routing/summary", API_BASE)).await
+    // NOTE: `/routing/summary` no longer exists on admin BFF; unknown routes can
+    // fall through to index.html (HTTP 200), which causes JSON parse failures.
+    // Build lightweight summary from profile routing. Try `default` first for
+    // backward compatibility, then fall back to configured default/first profile.
+    let profile = match fetch_profile_routing("default").await {
+        Ok(profile) => profile,
+        Err(_) => {
+            let profiles = fetch_upstream_profiles().await?;
+            let fallback_profile_id = if !profiles.default_profile_id.is_empty() {
+                profiles.default_profile_id
+            } else {
+                profiles
+                    .profiles
+                    .first()
+                    .map(|p| p.id.clone())
+                    .ok_or_else(|| "No upstream profile available".to_string())?
+            };
+            fetch_profile_routing(&fallback_profile_id).await?
+        }
+    };
+    let backends_total = profile.backends.len();
+    let backends_healthy = profile.backends.iter().filter(|b| b.healthy).count();
+    let circuit_open_count = profile
+        .backends
+        .iter()
+        .filter(|b| b.circuit_state.eq_ignore_ascii_case("open"))
+        .count();
+
+    Ok(RoutingSummaryView {
+        backends_healthy,
+        backends_total,
+        circuit_open_count,
+        upstream_keys_available: profile.key_pool.available,
+        upstream_keys_total: profile.key_pool.total,
+        profile_id: profile.profile_id,
+    })
+}
+
+pub async fn fetch_routing_profiles() -> Result<Vec<ProfileRoutingView>, String> {
+    let profiles_resp = fetch_upstream_profiles().await?;
+    let mut ids: Vec<String> = profiles_resp.profiles.into_iter().map(|p| p.id).collect();
+    if ids.is_empty() {
+        return Err("No upstream profile available".to_string());
+    }
+    if !profiles_resp.default_profile_id.is_empty() {
+        ids.sort();
+        ids.dedup();
+        if let Some(pos) = ids
+            .iter()
+            .position(|id| id == &profiles_resp.default_profile_id)
+        {
+            let default = ids.remove(pos);
+            ids.insert(0, default);
+        }
+    }
+
+    let mut views = Vec::with_capacity(ids.len());
+    let mut last_err: Option<String> = None;
+    for id in ids {
+        match fetch_profile_routing(&id).await {
+            Ok(view) => views.push(view),
+            Err(e) => last_err = Some(format!("{id}: {e}")),
+        }
+    }
+    if views.is_empty() {
+        return Err(last_err.unwrap_or_else(|| "No routing data available".to_string()));
+    }
+    Ok(views)
 }
 
 pub async fn sync_models(profile_id: &str) -> Result<SyncResult, String> {

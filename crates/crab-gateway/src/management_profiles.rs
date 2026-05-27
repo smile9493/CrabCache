@@ -591,10 +591,9 @@ pub async fn get_profile_routing(
     let cb = state.runtime.circuit_breaker_config;
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
-    let available = pool_status
-        .iter()
-        .filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0)
-        .count();
+    // Align "available" with acquire() semantics: enabled + not in cooldown.
+    // Inflight does not make a key unavailable because the pool selects least inflight.
+    let available = pool.available_count();
 
     Ok(Json(ProfileRoutingView {
         profile_id: id.to_string(),

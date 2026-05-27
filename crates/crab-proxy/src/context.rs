@@ -6,6 +6,7 @@ use crate::runtime::RuntimeConfig;
 use crate::semantic_runtime::SharedSemanticRuntime;
 use crate::upstream_pool::UpstreamKeyGuard;
 use crate::upstream_user_id_limiter::{UpstreamUserIdGuard, UpstreamUserIdLimiter};
+use bytes::Bytes;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
@@ -14,7 +15,6 @@ use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
 use crab_semantic::SemanticCache;
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

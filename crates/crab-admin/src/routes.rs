@@ -18,6 +18,7 @@ use crab_control::{
     validate_deepseek_key,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -99,6 +100,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
         .route("/api/admin/keys/{id}", delete(revoke_key).patch(patch_key))
+        .route("/api/admin/keys/{id}/concurrency", get(get_key_concurrency))
+        .route("/api/admin/keys/{id}/routing", get(get_key_routing))
+        .route(
+            "/api/admin/sessions/{fingerprint}",
+            get(get_session_timeline),
+        )
         .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
         .route(
             "/api/admin/cache/config",
@@ -2773,7 +2780,7 @@ async fn get_live_consumers(
 ) -> Json<serde_json::Value> {
     let path = crate::trace_log::trace_log_path();
     let trace_available = crate::trace_log::trace_log_available(&path);
-    let window_secs = query.window_secs.clamp(60, 900);
+    let window_secs = query.window_secs.clamp(60, 30 * 24 * 3600);
     let path_for_blocking = path.clone();
     let state_for_blocking = Arc::clone(&state);
 
@@ -2793,6 +2800,283 @@ async fn get_live_consumers(
     Json(serde_json::json!({
         "trace_available": trace_available,
         "available_consumers": consumer_names,
+    }))
+}
+
+// ── P1: Per-key concurrency ─────────────────────────────────────────
+
+async fn get_key_concurrency(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(key_id): axum::extract::Path<String>,
+) -> Result<Json<KeyConcurrencyResponse>, StatusCode> {
+    let path = crate::trace_log::trace_log_path();
+    let window_secs: u32 = 300;
+    let entries = tokio::task::spawn_blocking({
+        let state_clone = Arc::clone(&state);
+        let p = path.clone();
+        move || {
+            crate::trace_log::load_live_trace_entries_cached(
+                &state_clone.live_trace_cache,
+                &p,
+                window_secs,
+                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
+            )
+        }
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let filtered: Vec<KeyConcurrencyEntry> = entries
+        .iter()
+        .filter(|e| {
+            e.upstream_key_id.as_deref() == Some(&key_id)
+                || e.client_key_id.as_deref() == Some(&key_id)
+        })
+        .map(|e| KeyConcurrencyEntry {
+            request_hash: e.request_hash.clone(),
+            timestamp_ms: e.timestamp_ms,
+            model: e.model.clone(),
+            consumer: e.consumer.clone(),
+            affinity_key: e.affinity_key.clone(),
+            affinity_kind: e.affinity_kind.clone(),
+            backend_name: e.backend_name.clone(),
+            session_fingerprint: e.session_fingerprint.clone(),
+            is_coalesced: e.is_coalesced,
+            latency_ms: e.latency_ms,
+            cache_hit: e.cache_hit,
+            cache_tier: e.cache_tier.clone(),
+        })
+        .collect();
+
+    let total = filtered.len();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let active_threshold_ms = 30_000;
+    let active_now = filtered
+        .iter()
+        .filter(|e| now_ms.saturating_sub(e.timestamp_ms) < active_threshold_ms)
+        .count();
+
+    // Compute peak concurrency: max overlapping requests within any 1-second window.
+    let concurrent_peak = compute_peak_concurrency(&filtered);
+
+    Ok(Json(KeyConcurrencyResponse {
+        key_id,
+        window_secs,
+        total_requests: total,
+        concurrent_peak,
+        active_now,
+        entries: filtered,
+    }))
+}
+
+fn compute_peak_concurrency(entries: &[KeyConcurrencyEntry]) -> u32 {
+    if entries.is_empty() {
+        return 0;
+    }
+    let mut events: Vec<(u64, i32)> = Vec::with_capacity(entries.len() * 2);
+    for e in entries {
+        let duration_ms = (e.latency_ms.max(1.0)) as u64;
+        let end_ms = e.timestamp_ms.saturating_add(duration_ms);
+        events.push((e.timestamp_ms, 1));
+        events.push((end_ms, -1));
+    }
+    events.sort_by_key(|(ts, _)| *ts);
+    let mut current: u32 = 0;
+    let mut peak: u32 = 0;
+    for (_, delta) in events {
+        if delta > 0 {
+            current += 1;
+            peak = peak.max(current);
+        } else {
+            current = current.saturating_sub(1);
+        }
+    }
+    peak
+}
+
+// ── P1: Per-key routing distribution ────────────────────────────────
+
+async fn get_key_routing(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(key_id): axum::extract::Path<String>,
+) -> Result<Json<KeyRoutingResponse>, StatusCode> {
+    let path = crate::trace_log::trace_log_path();
+    let window_secs: u32 = 300;
+    let entries = tokio::task::spawn_blocking({
+        let state_clone = Arc::clone(&state);
+        let p = path.clone();
+        move || {
+            crate::trace_log::load_live_trace_entries_cached(
+                &state_clone.live_trace_cache,
+                &p,
+                window_secs,
+                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
+            )
+        }
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let key_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
+        .iter()
+        .filter(|e| {
+            e.upstream_key_id.as_deref() == Some(&key_id)
+                || e.client_key_id.as_deref() == Some(&key_id)
+        })
+        .collect();
+
+    // Backend distribution by affinity kind.
+    let mut backend_map: HashMap<(String, Option<String>), (u64, f64, u32)> = HashMap::new();
+    for e in &key_entries {
+        let name = e.backend_name.clone().unwrap_or_else(|| "unknown".into());
+        let affinity_kind = e.affinity_kind.clone();
+        let slot = backend_map
+            .entry((name, affinity_kind))
+            .or_insert((0, 0.0, 0));
+        slot.0 += 1;
+        slot.1 += e.latency_ms;
+        if e.cache_hit {
+            slot.2 += 1;
+        }
+    }
+    let backends: Vec<KeyRoutingBackend> = backend_map
+        .into_iter()
+        .map(
+            |((name, affinity_kind), (count, lat_sum, hits))| KeyRoutingBackend {
+                backend_name: name,
+                request_count: count,
+                affinity_kind,
+                avg_latency_ms: if count > 0 {
+                    lat_sum / count as f64
+                } else {
+                    0.0
+                },
+                cache_hit_rate: if count > 0 {
+                    hits as f64 / count as f64
+                } else {
+                    0.0
+                },
+            },
+        )
+        .collect();
+
+    // Detect affinity migrations: same session_fingerprint switching backends.
+    let mut migrations: Vec<AffinityMigration> = Vec::new();
+    let mut session_backend: HashMap<String, (String, u64)> = HashMap::new();
+    let mut sorted = key_entries.clone();
+    sorted.sort_by_key(|e| e.timestamp_ms);
+    for e in &sorted {
+        if let (Some(fp), Some(backend)) =
+            (e.session_fingerprint.as_deref(), e.backend_name.as_deref())
+        {
+            if let Some((prev_backend, _)) = session_backend.get(fp) {
+                if prev_backend != backend {
+                    migrations.push(AffinityMigration {
+                        session_fingerprint: fp.to_string(),
+                        from_backend: prev_backend.clone(),
+                        to_backend: backend.to_string(),
+                        timestamp_ms: e.timestamp_ms,
+                    });
+                }
+            }
+            session_backend.insert(fp.to_string(), (backend.to_string(), e.timestamp_ms));
+        }
+    }
+
+    // Count prefix breaks: requests where affinity_kind changed from a prefix-based source.
+    let mut prefix_break_count: u64 = 0;
+    let mut session_affinity: HashMap<String, &str> = HashMap::new();
+    for e in &sorted {
+        if let (Some(fp), Some(kind)) =
+            (e.session_fingerprint.as_deref(), e.affinity_kind.as_deref())
+        {
+            if let Some(prev_kind) = session_affinity.get(fp) {
+                if *prev_kind != kind && (*prev_kind == "conv" || *prev_kind == "pck") {
+                    prefix_break_count += 1;
+                }
+            }
+            session_affinity.insert(fp.to_string(), kind);
+        }
+    }
+
+    Ok(Json(KeyRoutingResponse {
+        key_id,
+        window_secs,
+        backends,
+        migrations,
+        prefix_break_count,
+    }))
+}
+
+// ── P1: Session timeline ────────────────────────────────────────────
+
+async fn get_session_timeline(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(fingerprint): axum::extract::Path<String>,
+) -> Result<Json<SessionTimelineResponse>, StatusCode> {
+    let path = crate::trace_log::trace_log_path();
+    let window_secs: u32 = 900;
+    let entries = tokio::task::spawn_blocking({
+        let state_clone = Arc::clone(&state);
+        let p = path.clone();
+        move || {
+            crate::trace_log::load_live_trace_entries_cached(
+                &state_clone.live_trace_cache,
+                &p,
+                window_secs,
+                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
+            )
+        }
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut session_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
+        .iter()
+        .filter(|e| e.session_fingerprint.as_deref() == Some(&fingerprint))
+        .collect();
+    session_entries.sort_by_key(|e| e.timestamp_ms);
+
+    let unique_keys: Vec<String> = session_entries
+        .iter()
+        .filter_map(|e| {
+            e.upstream_key_id
+                .as_deref()
+                .or(e.client_key_id.as_deref())
+                .map(|s| s.to_string())
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let events: Vec<SessionEvent> = session_entries
+        .iter()
+        .map(|e| SessionEvent {
+            timestamp_ms: e.timestamp_ms,
+            request_hash: e.request_hash.clone(),
+            model: e.model.clone(),
+            consumer: e.consumer.clone(),
+            affinity_key: e.affinity_key.clone(),
+            backend_name: e.backend_name.clone(),
+            is_coalesced: e.is_coalesced,
+            cache_hit: e.cache_hit,
+            cache_tier: e.cache_tier.clone(),
+            latency_ms: e.latency_ms,
+            input_tokens: e.input_tokens,
+            output_tokens: e.output_tokens,
+        })
+        .collect();
+
+    let total = events.len();
+    Ok(Json(SessionTimelineResponse {
+        session_fingerprint: fingerprint,
+        window_secs,
+        total_events: total,
+        unique_keys,
+        events,
     }))
 }
 
@@ -2828,6 +3112,8 @@ async fn get_live_metrics(
     let resp = crate::live_metrics::aggregate_live_metrics(
         entries.as_ref(),
         &consumer,
+        "",
+        "",
         window_secs,
         bucket_secs,
         trace_available,

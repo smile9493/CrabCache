@@ -35,7 +35,9 @@ use crate::upstream_headers::{
 };
 use crate::upstream_user_id_limiter::{DeepSeekUserIdLimitError, classify_deepseek_v4_tier};
 use crate::user_id_audit::apply_user_id_audit_to_entry;
+use bytes::Bytes;
 use crab_cache::CoalesceError;
+use crab_capture::{affinity_kind_from_key, session_fingerprint_from_payload};
 use crab_composition::{
     CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
     extract_tools_json,
@@ -50,10 +52,8 @@ use crab_reasoning::{
     prepare_light_request, prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
     sanitize_client_completion,
 };
-use crab_capture::{affinity_kind_from_key, session_fingerprint_from_payload};
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
-use bytes::Bytes;
 use http::HeaderMap;
 use pingora_core::prelude::*;
 use pingora_core::protocols::l4::ext::TcpKeepalive;
@@ -958,8 +958,7 @@ impl ProxyHttp for GatewayProxy {
 
         // ---- Extract request composition for trace analysis ----
         let composition_start = Instant::now();
-        if let Some(payload) = ctx.parsed_request_payload.as_ref()
-        {
+        if let Some(payload) = ctx.parsed_request_payload.as_ref() {
             let hints = CompositionHints {
                 consumer: ctx.consumer.clone().unwrap_or_default(),
                 domain: ctx.domain.clone().unwrap_or_default(),
@@ -1542,7 +1541,13 @@ impl ProxyHttp for GatewayProxy {
         // Reuse affinity key from request_filter if available (avoids redundant SHA-256 hash)
         let body_pck = ctx.prompt_cache_key.as_deref();
         let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
-            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref(), ctx.session_fingerprint.as_deref())
+            extract_affinity_key(
+                &headers,
+                &client_ip,
+                body_pck,
+                ctx.project_id.as_deref(),
+                ctx.session_fingerprint.as_deref(),
+            )
         });
 
         let profile = self.active_upstream_profile(ctx);
@@ -2482,15 +2487,16 @@ impl ProxyHttp for GatewayProxy {
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                     }
-                    entry.reasoning_strategy = if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
-                        Some(
-                            ctx.cached_reasoning_config
-                                .missing_reasoning_strategy
-                                .clone(),
-                        )
-                    } else {
-                        Some("none".to_string())
-                    };
+                    entry.reasoning_strategy =
+                        if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
+                            Some(
+                                ctx.cached_reasoning_config
+                                    .missing_reasoning_strategy
+                                    .clone(),
+                            )
+                        } else {
+                            Some("none".to_string())
+                        };
                     let hit = ctx.tokens.last_prompt_cache_hit;
                     let miss = ctx.tokens.last_prompt_cache_miss;
                     if hit + miss > 0 {
@@ -2508,7 +2514,11 @@ impl ProxyHttp for GatewayProxy {
                     if max_resp > 0 {
                         entry.response_preview = build_response_preview(ctx, max_resp);
                     }
-                    entry.upstream_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id().to_string());
+                    entry.upstream_key_id = ctx
+                        .upstream
+                        .key_guard
+                        .as_ref()
+                        .map(|g| g.key_id().to_string());
                     apply_user_id_audit_to_entry(
                         &mut entry,
                         ctx.request_pipeline,
@@ -2529,7 +2539,11 @@ impl ProxyHttp for GatewayProxy {
                         .map(|k| affinity_kind_from_key(k).to_string());
                     entry.backend_name = ctx.upstream.backend_name.clone();
                     entry.is_coalesced = ctx.is_coalesced_follower;
-                    entry.client_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id().to_string());
+                    entry.client_key_id = ctx
+                        .upstream
+                        .key_guard
+                        .as_ref()
+                        .map(|g| g.key_id().to_string());
                     entry.session_fingerprint = ctx.session_fingerprint.clone();
                     if let Some(backend) = &ctx.upstream.backend_name {
                         let result = if ctx.upstream.http_status.map_or(false, |s| s >= 400) {
@@ -2689,7 +2703,12 @@ fn record_usage_metrics(
     );
 
     if let Some(kid) = upstream_key_id {
-        global_metrics().record_upstream_key_usage(kid, model, usage.prompt_tokens, usage.completion_tokens);
+        global_metrics().record_upstream_key_usage(
+            kid,
+            model,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+        );
     }
 
     if usage.prompt_cache_hit_tokens > 0 {

@@ -211,6 +211,13 @@ mod tests {
             client_body_user_id: None,
             upstream_user_id: upstream_user_id.map(str::to_string),
             user_id_audit: Some(audit.into()),
+            upstream_key_id: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
         }
     }
 

@@ -139,3 +139,89 @@ fn upstream_keys_put_mode_to_control(
         UpstreamKeysPutMode::Append => crab_control::UpstreamKeysPutMode::Append,
     }
 }
+
+// ── P1: Per-key concurrency / routing / session timeline types ────────
+
+/// A single in-flight or recent request for a given key.
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyConcurrencyEntry {
+    pub request_hash: String,
+    pub timestamp_ms: u64,
+    pub model: String,
+    pub consumer: Option<String>,
+    pub affinity_key: Option<String>,
+    pub affinity_kind: Option<String>,
+    pub backend_name: Option<String>,
+    pub session_fingerprint: Option<String>,
+    pub is_coalesced: bool,
+    pub latency_ms: f64,
+    pub cache_hit: bool,
+    pub cache_tier: Option<String>,
+}
+
+/// Response for `GET /api/admin/keys/{id}/concurrency`.
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyConcurrencyResponse {
+    pub key_id: String,
+    pub window_secs: u32,
+    pub total_requests: usize,
+    pub concurrent_peak: u32,
+    pub active_now: usize,
+    pub entries: Vec<KeyConcurrencyEntry>,
+}
+
+/// A backend routing bucket for a specific key.
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyRoutingBackend {
+    pub backend_name: String,
+    pub request_count: u64,
+    pub affinity_kind: Option<String>,
+    pub avg_latency_ms: f64,
+    pub cache_hit_rate: f64,
+}
+
+/// An affinity migration event: when the same session switched backends.
+#[derive(Debug, Clone, Serialize)]
+pub struct AffinityMigration {
+    pub session_fingerprint: String,
+    pub from_backend: String,
+    pub to_backend: String,
+    pub timestamp_ms: u64,
+}
+
+/// Response for `GET /api/admin/keys/{id}/routing`.
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyRoutingResponse {
+    pub key_id: String,
+    pub window_secs: u32,
+    pub backends: Vec<KeyRoutingBackend>,
+    pub migrations: Vec<AffinityMigration>,
+    pub prefix_break_count: u64,
+}
+
+/// A single event in a session timeline.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionEvent {
+    pub timestamp_ms: u64,
+    pub request_hash: String,
+    pub model: String,
+    pub consumer: Option<String>,
+    pub affinity_key: Option<String>,
+    pub backend_name: Option<String>,
+    pub is_coalesced: bool,
+    pub cache_hit: bool,
+    pub cache_tier: Option<String>,
+    pub latency_ms: f64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+/// Response for `GET /api/admin/sessions/{fingerprint}`.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTimelineResponse {
+    pub session_fingerprint: String,
+    pub window_secs: u32,
+    pub total_events: usize,
+    pub unique_keys: Vec<String>,
+    pub events: Vec<SessionEvent>,
+}

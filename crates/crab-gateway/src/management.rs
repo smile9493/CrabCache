@@ -1665,10 +1665,8 @@ async fn get_routing_summary(
 
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
-    let upstream_keys_available = pool_status
-        .iter()
-        .filter(|k| k.enabled && k.inflight == 0 && k.cooldown_remaining_secs == 0)
-        .count();
+    // Keep this consistent with upstream pool acquire() behavior.
+    let upstream_keys_available = pool.available_count();
 
     Ok(Json(RoutingSummaryView {
         backends_healthy,

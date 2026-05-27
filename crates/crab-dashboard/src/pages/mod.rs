@@ -13,5 +13,6 @@ pub mod overview_analytics;
 pub mod pipeline;
 pub mod reasoning;
 pub mod requests;
+pub mod session_monitor;
 pub mod system;
 pub mod upstream;

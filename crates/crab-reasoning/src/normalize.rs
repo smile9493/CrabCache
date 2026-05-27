@@ -8,6 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use tracing::debug;
 
 static CURSOR_THINKING_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:<(?:think|thinking)\b[^>]*>[\s\S]*?(?:</(?:think|thinking)>|$)|<details\b[^>]*>\s*<summary\b[^>]*>\s*Thinking\s*</summary>[\s\S]*?(?:</details>|$))\s*").unwrap()
@@ -711,6 +712,64 @@ fn leading_system_messages(messages: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+/// Turn-based prefix retirement: keep system + tools + last `keep_turns` user/assistant pairs.
+///
+/// Returns `(retired_messages, token_estimate_before, token_estimate_after)` where
+/// token estimates are rough character-based proxies (4 chars ≈ 1 token).
+fn retire_prefix_messages_by_turns(
+    messages: &[Value],
+    keep_turns: usize,
+) -> (Vec<Value>, usize, usize) {
+    if messages.is_empty() {
+        return (messages.to_vec(), 0, 0);
+    }
+
+    let chars_before: usize = messages.iter().map(|m| m.to_string().len()).sum();
+
+    // Collect leading system messages (preserve unconditionally).
+    let system_end = messages
+        .iter()
+        .position(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+        .unwrap_or(messages.len());
+    let system_msgs: Vec<Value> = messages[..system_end].to_vec();
+
+    // Find the trailing `keep_turns` user messages (each marks a turn boundary).
+    let non_system = &messages[system_end..];
+    let user_positions: Vec<usize> = non_system
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .map(|(i, _)| i)
+        .collect();
+
+    // If fewer user messages than keep_turns, no retirement needed.
+    if user_positions.len() <= keep_turns {
+        return (messages.to_vec(), 0, 0);
+    }
+
+    // The cutoff: keep everything from the (N - keep_turns)-th user message onward.
+    let cutoff_in_non_system = user_positions[user_positions.len() - keep_turns];
+    let cutoff_in_full = system_end + cutoff_in_non_system;
+
+    let mut result = system_msgs;
+    // Insert a system notice about the retired messages.
+    let retired_count = cutoff_in_full - system_end;
+    if retired_count > 0 {
+        result.push(serde_json::json!({
+            "role": "system",
+            "content": format!(
+                "[crabcache] {} older messages retired for prefix cache optimization.",
+                retired_count
+            )
+        }));
+    }
+    result.extend_from_slice(&messages[cutoff_in_full..]);
+
+    let chars_after: usize = result.iter().map(|m| m.to_string().len()).sum();
+
+    (result, chars_before / 4, chars_after / 4)
+}
+
 fn active_messages_from_recovery_boundary(
     messages: &[Value],
 ) -> Option<(Vec<Value>, usize, serde_json::Value)> {
@@ -1167,6 +1226,8 @@ pub struct PreparedRequest {
     pub recovered_reasoning_messages: usize,
     pub recovery_dropped_messages: usize,
     pub retired_prefix_messages: usize,
+    pub prefix_tokens_before: usize,
+    pub prefix_tokens_after: usize,
     pub recovery_notice: Option<String>,
     pub record_response_scope: String,
     pub record_response_messages: Vec<Value>,
@@ -1323,6 +1384,8 @@ pub fn prepare_upstream_request(
     let mut recovered_count = 0;
     let mut recovery_dropped_messages = 0;
     let mut recovery_notice = None;
+    let mut prefix_tokens_before: usize = 0;
+    let mut prefix_tokens_after: usize = 0;
 
     let stable_scope = stable_session_id.filter(|s| !s.trim().is_empty());
 
@@ -1336,6 +1399,30 @@ pub fn prepare_upstream_request(
     {
         messages_for_repair = active;
         retired_prefix_messages = retired;
+    }
+
+    // ── Turn-based prefix retirement (secondary optimization) ─────────
+    // Retire older turns to improve prefix cache hit rate, preserving system + recent N turns.
+    // Only applies when messages are long enough to benefit (>= 20 messages).
+    const MIN_MESSAGES_FOR_TURN_RETIREMENT: usize = 20;
+    const KEEP_RECENT_TURNS: usize = 5;
+    if retired_prefix_messages == 0 && messages_for_repair.len() >= MIN_MESSAGES_FOR_TURN_RETIREMENT
+    {
+        let (trimmed, tokens_before_est, tokens_after_est) =
+            retire_prefix_messages_by_turns(&messages_for_repair, KEEP_RECENT_TURNS);
+        if trimmed.len() < messages_for_repair.len() {
+            let retired_now = messages_for_repair.len() - trimmed.len();
+            retired_prefix_messages += retired_now;
+            messages_for_repair = trimmed;
+            prefix_tokens_before = tokens_before_est;
+            prefix_tokens_after = tokens_after_est;
+            debug!(
+                tokens_before = tokens_before_est,
+                tokens_after = tokens_after_est,
+                retired_now,
+                "turn-based prefix retirement applied"
+            );
+        }
     }
 
     let tools_for_block = prepared.get("tools").cloned();
@@ -1444,6 +1531,8 @@ pub fn prepare_upstream_request(
         recovered_reasoning_messages: recovered_count,
         recovery_dropped_messages,
         retired_prefix_messages,
+        prefix_tokens_before,
+        prefix_tokens_after,
         recovery_notice,
         record_response_scope,
         record_response_messages,

@@ -33,7 +33,8 @@ mod tests {
     #[test]
     fn emits_on_end_of_stream() {
         let mut chunk = Some(Bytes::from_static(b"client"));
-        let rest = apply_prepared_upstream_body(Bytes::from_static(b"prep"), &mut chunk, true, false);
+        let rest =
+            apply_prepared_upstream_body(Bytes::from_static(b"prep"), &mut chunk, true, false);
         assert!(rest.is_none());
         assert_eq!(chunk.as_ref().unwrap().as_ref(), b"prep");
     }
@@ -41,7 +42,8 @@ mod tests {
     #[test]
     fn emits_when_retry_buffer_truncated() {
         let mut chunk = None;
-        let rest = apply_prepared_upstream_body(Bytes::from_static(b"big"), &mut chunk, false, true);
+        let rest =
+            apply_prepared_upstream_body(Bytes::from_static(b"big"), &mut chunk, false, true);
         assert!(rest.is_none());
         assert_eq!(chunk.as_ref().unwrap().as_ref(), b"big");
     }
@@ -49,7 +51,8 @@ mod tests {
     #[test]
     fn holds_until_end_when_buffer_ok() {
         let mut chunk = Some(Bytes::from_static(b"client"));
-        let rest = apply_prepared_upstream_body(Bytes::from_static(b"prep"), &mut chunk, false, false);
+        let rest =
+            apply_prepared_upstream_body(Bytes::from_static(b"prep"), &mut chunk, false, false);
         assert_eq!(rest.as_deref(), Some(b"prep".as_slice()));
         assert!(chunk.is_none());
     }

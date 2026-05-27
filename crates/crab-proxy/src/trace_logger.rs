@@ -74,6 +74,24 @@ pub struct SanitizedLogEntry {
     /// DeepSeek isolation audit: `injected` | `absent` | `stripped_client` | `mismatch` | `not_applicable`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id_audit: Option<String>,
+    /// Ketama affinity key used for backend selection (e.g. `conv:{uuid}`, `ip:{hash}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affinity_key: Option<String>,
+    /// Categorized affinity source: `conv` | `pck` | `user` | `ip` | `unknown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affinity_kind: Option<String>,
+    /// Selected upstream backend node name (for circuit-breaker tracking).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_name: Option<String>,
+    /// Session fingerprint derived from the first user message (SHA-256 prefix).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_fingerprint: Option<String>,
+    /// Whether this request was a coalesced follower (waiting on a leader).
+    #[serde(default)]
+    pub is_coalesced: bool,
+    /// Client API key ID (not the consumer name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_key_id: Option<String>,
 }
 
 impl SanitizedLogEntry {
@@ -158,6 +176,12 @@ impl SanitizedLogEntry {
             client_body_user_id: None,
             upstream_user_id: None,
             user_id_audit: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
         }
     }
 }

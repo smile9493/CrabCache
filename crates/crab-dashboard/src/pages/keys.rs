@@ -4,8 +4,11 @@ use crate::api;
 use crate::clipboard;
 use crate::components::ui::*;
 use crate::locale::use_translations;
-use crate::types::{ApiKey, CreateKeyRequest, NetworkInfo, PatchKeyRequest};
-use std::collections::HashSet;
+use crate::types::{
+    ApiKey, CreateKeyRequest, KeyConcurrencyResponse, KeyRoutingResponse, NetworkInfo,
+    PatchKeyRequest,
+};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyNoticeKind {
@@ -21,6 +24,10 @@ pub fn KeysPage() -> impl IntoView {
     let search_query: RwSignal<String> = RwSignal::new(String::new());
     let copy_notice: RwSignal<Option<CopyNoticeKind>> = RwSignal::new(None);
     let created_key: RwSignal<Option<ApiKey>> = RwSignal::new(None);
+    let key_routing: RwSignal<HashMap<String, Result<KeyRoutingResponse, String>>> =
+        RwSignal::new(HashMap::new());
+    let key_concurrency: RwSignal<HashMap<String, Result<KeyConcurrencyResponse, String>>> =
+        RwSignal::new(HashMap::new());
 
     let show_copy_notice = move |kind: CopyNoticeKind| {
         copy_notice.set(Some(kind));
@@ -54,6 +61,30 @@ pub fn KeysPage() -> impl IntoView {
                 Ok(info) => network_info.set(Some(Ok(info))),
                 Err(e) => network_info.set(Some(Err(e))),
             }
+        });
+    };
+
+    let load_key_routing = move |key_id: String| {
+        if key_routing.with(|m| m.contains_key(&key_id)) {
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            let result = api::fetch_key_routing(&key_id).await;
+            key_routing.update(|m| {
+                m.insert(key_id, result);
+            });
+        });
+    };
+
+    let load_key_concurrency = move |key_id: String| {
+        if key_concurrency.with(|m| m.contains_key(&key_id)) {
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            let result = api::fetch_key_concurrency(&key_id).await;
+            key_concurrency.update(|m| {
+                m.insert(key_id, result);
+            });
         });
     };
 
@@ -773,6 +804,8 @@ pub fn KeysPage() -> impl IntoView {
                                             <th>{t.keys_col_key()}</th>
                                             <th>{t.keys_col_rpm()}</th>
                                             <th>{t.keys_col_concurrency()}</th>
+                                            <th>"Routing"</th>
+                                            <th>"Prefix"</th>
                                             <th>{t.keys_col_quota()}</th>
                                             <th>{t.keys_col_tokens()}</th>
                                             <th>{t.keys_col_status()}</th>
@@ -803,15 +836,22 @@ pub fn KeysPage() -> impl IntoView {
                                                 format!("{}", key.remain_quota)
                                             };
                                             let id_for_check = id.clone();
+                                            let id_for_peak = id.clone();
+                                            let id_for_routing = id.clone();
+                                            let id_for_prefix = id.clone();
                                             let is_checked = move || selected_keys.get().contains(&id_for_check);
                                             let id_for_edit = id.clone();
                                             let is_editing = move || editing_key_id.get().as_deref() == Some(&id_for_edit);
                                             let key_for_edit = key.clone();
+                                            let inflight_now = key_for_edit.inflight;
+                                            let max_concurrent_now = key_for_edit.max_concurrent;
+                                            load_key_routing(id.clone());
+                                            load_key_concurrency(id.clone());
                                             let t = use_translations();
                                             if is_editing() {
                                                 view! {
                                                             <tr class="bg-theme-tertiary/40">
-                                                                <td colspan="9" class="p-3">
+                                                                <td colspan="11" class="p-3">
                                                                     <h4 class="text-xs font-semibold text-theme mb-2">{t.keys_edit_title()}</h4>
                                                                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
                                                                         <div>
@@ -939,7 +979,65 @@ pub fn KeysPage() -> impl IntoView {
                                                                     {rpm_str}
                                                                 </td>
                                                                 <td class="font-mono tabular-nums text-theme text-sm">
-                                                                    {concurrency_str}
+                                                                    <div class="space-y-1">
+                                                                        <div>{concurrency_str}</div>
+                                                                        <div class="text-[11px] text-theme-muted">
+                                                                            {move || {
+                                                                                if let Some(Ok(c)) = key_concurrency.with(|m| m.get(&id_for_peak).cloned()) {
+                                                                                    format!("peak {}", c.concurrent_peak)
+                                                                                } else {
+                                                                                    "peak ...".to_string()
+                                                                                }
+                                                                            }}
+                                                                        </div>
+                                                                        <div class="h-1.5 w-24 bg-theme-tertiary rounded overflow-hidden">
+                                                                            <div
+                                                                                class="h-full bg-accent"
+                                                                                style:width=move || {
+                                                                                    let max = max_concurrent_now;
+                                                                                    let ratio = if max == 0 {
+                                                                                        0.0
+                                                                                    } else {
+                                                                                        (inflight_now as f64 / max as f64).clamp(0.0, 1.0)
+                                                                                    };
+                                                                                    format!("{:.0}%", ratio * 100.0)
+                                                                                }
+                                                                            ></div>
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                                <td class="text-theme text-xs">
+                                                                    {move || {
+                                                                        if let Some(Ok(r)) = key_routing.with(|m| m.get(&id_for_routing).cloned()) {
+                                                                            let total: u64 = r.backends.iter().map(|b| b.request_count).sum();
+                                                                            if let Some(top) = r.backends.iter().max_by_key(|b| b.request_count) {
+                                                                                if total > 0 {
+                                                                                    format!("{} ({:.0}%)", top.backend_name, top.request_count as f64 * 100.0 / total as f64)
+                                                                                } else {
+                                                                                    "n/a".to_string()
+                                                                                }
+                                                                            } else {
+                                                                                "n/a".to_string()
+                                                                            }
+                                                                        } else {
+                                                                            "loading...".to_string()
+                                                                        }
+                                                                    }}
+                                                                </td>
+                                                                <td class="text-theme text-xs">
+                                                                    {move || {
+                                                                        if let Some(Ok(r)) = key_routing.with(|m| m.get(&id_for_prefix).cloned()) {
+                                                                            let total: u64 = r.backends.iter().map(|b| b.request_count).sum();
+                                                                            if total == 0 {
+                                                                                "n/a".to_string()
+                                                                            } else {
+                                                                                let safe = total.saturating_sub(r.prefix_break_count);
+                                                                                format!("{:.1}%", safe as f64 * 100.0 / total as f64)
+                                                                            }
+                                                                        } else {
+                                                                            "loading...".to_string()
+                                                                        }
+                                                                    }}
                                                                 </td>
                                                                 <td class="font-mono tabular-nums text-theme text-sm">
                                                                     {quota_str}

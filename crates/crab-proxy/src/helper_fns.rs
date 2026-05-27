@@ -93,6 +93,7 @@ pub fn build_capture_request_meta(
             &client_ip,
             ctx.prompt_cache_key.as_deref(),
             ctx.project_id.as_deref(),
+            ctx.session_fingerprint.as_deref(),
         )
     });
     let affinity_kind = Some(affinity_kind_from_key(&affinity_key).to_string());

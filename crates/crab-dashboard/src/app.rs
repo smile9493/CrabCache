@@ -8,12 +8,12 @@ use crate::components::toast::{ToastContainer, provide_toast};
 use crate::components::topnav::TopNav;
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache::CachePage;
-use crate::pages::infra::InfraPage;
 use crate::pages::keys::KeysPage;
 use crate::pages::live::LivePage;
 use crate::pages::models::ModelsPage;
 use crate::pages::overview::OverviewPage;
 use crate::pages::requests::RequestsPage;
+use crate::pages::session_monitor::SessionMonitorPage;
 use crate::pages::system::SystemPage;
 use crate::pages::upstream::UpstreamPage;
 use crate::theme::provide_theme;
@@ -46,18 +46,33 @@ fn AuthenticatedShell() -> impl IntoView {
                     <Routes fallback=|| view! { <NotFound /> }>
                         <Route path=path!("/") view=OverviewPage />
                         <Route path=path!("/live") view=LivePage />
-                        <Route path=path!("/infra") view=InfraPage />
+                        <Route path=path!("/infra") view=InfraRedirectPage />
                         <Route path=path!("/keys") view=KeysPage />
                         <Route path=path!("/models") view=ModelsPage />
                         <Route path=path!("/system") view=SystemPage />
                         <Route path=path!("/cache") view=CachePage />
                         <Route path=path!("/requests") view=RequestsPage />
+                        <Route path=path!("/sessions") view=SessionMonitorPage />
                         <Route path=path!("/upstream") view=UpstreamPage />
                     </Routes>
                 </main>
                 <ToastContainer />
             </div>
         </Router>
+    }
+}
+
+#[component]
+fn InfraRedirectPage() -> impl IntoView {
+    Effect::new(move |_| {
+        if let Some(win) = web_sys::window() {
+            let _ = win.location().set_href("/");
+        }
+    });
+    view! {
+        <div class="page-content">
+            <div class="glass-card text-sm text-theme-muted">"Redirecting to Overview..."</div>
+        </div>
     }
 }
 

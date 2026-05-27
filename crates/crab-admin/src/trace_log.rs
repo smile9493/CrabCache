@@ -85,6 +85,24 @@ pub struct TraceLogEntry {
     pub user_id_audit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_key_id: Option<String>,
+    /// Ketama affinity key used for backend selection.
+    #[serde(default)]
+    pub affinity_key: Option<String>,
+    /// Categorized affinity source: `conv` | `pck` | `user` | `ip` | `unknown`.
+    #[serde(default)]
+    pub affinity_kind: Option<String>,
+    /// Selected upstream backend node name.
+    #[serde(default)]
+    pub backend_name: Option<String>,
+    /// Session fingerprint derived from the first user message (SHA-256 prefix).
+    #[serde(default)]
+    pub session_fingerprint: Option<String>,
+    /// Whether this request was a coalesced follower.
+    #[serde(default)]
+    pub is_coalesced: bool,
+    /// Client API key ID (not the consumer name).
+    #[serde(default)]
+    pub client_key_id: Option<String>,
 }
 
 impl TraceLogEntry {
@@ -240,6 +258,10 @@ pub struct LiveTraceCache {
     pub entries: Vec<TraceLogEntry>,
     /// Inline consumer HashSet for fast `live_distinct_consumers`.
     pub consumers: HashSet<String>,
+    /// Inline key_id set for per-key filtering.
+    pub key_ids: HashSet<String>,
+    /// Inline session_fingerprint set for per-session filtering.
+    pub session_fingerprints: HashSet<String>,
     /// Immutable Arc snapshot returned on cache hit.
     pub cached_arc: Arc<Vec<TraceLogEntry>>,
 }
@@ -256,6 +278,8 @@ impl Default for LiveTraceCache {
             partial_line: Vec::new(),
             entries: Vec::new(),
             consumers: HashSet::new(),
+            key_ids: HashSet::new(),
+            session_fingerprints: HashSet::new(),
             cached_arc: Arc::new(Vec::new()),
         }
     }
@@ -271,6 +295,8 @@ impl std::fmt::Debug for LiveTraceCache {
             .field("partial_line_len", &self.partial_line.len())
             .field("entries", &self.entries.len())
             .field("consumers", &self.consumers.len())
+            .field("key_ids", &self.key_ids.len())
+            .field("session_fingerprints", &self.session_fingerprints.len())
             .finish()
     }
 }
@@ -342,6 +368,25 @@ pub fn load_live_trace_entries_cached(
             .iter()
             .filter_map(|e| e.consumer.as_ref().filter(|s| !s.is_empty()).cloned())
             .collect();
+        let key_ids: HashSet<String> = entries
+            .iter()
+            .filter_map(|e| {
+                e.upstream_key_id
+                    .as_ref()
+                    .or(e.client_key_id.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+            })
+            .collect();
+        let session_fingerprints: HashSet<String> = entries
+            .iter()
+            .filter_map(|e| {
+                e.session_fingerprint
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+            })
+            .collect();
 
         let arc = Arc::new(entries.clone());
         *guard = LiveTraceCache {
@@ -354,6 +399,8 @@ pub fn load_live_trace_entries_cached(
             partial_line: Vec::new(),
             entries,
             consumers,
+            key_ids,
+            session_fingerprints,
             cached_arc: arc.clone(),
         };
         return arc;
@@ -406,6 +453,17 @@ pub fn load_live_trace_entries_cached(
                 if let Some(c) = entry.consumer.as_ref().filter(|s| !s.is_empty()) {
                     guard.consumers.insert(c.clone());
                 }
+                if let Some(k) = entry
+                    .upstream_key_id
+                    .as_ref()
+                    .or(entry.client_key_id.as_ref())
+                    .filter(|s| !s.is_empty())
+                {
+                    guard.key_ids.insert(k.clone());
+                }
+                if let Some(fp) = entry.session_fingerprint.as_ref().filter(|s| !s.is_empty()) {
+                    guard.session_fingerprints.insert(fp.clone());
+                }
                 guard.entries.push(entry);
             }
         }
@@ -440,6 +498,29 @@ pub fn load_live_trace_entries_cached(
             .filter_map(|e| e.consumer.as_ref().filter(|s| !s.is_empty()).cloned())
             .collect();
         guard.consumers = new_consumers;
+        let new_key_ids: HashSet<String> = guard
+            .entries
+            .iter()
+            .filter_map(|e| {
+                e.upstream_key_id
+                    .as_ref()
+                    .or(e.client_key_id.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+            })
+            .collect();
+        guard.key_ids = new_key_ids;
+        let new_fps: HashSet<String> = guard
+            .entries
+            .iter()
+            .filter_map(|e| {
+                e.session_fingerprint
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+            })
+            .collect();
+        guard.session_fingerprints = new_fps;
     }
 
     if entries_changed {
@@ -456,6 +537,22 @@ pub fn live_distinct_consumers(cache: &RwLock<LiveTraceCache>) -> Vec<String> {
     let guard = cache.read();
     let mut out: Vec<String> = guard.consumers.iter().cloned().collect();
     out.sort_by(|a, b| b.cmp(a));
+    out
+}
+
+/// Fast key_id list from the live trace cache.
+pub fn live_distinct_key_ids(cache: &RwLock<LiveTraceCache>) -> Vec<String> {
+    let guard = cache.read();
+    let mut out: Vec<String> = guard.key_ids.iter().cloned().collect();
+    out.sort();
+    out
+}
+
+/// Fast session_fingerprint list from the live trace cache.
+pub fn live_distinct_session_fingerprints(cache: &RwLock<LiveTraceCache>) -> Vec<String> {
+    let guard = cache.read();
+    let mut out: Vec<String> = guard.session_fingerprints.iter().cloned().collect();
+    out.sort();
     out
 }
 
@@ -939,6 +1036,13 @@ mod tests {
             client_body_user_id: None,
             upstream_user_id: None,
             user_id_audit: None,
+            upstream_key_id: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -970,6 +1074,13 @@ mod tests {
             client_body_user_id: None,
             upstream_user_id: None,
             user_id_audit: None,
+            upstream_key_id: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -1041,6 +1152,13 @@ mod tests {
                 client_body_user_id: None,
                 upstream_user_id: None,
                 user_id_audit: None,
+                upstream_key_id: None,
+                affinity_key: None,
+                affinity_kind: None,
+                backend_name: None,
+                session_fingerprint: None,
+                is_coalesced: false,
+                client_key_id: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -1072,6 +1190,13 @@ mod tests {
                 client_body_user_id: None,
                 upstream_user_id: None,
                 user_id_audit: None,
+                upstream_key_id: None,
+                affinity_key: None,
+                affinity_kind: None,
+                backend_name: None,
+                session_fingerprint: None,
+                is_coalesced: false,
+                client_key_id: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);

@@ -181,6 +181,19 @@ pub fn OverviewPage() -> impl IntoView {
         let request_id = load_generation.get();
         let current_etag = etag.get();
         is_loading.set(true);
+        // Watchdog: avoid endless skeleton when request hangs (network/proxy issues).
+        leptos::task::spawn_local(async move {
+            TimeoutFuture::new(12_000).await;
+            if load_generation.get() == request_id {
+                if overview_core.get().is_none() {
+                    overview_core.set(Some(Err(
+                        "Overview request timed out. Please refresh or re-login admin key."
+                            .to_string(),
+                    )));
+                }
+                is_loading.set(false);
+            }
+        });
         leptos::task::spawn_local(async move {
             match api::fetch_overview_core(&current_etag).await {
                 Ok(result) => {
@@ -499,6 +512,8 @@ fn OverviewContent(
                     }
                 })}
             </div>
+
+            <super::overview_analytics::InfraOverviewSection />
 
             // Desktop: full tabbed view
             <div class="desktop-only">

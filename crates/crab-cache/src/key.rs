@@ -149,6 +149,120 @@ pub fn generate_namespaced_cache_key_with_fingerprint(
     }
 }
 
+/// Composite cache key with separate hashes for system prompt and tools.
+///
+/// This structure allows requests with the same system prompt and tools
+/// but different conversations to share cache entries more effectively.
+///
+/// Key format: `{namespace}:{fp_version}:{system_hash}:{tools_hash}:{messages_hash}`
+///
+/// The system hash and tools hash are stable across requests with the same
+/// configuration, improving prefix cache hit rates on upstream providers.
+pub fn generate_composite_cache_key(
+    request_body: &[u8],
+    namespace: Option<&str>,
+    config: &FingerprintConfig,
+) -> Result<String> {
+    let mut value: Value = serde_json::from_slice(request_body)?;
+
+    if let Some(obj) = value.as_object_mut() {
+        for field in STRIPPED_FIELDS {
+            obj.remove(*field);
+        }
+    }
+
+    normalize_for_fingerprint(&mut value, config);
+
+    let system_hash = hash_system_messages(&value, config);
+    let tools_hash = hash_tools(&value);
+    let messages_hash = hash_conversation_messages(&value, config);
+
+    let key = format!(
+        "{}:{}:{}:{}",
+        config.version, system_hash, tools_hash, messages_hash
+    );
+
+    match namespace {
+        Some(ns) if !ns.is_empty() => Ok(format!("{ns}:{key}")),
+        _ => Ok(key),
+    }
+}
+
+/// Hash only system messages from the messages array.
+fn hash_system_messages(value: &Value, _config: &FingerprintConfig) -> String {
+    let Some(messages) = value.get("messages").and_then(|m| m.as_array()) else {
+        return "none".to_string();
+    };
+
+    let system_msgs: Vec<&Value> = messages
+        .iter()
+        .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        .collect();
+
+    if system_msgs.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut canonical = String::new();
+    for msg in &system_msgs {
+        canonical_write(msg, &mut canonical);
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    hash[..hash.len().min(12)].to_string()
+}
+
+/// Hash the tools definition (if present).
+fn hash_tools(value: &Value) -> String {
+    let Some(tools) = value.get("tools") else {
+        return "none".to_string();
+    };
+
+    let Value::Array(tools_arr) = tools else {
+        return "none".to_string();
+    };
+
+    if tools_arr.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut canonical = String::new();
+    canonical_write(tools, &mut canonical);
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    hash[..hash.len().min(12)].to_string()
+}
+
+/// Hash non-system messages (user + assistant + tool messages).
+fn hash_conversation_messages(value: &Value, _config: &FingerprintConfig) -> String {
+    let Some(messages) = value.get("messages").and_then(|m| m.as_array()) else {
+        return "empty".to_string();
+    };
+
+    let non_system: Vec<&Value> = messages
+        .iter()
+        .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+        .collect();
+
+    if non_system.is_empty() {
+        return "empty".to_string();
+    }
+
+    let mut canonical = String::new();
+    for msg in &non_system {
+        canonical_write(msg, &mut canonical);
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+    hash
+}
+
 /// Apply fingerprint normalization to a parsed JSON request body.
 ///
 /// Normalizes message content strings to reduce semantically-irrelevant differences:

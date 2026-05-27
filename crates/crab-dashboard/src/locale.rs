@@ -589,16 +589,124 @@ impl Translations {
             Locale::EnUS => "Last 30 min",
         }
     }
+    pub fn live_window_10m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 10 分钟",
+            Locale::EnUS => "Last 10 min",
+        }
+    }
     pub fn live_window_1h(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "近 1 小时",
             Locale::EnUS => "Last 1 hour",
         }
     }
+    pub fn live_window_12h(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 12 小时",
+            Locale::EnUS => "Last 12 hours",
+        }
+    }
+    pub fn live_window_1d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 1 天",
+            Locale::EnUS => "Last 1 day",
+        }
+    }
+    pub fn live_window_3d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 3 天",
+            Locale::EnUS => "Last 3 days",
+        }
+    }
+    pub fn live_window_7d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 7 天",
+            Locale::EnUS => "Last 7 days",
+        }
+    }
+    pub fn live_window_15d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 15 天",
+            Locale::EnUS => "Last 15 days",
+        }
+    }
+    pub fn live_window_30d(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 1 月",
+            Locale::EnUS => "Last 30 days",
+        }
+    }
     pub fn live_cache_hit_trend(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "缓存命中率趋势",
             Locale::EnUS => "Cache Hit Rate Trend",
+        }
+    }
+    pub fn live_traffic_stats(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流量统计",
+            Locale::EnUS => "Traffic stats",
+        }
+    }
+    pub fn live_config_consumer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Consumer",
+            Locale::EnUS => "Consumer",
+        }
+    }
+    pub fn live_config_window(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "时间范围",
+            Locale::EnUS => "Time range",
+        }
+    }
+    pub fn live_config_refresh(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刷新",
+            Locale::EnUS => "Refresh",
+        }
+    }
+    pub fn live_chart_throughput(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求吞吐",
+            Locale::EnUS => "Request throughput",
+        }
+    }
+    pub fn live_routing_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "负载均衡",
+            Locale::EnUS => "Load balancing",
+        }
+    }
+    pub fn live_routing_group(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由组",
+            Locale::EnUS => "Routing group",
+        }
+    }
+    pub fn live_nodes_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟明细",
+            Locale::EnUS => "Latency detail",
+        }
+    }
+    pub fn live_cache_hit_pct(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存命中",
+            Locale::EnUS => "Cache hit",
+        }
+    }
+    pub fn live_routing_loading(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正在加载负载均衡状态…",
+            Locale::EnUS => "Loading load-balancing status…",
+        }
+    }
+    pub fn live_routing_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "负载均衡监控不可用",
+            Locale::EnUS => "Load-balancing monitor unavailable",
         }
     }
     pub fn live_trace_unavailable(self) -> &'static str {

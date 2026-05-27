@@ -17,6 +17,7 @@ use crab_control::GatewayStatus;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::time::timeout;
 
 const TRACE_SUMMARY_TTL: Duration = Duration::from_secs(60);
 const GATEWAY_PROBE_TTL: Duration = Duration::from_secs(3);
@@ -261,13 +262,25 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
 
     refresh_metrics_history_sample(state, &body, now).await;
 
-    let probe = fetch_gateway_probe_cached(state).await;
+    let probe = match timeout(Duration::from_secs(2), fetch_gateway_probe_cached(state)).await {
+        Ok(p) => p,
+        Err(_) => GatewayProbe {
+            ready_ok: false,
+            ready_error: Some("gateway probe timeout".to_string()),
+            status: None,
+            status_error: Some("gateway probe timeout".to_string()),
+            redis_status: "unavailable".to_string(),
+            l2_status: "unavailable".to_string(),
+        },
+    };
     let metrics = build_metrics_snapshot_core(&body, state, now, probe.status.as_ref()).await?;
     let mut health = build_gateway_health_from_probe(&probe);
     let prefix_cache = build_prefix_cache_snapshot(&body);
 
     // Fetch routing summary for backend health / circuit breaker fields.
-    if let Ok(summary) = state.gateway.get_routing_summary().await {
+    if let Ok(Ok(summary)) =
+        timeout(Duration::from_secs(2), state.gateway.get_routing_summary()).await
+    {
         health.backends_healthy = summary.backends_healthy;
         health.backends_total = summary.backends_total;
         health.circuit_open_count = summary.circuit_open_count;
@@ -284,9 +297,21 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
         ops.upstream_key_count = status.upstream_key_count as u32;
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
-    enrich_ops_upstream_keys(state, &mut ops).await;
+    let _ = timeout(
+        Duration::from_secs(2),
+        enrich_ops_upstream_keys(state, &mut ops),
+    )
+    .await;
 
-    let trace_summary = cached_trace_summary(state, 24).await;
+    let trace_summary = match timeout(Duration::from_secs(2), cached_trace_summary(state, 24)).await
+    {
+        Ok(summary) => summary,
+        Err(_) => TraceSummary {
+            hours: 24,
+            total_requests: 0,
+            cache_hit_ratio: 0.0,
+        },
+    };
 
     let bundle_for_suggestions = OverviewBundle {
         metrics: metrics_snapshot_from_core(&metrics, &[]),
