@@ -226,10 +226,10 @@ cache_max_rows = 100000
 tcp_keepalive_idle_secs = 60
 tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
-idle_timeout_secs = 90
+idle_timeout_secs = 120
 # Force HTTP/1.1 to api.deepseek.com (recommended for Cursor; avoids H2 edge cases on large bodies)
 upstream_force_http1 = true
-upstream_disable_keepalive = true
+upstream_disable_keepalive = false
 h2_ping_interval_secs = 30
 upstream_request_timeout_secs = 300
 upstream_write_timeout_secs = 300

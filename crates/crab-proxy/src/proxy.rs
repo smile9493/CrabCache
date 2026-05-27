@@ -50,8 +50,10 @@ use crab_reasoning::{
     prepare_light_request, prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
     sanitize_client_completion,
 };
+use crab_capture::{affinity_kind_from_key, session_fingerprint_from_payload};
 use crab_route::{CircuitState, extract_affinity_key};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
+use bytes::Bytes;
 use http::HeaderMap;
 use pingora_core::prelude::*;
 use pingora_core::protocols::l4::ext::TcpKeepalive;
@@ -613,13 +615,23 @@ impl ProxyHttp for GatewayProxy {
         ctx.req_hash = Some(req_hash);
         ctx.content_length = full_body.len();
 
-        let payload: serde_json::Value = match serde_json::from_slice(&full_body) {
-            Ok(v) => v,
+        let parse_start = Instant::now();
+        let parsed_payload = match serde_json::from_slice::<serde_json::Value>(&full_body) {
+            Ok(v) => Arc::new(v),
             Err(_) => {
                 let _ = session.respond_error(400).await;
                 return Ok(true);
             }
         };
+        let parse_elapsed = parse_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "json_parse_client",
+            parse_elapsed,
+            full_body.len(),
+            None,
+        );
+        ctx.parsed_request_payload = Some(parsed_payload.clone());
+        let payload = parsed_payload.as_ref();
 
         let profile = self.state.runtime.default_profile();
         let fallback_model = profile.fallback_model.clone();
@@ -644,6 +656,8 @@ impl ProxyHttp for GatewayProxy {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        ctx.session_fingerprint = session_fingerprint_from_payload(&payload);
+
         let client_ip = session
             .client_addr()
             .map(|a| a.to_string())
@@ -660,6 +674,7 @@ impl ProxyHttp for GatewayProxy {
             &client_ip,
             ctx.prompt_cache_key.as_deref(),
             ctx.project_id.as_deref(),
+            ctx.session_fingerprint.as_deref(),
         ));
 
         let pipeline_globals = self.state.runtime.pipeline_globals();
@@ -752,6 +767,7 @@ impl ProxyHttp for GatewayProxy {
         let mut namespace_preview = String::new();
         let effective_user_id = ctx.project_id.as_deref();
 
+        let prepare_start = Instant::now();
         match selection.pipeline {
             RequestPipeline::CursorDeepSeekV4 => {
                 let prepared = prepare_upstream_request(
@@ -779,8 +795,9 @@ impl ProxyHttp for GatewayProxy {
                     missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
                 ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
                 ctx.prepared_request = Some(prepared.clone());
-                ctx.new_request_body =
-                    Some(serde_json::to_vec(&prepared.payload).unwrap_or_default());
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&prepared.payload).unwrap_or_default(),
+                ));
                 if ctx.is_streaming {
                     ctx.stream.accumulator = Some(StreamAccumulator::new());
                     ctx.stream.display_adapter = reasoning_cfg.display_reasoning.then(|| {
@@ -796,15 +813,25 @@ impl ProxyHttp for GatewayProxy {
                     effective_user_id,
                 );
                 upstream_model_log = light.upstream_model.clone();
-                ctx.new_request_body = Some(serde_json::to_vec(&light.payload).unwrap_or_default());
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&light.payload).unwrap_or_default(),
+                ));
             }
             RequestPipeline::GenericRelay | RequestPipeline::MimoRelay => {
                 let generic = prepare_generic_request(&payload);
                 upstream_model_log = generic.model.clone();
-                ctx.new_request_body =
-                    Some(serde_json::to_vec(&generic.payload).unwrap_or_default());
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&generic.payload).unwrap_or_default(),
+                ));
             }
         }
+        let prepare_elapsed = prepare_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "prepare_upstream_body",
+            prepare_elapsed,
+            full_body.len(),
+            Some(selection.pipeline.as_str()),
+        );
         ctx.upstream_model = Some(upstream_model_log.clone());
 
         if selection.provider == UpstreamProvider::Deepseek
@@ -930,8 +957,8 @@ impl ProxyHttp for GatewayProxy {
         // #endregion
 
         // ---- Extract request composition for trace analysis ----
-        if let Some(body) = &ctx.original_request_body
-            && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body)
+        let composition_start = Instant::now();
+        if let Some(payload) = ctx.parsed_request_payload.as_ref()
         {
             let hints = CompositionHints {
                 consumer: ctx.consumer.clone().unwrap_or_default(),
@@ -953,7 +980,11 @@ impl ProxyHttp for GatewayProxy {
             if let Some(debug_tx) = composition_debug_tx() {
                 let request_hash = ctx.req_hash.clone().unwrap_or_else(|| {
                     let mut hasher = sha2::Sha256::new();
-                    hasher.update(body);
+                    if let Some(body) = ctx.original_request_body.as_deref() {
+                        hasher.update(body);
+                    } else {
+                        hasher.update(payload.to_string().as_bytes());
+                    }
                     let h = hex::encode(hasher.finalize());
                     h[..h.len().min(16)].to_string()
                 });
@@ -977,18 +1008,40 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
         }
+        let composition_elapsed = composition_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "extract_composition",
+            composition_elapsed,
+            full_body.len(),
+            Some(selection.pipeline.as_str()),
+        );
 
-        let new_body = ctx.new_request_body.clone().unwrap_or(full_body);
+        let new_body = ctx
+            .new_request_body
+            .clone()
+            .unwrap_or_else(|| Bytes::from(full_body));
         ctx.upstream_outbound_body_len = new_body.len();
         // #region agent log
         let outbound_fp: String = {
             let mut hasher = Sha256::new();
-            hasher.update(&new_body);
+            hasher.update(new_body.as_ref());
             let h = hex::encode(hasher.finalize());
             h[..h.len().min(8)].to_string()
         };
-        let upstream_msg_count = serde_json::from_slice::<serde_json::Value>(&new_body)
-            .ok()
+        let upstream_parse_start = Instant::now();
+        let parsed_upstream_payload =
+            serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
+                .ok()
+                .map(Arc::new);
+        let upstream_parse_elapsed = upstream_parse_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "json_parse_upstream",
+            upstream_parse_elapsed,
+            ctx.upstream_outbound_body_len,
+            Some(selection.pipeline.as_str()),
+        );
+        let upstream_msg_count = parsed_upstream_payload
+            .as_ref()
             .and_then(|v| {
                 v.get("messages")
                     .and_then(|m| m.as_array())
@@ -1013,6 +1066,7 @@ impl ProxyHttp for GatewayProxy {
             }),
         );
         // #endregion
+        ctx.parsed_upstream_payload = parsed_upstream_payload;
         ctx.new_request_body = Some(new_body.clone());
         ctx.upstream_body_for_capture = Some(new_body);
         ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
@@ -1040,6 +1094,23 @@ impl ProxyHttp for GatewayProxy {
                     "outbound_bytes": ctx.upstream_outbound_body_len,
                     "model": ctx.model,
                     "is_streaming": ctx.is_streaming,
+                }),
+            );
+        }
+        if ctx.upstream_outbound_body_len >= 256 * 1024 {
+            debug_agent_log(
+                "PB",
+                "proxy.rs:request_filter",
+                "request body performance sample",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "pipeline": selection.pipeline.as_str(),
+                    "inbound_bytes": ctx.content_length,
+                    "outbound_bytes": ctx.upstream_outbound_body_len,
+                    "client_parse_ms": parse_elapsed.as_secs_f64() * 1000.0,
+                    "prepare_ms": prepare_elapsed.as_secs_f64() * 1000.0,
+                    "composition_ms": composition_elapsed.as_secs_f64() * 1000.0,
+                    "upstream_parse_ms": upstream_parse_elapsed.as_secs_f64() * 1000.0,
                 }),
             );
         }
@@ -1471,7 +1542,7 @@ impl ProxyHttp for GatewayProxy {
         // Reuse affinity key from request_filter if available (avoids redundant SHA-256 hash)
         let body_pck = ctx.prompt_cache_key.as_deref();
         let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
-            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref())
+            extract_affinity_key(&headers, &client_ip, body_pck, ctx.project_id.as_deref(), ctx.session_fingerprint.as_deref())
         });
 
         let profile = self.active_upstream_profile(ctx);
@@ -2411,11 +2482,15 @@ impl ProxyHttp for GatewayProxy {
                     if let Some(prepared) = &ctx.prepared_request {
                         entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                     }
-                    entry.reasoning_strategy = Some(
-                        ctx.cached_reasoning_config
-                            .missing_reasoning_strategy
-                            .clone(),
-                    );
+                    entry.reasoning_strategy = if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
+                        Some(
+                            ctx.cached_reasoning_config
+                                .missing_reasoning_strategy
+                                .clone(),
+                        )
+                    } else {
+                        Some("none".to_string())
+                    };
                     let hit = ctx.tokens.last_prompt_cache_hit;
                     let miss = ctx.tokens.last_prompt_cache_miss;
                     if hit + miss > 0 {
@@ -2442,9 +2517,28 @@ impl ProxyHttp for GatewayProxy {
                         ctx.project_id.as_deref(),
                         ctx.original_request_body.as_deref(),
                         ctx.upstream_body_for_capture
-                            .as_deref()
+                            .as_ref()
+                            .map(|b| b.as_ref())
                             .or(ctx.new_request_body.as_deref()),
                     );
+                    entry.affinity_key = ctx.upstream.affinity_key.clone();
+                    entry.affinity_kind = ctx
+                        .upstream
+                        .affinity_key
+                        .as_deref()
+                        .map(|k| affinity_kind_from_key(k).to_string());
+                    entry.backend_name = ctx.upstream.backend_name.clone();
+                    entry.is_coalesced = ctx.is_coalesced_follower;
+                    entry.client_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id().to_string());
+                    entry.session_fingerprint = ctx.session_fingerprint.clone();
+                    if let Some(backend) = &ctx.upstream.backend_name {
+                        let result = if ctx.upstream.http_status.map_or(false, |s| s >= 400) {
+                            "error"
+                        } else {
+                            "ok"
+                        };
+                        global_metrics().record_backend_request(backend, result);
+                    }
                     trace_logger.log(entry);
                 }
             }
@@ -2473,8 +2567,11 @@ impl ProxyHttp for GatewayProxy {
                     Some(reasoning_strategy),
                     ctx.original_request_body.as_deref(),
                     ctx.upstream_body_for_capture
-                        .as_deref()
+                        .as_ref()
+                        .map(|b| b.as_ref())
                         .or(ctx.new_request_body.as_deref()),
+                    ctx.parsed_request_payload.as_deref(),
+                    ctx.parsed_upstream_payload.as_deref(),
                     capture_meta,
                 );
             }
@@ -2946,6 +3043,8 @@ mod tests {
             recovered_reasoning_messages: 0,
             recovery_dropped_messages: 0,
             retired_prefix_messages: 0,
+            prefix_tokens_before: 0,
+            prefix_tokens_after: 0,
             recovery_notice: None,
             record_response_scope: "scope".into(),
             record_response_messages: vec![],
@@ -2999,6 +3098,8 @@ mod tests {
             recovered_reasoning_messages: 0,
             recovery_dropped_messages: 0,
             retired_prefix_messages: 0,
+            prefix_tokens_before: 0,
+            prefix_tokens_after: 0,
             recovery_notice: None,
             record_response_scope: "scope".into(),
             record_response_messages: vec![],

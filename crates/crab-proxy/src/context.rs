@@ -14,6 +14,7 @@ use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
 use crab_semantic::SemanticCache;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,7 +51,7 @@ pub struct ConnectionConfig {
 }
 
 fn default_upstream_disable_keepalive() -> bool {
-    true
+    false
 }
 
 fn default_upstream_force_http1() -> bool {
@@ -79,13 +80,13 @@ impl Default for ConnectionConfig {
             tcp_keepalive_idle_secs: Some(60),
             tcp_keepalive_interval_secs: Some(10),
             tcp_keepalive_count: Some(3),
-            idle_timeout_secs: Some(90),
+            idle_timeout_secs: Some(120),
             h2_ping_interval_secs: Some(30),
             upstream_request_timeout_secs: default_upstream_request_timeout_secs(),
             upstream_force_http1: true,
             upstream_write_timeout_secs: default_upstream_write_timeout_secs(),
             upstream_connection_timeout_secs: default_upstream_connection_timeout_secs(),
-            upstream_disable_keepalive: true,
+            upstream_disable_keepalive: false,
             upstream_tls_curves: default_upstream_tls_curves(),
         }
     }
@@ -293,10 +294,14 @@ pub struct GatewayContext {
     pub is_coalesced_follower: bool,
     pub coalesce_guard: Option<CoalesceGuard>,
     pub original_request_body: Option<Vec<u8>>,
+    /// Parsed client JSON payload reused across pipeline/composition/raw-capture to avoid re-parse.
+    pub parsed_request_payload: Option<Arc<serde_json::Value>>,
     pub prepared_request: Option<PreparedRequest>,
-    pub new_request_body: Option<Vec<u8>>,
+    pub new_request_body: Option<Bytes>,
     /// Snapshot of the upstream JSON body for raw capture (survives `new_request_body.take()`).
-    pub upstream_body_for_capture: Option<Vec<u8>>,
+    pub upstream_body_for_capture: Option<Bytes>,
+    /// Parsed upstream JSON payload reused by raw-capture.
+    pub parsed_upstream_payload: Option<Arc<serde_json::Value>>,
     pub authorization: Option<String>,
     /// SHA-256 prefix of client Bearer token (for capture: same key grouping).
     pub client_key_fingerprint: Option<String>,
@@ -327,6 +332,9 @@ pub struct GatewayContext {
     pub response_body_preview: Vec<u8>,
     /// Per-request cached reasoning config snapshot (avoids repeated RwLock reads).
     pub cached_reasoning_config: ReasoningConfig,
+    /// Session fingerprint derived from the first user message (SHA-256 prefix).
+    /// Computed once in `request_filter` and shared by trace logger + raw capture.
+    pub session_fingerprint: Option<String>,
 }
 
 impl GatewayContext {
@@ -351,9 +359,11 @@ impl GatewayContext {
             is_coalesced_follower: false,
             coalesce_guard: None,
             original_request_body: None,
+            parsed_request_payload: None,
             prepared_request: None,
             new_request_body: None,
             upstream_body_for_capture: None,
+            parsed_upstream_payload: None,
             authorization: None,
             client_key_fingerprint: None,
             req_hash: None,
@@ -372,6 +382,7 @@ impl GatewayContext {
             stream: StreamState::default(),
             response_body_preview: Vec::new(),
             cached_reasoning_config: ReasoningConfig::default(),
+            session_fingerprint: None,
         }
     }
 }

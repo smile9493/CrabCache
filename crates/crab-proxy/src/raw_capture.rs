@@ -2,13 +2,14 @@ use crab_capture::{
     CaptureRequestMeta, PacketStructureSummary, RawCaptureEntry, affinity_kind_from_key,
     analyze_packet, diff_structure, session_fingerprint_from_payload,
 };
+use crab_metrics::global_metrics;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
 // ── Config ───────────────────────────────────────────────────────────
@@ -279,6 +280,8 @@ impl RawCaptureLogger {
         reasoning_strategy: Option<&str>,
         client_body: Option<&[u8]>,
         upstream_body: Option<&[u8]>,
+        parsed_client_json: Option<&Value>,
+        parsed_upstream_json: Option<&Value>,
         meta: CaptureRequestMeta,
     ) {
         let timestamp_ms = SystemTime::now()
@@ -287,17 +290,29 @@ impl RawCaptureLogger {
             .as_millis() as u64;
 
         // Analyze client and upstream packets.
-        let client_json = client_body.and_then(parse_json_safe);
-        let (client_summary, client_json_ok) = match client_json.as_ref() {
+        let client_json_owned = parsed_client_json
+            .is_none()
+            .then(|| client_body.and_then(parse_json_safe))
+            .flatten();
+        let client_json = parsed_client_json.or(client_json_owned.as_ref());
+        let client_analyze_start = Instant::now();
+        let (client_summary, client_json_ok) = match client_json {
             Some(json) => (analyze_packet(json), true),
             None => (PacketStructureSummary::default(), false),
         };
+        let client_analyze_elapsed = client_analyze_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "raw_capture_client_analyze",
+            client_analyze_elapsed,
+            client_body.map_or(0, |b| b.len()),
+            pipeline,
+        );
 
         let mut session_fingerprint = meta.session_fingerprint.clone();
         let mut body_user = meta.body_user.clone();
         let mut conversation_id = meta.conversation_id.clone();
         let mut prompt_cache_key = meta.prompt_cache_key.clone();
-        if let Some(ref json) = client_json {
+        if let Some(json) = client_json {
             if session_fingerprint.is_none() {
                 session_fingerprint = session_fingerprint_from_payload(json);
             }
@@ -326,10 +341,23 @@ impl RawCaptureLogger {
             .map(affinity_kind_from_key)
             .map(str::to_string)
             .or(meta.affinity_kind.clone());
-        let (upstream_summary, upstream_json_ok) = match upstream_body.and_then(parse_json_safe) {
-            Some(json) => (analyze_packet(&json), true),
+        let upstream_json_owned = parsed_upstream_json
+            .is_none()
+            .then(|| upstream_body.and_then(parse_json_safe))
+            .flatten();
+        let upstream_json = parsed_upstream_json.or(upstream_json_owned.as_ref());
+        let upstream_analyze_start = Instant::now();
+        let (upstream_summary, upstream_json_ok) = match upstream_json {
+            Some(json) => (analyze_packet(json), true),
             None => (PacketStructureSummary::default(), false),
         };
+        let upstream_analyze_elapsed = upstream_analyze_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "raw_capture_upstream_analyze",
+            upstream_analyze_elapsed,
+            upstream_body.map_or(0, |b| b.len()),
+            pipeline,
+        );
 
         let diff = diff_structure(&client_summary, &upstream_summary);
 

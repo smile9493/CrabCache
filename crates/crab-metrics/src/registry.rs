@@ -84,6 +84,9 @@ pub struct GatewayMetrics {
     pub upstream_key_input_tokens: IntCounterVec,
     pub upstream_key_output_tokens: IntCounterVec,
     pub upstream_key_latency: HistogramVec,
+    pub backend_requests: IntCounterVec,
+    pub request_body_stage_latency: HistogramVec,
+    pub request_body_stage_samples: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -357,6 +360,33 @@ impl GatewayMetrics {
             &["key_id"],
         )?;
 
+        let backend_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_backend_requests_total",
+                "Total requests per upstream backend node",
+            ),
+            &["backend_name", "result"],
+        )?;
+
+        let request_body_stage_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_request_body_stage_latency_seconds",
+                "Request-body processing stage latency in seconds",
+            )
+            .buckets(vec![
+                0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0,
+            ]),
+            &["stage", "size_bucket", "pipeline"],
+        )?;
+
+        let request_body_stage_samples = IntCounterVec::new(
+            Opts::new(
+                "gateway_request_body_stage_samples_total",
+                "Request-body stage sample count by size bucket and pipeline",
+            ),
+            &["stage", "size_bucket", "pipeline"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -393,6 +423,9 @@ impl GatewayMetrics {
             upstream_key_input_tokens,
             upstream_key_output_tokens,
             upstream_key_latency,
+            backend_requests,
+            request_body_stage_latency,
+            request_body_stage_samples,
         })
     }
 
@@ -432,6 +465,9 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_key_input_tokens.clone()))?;
         registry.register(Box::new(self.upstream_key_output_tokens.clone()))?;
         registry.register(Box::new(self.upstream_key_latency.clone()))?;
+        registry.register(Box::new(self.backend_requests.clone()))?;
+        registry.register(Box::new(self.request_body_stage_latency.clone()))?;
+        registry.register(Box::new(self.request_body_stage_samples.clone()))?;
         Ok(())
     }
 
@@ -760,6 +796,43 @@ impl GatewayMetrics {
         self.upstream_key_latency
             .with_label_values(&[key_id])
             .observe(duration.as_secs_f64());
+    }
+
+    pub fn record_backend_request(&self, backend_name: &str, result: &str) {
+        self.backend_requests
+            .with_label_values(&[backend_name, result])
+            .inc();
+    }
+
+    pub fn record_request_body_stage(
+        &self,
+        stage: &str,
+        duration: Duration,
+        body_bytes: usize,
+        pipeline: Option<&str>,
+    ) {
+        let size_bucket = request_body_size_bucket(body_bytes);
+        let pipeline = pipeline.unwrap_or("unknown");
+        self.request_body_stage_latency
+            .with_label_values(&[stage, size_bucket, pipeline])
+            .observe(duration.as_secs_f64());
+        self.request_body_stage_samples
+            .with_label_values(&[stage, size_bucket, pipeline])
+            .inc();
+    }
+}
+
+fn request_body_size_bucket(body_bytes: usize) -> &'static str {
+    if body_bytes <= 256 * 1024 {
+        "le_256k"
+    } else if body_bytes <= 1024 * 1024 {
+        "le_1m"
+    } else if body_bytes <= 2 * 1024 * 1024 {
+        "le_2m"
+    } else if body_bytes <= 4 * 1024 * 1024 {
+        "le_4m"
+    } else {
+        "gt_4m"
     }
 }
 
