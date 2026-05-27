@@ -873,8 +873,8 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
                         }}
                     </span>
                     {delta_html.map(|(color, text)| {
-                        view! { <span class=color>{text}</span> }.into_any()
-                    }).unwrap_or_else(|| view! { <span></span> }.into_any())}
+                        view! { <span class=color>{text}</span> }
+                    })}
                 </div>
             </div>
             <div class="flex gap-2 shrink-0">
@@ -1037,14 +1037,10 @@ fn MetricsBento(
                             </div>
                             <div class="text-xs text-theme-muted mt-1">
                                 {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
-                                {move || {
-                                    if qps_trend.abs() > 0.1 {
-                                        let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
-                                        view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }.into_any()
-                                    } else {
-                                        ().into_any()
-                                    }
-                                }}
+                                {(qps_trend.abs() > 0.1).then(|| {
+                                    let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
+                                    view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }
+                                })}
                             </div>
                         </div>
                         <div class="text-3xl opacity-30">"⚡"</div>
@@ -1061,14 +1057,10 @@ fn MetricsBento(
                             </div>
                             <div class="text-xs text-theme-muted mt-0.5">
                                 {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
-                                {move || {
-                                    if !insufficient && hit_rate_trend.abs() > 0.01 {
+                                    {(!insufficient && hit_rate_trend.abs() > 0.01).then(|| {
                                         let cls = if hit_rate_trend > 0.0 { "ml-1 trend-up" } else { "ml-1 trend-down" };
-                                        view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }.into_any()
-                                    } else {
-                                        ().into_any()
-                                    }
-                                }}
+                                        view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }
+                                    })}
                             </div>
                         </div>
                         <div>
@@ -1185,8 +1177,8 @@ fn MetricsBento(
                     return None;
                 }
                 let healthy = h.backends_healthy;
-                let open = h.circuit_open_count;
-                let warning = healthy < total || open > 0;
+                let unhealthy = h.backends_unhealthy;
+                let warning = healthy < total || unhealthy > 0;
                 Some(view! {
                     <div class="bento-cell">
                         <a href="/upstream?tab=routing" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
@@ -1198,18 +1190,14 @@ fn MetricsBento(
                                 {format!("{}/{}", healthy, total)}
                             </div>
                             <div class="metric-card-sub">{t.routing_summary_healthy_label()}</div>
-                            {if open > 0 {
-                                view! {
-                                    <div class="mt-2 flex items-center gap-1.5">
-                                        <span class="w-2 h-2 rounded-full bg-error"></span>
-                                        <span class="text-xs text-error font-medium">
-                                            {format!("{} {}", open, t.routing_summary_circuit_label())}
-                                        </span>
-                                    </div>
-                                }.into_any()
-                            } else {
-                                ().into_any()
-                            }}
+                            {(unhealthy > 0).then(|| view! {
+                                <div class="mt-2 flex items-center gap-1.5">
+                                    <span class="w-2 h-2 rounded-full bg-error"></span>
+                                    <span class="text-xs text-error font-medium">
+                                        {format!("{} unhealthy", unhealthy)}
+                                    </span>
+                                </div>
+                            })}
                         </a>
                     </div>
                 })
@@ -1866,11 +1854,7 @@ pub fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
                                         <span class="w-20 text-xs text-theme-muted shrink-0 text-right">"P99"</span>
                                         <div class="flex-1 text-xs font-mono tabular-nums text-theme-muted">
                                             {format!("{:.1}ms", p99)}
-                                            {if over_slo {
-                                                view! { <span class="text-warning ml-2">"over SLO"</span> }.into_any()
-                                            } else {
-                                                ().into_any()
-                                            }}
+                                            {over_slo.then(|| view! { <span class="text-warning ml-2">"over SLO"</span> })}
                                         </div>
                                     </div>
                                 }.into_any()

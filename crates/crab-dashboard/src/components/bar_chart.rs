@@ -1,4 +1,4 @@
-//! Grouped vertical bar chart (time series / usage trends).
+//! Grouped vertical bar chart (time series / usage trends) — Financial Grade.
 
 use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,6 +7,23 @@ use wasm_bindgen::JsCast;
 use super::line_chart::{ChartSeries, format_tooltip_value, mouse_to_svg_x, y_range};
 
 static BAR_CHART_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Format a numeric value with full precision for the financial tooltip.
+fn format_precise_value(v: f64) -> String {
+    if v >= 1_000_000.0 {
+        format!("{:.1}M", v / 1_000_000.0)
+    } else if v >= 1_000.0 {
+        format!("{:.1}K", v / 1_000.0)
+    } else if v >= 100.0 {
+        format!("{:.2}", v)
+    } else if v >= 1.0 {
+        format!("{:.2}", v)
+    } else if v >= 0.01 {
+        format!("{:.4}", v)
+    } else {
+        format!("{:.6}", v)
+    }
+}
 
 #[component]
 pub fn BarChart(
@@ -20,9 +37,7 @@ pub fn BarChart(
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {
-        let Some(svg_el) = svg_ref.get() else {
-            return;
-        };
+        let Some(svg_el) = svg_ref.get() else { return };
         let svg_dom: web_sys::SvgsvgElement = svg_el.dyn_into().unwrap();
         let Some(svg_x) = mouse_to_svg_x(&ev, &svg_dom) else {
             hover_index.set(None);
@@ -44,40 +59,30 @@ pub fn BarChart(
         hover_index.set(None);
     };
 
-    // Keyboard navigation for accessibility
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         let labels = x_labels.get_untracked();
         let n = labels.len();
-        if n == 0 {
-            return;
-        }
-
+        if n == 0 { return; }
         let current = hover_index.get_untracked();
         let new_idx = match ev.key().as_str() {
-            "ArrowLeft" => {
-                match current {
-                    Some(idx) if idx > 0 => Some(idx - 1),
-                    None => Some(n - 1),
-                    _ => current,
-                }
-            }
-            "ArrowRight" => {
-                match current {
-                    Some(idx) if idx < n - 1 => Some(idx + 1),
-                    None => Some(0),
-                    _ => current,
-                }
-            }
+            "ArrowLeft" => match current {
+                Some(idx) if idx > 0 => Some(idx - 1),
+                None => Some(n - 1),
+                _ => current,
+            },
+            "ArrowRight" => match current {
+                Some(idx) if idx < n - 1 => Some(idx + 1),
+                None => Some(0),
+                _ => current,
+            },
             "Escape" => None,
             _ => return,
         };
-
         hover_index.set(new_idx);
         ev.prevent_default();
     };
 
     let on_focus = move |_: web_sys::FocusEvent| {
-        // Show first data point on focus if none selected
         let labels = x_labels.get_untracked();
         if !labels.is_empty() && hover_index.get_untracked().is_none() {
             hover_index.set(Some(0));
@@ -98,19 +103,15 @@ pub fn BarChart(
                 if labels.is_empty() || all_series.is_empty() {
                     return view! {
                         <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
-                    }
-                    .into_any();
+                    }.into_any();
                 }
                 let has_point = all_series.iter().any(|s| {
-                    s.values
-                        .iter()
-                        .any(|v| matches!(v, Some(x) if *x > 0.0 && x.is_finite()))
+                    s.values.iter().any(|v| matches!(v, Some(x) if *x > 0.0 && x.is_finite()))
                 });
                 if !has_point {
                     return view! {
                         <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
-                    }
-                    .into_any();
+                    }.into_any();
                 }
 
                 let (ymin, ymax) = y_range(&all_series);
@@ -125,39 +126,55 @@ pub fn BarChart(
                 let bar_w = slot * 0.82;
                 let span = (ymax - ymin).max(1.0);
 
-                // Generate data summary for screen readers
                 let series_names: Vec<String> = all_series.iter().map(|s| s.label.clone()).collect();
                 let data_summary = format!(
                     "Bar chart with {} categories and {} series: {}. Y range: {:.0} to {:.0}{}.",
                     labels.len(),
                     series_names.len(),
                     series_names.join(", "),
-                    ymin,
-                    ymax,
+                    ymin, ymax,
                     if y_unit.is_empty() { String::new() } else { format!(" {}", y_unit) }
                 );
 
                 let hover_idx = hover_index.get();
+
+                // Tooltip data with precise values
                 let tooltip_data = hover_idx.and_then(|idx| {
-                    if idx >= labels.len() {
-                        return None;
-                    }
+                    if idx >= labels.len() { return None; }
                     let label = labels[idx].clone();
-                    let values: Vec<(String, String, &'static str)> = all_series
+                    let values: Vec<(String, String, &'static str, f64)> = all_series
                         .iter()
                         .filter_map(|s| {
                             let v = s.values.get(idx).and_then(|opt| *opt)?;
-                            Some((s.label.clone(), format_tooltip_value(v), s.color))
+                            Some((s.label.clone(), format_precise_value(v), s.color, v))
                         })
                         .collect();
-                    if values.is_empty() {
-                        None
-                    } else {
-                        Some((idx, label, values))
-                    }
+                    if values.is_empty() { None } else { Some((idx, label, values)) }
                 });
 
                 let crosshair_x = hover_idx.map(|idx| idx as f64 * bucket_w + bucket_w / 2.0);
+
+                // Max value in hovered column for horizontal crosshair
+                let crosshair_y = hover_idx.and_then(|idx| {
+                    let max_val = all_series.iter().filter_map(|s| {
+                        let v = s.values.get(idx).and_then(|opt| *opt)?;
+                        if v.is_finite() && v > 0.0 { Some(v) } else { None }
+                    }).fold(0.0_f64, f64::max);
+                    if max_val > 0.0 {
+                        let norm = ((max_val - ymin) / span).clamp(0.0, 1.0);
+                        Some(H - norm * H)
+                    } else {
+                        None
+                    }
+                });
+
+                let crosshair_y_value = hover_idx.and_then(|idx| {
+                    let max_val = all_series.iter().filter_map(|s| {
+                        let v = s.values.get(idx).and_then(|opt| *opt)?;
+                        if v.is_finite() && v > 0.0 { Some(v) } else { None }
+                    }).fold(0.0_f64, f64::max);
+                    if max_val > 0.0 { Some(max_val) } else { None }
+                });
 
                 view! {
                     <div class="line-chart-plot" style="position: relative">
@@ -178,8 +195,27 @@ pub fn BarChart(
                             on:focus=on_focus
                             on:blur=on_blur
                         >
+                            // Grid axes
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
+                            // Horizontal grid lines
+                            {move || {
+                                let steps = 4;
+                                (1..steps).map(|i| {
+                                    let y = H * i as f64 / steps as f64;
+                                    view! {
+                                        <line
+                                            x1="0" y1=y x2="100" y2=y
+                                            stroke="var(--cc-border-light)"
+                                            stroke-width="0.15"
+                                            stroke-dasharray="1 2"
+                                            vector-effect="non-scaling-stroke"
+                                            opacity="0.4"
+                                        />
+                                    }
+                                }).collect_view()
+                            }}
+                            // Bars
                             {all_series.iter().enumerate().flat_map(|(j, s)| {
                                 s.values.iter().enumerate().filter_map(move |(i, opt)| {
                                     let v = match opt {
@@ -194,35 +230,76 @@ pub fn BarChart(
                                     let color = s.color;
                                     Some(view! {
                                         <rect
-                                            x=x
-                                            y=y
-                                            width=bar_w
-                                            height=h.max(0.15)
-                                            fill=color
-                                            opacity="0.88"
+                                            x=x y=y
+                                            width=bar_w height=h.max(0.15)
+                                            fill=color opacity="0.88"
                                             rx="0.35"
                                         />
                                     })
                                 })
                             }).collect_view()}
+
+                            // === Financial Crosshair ===
+                            // Hover column highlight band
+                            {crosshair_x.map(|cx| {
+                                let half = bucket_w / 2.0;
+                                view! {
+                                    <rect
+                                        x={cx - half} y="0"
+                                        width={bucket_w} height="40"
+                                        fill="var(--cc-text-muted)"
+                                        opacity="0.04"
+                                    />
+                                }
+                            })}
+                            // Vertical crosshair
                             {crosshair_x.map(|cx| view! {
                                 <line
-                                    x1=cx
-                                    y1="0"
-                                    x2=cx
-                                    y2="40"
+                                    x1=cx y1="0" x2=cx y2="40"
                                     stroke="var(--cc-text-muted)"
-                                    stroke-width="0.3"
-                                    stroke-dasharray="1.5 1.5"
+                                    stroke-width="0.25"
+                                    stroke-dasharray="1.5 1"
                                     vector-effect="non-scaling-stroke"
-                                    style="opacity: 0.5"
+                                    opacity="0.7"
                                 />
                             })}
-                            <rect x="0" y="0" width="100" height="40" fill="transparent" style="cursor: crosshair" />
+                            // Horizontal crosshair
+                            {crosshair_y.map(|cy| view! {
+                                <line
+                                    x1="0" y1=cy x2="100" y2=cy
+                                    stroke="var(--cc-text-muted)"
+                                    stroke-width="0.2"
+                                    stroke-dasharray="1 1.5"
+                                    vector-effect="non-scaling-stroke"
+                                    opacity="0.5"
+                                />
+                            })}
+
+                            // Invisible hit area
+                            <rect
+                                x="0" y="0" width="100" height="40"
+                                fill="transparent" style="cursor: crosshair"
+                            />
                         </svg>
+
+                        // Y-axis value label
+                        {crosshair_y_value.map(|val| {
+                            let pct = ((val - ymin) / span).clamp(0.0, 1.0);
+                            let top_pct = (1.0 - pct) * 100.0;
+                            view! {
+                                <div
+                                    class="chart-axis-label"
+                                    style=format!("top: {:.1}%", top_pct)
+                                >
+                                    {format_tooltip_value(val)}
+                                </div>
+                            }
+                        })}
+
+                        // Financial tooltip
                         {tooltip_data.map(|(idx, label, values)| {
                             let pct = (idx as f64 + 0.5) / n as f64 * 100.0;
-                            let side = if pct > 75.0 { "right" } else { "left" };
+                            let side = if pct > 70.0 { "right" } else { "left" };
                             let pos_style = if side == "right" {
                                 format!("right: {:.1}%", 100.0 - pct)
                             } else {
@@ -231,40 +308,27 @@ pub fn BarChart(
                             view! {
                                 <div
                                     class="chart-tooltip"
-                                    style=format!(
-                                        "position: absolute; top: 8px; {}; pointer-events: none; z-index: 10",
-                                        pos_style
-                                    )
+                                    style=format!("position: absolute; top: 8px; {}", pos_style)
                                 >
-                                    <div
-                                        class="chart-tooltip-label"
-                                        style="font-size: 0.6875rem; color: var(--cc-text-muted); margin-bottom: 0.25rem; font-family: var(--font-mono)"
-                                    >
-                                        {label}
-                                    </div>
-                                    {values
-                                        .into_iter()
-                                        .map(|(name, val, color)| {
-                                            view! {
-                                                <div
-                                                    class="chart-tooltip-row"
-                                                    style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; line-height: 1.4"
-                                                >
-                                                    <span style=format!(
-                                                        "width: 0.5rem; height: 0.5rem; border-radius: 2px; background: {}; flex-shrink: 0",
-                                                        color
-                                                    )></span>
-                                                    <span style="color: var(--cc-text-muted)">{name}:</span>
-                                                    <span style="font-family: var(--font-mono); font-weight: 600; color: var(--cc-text)">
-                                                        {val}
-                                                    </span>
-                                                </div>
-                                            }
-                                        })
-                                        .collect_view()}
+                                    <div class="chart-tooltip-label">{label}</div>
+                                    {values.into_iter().map(|(name, val, color, _raw)| {
+                                        view! {
+                                            <div class="chart-tooltip-row">
+                                                <span class="chart-tooltip-row-name">
+                                                    <span
+                                                        class="chart-tooltip-dot"
+                                                        style=format!("background: {}", color)
+                                                    ></span>
+                                                    <span>{name}</span>
+                                                </span>
+                                                <span class="chart-tooltip-value">{val}</span>
+                                            </div>
+                                        }
+                                    }).collect_view()}
                                 </div>
                             }
                         })}
+
                         <div class="line-chart-y-hint text-xs text-theme-muted font-mono">
                             {if y_unit.is_empty() {
                                 format!("{:.0}\u{2013}{:.0}", ymin, ymax)
@@ -276,41 +340,29 @@ pub fn BarChart(
                     <div class="line-chart-x-labels">
                         {{
                             let tick_count = labels.len();
-                            labels
-                                .into_iter()
-                                .enumerate()
-                                .filter_map(move |(i, l)| {
-                                    if tick_count <= 8
-                                        || i == 0
-                                        || i == tick_count - 1
-                                        || i % (tick_count / 6).max(1) == 0
-                                    {
-                                        Some(view! { <span class="line-chart-x-tick">{l}</span> })
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect_view()
+                            labels.into_iter().enumerate().filter_map(move |(i, l)| {
+                                if tick_count <= 8 || i == 0 || i == tick_count - 1 || i % (tick_count / 6).max(1) == 0 {
+                                    Some(view! { <span class="line-chart-x-tick">{l}</span> })
+                                } else {
+                                    None
+                                }
+                            }).collect_view()
                         }}
                     </div>
                     <div class="line-chart-legend">
-                        {all_series
-                            .into_iter()
-                            .map(|s| {
-                                view! {
-                                    <span class="line-chart-legend-item">
-                                        <span
-                                            class="line-chart-legend-swatch"
-                                            style=format!("background: {}", s.color)
-                                        ></span>
-                                        {s.label.clone()}
-                                    </span>
-                                }
-                            })
-                            .collect_view()}
+                        {all_series.into_iter().map(|s| {
+                            view! {
+                                <span class="line-chart-legend-item">
+                                    <span
+                                        class="line-chart-legend-swatch"
+                                        style=format!("background: {}", s.color)
+                                    ></span>
+                                    {s.label.clone()}
+                                </span>
+                            }
+                        }).collect_view()}
                     </div>
-                }
-                .into_any()
+                }.into_any()
             }}
         </div>
     }

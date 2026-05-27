@@ -580,16 +580,12 @@ pub async fn fetch_routing_summary() -> Result<RoutingSummaryView, String> {
     };
     let backends_total = profile.backends.len();
     let backends_healthy = profile.backends.iter().filter(|b| b.healthy).count();
-    let circuit_open_count = profile
-        .backends
-        .iter()
-        .filter(|b| b.circuit_state.eq_ignore_ascii_case("open"))
-        .count();
+    let backends_unhealthy = backends_total.saturating_sub(backends_healthy);
 
     Ok(RoutingSummaryView {
         backends_healthy,
         backends_total,
-        circuit_open_count,
+        backends_unhealthy,
         upstream_keys_available: profile.key_pool.available,
         upstream_keys_total: profile.key_pool.total,
         profile_id: profile.profile_id,

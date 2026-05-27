@@ -61,7 +61,6 @@ pub fn HistogramChart(
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
-    // Pre-compute bins reactively (only when values change)
     let bins_sig = Signal::derive(move || auto_bins(&values.get(), bin_count));
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {
@@ -89,40 +88,30 @@ pub fn HistogramChart(
         hover_index.set(None);
     };
 
-    // Keyboard navigation for accessibility
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         let bins = bins_sig.get_untracked();
         let n = bins.len();
-        if n == 0 {
-            return;
-        }
-
+        if n == 0 { return; }
         let current = hover_index.get_untracked();
         let new_idx = match ev.key().as_str() {
-            "ArrowLeft" => {
-                match current {
-                    Some(idx) if idx > 0 => Some(idx - 1),
-                    None => Some(n - 1),
-                    _ => current,
-                }
-            }
-            "ArrowRight" => {
-                match current {
-                    Some(idx) if idx < n - 1 => Some(idx + 1),
-                    None => Some(0),
-                    _ => current,
-                }
-            }
+            "ArrowLeft" => match current {
+                Some(idx) if idx > 0 => Some(idx - 1),
+                None => Some(n - 1),
+                _ => current,
+            },
+            "ArrowRight" => match current {
+                Some(idx) if idx < n - 1 => Some(idx + 1),
+                None => Some(0),
+                _ => current,
+            },
             "Escape" => None,
             _ => return,
         };
-
         hover_index.set(new_idx);
         ev.prevent_default();
     };
 
     let on_focus = move |_: web_sys::FocusEvent| {
-        // Show first bin on focus if none selected
         let bins = bins_sig.get_untracked();
         if !bins.is_empty() && hover_index.get_untracked().is_none() {
             hover_index.set(Some(0));
@@ -150,24 +139,33 @@ pub fn HistogramChart(
                 let pad = bar_w * 0.1;
                 let hover_idx = hover_index.get();
 
-                // Generate data summary for screen readers
                 let total_requests: usize = bins.iter().map(|b| b.count).sum();
                 let data_summary = format!(
                     "Histogram with {} bins and {} total requests. Y range: 0 to {} {}.",
-                    n,
-                    total_requests,
-                    format_tooltip_value(max_count),
-                    y_unit
+                    n, total_requests, format_tooltip_value(max_count), y_unit
                 );
 
                 let tooltip_data = hover_idx.and_then(|idx| {
                     let bin = bins.get(idx)?;
-                    let label = format!("{} - {}", format_tooltip_value(bin.range_start), format_tooltip_value(bin.range_end));
+                    let label = format!("{} \u{2013} {}",
+                        format_tooltip_value(bin.range_start),
+                        format_tooltip_value(bin.range_end));
                     Some((idx, label, bin.count))
                 });
 
+                // Y value for horizontal crosshair (max count at hover)
+                let crosshair_y = hover_idx.and_then(|idx| {
+                    let bin = bins.get(idx)?;
+                    if bin.count > 0 {
+                        let norm = (bin.count as f64 / max_count).clamp(0.0, 1.0);
+                        Some(40.0 - norm * 38.0)
+                    } else {
+                        None
+                    }
+                });
+
                 view! {
-                    <div style="position: relative">
+                    <div class="line-chart-plot" style="position: relative">
                         <div id={summary_id_clone.clone()} class="sr-only">{data_summary}</div>
                         <svg
                             node_ref=svg_ref
@@ -185,8 +183,27 @@ pub fn HistogramChart(
                             on:focus=on_focus
                             on:blur=on_blur
                         >
+                            // Grid
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
+                            // Horizontal grid lines
+                            {move || {
+                                let steps = 4;
+                                (1..steps).map(|i| {
+                                    let y = 40.0 - (38.0 * i as f64 / steps as f64);
+                                    view! {
+                                        <line
+                                            x1="0" y1=y x2="100" y2=y
+                                            stroke="var(--cc-border-light)"
+                                            stroke-width="0.15"
+                                            stroke-dasharray="1 2"
+                                            vector-effect="non-scaling-stroke"
+                                            opacity="0.4"
+                                        />
+                                    }
+                                }).collect_view()
+                            }}
+                            // Bars
                             {bins.iter().enumerate().map(|(i, bin)| {
                                 let h = if max_count > 0.0 { (bin.count as f64 / max_count) * 38.0 } else { 0.0 };
                                 let x = i as f64 * bar_w + pad;
@@ -205,24 +222,68 @@ pub fn HistogramChart(
                                     />
                                 }
                             }).collect_view()}
+
+                            // === Financial Crosshair ===
+                            // Hover column highlight
+                            {hover_idx.map(|idx| {
+                                let x = idx as f64 * bar_w;
+                                view! {
+                                    <rect
+                                        x=x y="0"
+                                        width=bar_w height="40"
+                                        fill="var(--cc-text-muted)"
+                                        opacity="0.04"
+                                    />
+                                }
+                            })}
+                            // Vertical crosshair
                             {hover_idx.map(|idx| {
                                 let cx = idx as f64 * bar_w + bar_w / 2.0;
                                 view! {
                                     <line
                                         x1=cx y1="0" x2=cx y2="40"
                                         stroke="var(--cc-text-muted)"
-                                        stroke-width="0.3"
-                                        stroke-dasharray="1.5 1.5"
+                                        stroke-width="0.25"
+                                        stroke-dasharray="1.5 1"
                                         vector-effect="non-scaling-stroke"
-                                        style="opacity: 0.6"
+                                        opacity="0.7"
                                     />
                                 }
                             })}
+                            // Horizontal crosshair
+                            {crosshair_y.map(|cy| view! {
+                                <line
+                                    x1="0" y1=cy x2="100" y2=cy
+                                    stroke="var(--cc-text-muted)"
+                                    stroke-width="0.2"
+                                    stroke-dasharray="1 1.5"
+                                    vector-effect="non-scaling-stroke"
+                                    opacity="0.5"
+                                />
+                            })}
+
                             <rect x="0" y="0" width="100" height="40" fill="transparent" style="cursor: crosshair" />
                         </svg>
+
+                        // Y-axis value label
+                        {crosshair_y.map(|cy| {
+                            let val_pct = ((40.0 - cy) / 38.0).clamp(0.0, 1.0);
+                            let count_val = val_pct * max_count;
+                            let top_pct = (cy / 40.0) * 100.0;
+                            view! {
+                                <div
+                                    class="chart-axis-label"
+                                    style=format!("top: {:.1}%", top_pct)
+                                >
+                                    {format_tooltip_value(count_val)}
+                                </div>
+                            }
+                        })}
+
+                        // Financial tooltip
                         {tooltip_data.map(|(idx, label, count)| {
                             let pct = (idx as f64 + 0.5) / n as f64 * 100.0;
-                            let side = if pct > 75.0 { "right" } else { "left" };
+                            let side = if pct > 70.0 { "right" } else { "left" };
                             let pos_style = if side == "right" {
                                 format!("right: {:.1}%", 100.0 - pct)
                             } else {
@@ -231,19 +292,22 @@ pub fn HistogramChart(
                             view! {
                                 <div
                                     class="chart-tooltip"
-                                    style=format!("position: absolute; top: 8px; {}; pointer-events: none; z-index: 10", pos_style)
+                                    style=format!("position: absolute; top: 8px; {}", pos_style)
                                 >
-                                    <div class="chart-tooltip-label" style="font-size: 0.6875rem; color: var(--cc-text-muted); margin-bottom: 0.25rem; font-family: var(--font-mono)">
-                                        {label}
-                                    </div>
-                                    <div class="chart-tooltip-row" style="font-size: 0.75rem; font-weight: 600; color: var(--cc-text); font-family: var(--font-mono)">
-                                        {format!("{} requests", count)}
+                                    <div class="chart-tooltip-label">{label}</div>
+                                    <div class="chart-tooltip-row">
+                                        <span class="chart-tooltip-row-name">
+                                            <span class="chart-tooltip-dot" style="background: var(--accent-primary)"></span>
+                                            <span>{"Requests"}</span>
+                                        </span>
+                                                <span class="chart-tooltip-value">{format!("{}", count)}</span>
                                     </div>
                                 </div>
                             }
                         })}
+
                         <div class="line-chart-y-hint text-xs text-theme-muted font-mono">
-                            {format!("0 - {} {}", format_tooltip_value(max_count), y_unit)}
+                            {format!("0 \u{2013} {} {}", format_tooltip_value(max_count), y_unit)}
                         </div>
                     </div>
                     <div class="line-chart-x-labels">

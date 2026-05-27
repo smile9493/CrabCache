@@ -107,10 +107,6 @@ pub(crate) fn mouse_to_svg_x(
     let inv = ctm.inverse().ok()?;
     let cx = ev.client_x() as f64;
     let cy = ev.client_y() as f64;
-    // Apply 2D affine inverse: [a c e; b d f; 0 0 1]
-    // screen_x = a*svg_x + c*svg_y + e
-    // screen_y = b*svg_x + d*svg_y + f
-    // Solve for svg_x: svg_x = (d*(cx-e) - c*(cy-f)) / (a*d - b*c)
     let a = inv.a() as f64;
     let b = inv.b() as f64;
     let c = inv.c() as f64;
@@ -124,7 +120,7 @@ pub(crate) fn mouse_to_svg_x(
     Some((d * (cx - e) - c * (cy - f)) / det)
 }
 
-/// Format a numeric value for tooltip display.
+/// Format a numeric value for tooltip display — abbreviated (axis hint).
 pub(crate) fn format_tooltip_value(v: f64) -> String {
     if v >= 1_000_000.0 {
         format!("{:.1}M", v / 1_000_000.0)
@@ -134,6 +130,23 @@ pub(crate) fn format_tooltip_value(v: f64) -> String {
         format!("{:.0}", v)
     } else {
         format!("{:.1}", v)
+    }
+}
+
+/// Format a numeric value with full precision for the financial tooltip.
+fn format_precise_value(v: f64) -> String {
+    if v >= 1_000_000.0 {
+        format!("{:.1}M", v / 1_000_000.0)
+    } else if v >= 1_000.0 {
+        format!("{:.1}K", v / 1_000.0)
+    } else if v >= 100.0 {
+        format!("{:.2}", v)
+    } else if v >= 1.0 {
+        format!("{:.2}", v)
+    } else if v >= 0.01 {
+        format!("{:.4}", v)
+    } else {
+        format!("{:.6}", v)
     }
 }
 
@@ -148,7 +161,6 @@ pub fn LineChart(
 ) -> impl IntoView {
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
 
-    // We need a node ref for the SVG to do coordinate transforms
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {
@@ -159,7 +171,6 @@ pub fn LineChart(
             return;
         };
 
-        // Get current labels to determine data point count
         let labels = x_labels.get_untracked();
         let n = labels.len();
         if n == 0 {
@@ -182,7 +193,6 @@ pub fn LineChart(
         hover_index.set(None);
     };
 
-    // Keyboard navigation for accessibility
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         let labels = x_labels.get_untracked();
         let n = labels.len();
@@ -215,7 +225,6 @@ pub fn LineChart(
     };
 
     let on_focus = move |_: web_sys::FocusEvent| {
-        // Show first data point on focus if none selected
         let labels = x_labels.get_untracked();
         if !labels.is_empty() && hover_index.get_untracked().is_none() {
             hover_index.set(Some(0));
@@ -252,34 +261,50 @@ pub fn LineChart(
                 const H: f64 = 40.0;
                 let n = labels.len().max(1);
                 let x_step = if n > 1 { W / (n - 1) as f64 } else { 0.0 };
+                let span = (ymax - ymin).max(1.0);
 
-                // Generate data summary for screen readers
                 let series_names: Vec<String> = all_series.iter().map(|s| s.label.clone()).collect();
                 let data_summary = format!(
                     "Line chart with {} data points and {} series: {}. Y range: {:.0} to {:.0} {}.",
                     labels.len(),
                     series_names.len(),
                     series_names.join(", "),
-                    ymin,
-                    ymax,
-                    y_unit
+                    ymin, ymax, y_unit
                 );
 
-                // Tooltip data derivation
                 let hover_idx = hover_index.get();
+
+                // Build tooltip data with precise values
                 let tooltip_data = hover_idx.and_then(|idx| {
                     if idx >= labels.len() { return None; }
                     let label = labels[idx].clone();
-                    let values: Vec<(String, String, &'static str)> = all_series.iter().filter_map(|s| {
+                    let values: Vec<(String, String, &'static str, f64)> = all_series.iter().filter_map(|s| {
                         let v = s.values.get(idx).and_then(|opt| *opt)?;
-                        Some((s.label.clone(), format_tooltip_value(v), s.color))
+                        Some((s.label.clone(), format_precise_value(v), s.color, v))
                     }).collect();
                     if values.is_empty() { None } else { Some((idx, label, values)) }
                 });
 
-                // Crosshair X position in viewBox coords
+                // Crosshair X position
                 let crosshair_x = hover_idx.map(|idx| {
                     if n > 1 { idx as f64 * x_step } else { W / 2.0 }
+                });
+
+                // Find the primary (first) series value at hover for horizontal crosshair
+                let crosshair_y = hover_idx.and_then(|idx| {
+                    let v = all_series.first()?.values.get(idx).and_then(|opt| *opt)?;
+                    if v.is_finite() && v > 0.0 {
+                        let norm = ((v - ymin) / span).clamp(0.0, 1.0);
+                        Some(H - norm * H)
+                    } else {
+                        None
+                    }
+                });
+
+                // Y value at crosshair for axis label
+                let crosshair_y_value = hover_idx.and_then(|idx| {
+                    let v = all_series.first()?.values.get(idx).and_then(|opt| *opt)?;
+                    if v.is_finite() && v > 0.0 { Some(v) } else { None }
                 });
 
                 view! {
@@ -301,24 +326,37 @@ pub fn LineChart(
                             on:focus=on_focus
                             on:blur=on_blur
                         >
+                            // Grid axes
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
-                            // Area fills (rendered before lines so lines appear on top)
+                            // Horizontal grid lines (subtle Y guides)
+                            {move || {
+                                let steps = 4;
+                                (1..steps).map(|i| {
+                                    let y = H * i as f64 / steps as f64;
+                                    view! {
+                                        <line
+                                            x1="0" y1=y x2="100" y2=y
+                                            stroke="var(--cc-border-light)"
+                                            stroke-width="0.15"
+                                            stroke-dasharray="1 2"
+                                            vector-effect="non-scaling-stroke"
+                                            opacity="0.4"
+                                        />
+                                    }
+                                }).collect_view()
+                            }}
+                            // Area fills
                             {all_series.iter().filter(|s| s.fill).flat_map(|s| {
                                 let segs = value_segments_indexed(&s.values);
                                 segs.into_iter().map(move |(start_idx, seg_vals)| {
                                     let x_offset = start_idx as f64 * x_step;
                                     let line_points = scale_segment(&seg_vals, ymin, ymax, H, x_offset, x_step);
-                                    // Build closed polygon: line points + bottom-right + bottom-left
                                     let first_x = x_offset;
                                     let last_x = x_offset + (seg_vals.len().saturating_sub(1)) as f64 * x_step;
                                     let poly = format!("{} {:.2},{:.2} {:.2},{:.2}", line_points, last_x, H, first_x, H);
                                     view! {
-                                        <polygon
-                                            points=poly
-                                            fill=s.color
-                                            opacity="0.12"
-                                        />
+                                        <polygon points=poly fill=s.color opacity="0.12" />
                                     }
                                 })
                             }).collect_view()}
@@ -343,78 +381,118 @@ pub fn LineChart(
                             }).collect_view()}
                             // Threshold reference lines
                             {thresholds.iter().filter_map(|t| {
-                                let span = (ymax - ymin).max(1.0);
                                 let norm = ((t.value - ymin) / span).clamp(0.0, 1.0);
                                 let y = H - norm * H;
-                                if !(0.0..=H).contains(&y) {
-                                    return None;
-                                }
+                                if !(0.0..=H).contains(&y) { return None; }
                                 let color = t.color;
                                 let label = t.label.clone();
                                 Some(view! {
                                     <>
                                         <line
                                             x1="0" y1=y x2="100" y2=y
-                                            stroke=color
-                                            stroke-width="0.4"
+                                            stroke=color stroke-width="0.4"
                                             stroke-dasharray="3 2"
                                             vector-effect="non-scaling-stroke"
                                             opacity="0.7"
                                         />
                                         <text
                                             x="1" y={format!("{:.1}", y - 0.8)}
-                                            fill=color
-                                            font-size="2.2"
+                                            fill=color font-size="2.2"
                                             font-family="var(--font-mono)"
-                                        >
-                                            {label}
-                                        </text>
+                                        >{label}</text>
                                     </>
                                 })
                             }).collect_view()}
-                            // Crosshair line
+
+                            // === Financial Crosshair ===
+                            // Hover column highlight band
+                            {crosshair_x.map(|cx| {
+                                let half = if n > 1 { x_step * 0.4 } else { 2.0 };
+                                view! {
+                                    <rect
+                                        x={cx - half} y="0"
+                                        width={half * 2.0} height="40"
+                                        fill="var(--cc-text-muted)"
+                                        opacity="0.04"
+                                    />
+                                }
+                            })}
+                            // Vertical crosshair line
                             {crosshair_x.map(|cx| view! {
                                 <line
                                     x1=cx y1="0" x2=cx y2="40"
                                     stroke="var(--cc-text-muted)"
-                                    stroke-width="0.3"
-                                    stroke-dasharray="1.5 1.5"
+                                    stroke-width="0.25"
+                                    stroke-dasharray="1.5 1"
                                     vector-effect="non-scaling-stroke"
-                                    style="opacity: 0.6"
+                                    opacity="0.7"
                                 />
                             })}
-                            // Highlight dots
+                            // Horizontal crosshair line (follows primary series)
+                            {crosshair_y.map(|cy| view! {
+                                <line
+                                    x1="0" y1=cy x2="100" y2=cy
+                                    stroke="var(--cc-text-muted)"
+                                    stroke-width="0.2"
+                                    stroke-dasharray="1 1.5"
+                                    vector-effect="non-scaling-stroke"
+                                    opacity="0.5"
+                                />
+                            })}
+
+                            // Highlight dots — larger, with glow ring
                             {hover_idx.map(|idx| {
                                 all_series.iter().filter_map(move |s| {
                                     let v = s.values.get(idx).and_then(|opt| *opt)?;
                                     let cx = if n > 1 { idx as f64 * x_step } else { W / 2.0 };
-                                    let span = (ymax - ymin).max(1.0);
                                     let norm = ((v - ymin) / span).clamp(0.0, 1.0);
                                     let cy = H - norm * H;
                                     let color = s.color;
                                     Some(view! {
-                                        <circle
-                                            cx=cx cy=cy r="1.2"
-                                            fill=color
-                                            stroke="var(--cc-bg-card)"
-                                            stroke-width="0.6"
-                                        />
+                                        <>
+                                            // Glow ring
+                                            <circle
+                                                cx=cx cy=cy r="2.5"
+                                                fill=color opacity="0.15"
+                                            />
+                                            // Solid dot
+                                            <circle
+                                                cx=cx cy=cy r="1.5"
+                                                fill=color
+                                                stroke="var(--cc-bg-card)"
+                                                stroke-width="0.7"
+                                            />
+                                        </>
                                     })
                                 }).collect_view()
                             })}
-                            // Invisible hit area for mouse events (must be on top)
+
+                            // Invisible hit area
                             <rect
                                 x="0" y="0" width="100" height="40"
                                 fill="transparent"
                                 style="cursor: crosshair"
                             />
                         </svg>
-                        // Tooltip overlay (positioned in CSS)
+
+                        // Y-axis value label (appears on hover)
+                        {crosshair_y_value.map(|val| {
+                            let pct = ((val - ymin) / span).clamp(0.0, 1.0);
+                            let top_pct = (1.0 - pct) * 100.0;
+                            view! {
+                                <div
+                                    class="chart-axis-label"
+                                    style=format!("top: {:.1}%", top_pct)
+                                >
+                                    {format_tooltip_value(val)}
+                                </div>
+                            }
+                        })}
+
+                        // Financial tooltip (positioned outside SVG)
                         {tooltip_data.map(|(idx, label, values)| {
-                            // Position: use the crosshair X percentage
                             let pct = if n > 1 { idx as f64 / (n - 1) as f64 * 100.0 } else { 50.0 };
-                            // Flip to left if past 75%
-                            let side = if pct > 75.0 { "right" } else { "left" };
+                            let side = if pct > 70.0 { "right" } else { "left" };
                             let pos_style = if side == "right" {
                                 format!("right: {:.1}%", 100.0 - pct)
                             } else {
@@ -423,23 +501,27 @@ pub fn LineChart(
                             view! {
                                 <div
                                     class="chart-tooltip"
-                                    style=format!("position: absolute; top: 8px; {}; pointer-events: none; z-index: 10", pos_style)
+                                    style=format!("position: absolute; top: 8px; {}", pos_style)
                                 >
-                                    <div class="chart-tooltip-label" style="font-size: 0.6875rem; color: var(--cc-text-muted); margin-bottom: 0.25rem; font-family: var(--font-mono)">
-                                        {label}
-                                    </div>
-                                    {values.into_iter().map(|(name, val, color)| {
+                                    <div class="chart-tooltip-label">{label}</div>
+                                    {values.into_iter().map(|(name, val, color, _raw)| {
                                         view! {
-                                            <div class="chart-tooltip-row" style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; line-height: 1.4">
-                                                <span style=format!("width: 0.5rem; height: 0.5rem; border-radius: 50%; background: {}; flex-shrink: 0", color)></span>
-                                                <span style="color: var(--cc-text-muted)">{name}:</span>
-                                                <span style="font-family: var(--font-mono); font-weight: 600; color: var(--cc-text)">{val}</span>
+                                            <div class="chart-tooltip-row">
+                                                <span class="chart-tooltip-row-name">
+                                                    <span
+                                                        class="chart-tooltip-dot"
+                                                        style=format!("background: {}", color)
+                                                    ></span>
+                                                    <span>{name}</span>
+                                                </span>
+                                                <span class="chart-tooltip-value">{val}</span>
                                             </div>
                                         }
                                     }).collect_view()}
                                 </div>
                             }
                         })}
+
                         <div class="line-chart-y-hint text-xs text-theme-muted font-mono">
                             {format!("{:.0}\u{2013}{:.0} {}", ymin, ymax, y_unit)}
                         </div>
@@ -449,9 +531,7 @@ pub fn LineChart(
                             let tick_count = labels.len();
                             labels.into_iter().enumerate().filter_map(move |(i, l)| {
                             if tick_count <= 8 || i == 0 || i == tick_count - 1 || i % (tick_count / 6).max(1) == 0 {
-                                Some(view! {
-                                    <span class="line-chart-x-tick">{l}</span>
-                                })
+                                Some(view! { <span class="line-chart-x-tick">{l}</span> })
                             } else {
                                 None
                             }
