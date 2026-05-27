@@ -132,6 +132,19 @@ impl PgStore {
         Ok(store)
     }
 
+    /// Return the row count for a given table (used by metrics gauges).
+    /// Table name is validated against a whitelist to prevent SQL injection.
+    pub async fn table_row_count(&self, table: &str) -> Result<i64> {
+        const ALLOWED: &[&str] = &["trace_logs", "request_logs", "audit_log"];
+        if !ALLOWED.contains(&table) {
+            anyhow::bail!("invalid table name: {}", table);
+        }
+        let client = self.pool.get().await?;
+        let q = format!("SELECT count(*) FROM {}", table);
+        let row = client.query_one(q.as_str(), &[]).await?;
+        Ok(row.get(0))
+    }
+
     // -----------------------------------------------------------------------
     // Schema migrations
     // -----------------------------------------------------------------------
@@ -1209,6 +1222,7 @@ impl PgStore {
         }
 
         tx.commit().await?;
+        crab_metrics::global_metrics().inc_admin_log_write("trace");
         Ok(())
     }
 
@@ -1323,6 +1337,173 @@ impl PgStore {
             });
         }
         Ok(out)
+    }
+
+    /// Paginated trace log query with cursor support.
+    /// Returns (entries, next_cursor) where next_cursor is `None` if no more pages.
+    pub async fn query_trace_logs_paginated(
+        &self,
+        cursor: Option<&str>,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        consumer: Option<&str>,
+        model: Option<&str>,
+        cache_tier: Option<&str>,
+        request_hash: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<TraceLogEntry>, Option<String>)> {
+        // Parse cursor: "timestamp_ms:request_hash"
+        let (cursor_ts, cursor_hash) = if let Some(c) = cursor {
+            let parts: Vec<&str> = c.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let ts: Option<u64> = parts[0].parse().ok();
+                if ts.is_none() {
+                    tracing::warn!(cursor = %c, "malformed cursor timestamp, ignoring cursor");
+                }
+                (ts, Some(parts[1].to_string()))
+            } else {
+                tracing::warn!(cursor = %c, "malformed cursor format, ignoring cursor");
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let client = self.pool.get().await?;
+        let mut sql = String::from(
+            "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
+                    model, prompt_tokens, latency_ms, cache_hit,
+                    conversation_id, consumer, domain, project_id,
+                    upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+                    cache_tier, composition,
+                    request_messages_snapshot, response_preview,
+                    retired_prefix_messages, reasoning_strategy,
+                    prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+                    upstream_model, client_body_user_id, upstream_user_id,
+                    user_id_audit, upstream_key_id
+             FROM trace_logs WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>> = Vec::new();
+        let mut idx = 1;
+
+        // Cursor-based keyset pagination: (timestamp_ms, request_hash) < cursor
+        if let Some(ts) = cursor_ts {
+            if let Some(ref rh) = cursor_hash {
+                let next_idx = idx + 1;
+                sql.push_str(&format!(
+                    " AND (timestamp_ms < ${idx} OR (timestamp_ms = ${idx} AND request_hash < ${next_idx}))",
+                ));
+                params.push(Box::new(to_pg_bigint(ts)));
+                params.push(Box::new(rh.clone()));
+                idx += 2;
+            }
+        }
+
+        if let Some(from) = from_ms {
+            sql.push_str(&format!(" AND timestamp_ms >= ${idx}"));
+            params.push(Box::new(to_pg_bigint(from)));
+            idx += 1;
+        }
+        if let Some(to) = to_ms {
+            sql.push_str(&format!(" AND timestamp_ms <= ${idx}"));
+            params.push(Box::new(to_pg_bigint(to)));
+            idx += 1;
+        }
+        if let Some(c) = consumer {
+            sql.push_str(&format!(" AND consumer = ${idx}"));
+            params.push(Box::new(c.to_string()));
+            idx += 1;
+        }
+        if let Some(m) = model {
+            sql.push_str(&format!(" AND model = ${idx}"));
+            params.push(Box::new(m.to_string()));
+            idx += 1;
+        }
+        if let Some(ct) = cache_tier {
+            sql.push_str(&format!(" AND cache_tier = ${idx}"));
+            params.push(Box::new(ct.to_string()));
+            idx += 1;
+        }
+        if let Some(rh) = request_hash {
+            sql.push_str(&format!(" AND request_hash = ${idx}"));
+            params.push(Box::new(rh.to_string()));
+            idx += 1;
+        }
+
+        sql.push_str(" ORDER BY timestamp_ms DESC, request_hash DESC");
+        // Fetch limit+1 to detect has_more.
+        sql.push_str(&format!(" LIMIT ${idx}"));
+        params.push(Box::new((limit + 1) as i64));
+
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|p| {
+                let r: &(dyn tokio_postgres::types::ToSql + Sync) = p.as_ref();
+                r
+            }).collect();
+        let rows = client.query(&sql, &param_refs[..]).await?;
+
+        let has_more = rows.len() > limit;
+
+        // Build cursor from the (limit+1)-th row BEFORE consuming rows.
+        let next_cursor = if has_more {
+            let tail = &rows[limit];
+            Some(format!(
+                "{}:{}",
+                from_pg_bigint(tail.get(1)),
+                tail.get::<_, String>(0),
+            ))
+        } else {
+            None
+        };
+
+        let entries: Vec<TraceLogEntry> = rows
+            .into_iter()
+            .take(limit)
+            .map(|row| {
+                let composition_raw: Option<String> = row.get(17);
+                let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
+                TraceLogEntry {
+                    request_hash: row.get(0),
+                    timestamp_ms: from_pg_bigint(row.get(1)),
+                    content_length: row.get::<_, i32>(2) as usize,
+                    semantic_cluster: row.get::<_, i32>(3) as u32,
+                    model: row.get(4),
+                    prompt_tokens: row.get::<_, i32>(5) as usize,
+                    latency_ms: row.get(6),
+                    cache_hit: row.get(7),
+                    conversation_id: row.get(8),
+                    consumer: row.get(9),
+                    domain: row.get(10),
+                    project_id: row.get(11),
+                    upstream_latency_ms: row.get(12),
+                    ttft_ms: row.get(13),
+                    input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
+                    output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
+                    cache_tier: row.get(16),
+                    composition,
+                    request_messages_snapshot: row.get(18),
+                    response_preview: row.get(19),
+                    retired_prefix_messages: row.get::<_, Option<i32>>(20).map(|v| v as usize),
+                    reasoning_strategy: row.get(21),
+                    prompt_cache_hit_ratio: row.get(22),
+                    upstream_profile_id: row.get(23),
+                    pipeline: row.get(24),
+                    upstream_model: row.get(25),
+                    client_body_user_id: row.get(26),
+                    upstream_user_id: row.get(27),
+                    user_id_audit: row.get(28),
+                    upstream_key_id: row.get(29),
+                    affinity_key: None,
+                    affinity_kind: None,
+                    backend_name: None,
+                    session_fingerprint: None,
+                    is_coalesced: false,
+                    client_key_id: None,
+                }
+            })
+            .collect();
+
+        Ok((entries, next_cursor))
     }
 
     /// Find a single trace log entry by composite key (request_hash, timestamp_ms).
@@ -1498,6 +1679,7 @@ impl PgStore {
         }
 
         tx.commit().await?;
+        crab_metrics::global_metrics().inc_admin_log_write("request");
         Ok(())
     }
 
@@ -1807,6 +1989,7 @@ impl PgStore {
                 ],
             )
             .await?;
+        crab_metrics::global_metrics().inc_admin_log_write("audit");
         Ok(())
     }
 

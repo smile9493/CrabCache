@@ -2095,6 +2095,17 @@ async fn get_logs(
         });
     }
 
+    // ── PG primary path ─────────────────────────────────────────────
+    // When PG is available, use it as the primary query source for all
+    // filtered/cursor queries, with JSONL as the fallback.
+    let pg_ref = state.pg_store.read().clone();
+    if let Some(ref pg) = pg_ref {
+        if let Some(result) = try_query_pg_logs(pg, &query, limit).await {
+            return Json(result);
+        }
+    }
+
+    // ── JSONL fallback path ─────────────────────────────────────────
     // Use archive-aware loading with pagination.
     let opts = crate::trace_log::TraceLoadOpts {
         from_ms: query.from_ms,
@@ -2171,6 +2182,73 @@ async fn get_logs(
         .collect();
 
     Json(crate::types::LogsPageResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_in_window: 0,
+    })
+}
+
+/// Try to query logs from PG. Returns `Some(LogsPageResponse)` on success, `None` to fall back to JSONL.
+async fn try_query_pg_logs(
+    pg: &crate::pg::PgStore,
+    query: &crate::types::LogsQuery,
+    limit: usize,
+) -> Option<crate::types::LogsPageResponse> {
+    let (rows, next_cursor) = pg
+        .query_trace_logs_paginated(
+            query.cursor.as_deref(),
+            query.from_ms,
+            query.to_ms,
+            query.consumer.as_deref(),
+            query.model.as_deref(),
+            query.cache_tier.as_deref(),
+            query.request_hash.as_deref(),
+            limit + 1,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "PG query failed, falling back to JSONL");
+            e
+        })
+        .ok()?;
+
+    let has_more = rows.len() > limit;
+    let items: Vec<RequestLog> = rows
+        .into_iter()
+        .take(limit)
+        .map(|e| {
+            let input = e.input_tokens.unwrap_or(0);
+            let output = e.output_tokens.unwrap_or(0);
+            RequestLog {
+                id: e.request_hash.clone(),
+                timestamp: crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64),
+                model: e.model.clone(),
+                consumer: e.consumer.clone().unwrap_or_else(|| "—".to_string()),
+                latency_ms: e.latency_ms as u64,
+                total_tokens: input + output,
+                cache_status: e.cache_tier.clone().unwrap_or_default(),
+                request_payload: e.request_messages_snapshot.clone().unwrap_or_default(),
+                response_preview: e
+                    .response_preview
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect(),
+                input_tokens: Some(input),
+                output_tokens: Some(output),
+                ttft_ms: e.ttft_ms,
+                content_length: Some(e.content_length),
+                request_hash: Some(e.request_hash),
+                project_id: e.project_id,
+                upstream_user_id: None,
+                user_id_audit: None,
+                upstream_key_id: None,
+            }
+        })
+        .collect();
+
+    Some(crate::types::LogsPageResponse {
         items,
         next_cursor,
         has_more,

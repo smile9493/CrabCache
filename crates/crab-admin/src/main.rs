@@ -8,6 +8,7 @@ mod metrics_history;
 mod metrics_store;
 mod network;
 mod openresty;
+mod pg_sync;
 mod overview;
 mod persist;
 mod pg;
@@ -334,6 +335,13 @@ async fn main() -> anyhow::Result<()> {
         let bg = Arc::clone(&state);
         tokio::spawn(crate::log_management::log_retention_loop(bg));
         info!("Log retention enforcement task started");
+    }
+
+    // Spawn PG log sync task (runs every 10 seconds).
+    {
+        let bg = Arc::clone(&state);
+        crate::pg_sync::spawn_pg_sync(bg);
+        info!("PG log sync task started");
     }
 
     match state.gateway.list_keys().await {

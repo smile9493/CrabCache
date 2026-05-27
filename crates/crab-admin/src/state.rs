@@ -934,5 +934,8 @@ fn load_retention_policy() -> RetentionPolicy {
         max_disk_mb,
         max_trace_files,
         max_capture_body_files,
+        pg_retention_days: 7,
+        compress_before_delete: false,
+        compressed_retention_days: 30,
     }
 }

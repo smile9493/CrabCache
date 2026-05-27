@@ -1,7 +1,10 @@
 use crab_admin_types::{
     ClearLogsRequest, ClearLogsResponse, ClearTarget, LogDiskUsage, RetentionPolicy,
 };
-use std::fs;
+use std::io::{BufReader, BufWriter, Write};
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -144,17 +147,17 @@ pub fn clear_logs(request: &ClearLogsRequest) -> Result<ClearLogsResponse, Strin
 
     match request.target {
         ClearTarget::TraceRotated => {
-            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes);
+            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
         }
         ClearTarget::DebugRotated => {
-            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes);
+            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
         }
         ClearTarget::Capture => {
             delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
         }
         ClearTarget::All => {
-            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes);
-            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes);
+            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
+            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
             delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
         }
     }
@@ -206,11 +209,77 @@ pub fn truncate_active_logs(
 }
 
 /// Delete rotated files for a given base path.
+/// Compress a file to .gz and remove the original. Returns true on success.
+fn compress_and_remove(path: &Path) -> bool {
+    let gz_path = PathBuf::from(format!("{}.gz", path.display()));
+    let Ok(src_file) = File::open(path) else {
+        return false;
+    };
+    let Ok(dst_file) = File::create(&gz_path) else {
+        return false;
+    };
+    let mut reader = BufReader::new(src_file);
+    let encoder = GzEncoder::new(BufWriter::new(dst_file), Compression::default());
+    let mut writer = BufWriter::new(encoder);
+    if std::io::copy(&mut reader, &mut writer).is_err() {
+        let _ = fs::remove_file(&gz_path);
+        return false;
+    }
+    if writer.flush().is_err() {
+        let _ = fs::remove_file(&gz_path);
+        return false;
+    }
+    // The encoder is flushed when the BufWriter is dropped, but we need to
+    // finalize the gzip stream explicitly.
+    drop(writer);
+    // Now remove the original.
+    fs::remove_file(path).is_ok()
+}
+
+/// Remove compressed (.gz) files older than `cutoff`.
+fn cleanup_compressed_files(
+    base_path: &str,
+    cutoff: Option<SystemTime>,
+    deleted: &mut Vec<String>,
+    freed: &mut u64,
+) {
+    let path = Path::new(base_path);
+    let Some(parent) = path.parent() else { return };
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else { return };
+
+    let Ok(entries) = fs::read_dir(parent) else { return };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Match: {file_name}.{timestamp}.gz
+        if !(name_str.starts_with(file_name) && name_str.ends_with(".gz") && name_str != file_name) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+
+        if let Some(cutoff_time) = cutoff
+            && let Ok(modified) = meta.modified()
+            && modified > cutoff_time
+        {
+            continue;
+        }
+
+        let size = meta.len();
+        let path_str = entry.path().to_string_lossy().to_string();
+        if fs::remove_file(entry.path()).is_ok() {
+            deleted.push(path_str);
+            *freed += size;
+        }
+    }
+}
+
 fn delete_rotated_files(
     base_path: &str,
     cutoff: Option<SystemTime>,
     deleted: &mut Vec<String>,
     freed: &mut u64,
+    compress: bool,
 ) {
     let path = Path::new(base_path);
     let Some(parent) = path.parent() else {
@@ -246,7 +315,12 @@ fn delete_rotated_files(
 
         let size = meta.len();
         let path_str = entry.path().to_string_lossy().to_string();
-        if fs::remove_file(entry.path()).is_ok() {
+        if compress {
+            if compress_and_remove(&entry.path()) {
+                deleted.push(path_str);
+                *freed += size;
+            }
+        } else if fs::remove_file(entry.path()).is_ok() {
             deleted.push(path_str);
             *freed += size;
         }
@@ -331,13 +405,21 @@ pub fn enforce_retention(policy: &RetentionPolicy) -> Result<ClearLogsResponse, 
     let mut freed_bytes: u64 = 0;
 
     // 1. Age-based cleanup
+    let compress = policy.compress_before_delete;
     if policy.max_age_hours > 0 {
         let cutoff = SystemTime::now() - Duration::from_secs(policy.max_age_hours as u64 * 3600);
         let cutoff = Some(cutoff);
 
-        delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes);
-        delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes);
+        delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, compress);
+        delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, compress);
         delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
+    }
+
+    // 1b. Compressed file cleanup (if compressing)
+    if compress && policy.compressed_retention_days > 0 {
+        let cutoff = SystemTime::now() - Duration::from_secs(policy.compressed_retention_days * 86400);
+        cleanup_compressed_files(&trace_base, Some(cutoff), &mut deleted_files, &mut freed_bytes);
+        cleanup_compressed_files(&debug_base, Some(cutoff), &mut deleted_files, &mut freed_bytes);
     }
 
     // 2. File-count-based cleanup for trace files
@@ -581,14 +663,15 @@ pub async fn log_retention_loop(state: Arc<AppState>) {
         interval.tick().await;
         let policy = state.log_retention.read().clone();
 
-        // PG trace_logs retention (default 7 days).
+        // PG trace_logs/request_logs retention.
         {
             let pg_ref = state.pg_store.read().clone();
             if let Some(ref pg) = pg_ref {
+                // Priority: env var override > policy.pg_retention_days
                 let retention_days: u64 = std::env::var("CRADMIN_TRACE_RETENTION_DAYS")
                     .ok()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(7);
+                    .unwrap_or(policy.pg_retention_days);
                 if retention_days > 0 {
                     let cutoff_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -640,6 +723,25 @@ pub async fn log_retention_loop(state: Arc<AppState>) {
             Ok(Err(e)) => warn!(error = %e, "Log retention enforcement failed"),
             Err(e) => warn!(error = %e, "Log retention task panicked"),
             _ => {}
+        }
+
+        // Update Prometheus gauges for log subsystem observability.
+        {
+            let m = crab_metrics::global_metrics();
+            let usage = compute_disk_usage();
+            m.set_admin_log_disk_bytes("trace", usage.trace_bytes as i64);
+            m.set_admin_log_disk_bytes("debug", usage.debug_trace_bytes as i64);
+            m.set_admin_log_disk_bytes("capture_index", usage.capture_index_bytes as i64);
+            m.set_admin_log_disk_bytes("capture_body", usage.capture_body_bytes as i64);
+
+            let pg_ref = state.pg_store.read().clone();
+            if let Some(ref pg) = pg_ref {
+                for table in &["trace_logs", "request_logs", "audit_log"] {
+                    if let Ok(count) = pg.table_row_count(table).await {
+                        m.set_admin_log_pg_rows(table, count);
+                    }
+                }
+            }
         }
     }
 }

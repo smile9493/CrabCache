@@ -38,6 +38,7 @@ ring = "0.17"
 crab-admin-types.workspace = true
 crab-control.workspace = true
 crab-composition.workspace = true
+crab-metrics.workspace = true
 rusqlite.workspace = true
 crab-capture.workspace = true
 crab-proxy.workspace = true
@@ -48,5 +49,6 @@ hex.workspace = true
 bollard = "0.17"
 futures = "0.3"
 async-stream = "0.3"
+flate2 = "1"
 libc = "0.2"
 subtle = { workspace = true }

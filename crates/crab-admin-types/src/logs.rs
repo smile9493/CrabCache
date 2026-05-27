@@ -87,6 +87,15 @@ pub struct RetentionPolicy {
     pub max_trace_files: usize,
     /// Max number of capture body files to keep.
     pub max_capture_body_files: usize,
+    /// PG trace_logs/request_logs retention in days. 0 = disabled.
+    #[serde(default)]
+    pub pg_retention_days: u64,
+    /// Compress rotated JSONL files to .gz before deletion. Default: false.
+    #[serde(default)]
+    pub compress_before_delete: bool,
+    /// Retention days for compressed .gz files. 0 = disabled.
+    #[serde(default)]
+    pub compressed_retention_days: u64,
 }
 
 impl Default for RetentionPolicy {
@@ -96,6 +105,9 @@ impl Default for RetentionPolicy {
             max_disk_mb: 500,
             max_trace_files: 20,
             max_capture_body_files: 5000,
+            pg_retention_days: 7,
+            compress_before_delete: false,
+            compressed_retention_days: 30,
         }
     }
 }

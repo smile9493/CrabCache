@@ -898,6 +898,69 @@ fn main() -> Result<()> {
         "CrabCache gateway starting"
     );
 
+    // ── Backend connection pre-warm ───────────────────────────────
+    // After the server starts, send lightweight GET /v1/models to each
+    // upstream backend to trigger Pingora's internal connection pool
+    // establishment (TCP + TLS handshake). This is an application-layer
+    // warmup — Pingora's lazy-connect model means the first real request
+    // to a backend would otherwise pay the full connect latency.
+    if config.features.connection_prewarm {
+        let profiles = runtime.upstream_profiles.read().clone();
+        let api_key = config.api_key.as_authorization().to_string();
+        let listen_addr = config.listen_addr.clone();
+        tokio::spawn(async move {
+            // Wait for the proxy listener to be ready.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+
+            for (profile_id, profile) in &profiles {
+                for backend in profile.router.backends() {
+                    let use_tls = !backend.tls_sni.is_empty()
+                        && backend.tls_sni != backend.addr.to_string();
+                    let scheme = if use_tls { "https" } else { "http" };
+                    let host = if use_tls {
+                        &backend.tls_sni
+                    } else {
+                        &backend.addr.to_string()
+                    };
+                    let url = format!("{}://{}/v1/models", scheme, host);
+                    let start = std::time::Instant::now();
+                    match client
+                        .get(&url)
+                        .header("Authorization", format!("Bearer {}", api_key))
+                        .header("Host", host)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            let elapsed = start.elapsed();
+                            info!(
+                                backend = %backend.name,
+                                profile = %profile_id,
+                                status = resp.status().as_u16(),
+                                elapsed_ms = elapsed.as_millis() as u64,
+                                "Backend pre-warm succeeded"
+                            );
+                        }
+                        Err(e) => {
+                            debug!(
+                                backend = %backend.name,
+                                profile = %profile_id,
+                                error = %e,
+                                "Backend pre-warm failed (non-fatal)"
+                            );
+                        }
+                    }
+                }
+            }
+            info!("Backend connection pre-warm completed");
+        });
+    }
+
     server.run_forever();
 }
 
