@@ -1323,6 +1323,93 @@ body {
 .waterfall-chart { padding: 0.25rem 0; }
 
 /* ==============================================================
+   HEALTH STRIP (compact single-line status bar)
+   ============================================================== */
+
+.health-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.8125rem;
+}
+
+/* ==============================================================
+   LATENCY ROW (horizontal bar chart for L0/L1/L2/upstream)
+   ============================================================== */
+
+.latency-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.latency-label {
+  width: 3rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary, var(--cc-text-muted));
+  flex-shrink: 0;
+}
+
+.latency-value {
+  width: 5rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-text);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ==============================================================
+   DONUT LEGEND (horizontal legend below donut chart)
+   ============================================================== */
+
+.donut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--cc-text-muted);
+  margin-top: 0.75rem;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+/* ==============================================================
+   IMPACT HINT (chart suggestion / recommendation)
+   ============================================================== */
+
+.impact-hint {
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--cc-accent);
+  background: var(--cc-accent-muted);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.75rem;
+}
+
+/* ==============================================================
+   METRIC CARD TREND
+   ============================================================== */
+
+.metric-card-trend {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.trend-up   { color: var(--cc-success); }
+.trend-down { color: var(--cc-error); }
+.trend-neutral { color: var(--cc-text-muted); }
+
+/* ==============================================================
    RESPONSIVE
    ============================================================== */
 

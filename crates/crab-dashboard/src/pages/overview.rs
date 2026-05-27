@@ -509,18 +509,17 @@ fn OverviewContent(
             </div>
 
             // === STATUS TAB (index 0) — desktop only ===
+            // Layout mirrors the demo page:
+            //   HealthStrip → Bento (with donut) → Latency → Trace → Ops
             <div class="desktop-only">
             {move || if active_tab.get() == 0 {
                 view! {
-                    <div class="space-y-6">
-                        <MetricsLegend />
+                    <div class="space-y-4">
                         {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
-                        {move || metrics_memo.get().map(|m| view! {
-                            <HistoryMetaHint metrics=m.clone() />
-                        })}
                         {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
-                            <MetricsBento metrics=m.clone() health=health_memo.get() suggestions=s.clone() />
+                            <MetricsBento metrics=m.clone() health=health_memo.get() _suggestions=s.clone() />
                         })}
+                        {move || metrics_memo.get().map(|m| view! { <LatencySection metrics=m.clone() /> })}
                         {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
                             <TraceCompareBanner trace=tr metrics=m.clone() />
                         })}
@@ -595,12 +594,17 @@ fn ChartSuggestions(suggestions: Vec<OverviewSuggestion>, target: &'static str) 
 fn MetricsLegend() -> impl IntoView {
     let t = use_translations();
     view! {
-        <div class="glass-card text-xs text-theme-muted space-y-1">
-            <p>{t.overview_legend_l0_l2()}</p>
-            <p>{t.overview_legend_l3()}</p>
-            <p>{t.overview_legend_5m()}</p>
-            <p>{t.overview_legend_cumulative()}</p>
-        </div>
+        <details class="glass-card text-xs text-theme-muted">
+            <summary class="cursor-pointer select-none font-medium text-theme-secondary">
+                "📊 " {t.overview_tab_status()} " — " "指标说明"
+            </summary>
+            <div class="space-y-1 mt-2">
+                <p>{t.overview_legend_l0_l2()}</p>
+                <p>{t.overview_legend_l3()}</p>
+                <p>{t.overview_legend_5m()}</p>
+                <p>{t.overview_legend_cumulative()}</p>
+            </div>
+        </details>
     }
 }
 
@@ -657,16 +661,12 @@ fn HistoryMetaHint(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let meta = metrics.history_meta.clone();
     let insufficient = metrics.metrics_sample_insufficient;
-    let show = insufficient || meta.sample_count < 3;
+    let show_hint = !insufficient && meta.sample_count < 3;
 
     view! {
-        {show.then(|| view! {
-            <p class="text-xs text-warning">
-                {if insufficient {
-                    t.overview_sample_insufficient().to_string()
-                } else {
-                    t.overview_history_meta(meta.sample_count, meta.oldest_sample_at_secs)
-                }}
+        {show_hint.then(|| view! {
+            <p class="text-xs text-theme-muted mt-2">
+                {t.overview_history_meta(meta.sample_count, meta.oldest_sample_at_secs)}
             </p>
         })}
         {meta.gateway_counter_reset.then(|| view! {
@@ -841,7 +841,7 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
 fn MetricsBento(
     metrics: MetricsSnapshot,
     health: Option<GatewayHealth>,
-    suggestions: Vec<OverviewSuggestion>,
+    _suggestions: Vec<OverviewSuggestion>,
 ) -> impl IntoView {
     let t = use_translations();
     let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
@@ -876,21 +876,19 @@ fn MetricsBento(
                     <div class="flex items-start justify-between mb-4">
                         <div>
                             <div class="metric-card-label">{t.overview_qps_5m()}</div>
-                            <div class="flex items-baseline gap-2">
-                                <div class="metric-card-value">
-                                    {format!("{:.2}", metrics.qps_5m)}
-                                </div>
+                            <div class="metric-card-value">
+                                {format!("{:.2}", metrics.qps_5m)}
+                            </div>
+                            <div class="text-xs text-theme-muted mt-1">
+                                {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
                                 {move || {
                                     if qps_trend.abs() > 0.1 {
-                                        let cls = if qps_trend > 0.0 { "metric-card-trend trend-up" } else { "metric-card-trend trend-down" };
+                                        let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
                                         view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }.into_any()
                                     } else {
                                         ().into_any()
                                     }
                                 }}
-                            </div>
-                            <div class="text-xs text-theme-muted mt-1">
-                                {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
                             </div>
                         </div>
                         <div class="text-3xl opacity-30">"⚡"</div>
@@ -898,25 +896,23 @@ fn MetricsBento(
                     <div class="grid grid-cols-2 gap-4 mt-auto">
                         <div>
                             <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate_5m()}</div>
-                            <div class="flex items-baseline gap-1.5">
-                                <div class="text-lg font-mono tabular-nums text-accent font-semibold">
-                                    {if insufficient {
-                                        "—".to_string()
-                                    } else {
-                                        format!("{hit_rate_5m:.1}%")
-                                    }}
-                                </div>
+                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
+                                {if insufficient {
+                                    "—".to_string()
+                                } else {
+                                    format!("{hit_rate_5m:.1}%")
+                                }}
+                            </div>
+                            <div class="text-xs text-theme-muted mt-0.5">
+                                {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
                                 {move || {
                                     if !insufficient && hit_rate_trend.abs() > 0.01 {
-                                        let cls = if hit_rate_trend > 0.0 { "metric-card-trend trend-up" } else { "metric-card-trend trend-down" };
+                                        let cls = if hit_rate_trend > 0.0 { "ml-1 trend-up" } else { "ml-1 trend-down" };
                                         view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }.into_any()
                                     } else {
                                         ().into_any()
                                     }
                                 }}
-                            </div>
-                            <div class="text-xs text-theme-muted mt-0.5">
-                                {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
                             </div>
                         </div>
                         <div>
@@ -936,7 +932,12 @@ fn MetricsBento(
                     {insufficient.then(|| view! {
                         <p class="text-xs text-warning mt-3">{t.overview_sample_insufficient()}</p>
                     })}
-                    <ChartSuggestions suggestions=suggestions.clone() target="hit_rate" />
+                    {(!insufficient && metrics.history_meta.sample_count < 3).then(|| view! {
+                        <p class="text-xs text-theme-muted mt-2">
+                            {t.overview_history_meta(metrics.history_meta.sample_count, metrics.history_meta.oldest_sample_at_secs)}
+                        </p>
+                    })}
+                    // Suggestions moved to analytics tab to reduce visual noise
                 </div>
             </div>
             <div class="bento-cell">
@@ -998,13 +999,13 @@ fn MetricsBento(
                         <div class="flex justify-between items-baseline">
                             <span class="text-xs text-theme-muted">{t.overview_token_hit()}</span>
                             <span class="text-lg font-mono tabular-nums text-accent">
-                                {format!("{}", metrics.cache_hit_tokens)}
+                                {format_number(metrics.cache_hit_tokens)}
                             </span>
                         </div>
                         <div class="flex justify-between items-baseline">
                             <span class="text-xs text-theme-muted">{t.overview_token_miss()}</span>
                             <span class="text-lg font-mono tabular-nums text-theme">
-                                {format!("{}", metrics.cache_miss_tokens)}
+                                {format_number(metrics.cache_miss_tokens)}
                             </span>
                         </div>
                     </div>
@@ -1057,6 +1058,49 @@ fn MetricsBento(
                     </div>
                 })
             }}
+            // Donut chart: L0-L2 cache tier distribution (mirrors demo page)
+            <div class="bento-cell-wide">
+                {{
+                    let d = metrics.tier_deltas_5m;
+                    let total = (d.l0 + d.l1 + d.l2 + d.miss).max(1) as f64;
+                    let hit_rate = (d.l0 + d.l1 + d.l2) as f64 / total * 100.0;
+                    let segments = vec![
+                        crate::components::donut_chart::DonutSegment {
+                            label: "L0".to_string(),
+                            value: d.l0 as f64,
+                            color: "var(--cc-accent)",
+                        },
+                        crate::components::donut_chart::DonutSegment {
+                            label: "L1".to_string(),
+                            value: d.l1 as f64,
+                            color: "var(--cc-info)",
+                        },
+                        crate::components::donut_chart::DonutSegment {
+                            label: "L2".to_string(),
+                            value: d.l2 as f64,
+                            color: "var(--cc-warning)",
+                        },
+                        crate::components::donut_chart::DonutSegment {
+                            label: t.overview_miss_label().to_string(),
+                            value: d.miss as f64,
+                            color: "var(--cc-error-muted)",
+                        },
+                    ];
+                    view! {
+                        <div class="glass-card h-full">
+                            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_gateway_cache_title()}</h3>
+                            <p class="text-xs text-theme-muted mb-4">{t.overview_tier_5m_hint()}</p>
+                            <div class="flex justify-center">
+                                <crate::components::donut_chart::DonutChart
+                                    segments=segments
+                                    center_label=format!("{:.1}%", hit_rate)
+                                    size=160
+                                />
+                            </div>
+                        </div>
+                    }
+                }}
+            </div>
         </div>
     }
 }
