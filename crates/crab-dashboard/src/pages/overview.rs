@@ -482,11 +482,8 @@ fn OverviewContent(
         })
     });
 
-    let active_tab = RwSignal::new(0usize);
-    init_tab_from_query(active_tab, &[("status", 0), ("analytics", 1)]);
-
     view! {
-        <div class="space-y-6">
+        <div class="space-y-4">
             {move || show_cta.get().then(|| view! {
                 <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
                     <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
@@ -496,78 +493,223 @@ fn OverviewContent(
                 </div>
             })}
 
-            // Mobile-only: condensed KPI summary (always visible on small screens)
-            <div class="mobile-only">
-                {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
-                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| {
-                    let qps_val = Signal::derive(move || format!("{:.1}", m.qps_5m));
-                    let hit_val = Signal::derive(move || format!("{:.1}%", m.hit_rate_5m * 100.0));
-                    let cost_val = Signal::derive(move || format!("${:.4}", ops.cost_saved_usd_5m));
+            // ── Hero strip: 6 tiles ────────────────────────────────
+            {move || {
+                let h = health_memo.get();
+                let m = metrics_memo.get();
+                let o = ops_memo.get();
+                match (h, m, o) {
+                    (Some(h), Some(m), Some(o)) => view! {
+                        <OverviewHeroStrip health=h metrics=m ops=o />
+                    }.into_any(),
+                    _ => ().into_any(),
+                }
+            }}
+
+            // ── Main chart (always visible) ────────────────────────
+            {move || suggestions_memo.get().map(|s| view! {
+                <TimeSeriesChart
+                    points=ts_points
+                    selected_view=ts_window
+                    suggestions=s
+                />
+            })}
+
+            // ── Collapsed deep-dive modules ────────────────────────
+            <super::overview_analytics::InfraOverviewModule />
+
+            <OverviewCollapsible
+                title=t.overview_module_cache_cost()
+                icon=OverviewModuleIcon::Cache
+            >
+                {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
+                    <TraceCompareBanner trace=tr metrics=m.clone() />
+                })}
+                {move || prefix_memo.get().map(|pref| view! {
+                    <PrefixCacheCard prefix=pref.clone() />
+                })}
+                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                    <div class="bento-grid-2">
+                        <CacheHitSection metrics=m.clone() />
+                        <CostSavingsSection ops=ops.clone() />
+                    </div>
+                })}
+            </OverviewCollapsible>
+
+            <OverviewCollapsible
+                title=t.overview_module_consumer_domain()
+                icon=OverviewModuleIcon::Users
+            >
+                {move || metrics_memo.get().map(|m| view! {
+                    <ConsumerHitTable metrics=m.clone() />
+                })}
+                {move || metrics_memo.get().map(|m| {
+                    let cb = Callback::new(move |domain: String| {
+                        selected_domain.set(Some(domain));
+                    });
                     view! {
-                        <div class="mobile-kpi-grid">
-                            <MetricCard title=t.overview_hit_rate() value=hit_val subtitle="5m window" />
-                            <MetricCard title=Translations::overview_qps() value=qps_val subtitle="5m avg" />
-                            <MetricCard title=t.overview_cost_saved() value=cost_val subtitle="5m window" />
-                        </div>
+                        <super::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
                     }
                 })}
-            </div>
+                <super::domains::DomainDetailDrawer domain=selected_domain />
+            </OverviewCollapsible>
 
-            <super::overview_analytics::InfraOverviewSection />
+            <OverviewCollapsible
+                title=t.overview_module_latency_ops()
+                icon=OverviewModuleIcon::Latency
+            >
+                {move || metrics_memo.get().map(|m| view! { <LatencySection metrics=m.clone() /> })}
+                {move || ops_memo.get().map(|ops| view! { <OpsMetricsRow ops=ops.clone() /> })}
+            </OverviewCollapsible>
 
-            // Desktop: full tabbed view
-            <div class="desktop-only">
-            <TabBar
-                tabs=vec![t.overview_tab_status().to_string(), t.overview_tab_analytics().to_string()]
-                active=active_tab
-            />
-            </div>
-
-            // === STATUS TAB (index 0) — desktop only ===
-            // Layout mirrors the demo page:
-            //   HealthStrip → Bento (with donut) → Latency → Trace → Ops
-            <div class="desktop-only">
-            {move || if active_tab.get() == 0 {
-                view! {
-                    <div class="space-y-4">
-                        {move || health_memo.get().zip(metrics_memo.get()).map(|(h, m)| view! { <OverviewHealthStrip health=h error_rate=m.error_rate_5m /> })}
-                        {move || metrics_memo.get().zip(suggestions_memo.get()).map(|(m, s)| view! {
-                            <MetricsBento metrics=m.clone() health=health_memo.get() _suggestions=s.clone() />
-                        })}
-                        {move || metrics_memo.get().map(|m| view! { <LatencySection metrics=m.clone() /> })}
-                        {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
-                            <TraceCompareBanner trace=tr metrics=m.clone() />
-                        })}
-                        {move || ops_memo.get().map(|ops| view! {
-                            <OpsMetricsRow ops=ops.clone() />
-                        })}
+            <OverviewCollapsible
+                title=t.overview_module_advanced()
+                icon=OverviewModuleIcon::Advanced
+            >
+                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
+                    <div class="bento-grid-2">
+                        <CoalescingCard metrics=m.clone() ops=ops.clone() />
+                        <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
                     </div>
-                }.into_any()
-            } else {
-                ().into_any()
-            }}
-
-            // === ANALYTICS TAB (index 1) ===
-            {move || if active_tab.get() == 1 {
-                view! {
-                    <super::overview_analytics::OverviewAnalytics
-                        suggestions_memo
-                        ts_points
-                        ts_window
-                        prefix_memo
-                        metrics_memo
-                        ops_memo
-                        semantic_memo
-                        selected_domain
-                    />
-                }.into_any()
-            } else {
-                ().into_any()
-            }}
-            </div> // end desktop-only
+                })}
+                {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
+                    <TokenStats metrics=m.clone() prefix=pref.clone() />
+                })}
+                {move || ops_memo.get().map(|ops| view! {
+                    <div class="bento-grid-2">
+                        <UpstreamKeyStrip ops=ops.clone() />
+                        <PrefixHealthCard ops=ops.clone() />
+                    </div>
+                })}
+            </OverviewCollapsible>
 
             <ObservabilityFooter />
         </div>
+    }
+}
+
+// ── Hero strip: 6 tiles across the top ─────────────────────────────
+
+#[component]
+fn OverviewHeroStrip(
+    health: GatewayHealth,
+    metrics: MetricsSnapshot,
+    ops: OverviewOpsMetrics,
+) -> impl IntoView {
+    let t = use_translations();
+    let keys_display = format!(
+        "{}/{}",
+        health.upstream_keys_available, health.upstream_key_count
+    );
+    let hit_display = if metrics.metrics_sample_insufficient {
+        "—".to_string()
+    } else {
+        format!("{:.1}%", metrics.hit_rate_5m * 100.0)
+    };
+    let qps_display = format!("{:.1}", metrics.qps_5m);
+    let cost_display = format!("${:.4}", ops.cost_saved_usd_5m);
+    let err_display = if metrics.error_rate_5m > 0.001 {
+        format!("{:.1}%", metrics.error_rate_5m * 100.0)
+    } else {
+        "0%".to_string()
+    };
+    let err_variant = if metrics.error_rate_5m > 0.01 {
+        "live-stat-tile live-stat-tile-warn"
+    } else {
+        "live-stat-tile live-stat-tile-muted"
+    };
+
+    view! {
+        <div class="overview-hero-grid">
+            <div class=if health.healthy { "live-stat-tile live-stat-tile-green" } else { "live-stat-tile live-stat-tile-warn" }>
+                <span class="live-stat-tile-label">{t.overview_health_title()}</span>
+                <span class="live-stat-tile-value">
+                    {if health.healthy { t.overview_status_active() } else { t.overview_health_unhealthy() }}
+                </span>
+            </div>
+            <div class="live-stat-tile live-stat-tile-teal">
+                <span class="live-stat-tile-label">{t.overview_health_upstream_keys()}</span>
+                <span class="live-stat-tile-value">{keys_display}</span>
+            </div>
+            <div class="live-stat-tile live-stat-tile-accent">
+                <span class="live-stat-tile-label">{t.overview_hit_rate()}</span>
+                <span class="live-stat-tile-value">{hit_display}</span>
+            </div>
+            <div class="live-stat-tile live-stat-tile-accent">
+                <span class="live-stat-tile-label">{Translations::overview_qps()}</span>
+                <span class="live-stat-tile-value">{qps_display}</span>
+            </div>
+            <div class="live-stat-tile live-stat-tile-orange">
+                <span class="live-stat-tile-label">{t.overview_cost_saved()}</span>
+                <span class="live-stat-tile-value">{cost_display}</span>
+            </div>
+            <div class=err_variant>
+                <span class="live-stat-tile-label">"Error"</span>
+                <span class="live-stat-tile-value">{err_display}</span>
+            </div>
+        </div>
+    }
+}
+
+// ── Collapsible module wrapper ─────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum OverviewModuleIcon {
+    Cache,
+    Users,
+    Latency,
+    Advanced,
+}
+
+#[component]
+fn OverviewModuleIconView(kind: OverviewModuleIcon) -> impl IntoView {
+    match kind {
+        OverviewModuleIcon::Cache => view! {
+            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 6v6l4 2"></path>
+            </svg>
+        }.into_any(),
+        OverviewModuleIcon::Users => view! {
+            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M16 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path>
+                <circle cx="10" cy="7" r="4"></circle>
+                <path d="M22 21v-2a4 4 0 00-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 010 7.75"></path>
+            </svg>
+        }.into_any(),
+        OverviewModuleIcon::Latency => view! {
+            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+            </svg>
+        }.into_any(),
+        OverviewModuleIcon::Advanced => view! {
+            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"></path>
+            </svg>
+        }.into_any(),
+    }
+}
+
+#[component]
+fn OverviewCollapsible(
+    title: &'static str,
+    icon: OverviewModuleIcon,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <details class="overview-collapsible">
+            <summary class="overview-collapsible-head">
+                <span class="overview-collapsible-title">
+                    <OverviewModuleIconView kind=icon />
+                    <span>{title}</span>
+                </span>
+            </summary>
+            <div class="overview-collapsible-body">
+                {children()}
+            </div>
+        </details>
     }
 }
 

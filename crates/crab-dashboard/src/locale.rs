@@ -743,6 +743,54 @@ impl Translations {
             Locale::EnUS => "Docker container and host resource usage (CPU, memory, network, disk)",
         }
     }
+    pub fn infra_download_speed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "下载速度",
+            Locale::EnUS => "Download",
+        }
+    }
+    pub fn infra_upload_speed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上传速度",
+            Locale::EnUS => "Upload",
+        }
+    }
+    pub fn infra_active_containers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "活跃容器",
+            Locale::EnUS => "Active",
+        }
+    }
+    pub fn infra_mem_cumulative(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "内存占用",
+            Locale::EnUS => "Memory used",
+        }
+    }
+    pub fn infra_disk_cumulative(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "磁盘占用",
+            Locale::EnUS => "Disk used",
+        }
+    }
+    pub fn infra_docker_connected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Docker 已连接",
+            Locale::EnUS => "Docker OK",
+        }
+    }
+    pub fn infra_expand_details(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "展开基础设施明细",
+            Locale::EnUS => "Infrastructure details",
+        }
+    }
+    pub fn infra_top_containers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "容器 Top 3（按 CPU）",
+            Locale::EnUS => "Top 3 containers by CPU",
+        }
+    }
     pub fn infra_containers(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "容器状态",
@@ -4344,6 +4392,31 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "分析",
             Locale::EnUS => "Analytics",
+        }
+    }
+
+    pub fn overview_module_cache_cost(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存与成本",
+            Locale::EnUS => "Cache & Cost",
+        }
+    }
+    pub fn overview_module_consumer_domain(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "租户与域",
+            Locale::EnUS => "Consumers & Domains",
+        }
+    }
+    pub fn overview_module_latency_ops(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟与运维",
+            Locale::EnUS => "Latency & Ops",
+        }
+    }
+    pub fn overview_module_advanced(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "高级指标",
+            Locale::EnUS => "Advanced",
         }
     }
 
