@@ -288,6 +288,8 @@ impl GatewayProxy {
                 CacheTier::L2Semantic,
                 cost,
             );
+            global_metrics().record_full_response_cache_hit("L2_semantic", ctx.domain.as_deref());
+            global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
             return true;
         }
 
@@ -1222,6 +1224,8 @@ impl ProxyHttp for GatewayProxy {
                             tier,
                             cost,
                         );
+                        global_metrics().record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
+                        global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
                         return Ok(true);
                     }
 
@@ -1264,6 +1268,74 @@ impl ProxyHttp for GatewayProxy {
                         request_is_streaming = ctx.is_streaming,
                         "Exact cache hit ignored: stream mode mismatch"
                     );
+                }
+            }
+
+            // ── Prefix-aware L0 lookup (feature-gated) ───────────────
+            if tiered_was_absent && self.state.features.prefix_aware_cache {
+                if let Some(payload) = ctx.parsed_request_payload.as_ref() {
+                    let prefix_key = crab_cache::generate_composite_cache_key_from_value(
+                        payload,
+                        cache_namespace.as_deref(),
+                        &fingerprint,
+                    );
+                    // prefix_key format: "{ns}:{fp_ver}:{system_hash}:{tools_hash}:{msgs_hash}"
+                    // Extract prefix (everything before the last ':' = messages hash).
+                    if let Some(prefix_end) = prefix_key.rfind(':') {
+                        let prefix_hash = &prefix_key[..prefix_end];
+                        if let Some(entry) = self
+                            .state
+                            .tiered_cache
+                            .prefix_l0_lookup(prefix_hash)
+                            .await
+                        {
+                            if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+                                info!(
+                                    request_id = %ctx.request_id,
+                                    prefix_hash = %prefix_hash,
+                                    "Prefix-aware L0 hit"
+                                );
+                                let sent_ok = send_cached_response(
+                                    session,
+                                    &entry,
+                                    &ctx.model,
+                                    ctx.is_streaming,
+                                    CacheTier::L0Moka,
+                                    ctx.cached_reasoning_config.display_reasoning,
+                                )
+                                .await;
+                                if sent_ok {
+                                    ctx.cache_tier = Some(CacheTier::L0Moka);
+                                    ctx.cache_hit = Some(entry.clone());
+                                    ctx.tokens.last_input = entry.usage.prompt_tokens;
+                                    ctx.tokens.last_output = entry.usage.completion_tokens;
+                                    global_metrics().record_latency(
+                                        crab_metrics::LatencyKind::CacheFetch,
+                                        ctx.request_start.elapsed(),
+                                        &ctx.model,
+                                        Some(CacheTier::L0Moka),
+                                    );
+                                    global_metrics().record_cost_saved(
+                                        &ctx.model,
+                                        ctx.consumer.as_deref(),
+                                        ctx.domain.as_deref(),
+                                        CacheTier::L0Moka,
+                                        self.state.pricing.cost_saved_usd(
+                                            &ctx.model,
+                                            entry.usage.prompt_tokens,
+                                            entry.usage.completion_tokens,
+                                        ),
+                                    );
+                                    global_metrics().record_full_response_cache_hit("L0_prefix", ctx.domain.as_deref());
+                                    global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
+                                    self.state.tiered_cache.update_prefix_index(prefix_hash, &cache_key);
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                        // Register prefix → full key for future lookups.
+                        self.state.tiered_cache.update_prefix_index(prefix_hash, &cache_key);
+                    }
                 }
             }
 
@@ -1376,6 +1448,8 @@ impl ProxyHttp for GatewayProxy {
                                         tier,
                                         cost,
                                     );
+                                    global_metrics().record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
+                                    global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
                                     return Ok(true);
                                 }
 
@@ -1484,6 +1558,29 @@ impl ProxyHttp for GatewayProxy {
             }),
         );
         // #endregion
+
+        // ── Connection pre-warm for new session fingerprints ──────────
+        if self.state.features.connection_prewarm {
+            if let Some(sfp) = ctx.session_fingerprint.as_deref() {
+                let is_new = self
+                    .state
+                    .seen_session_fingerprints
+                    .get(sfp)
+                    .is_none();
+                if is_new {
+                    self.state
+                        .seen_session_fingerprints
+                        .insert(sfp.to_string(), ());
+                    let sfp_short = sfp.chars().take(8).collect::<String>();
+                    debug!(
+                        request_id = %ctx.request_id,
+                        sfp = %sfp_short,
+                        affinity_key = %ctx.upstream.affinity_key.as_deref().unwrap_or("none"),
+                        "New session fingerprint detected (pre-warm reserved for future use)"
+                    );
+                }
+            }
+        }
 
         Ok(false)
     }
@@ -2016,6 +2113,7 @@ impl ProxyHttp for GatewayProxy {
                             ctx.consumer.as_deref(),
                             ctx.domain.as_deref(),
                             ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                            ctx.upstream.affinity_key.as_deref().map(|k| crab_capture::affinity_kind_from_key(k)),
                             &self.state.runtime,
                             &self.state.pricing,
                         );
@@ -2123,6 +2221,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.consumer.as_deref(),
                         ctx.domain.as_deref(),
                         ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                        ctx.upstream.affinity_key.as_deref().map(|k| crab_capture::affinity_kind_from_key(k)),
                         &self.state.runtime,
                         &self.state.pricing,
                     );
@@ -2558,36 +2657,45 @@ impl ProxyHttp for GatewayProxy {
             }
         }
 
-        // ── Raw capture ──────────────────────────────────────────────
+        // ── Raw capture (with sampling) ───────────────────────────────
         if let Some(raw_logger) = &self.state.raw_capture_logger {
             let req_path = session.req_header().uri.path();
             if !raw_logger.should_skip(req_path) {
-                let reasoning_strategy = ctx
-                    .cached_reasoning_config
-                    .missing_reasoning_strategy
-                    .as_str();
-                let capture_meta = build_capture_request_meta(session, ctx, latency_ms);
-                raw_logger.capture(
-                    &ctx.request_id,
-                    ctx.req_hash.as_deref(),
-                    &ctx.model,
-                    ctx.consumer.as_deref(),
-                    ctx.project_id.as_deref(),
-                    ctx.request_pipeline.as_ref().map(|p| p.as_str()),
-                    ctx.is_streaming,
-                    ctx.prepared_request
-                        .as_ref()
-                        .map(|p| p.retired_prefix_messages),
-                    Some(reasoning_strategy),
-                    ctx.original_request_body.as_deref(),
-                    ctx.upstream_body_for_capture
-                        .as_ref()
-                        .map(|b| b.as_ref())
-                        .or(ctx.new_request_body.as_deref()),
-                    ctx.parsed_request_payload.as_deref(),
-                    ctx.parsed_upstream_payload.as_deref(),
-                    capture_meta,
-                );
+                let has_error = ctx
+                    .upstream
+                    .http_status
+                    .map_or(false, |s| s >= 400);
+                let body_bytes = ctx.content_length.max(ctx.upstream_outbound_body_len);
+                if raw_logger.should_sample(has_error, body_bytes)
+                    == crate::raw_capture::SampleDecision::Capture
+                {
+                    let reasoning_strategy = ctx
+                        .cached_reasoning_config
+                        .missing_reasoning_strategy
+                        .as_str();
+                    let capture_meta = build_capture_request_meta(session, ctx, latency_ms);
+                    raw_logger.capture(
+                        &ctx.request_id,
+                        ctx.req_hash.as_deref(),
+                        &ctx.model,
+                        ctx.consumer.as_deref(),
+                        ctx.project_id.as_deref(),
+                        ctx.request_pipeline.as_ref().map(|p| p.as_str()),
+                        ctx.is_streaming,
+                        ctx.prepared_request
+                            .as_ref()
+                            .map(|p| p.retired_prefix_messages),
+                        Some(reasoning_strategy),
+                        ctx.original_request_body.as_deref(),
+                        ctx.upstream_body_for_capture
+                            .as_ref()
+                            .map(|b| b.as_ref())
+                            .or(ctx.new_request_body.as_deref()),
+                        ctx.parsed_request_payload.as_deref(),
+                        ctx.parsed_upstream_payload.as_deref(),
+                        capture_meta,
+                    );
+                }
             }
         }
 
@@ -2689,6 +2797,7 @@ fn record_usage_metrics(
     consumer: Option<&str>,
     domain: Option<&str>,
     upstream_key_id: Option<&str>,
+    affinity_kind: Option<&str>,
     runtime: &crate::runtime::RuntimeConfig,
     pricing: &crate::context::PricingConfig,
 ) {
@@ -2719,6 +2828,12 @@ fn record_usage_metrics(
             consumer,
             domain,
         );
+        global_metrics().record_session_prompt_cache(
+            affinity_kind.unwrap_or("none"),
+            "hit",
+            usage.prompt_cache_hit_tokens,
+            model,
+        );
     }
     if usage.prompt_cache_miss_tokens > 0 {
         global_metrics().record_upstream_prompt_cache(
@@ -2727,6 +2842,12 @@ fn record_usage_metrics(
             model,
             consumer,
             domain,
+        );
+        global_metrics().record_session_prompt_cache(
+            affinity_kind.unwrap_or("none"),
+            "miss",
+            usage.prompt_cache_miss_tokens,
+            model,
         );
     }
 

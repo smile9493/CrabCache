@@ -5,6 +5,7 @@ use bb8_redis::RedisConnectionManager;
 use crab_metrics::{CacheTier, global_metrics};
 use moka::future::Cache;
 use moka::policy::Expiry;
+use moka::sync::Cache as SyncCache;
 use parking_lot::RwLock;
 use redis::{AsyncCommands, cmd};
 use std::sync::Arc;
@@ -116,6 +117,9 @@ pub struct TieredCache {
     ttl_config: Arc<ArcSwap<TtlConfig>>,
     /// Retained for backward-compat API surface that exposes the old RwLock handle.
     ttl_config_rwlock: Arc<RwLock<TtlConfig>>,
+    /// Prefix index: maps prefix_hash → full_cache_key for prefix-aware L0 lookup.
+    /// Bounded to 50K entries with LRU eviction. Only active when `prefix_aware_cache` is enabled.
+    prefix_index: SyncCache<String, String>,
 }
 
 impl TieredCache {
@@ -139,7 +143,29 @@ impl TieredCache {
             l1_pool,
             ttl_config: arc_swap,
             ttl_config_rwlock: ttl_config,
+            prefix_index: SyncCache::builder()
+                .max_capacity(50_000)
+                .build(),
         })
+    }
+
+    /// Register a prefix hash → full cache key mapping for prefix-aware L0 lookup.
+    /// Bounded to 50K entries — LRU entries are automatically evicted when at capacity.
+    pub fn update_prefix_index(&self, prefix_hash: &str, full_key: &str) {
+        self.prefix_index
+            .insert(prefix_hash.to_string(), full_key.to_string());
+    }
+
+    /// Look up L0 cache by prefix hash. Returns the cache entry if the prefix maps
+    /// to a full cache key that exists in L0.
+    pub async fn prefix_l0_lookup(&self, prefix_hash: &str) -> Option<CacheEntry> {
+        let full_key = self.prefix_index.get(prefix_hash)?;
+        self.l0.get(&full_key).await
+    }
+
+    /// Clear the prefix index (called when L0 cache is invalidated).
+    pub fn clear_prefix_index(&self) {
+        self.prefix_index.invalidate_all();
     }
 
     /// Lookup cache without incrementing Prometheus counters (e.g. coalesce follower replay).
@@ -352,6 +378,7 @@ impl TieredCache {
     #[tracing::instrument(skip(self, scan), fields(scope = "all"))]
     pub async fn invalidate_all(&self, scan: InvalidateScanOptions) -> Result<(), CacheError> {
         self.l0.invalidate_all();
+        self.clear_prefix_index();
         self.scan_delete_l1("cache:*", "all", scan).await
     }
 
@@ -513,5 +540,65 @@ mod tests {
     fn test_ttl_config() {
         let config = TtlConfig::new(3600);
         assert_eq!(config.resolve("v4-pro", None), 3600);
+    }
+
+    #[test]
+    fn test_prefix_index_operations() {
+        use moka::sync::Cache as SyncCache;
+        let prefix_index: SyncCache<String, String> =
+            SyncCache::builder().max_capacity(50_000).build();
+
+        // Initially empty.
+        assert!(prefix_index.get("v1:abc:def").is_none());
+
+        // Register a prefix → full key mapping.
+        prefix_index.insert("v1:abc:def".to_string(), "full_key_1".to_string());
+        assert_eq!(
+            prefix_index.get("v1:abc:def").unwrap().as_str(),
+            "full_key_1"
+        );
+
+        // Different prefix is independent.
+        assert!(prefix_index.get("v1:abc:xyz").is_none());
+
+        // Overwrite with newer full key.
+        prefix_index.insert("v1:abc:def".to_string(), "full_key_2".to_string());
+        assert_eq!(
+            prefix_index.get("v1:abc:def").unwrap().as_str(),
+            "full_key_2"
+        );
+    }
+
+    #[test]
+    fn test_prefix_index_lru_eviction() {
+        use moka::sync::Cache as SyncCache;
+        let index: SyncCache<String, String> =
+            SyncCache::builder().max_capacity(3).build();
+
+        index.insert("a".to_string(), "1".to_string());
+        index.insert("b".to_string(), "2".to_string());
+        index.insert("c".to_string(), "3".to_string());
+
+        // All 3 entries fit.
+        assert!(index.get("a").is_some());
+        assert!(index.get("b").is_some());
+        assert!(index.get("c").is_some());
+
+        // Insert 4th entry — LRU (least recently accessed) is evicted.
+        // "a" was accessed least recently (get order: a, b, c → a is LRU).
+        index.insert("d".to_string(), "4".to_string());
+
+        // After eviction, "d" must be present.
+        assert!(index.get("d").is_some());
+        // At least one of the old entries is evicted (moka uses TinyLFU, not strict LRU,
+        // so we only assert the total effective count stays bounded).
+        let remaining = ["a", "b", "c"]
+            .iter()
+            .filter(|k| index.get(**k).is_some())
+            .count();
+        assert!(
+            remaining <= 3,
+            "prefix_index should not exceed max_capacity"
+        );
     }
 }

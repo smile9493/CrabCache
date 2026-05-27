@@ -387,6 +387,30 @@ impl GatewayContext {
     }
 }
 
+/// Experimental feature flags — each gate is independent and default off.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct FeaturesConfig {
+    /// Enable prefix-aware L0 cache key (Moka prefix trie for shared message prefixes).
+    #[serde(default)]
+    pub prefix_aware_cache: bool,
+    /// Enable zero-buffer streaming body forwarding in `request_body_filter`.
+    #[serde(default)]
+    pub streaming_body_forward: bool,
+    /// Pre-warm upstream connections on new session fingerprints.
+    #[serde(default)]
+    pub connection_prewarm: bool,
+    /// Enable MiMo context compression (auto-summarize old messages).
+    #[serde(default)]
+    pub mimo_context_compression: bool,
+    /// MiMo context compression: message count threshold to trigger compression.
+    #[serde(default = "default_compression_threshold")]
+    pub mimo_compression_threshold: usize,
+}
+
+fn default_compression_threshold() -> usize {
+    40
+}
+
 pub struct GatewayState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
@@ -407,4 +431,8 @@ pub struct GatewayState {
     pub client_key_limiter: Arc<ClientKeyLimiter>,
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
     pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
+    pub features: FeaturesConfig,
+    /// Tracks session fingerprints that have already been seen (for connection pre-warm).
+    /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
+    pub seen_session_fingerprints: moka::sync::Cache<String, ()>,
 }

@@ -293,6 +293,19 @@ max_files = 5
 # max_upstream_bytes = 0
 # mask_api_keys = false  # true = mask sk-* tokens in captured bodies
 # skip_paths = ["/health", "/healthz", "/ready"]
+# sample_rate = 1.0                # 0.0~1.0, fraction of normal requests to capture
+# sample_always_on_error = true    # always capture 4xx/5xx upstream responses
+# sample_always_on_large_body = false  # always capture requests > min_body_bytes_for_large
+# min_body_bytes_for_large = 2097152   # 2 MiB threshold for large-body override
+
+# ── Experimental Feature Flags ────────────────────────────────────
+# Each feature is independent and default off. Enable at your own risk.
+# [features]
+# prefix_aware_cache = false         # L0 prefix trie for shared message prefixes
+# streaming_body_forward = false     # Zero-buffer forwarding in request_body_filter
+# connection_prewarm = false         # Pre-warm TLS connections on new session fingerprints
+# mimo_context_compression = false   # Auto-summarize old MiMo messages
+# mimo_compression_threshold = 40    # Message count to trigger compression
 
 # ── Log Retention (Admin Dashboard) ──────────────────────────────
 # The admin dashboard runs a background cleanup task every 10 minutes

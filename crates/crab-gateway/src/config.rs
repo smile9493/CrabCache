@@ -3,7 +3,7 @@ use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode, PipelineOverride,
     UpstreamProvider, validate_cursor_models,
 };
-use crab_proxy::{RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
+use crab_proxy::{FeaturesConfig, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::AffinityRouter;
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -106,6 +106,8 @@ pub struct GatewayConfig {
     pub gateway: GatewaySection,
     #[serde(default)]
     pub state: StateBackendConfig,
+    #[serde(default)]
+    pub features: FeaturesConfig,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -995,6 +997,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             management: None,
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
+            features: FeaturesConfig::default(),
         };
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("max_coalesce_inflight")));
@@ -1062,6 +1065,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             }),
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
+            features: FeaturesConfig::default(),
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));

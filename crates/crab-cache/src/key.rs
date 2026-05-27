@@ -188,6 +188,43 @@ pub fn generate_composite_cache_key(
     }
 }
 
+/// Composite cache key from an already-parsed JSON value (avoids redundant parse).
+///
+/// The value is deep-cloned and mutated internally (field stripping + normalization).
+/// Returns the composite key string.
+///
+/// **Cost note**: The deep clone is O(n) on the JSON tree size. For large payloads
+/// (2–4 MiB) this adds ~1–3 ms. Only call when `prefix_aware_cache` feature is enabled.
+pub fn generate_composite_cache_key_from_value(
+    value: &Value,
+    namespace: Option<&str>,
+    config: &FingerprintConfig,
+) -> String {
+    let mut value = value.clone();
+
+    if let Some(obj) = value.as_object_mut() {
+        for field in STRIPPED_FIELDS {
+            obj.remove(*field);
+        }
+    }
+
+    normalize_for_fingerprint(&mut value, config);
+
+    let system_hash = hash_system_messages(&value, config);
+    let tools_hash = hash_tools(&value);
+    let messages_hash = hash_conversation_messages(&value, config);
+
+    let key = format!(
+        "{}:{}:{}:{}",
+        config.version, system_hash, tools_hash, messages_hash
+    );
+
+    match namespace {
+        Some(ns) if !ns.is_empty() => format!("{ns}:{key}"),
+        _ => key,
+    }
+}
+
 /// Hash only system messages from the messages array.
 fn hash_system_messages(value: &Value, _config: &FingerprintConfig) -> String {
     let Some(messages) = value.get("messages").and_then(|m| m.as_array()) else {

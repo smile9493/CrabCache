@@ -87,6 +87,14 @@ pub struct GatewayMetrics {
     pub backend_requests: IntCounterVec,
     pub request_body_stage_latency: HistogramVec,
     pub request_body_stage_samples: IntCounterVec,
+    pub raw_capture_samples: IntCounterVec,
+    pub session_prompt_cache_tokens: IntCounterVec,
+    pub full_response_cache_hits: IntCounterVec,
+    pub requests_saved_by_any_cache: IntCounterVec,
+    pub admin_log_writes_total: IntCounterVec,
+    pub admin_log_pg_write_errors_total: IntCounter,
+    pub admin_log_disk_bytes: IntGaugeVec,
+    pub admin_log_pg_rows: IntGaugeVec,
 }
 
 impl GatewayMetrics {
@@ -387,6 +395,67 @@ impl GatewayMetrics {
             &["stage", "size_bucket", "pipeline"],
         )?;
 
+        let raw_capture_samples = IntCounterVec::new(
+            Opts::new(
+                "gateway_raw_capture_samples_total",
+                "Raw capture sampling decisions by outcome",
+            ),
+            &["outcome"],
+        )?;
+
+        let session_prompt_cache_tokens = IntCounterVec::new(
+            Opts::new(
+                "gateway_session_prompt_cache_tokens_total",
+                "Upstream prompt cache tokens grouped by affinity kind, status, and model",
+            ),
+            &["affinity_kind", "status", "model"],
+        )?;
+
+        let full_response_cache_hits = IntCounterVec::new(
+            Opts::new(
+                "gateway_full_response_cache_hits_total",
+                "Full response cache hits by tier and domain (avoided upstream inference)",
+            ),
+            &["tier", "domain"],
+        )?;
+
+        let requests_saved_by_any_cache = IntCounterVec::new(
+            Opts::new(
+                "gateway_requests_saved_by_any_cache_total",
+                "Requests saved from full inference by any cache mechanism (exact, prefix, semantic)",
+            ),
+            &["domain"],
+        )?;
+
+        let admin_log_writes_total = IntCounterVec::new(
+            Opts::new(
+                "admin_log_writes_total",
+                "Total log entries written to PostgreSQL by type",
+            ),
+            &["type"],
+        )?;
+
+        let admin_log_pg_write_errors_total = IntCounter::new(
+            "admin_log_pg_write_errors_total",
+            "Total PostgreSQL write errors in the log subsystem",
+        )?;
+
+        let admin_log_disk_bytes = IntGaugeVec::new(
+            Opts::new(
+                "admin_log_disk_bytes",
+                "Disk usage in bytes for log files by type",
+            ),
+            &["type"],
+        )?;
+
+        let admin_log_pg_rows = IntGaugeVec::new(
+            Opts::new(
+                "admin_log_pg_rows",
+                "Row count in PostgreSQL log tables",
+            ),
+            &["table"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -426,6 +495,14 @@ impl GatewayMetrics {
             backend_requests,
             request_body_stage_latency,
             request_body_stage_samples,
+            raw_capture_samples,
+            session_prompt_cache_tokens,
+            full_response_cache_hits,
+            requests_saved_by_any_cache,
+            admin_log_writes_total,
+            admin_log_pg_write_errors_total,
+            admin_log_disk_bytes,
+            admin_log_pg_rows,
         })
     }
 
@@ -468,6 +545,14 @@ impl GatewayMetrics {
         registry.register(Box::new(self.backend_requests.clone()))?;
         registry.register(Box::new(self.request_body_stage_latency.clone()))?;
         registry.register(Box::new(self.request_body_stage_samples.clone()))?;
+        registry.register(Box::new(self.raw_capture_samples.clone()))?;
+        registry.register(Box::new(self.session_prompt_cache_tokens.clone()))?;
+        registry.register(Box::new(self.full_response_cache_hits.clone()))?;
+        registry.register(Box::new(self.requests_saved_by_any_cache.clone()))?;
+        registry.register(Box::new(self.admin_log_writes_total.clone()))?;
+        registry.register(Box::new(self.admin_log_pg_write_errors_total.clone()))?;
+        registry.register(Box::new(self.admin_log_disk_bytes.clone()))?;
+        registry.register(Box::new(self.admin_log_pg_rows.clone()))?;
         Ok(())
     }
 
@@ -641,6 +726,24 @@ impl GatewayMetrics {
         let domain = metric_domain(domain);
         self.cache_requests
             .with_label_values(&[tier.as_str(), "miss", domain])
+            .inc();
+    }
+
+    /// Record a full-response cache hit (exact L0/L1, prefix-aware, or semantic).
+    /// This is the "avoided upstream inference" signal.
+    pub fn record_full_response_cache_hit(&self, tier: &str, domain: Option<&str>) {
+        let domain = metric_domain(domain);
+        self.full_response_cache_hits
+            .with_label_values(&[tier, domain])
+            .inc();
+    }
+
+    /// Record that a request was saved from full inference by any cache mechanism.
+    /// Call exactly once per request that is served from cache (any tier).
+    pub fn record_request_saved_by_cache(&self, domain: Option<&str>) {
+        let domain = metric_domain(domain);
+        self.requests_saved_by_any_cache
+            .with_label_values(&[domain])
             .inc();
     }
 
@@ -819,6 +922,52 @@ impl GatewayMetrics {
         self.request_body_stage_samples
             .with_label_values(&[stage, size_bucket, pipeline])
             .inc();
+    }
+
+    // ── Raw capture sampling metrics ──────────────────────────────────
+
+    pub fn record_raw_capture_sample(&self, outcome: &str) {
+        self.raw_capture_samples
+            .with_label_values(&[outcome])
+            .inc();
+    }
+
+    // ── Session prompt cache metrics ──────────────────────────────────
+
+    pub fn record_session_prompt_cache(
+        &self,
+        affinity_kind: &str,
+        status: &str,
+        tokens: u64,
+        model: &str,
+    ) {
+        self.session_prompt_cache_tokens
+            .with_label_values(&[affinity_kind, status, model])
+            .inc_by(tokens);
+    }
+
+    // ── Admin log metrics ───────────────────────────────────────────
+
+    pub fn inc_admin_log_write(&self, log_type: &str) {
+        self.admin_log_writes_total
+            .with_label_values(&[log_type])
+            .inc();
+    }
+
+    pub fn inc_admin_log_pg_write_error(&self) {
+        self.admin_log_pg_write_errors_total.inc();
+    }
+
+    pub fn set_admin_log_disk_bytes(&self, log_type: &str, bytes: i64) {
+        self.admin_log_disk_bytes
+            .with_label_values(&[log_type])
+            .set(bytes);
+    }
+
+    pub fn set_admin_log_pg_rows(&self, table: &str, rows: i64) {
+        self.admin_log_pg_rows
+            .with_label_values(&[table])
+            .set(rows);
     }
 }
 

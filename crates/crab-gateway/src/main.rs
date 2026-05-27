@@ -589,16 +589,7 @@ fn main() -> Result<()> {
 
     let raw_capture_logger = if let Some(rc_config) = &config.raw_capture {
         if rc_config.enabled {
-            let logger = RawCaptureLogger::init(crab_proxy::RawCaptureConfig {
-                enabled: rc_config.enabled,
-                dir: rc_config.dir.clone(),
-                max_index_lines: rc_config.max_index_lines,
-                max_body_files: rc_config.max_body_files,
-                max_client_bytes: rc_config.max_client_bytes,
-                max_upstream_bytes: rc_config.max_upstream_bytes,
-                mask_api_keys: rc_config.mask_api_keys,
-                skip_paths: rc_config.skip_paths.clone(),
-            });
+            let logger = RawCaptureLogger::init(rc_config.clone());
             info!(
                 dir = %rc_config.dir,
                 max_index_lines = rc_config.max_index_lines,
@@ -872,6 +863,11 @@ fn main() -> Result<()> {
         client_key_limiter,
         client_key_rate_limiter,
         deepseek_user_id_limiter,
+        features: config.features.clone(),
+        seen_session_fingerprints: moka::sync::Cache::builder()
+            .max_capacity(10_000)
+            .time_to_live(std::time::Duration::from_secs(3600))
+            .build(),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)

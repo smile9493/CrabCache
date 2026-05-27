@@ -41,7 +41,8 @@ pub use cache_response::{
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimiter};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
-    ConnectionConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig, ReasoningConfig,
+    ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig,
+    ReasoningConfig,
 };
 pub use debug_log::{debug_agent_log, init_debug_log};
 pub use error::ProxyError;

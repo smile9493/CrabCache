@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::warn;
@@ -34,6 +35,21 @@ pub struct RawCaptureConfig {
     /// Paths to skip (health checks, etc.).
     #[serde(default = "default_skip_paths")]
     pub skip_paths: Vec<String>,
+    /// Sampling rate for normal requests (0.0 = skip all, 1.0 = capture all).
+    /// Default: 1.0 (backward-compatible, capture every request).
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f64,
+    /// Always capture requests that result in upstream 4xx/5xx errors.
+    /// Default: true (error requests are always captured regardless of `sample_rate`).
+    #[serde(default = "default_true")]
+    pub sample_always_on_error: bool,
+    /// Always capture requests with body larger than `min_body_bytes_for_large`.
+    /// Default: false (use `sample_rate` regardless of body size).
+    #[serde(default)]
+    pub sample_always_on_large_body: bool,
+    /// Body size threshold (bytes) for `sample_always_on_large_body`. Default: 2 MiB.
+    #[serde(default = "default_min_body_bytes_for_large")]
+    pub min_body_bytes_for_large: usize,
 }
 
 fn default_max_index_lines() -> usize {
@@ -49,6 +65,15 @@ fn default_skip_paths() -> Vec<String> {
         "/ready".to_string(),
     ]
 }
+fn default_sample_rate() -> f64 {
+    1.0
+}
+fn default_true() -> bool {
+    true
+}
+fn default_min_body_bytes_for_large() -> usize {
+    2 * 1024 * 1024
+}
 
 impl Default for RawCaptureConfig {
     fn default() -> Self {
@@ -61,6 +86,10 @@ impl Default for RawCaptureConfig {
             max_upstream_bytes: 0,
             mask_api_keys: false,
             skip_paths: default_skip_paths(),
+            sample_rate: default_sample_rate(),
+            sample_always_on_error: default_true(),
+            sample_always_on_large_body: false,
+            min_body_bytes_for_large: default_min_body_bytes_for_large(),
         }
     }
 }
@@ -170,6 +199,71 @@ struct RawCaptureMessage {
 
 // ── RawCaptureLogger ─────────────────────────────────────────────────
 
+/// Sampling decision for a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleDecision {
+    /// Capture this request (sampled or forced by error/large body).
+    Capture,
+    /// Skip this request (not sampled and no override applies).
+    Skip,
+}
+
+/// Deterministic round-robin sampler using an atomic counter.
+struct Sampler {
+    counter: AtomicU64,
+    /// Inverse of sample_rate: capture every Nth request (0 = always capture).
+    every_n: u64,
+    always_on_error: bool,
+    always_on_large_body: bool,
+    min_body_bytes_for_large: usize,
+}
+
+impl Sampler {
+    fn from_config(config: &RawCaptureConfig) -> Self {
+        let rate = config.sample_rate.clamp(0.0, 1.0);
+        let every_n = if rate >= 1.0 {
+            0
+        } else if rate <= 0.0 {
+            u64::MAX
+        } else {
+            (1.0 / rate).round() as u64
+        };
+        Self {
+            counter: AtomicU64::new(0),
+            every_n,
+            always_on_error: config.sample_always_on_error,
+            always_on_large_body: config.sample_always_on_large_body,
+            min_body_bytes_for_large: config.min_body_bytes_for_large,
+        }
+    }
+
+    fn decide(&self, has_error: bool, body_bytes: usize) -> SampleDecision {
+        // Error override: always capture failing requests.
+        if has_error && self.always_on_error {
+            global_metrics().record_raw_capture_sample("always_error");
+            return SampleDecision::Capture;
+        }
+        // Large body override.
+        if self.always_on_large_body && body_bytes >= self.min_body_bytes_for_large {
+            global_metrics().record_raw_capture_sample("always_large");
+            return SampleDecision::Capture;
+        }
+        // Deterministic round-robin: capture every Nth request.
+        if self.every_n == 0 {
+            global_metrics().record_raw_capture_sample("sampled");
+            return SampleDecision::Capture;
+        }
+        let seq = self.counter.fetch_add(1, Ordering::Relaxed);
+        if seq % self.every_n == 0 {
+            global_metrics().record_raw_capture_sample("sampled");
+            SampleDecision::Capture
+        } else {
+            global_metrics().record_raw_capture_sample("skipped");
+            SampleDecision::Skip
+        }
+    }
+}
+
 pub struct RawCaptureLogger {
     sender: mpsc::Sender<RawCaptureMessage>,
     skip_paths: Vec<String>,
@@ -177,6 +271,7 @@ pub struct RawCaptureLogger {
     max_upstream_bytes: usize,
     mask_api_keys: bool,
     dir: String,
+    sampler: Sampler,
 }
 
 impl RawCaptureLogger {
@@ -240,6 +335,8 @@ impl RawCaptureLogger {
             })
             .expect("Failed to spawn raw capture logger thread");
 
+        let sampler = Sampler::from_config(&config);
+
         Self {
             sender: tx,
             skip_paths,
@@ -247,6 +344,7 @@ impl RawCaptureLogger {
             max_upstream_bytes,
             mask_api_keys,
             dir,
+            sampler,
         }
     }
 
@@ -260,6 +358,11 @@ impl RawCaptureLogger {
     /// Directory where raw capture data is written.
     pub fn dir(&self) -> &str {
         &self.dir
+    }
+
+    /// Returns true if this request should be captured based on sampling rules.
+    pub fn should_sample(&self, has_error: bool, body_bytes: usize) -> SampleDecision {
+        self.sampler.decide(has_error, body_bytes)
     }
 
     /// Attempt to capture a request. This is the main entry point called from
