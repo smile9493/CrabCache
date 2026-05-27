@@ -200,29 +200,26 @@ pub fn LivePage() -> impl IntoView {
 
     let load_consumers = move || {
         leptos::task::spawn_local(async move {
-            match api::fetch_live_consumers(window_secs.get_untracked()).await {
-                Ok(val) => {
-                    let names: Vec<String> = val
-                        .get("available_consumers")
-                        .and_then(|c| c.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    if !names.is_empty() {
-                        if selected_consumer.get_untracked().is_none()
-                            && let Some(first) = names.first()
-                        {
-                            selected_consumer.set(Some(first.clone()));
-                        }
-                        consumers.set(names);
-                        consumers_loaded.set(true);
-                        return;
+            if let Ok(val) = api::fetch_live_consumers(window_secs.get_untracked()).await {
+                let names: Vec<String> = val
+                    .get("available_consumers")
+                    .and_then(|c| c.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !names.is_empty() {
+                    if selected_consumer.get_untracked().is_none()
+                        && let Some(first) = names.first()
+                    {
+                        selected_consumer.set(Some(first.clone()));
                     }
+                    consumers.set(names);
+                    consumers_loaded.set(true);
+                    return;
                 }
-                Err(_) => {}
             }
             match api::fetch_keys().await {
                 Ok(keys) => {
@@ -908,10 +905,10 @@ fn LiveKeyDistributionPanel(
                     let backend_has = series_has_points(&backend_values);
                     let aff_has = series_has_points(&aff_values);
                     let backend_labels_sv = StoredValue::new(backend_labels);
-                    let backend_values_f64: Vec<f64> = backend_values.into_iter().filter_map(|v| v).collect();
+                    let backend_values_f64: Vec<f64> = backend_values.into_iter().flatten().collect();
                     let backend_values_sv = StoredValue::new(backend_values_f64);
                     let aff_labels_sv = StoredValue::new(aff_labels);
-                    let aff_values_f64: Vec<f64> = aff_values.into_iter().filter_map(|v| v).collect();
+                    let aff_values_f64: Vec<f64> = aff_values.into_iter().flatten().collect();
                     let aff_values_sv = StoredValue::new(aff_values_f64);
                     let backend_labels_sig = Signal::derive(move || backend_labels_sv.get_value());
                     let backend_values_sig = Signal::derive(move || backend_values_sv.get_value());

@@ -1,7 +1,10 @@
 use leptos::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
 use super::line_chart::{format_tooltip_value, mouse_to_svg_x};
+
+static HISTOGRAM_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
 struct Bin {
@@ -53,6 +56,8 @@ pub fn HistogramChart(
     y_unit: &'static str,
     empty_message: &'static str,
 ) -> impl IntoView {
+    let chart_id = HISTOGRAM_ID.fetch_add(1, Ordering::Relaxed);
+    let summary_id = format!("histogram-summary-{}", chart_id);
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
@@ -84,6 +89,52 @@ pub fn HistogramChart(
         hover_index.set(None);
     };
 
+    // Keyboard navigation for accessibility
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        let bins = bins_sig.get_untracked();
+        let n = bins.len();
+        if n == 0 {
+            return;
+        }
+
+        let current = hover_index.get_untracked();
+        let new_idx = match ev.key().as_str() {
+            "ArrowLeft" => {
+                match current {
+                    Some(idx) if idx > 0 => Some(idx - 1),
+                    None => Some(n - 1),
+                    _ => current,
+                }
+            }
+            "ArrowRight" => {
+                match current {
+                    Some(idx) if idx < n - 1 => Some(idx + 1),
+                    None => Some(0),
+                    _ => current,
+                }
+            }
+            "Escape" => None,
+            _ => return,
+        };
+
+        hover_index.set(new_idx);
+        ev.prevent_default();
+    };
+
+    let on_focus = move |_: web_sys::FocusEvent| {
+        // Show first bin on focus if none selected
+        let bins = bins_sig.get_untracked();
+        if !bins.is_empty() && hover_index.get_untracked().is_none() {
+            hover_index.set(Some(0));
+        }
+    };
+
+    let on_blur = move |_: web_sys::FocusEvent| {
+        hover_index.set(None);
+    };
+
+    let summary_id_clone = summary_id.clone();
+
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 48)>
             {move || {
@@ -99,6 +150,16 @@ pub fn HistogramChart(
                 let pad = bar_w * 0.1;
                 let hover_idx = hover_index.get();
 
+                // Generate data summary for screen readers
+                let total_requests: usize = bins.iter().map(|b| b.count).sum();
+                let data_summary = format!(
+                    "Histogram with {} bins and {} total requests. Y range: 0 to {} {}.",
+                    n,
+                    total_requests,
+                    format_tooltip_value(max_count),
+                    y_unit
+                );
+
                 let tooltip_data = hover_idx.and_then(|idx| {
                     let bin = bins.get(idx)?;
                     let label = format!("{} - {}", format_tooltip_value(bin.range_start), format_tooltip_value(bin.range_end));
@@ -107,14 +168,22 @@ pub fn HistogramChart(
 
                 view! {
                     <div style="position: relative">
+                        <div id={summary_id_clone.clone()} class="sr-only">{data_summary}</div>
                         <svg
                             node_ref=svg_ref
                             class="line-chart-svg"
                             viewBox="0 0 100 40"
                             preserveAspectRatio="xMidYMid meet"
                             style=format!("height: {}px", height_px)
+                            role="img"
+                            aria-label="Histogram"
+                            aria-describedby={summary_id_clone.clone()}
+                            tabindex="0"
                             on:mousemove=on_mousemove
                             on:mouseleave=on_mouseleave
+                            on:keydown=on_keydown
+                            on:focus=on_focus
+                            on:blur=on_blur
                         >
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
@@ -164,10 +233,10 @@ pub fn HistogramChart(
                                     class="chart-tooltip"
                                     style=format!("position: absolute; top: 8px; {}; pointer-events: none; z-index: 10", pos_style)
                                 >
-                                    <div style="font-size: 0.6875rem; color: var(--cc-text-muted); margin-bottom: 0.25rem; font-family: var(--font-mono)">
+                                    <div class="chart-tooltip-label" style="font-size: 0.6875rem; color: var(--cc-text-muted); margin-bottom: 0.25rem; font-family: var(--font-mono)">
                                         {label}
                                     </div>
-                                    <div style="font-size: 0.75rem; font-weight: 600; color: var(--cc-text); font-family: var(--font-mono)">
+                                    <div class="chart-tooltip-row" style="font-size: 0.75rem; font-weight: 600; color: var(--cc-text); font-family: var(--font-mono)">
                                         {format!("{} requests", count)}
                                     </div>
                                 </div>

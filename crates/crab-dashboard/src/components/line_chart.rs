@@ -1,5 +1,8 @@
 use leptos::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
+
+static LINE_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
 pub struct ChartSeries {
@@ -179,9 +182,55 @@ pub fn LineChart(
         hover_index.set(None);
     };
 
+    // Keyboard navigation for accessibility
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        let labels = x_labels.get_untracked();
+        let n = labels.len();
+        if n == 0 {
+            return;
+        }
+
+        let current = hover_index.get_untracked();
+        let new_idx = match ev.key().as_str() {
+            "ArrowLeft" => {
+                match current {
+                    Some(idx) if idx > 0 => Some(idx - 1),
+                    None => Some(n - 1),
+                    _ => current,
+                }
+            }
+            "ArrowRight" => {
+                match current {
+                    Some(idx) if idx < n - 1 => Some(idx + 1),
+                    None => Some(0),
+                    _ => current,
+                }
+            }
+            "Escape" => None,
+            _ => return,
+        };
+
+        hover_index.set(new_idx);
+        ev.prevent_default();
+    };
+
+    let on_focus = move |_: web_sys::FocusEvent| {
+        // Show first data point on focus if none selected
+        let labels = x_labels.get_untracked();
+        if !labels.is_empty() && hover_index.get_untracked().is_none() {
+            hover_index.set(Some(0));
+        }
+    };
+
+    let on_blur = move |_: web_sys::FocusEvent| {
+        hover_index.set(None);
+    };
+
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 48)>
             {move || {
+                let chart_id = LINE_CHART_ID.fetch_add(1, Ordering::Relaxed);
+                let summary_id = format!("line-chart-summary-{}", chart_id);
                 let labels = x_labels.get();
                 let all_series = series.get();
                 if labels.is_empty() || all_series.is_empty() {
@@ -204,6 +253,18 @@ pub fn LineChart(
                 let n = labels.len().max(1);
                 let x_step = if n > 1 { W / (n - 1) as f64 } else { 0.0 };
 
+                // Generate data summary for screen readers
+                let series_names: Vec<String> = all_series.iter().map(|s| s.label.clone()).collect();
+                let data_summary = format!(
+                    "Line chart with {} data points and {} series: {}. Y range: {:.0} to {:.0} {}.",
+                    labels.len(),
+                    series_names.len(),
+                    series_names.join(", "),
+                    ymin,
+                    ymax,
+                    y_unit
+                );
+
                 // Tooltip data derivation
                 let hover_idx = hover_index.get();
                 let tooltip_data = hover_idx.and_then(|idx| {
@@ -223,14 +284,22 @@ pub fn LineChart(
 
                 view! {
                     <div class="line-chart-plot" style="position: relative">
+                        <div id={summary_id.clone()} class="sr-only">{data_summary}</div>
                         <svg
                             node_ref=svg_ref
                             class="line-chart-svg"
                             viewBox="0 0 100 40"
                             preserveAspectRatio="xMidYMid meet"
                             style=format!("height: {}px", height_px)
+                            role="img"
+                            aria-label="Line chart"
+                            aria-describedby={summary_id}
+                            tabindex="0"
                             on:mousemove=on_mousemove
                             on:mouseleave=on_mouseleave
+                            on:keydown=on_keydown
+                            on:focus=on_focus
+                            on:blur=on_blur
                         >
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
