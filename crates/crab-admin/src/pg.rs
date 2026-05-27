@@ -287,6 +287,7 @@ impl PgStore {
                     client_body_user_id TEXT,
                     upstream_user_id TEXT,
                     user_id_audit   TEXT,
+                    upstream_key_id TEXT,
                     PRIMARY KEY (request_hash, timestamp_ms)
                 )",
                 &[],
@@ -1093,10 +1094,10 @@ impl PgStore {
                      retired_prefix_messages, reasoning_strategy,
                      prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                      upstream_model, client_body_user_id, upstream_user_id,
-                     user_id_audit)
+                     user_id_audit, upstream_key_id)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
-                         $26,$27,$28,$29)
+                         $26,$27,$28,$29,$30)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1140,6 +1141,7 @@ impl PgStore {
                     &e.client_body_user_id,
                     &e.upstream_user_id,
                     &e.user_id_audit,
+                    &e.upstream_key_id,
                 ],
             )
             .await?;
@@ -1171,7 +1173,7 @@ impl PgStore {
                     retired_prefix_messages, reasoning_strategy,
                     prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                     upstream_model, client_body_user_id, upstream_user_id,
-                    user_id_audit
+                    user_id_audit, upstream_key_id
              FROM trace_logs WHERE 1=1",
         );
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
@@ -1250,6 +1252,7 @@ impl PgStore {
                 client_body_user_id: row.get(26),
                 upstream_user_id: row.get(27),
                 user_id_audit: row.get(28),
+                upstream_key_id: row.get(29),
             });
         }
         Ok(out)

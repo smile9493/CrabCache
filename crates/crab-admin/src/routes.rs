@@ -2040,6 +2040,7 @@ async fn get_logs(
                 project_id: None,
                 upstream_user_id: None,
                 user_id_audit: None,
+                upstream_key_id: None,
             })
             .collect();
         return Json(crate::types::LogsPageResponse {
@@ -2120,6 +2121,7 @@ async fn get_logs(
                 project_id: e.project_id.clone(),
                 upstream_user_id: e.upstream_user_id.clone(),
                 user_id_audit: e.user_id_audit.clone(),
+                upstream_key_id: e.upstream_key_id.clone(),
             }
         })
         .collect();
@@ -2149,6 +2151,7 @@ async fn get_log_detail(
             output_tokens: None,
             request_hash: None,
             semantic_cluster: None,
+            upstream_key_id: None,
         }));
     }
 
@@ -2191,6 +2194,7 @@ async fn get_log_detail(
             output_tokens: entry.output_tokens,
             request_hash: Some(entry.request_hash.clone()),
             semantic_cluster: Some(entry.semantic_cluster),
+            upstream_key_id: entry.upstream_key_id.clone(),
         }));
     }
 

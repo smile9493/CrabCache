@@ -83,6 +83,8 @@ pub struct TraceLogEntry {
     pub upstream_user_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id_audit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
 }
 
 impl TraceLogEntry {

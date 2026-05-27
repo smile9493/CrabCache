@@ -81,6 +81,9 @@ pub struct GatewayMetrics {
     pub deepseek_user_id_concurrency_rejected: IntCounterVec,
     pub deepseek_user_id_inflight: IntGaugeVec,
     pub http_responses: IntCounterVec,
+    pub upstream_key_input_tokens: IntCounterVec,
+    pub upstream_key_output_tokens: IntCounterVec,
+    pub upstream_key_latency: HistogramVec,
 }
 
 impl GatewayMetrics {
@@ -329,6 +332,31 @@ impl GatewayMetrics {
             &["status_class"],
         )?;
 
+        let upstream_key_input_tokens = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_key_input_tokens_total",
+                "Total input tokens per upstream key id and model",
+            ),
+            &["key_id", "model"],
+        )?;
+
+        let upstream_key_output_tokens = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_key_output_tokens_total",
+                "Total output tokens per upstream key id and model",
+            ),
+            &["key_id", "model"],
+        )?;
+
+        let upstream_key_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_upstream_key_latency_seconds",
+                "Upstream response latency per key id in seconds",
+            )
+            .buckets(vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0]),
+            &["key_id"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -362,6 +390,9 @@ impl GatewayMetrics {
             deepseek_user_id_concurrency_rejected,
             deepseek_user_id_inflight,
             http_responses,
+            upstream_key_input_tokens,
+            upstream_key_output_tokens,
+            upstream_key_latency,
         })
     }
 
@@ -398,6 +429,9 @@ impl GatewayMetrics {
         registry.register(Box::new(self.deepseek_user_id_concurrency_rejected.clone()))?;
         registry.register(Box::new(self.deepseek_user_id_inflight.clone()))?;
         registry.register(Box::new(self.http_responses.clone()))?;
+        registry.register(Box::new(self.upstream_key_input_tokens.clone()))?;
+        registry.register(Box::new(self.upstream_key_output_tokens.clone()))?;
+        registry.register(Box::new(self.upstream_key_latency.clone()))?;
         Ok(())
     }
 
@@ -705,6 +739,27 @@ impl GatewayMetrics {
         self.upstream_prompt_cache_tokens
             .with_label_values(&[status, model, consumer, domain])
             .inc_by(tokens);
+    }
+
+    pub fn record_upstream_key_usage(
+        &self,
+        key_id: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        self.upstream_key_input_tokens
+            .with_label_values(&[key_id, model])
+            .inc_by(input_tokens);
+        self.upstream_key_output_tokens
+            .with_label_values(&[key_id, model])
+            .inc_by(output_tokens);
+    }
+
+    pub fn record_upstream_key_latency(&self, key_id: &str, duration: Duration) {
+        self.upstream_key_latency
+            .with_label_values(&[key_id])
+            .observe(duration.as_secs_f64());
     }
 }
 

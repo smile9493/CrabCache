@@ -572,6 +572,9 @@ fn LogDetailPane(
                 {summary.user_id_audit.clone().map(|v| view! {
                     <DetailField label=t.logs_detail_user_id_audit() value=v />
                 })}
+                {summary.upstream_key_id.clone().map(|v| view! {
+                    <DetailField label="Upstream Key" value=v />
+                })}
             </div>
 
             {move || {

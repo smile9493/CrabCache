@@ -56,6 +56,9 @@ pub struct SanitizedLogEntry {
     /// Selected upstream profile for this request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_profile_id: Option<String>,
+    /// Upstream key pool key_id used for this request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
     /// Request pipeline id (e.g. `cursor_deepseek_v4`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
@@ -149,6 +152,7 @@ impl SanitizedLogEntry {
             request_messages_snapshot,
             response_preview: None,
             upstream_profile_id: None,
+            upstream_key_id: None,
             pipeline: None,
             upstream_model: None,
             client_body_user_id: None,

@@ -1939,6 +1939,7 @@ impl ProxyHttp for GatewayProxy {
                             &ctx.model,
                             ctx.consumer.as_deref(),
                             ctx.domain.as_deref(),
+                            ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
                             &self.state.runtime,
                             &self.state.pricing,
                         );
@@ -1971,6 +1972,9 @@ impl ProxyHttp for GatewayProxy {
                     &ctx.model,
                     Some(crab_metrics::CacheTier::Miss),
                 );
+                if let Some(kid) = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()) {
+                    global_metrics().record_upstream_key_latency(kid, latency);
+                }
             }
 
             // Non-streaming: reasoning is stored inside rewrite_response_body via
@@ -2042,6 +2046,7 @@ impl ProxyHttp for GatewayProxy {
                         &ctx.model,
                         ctx.consumer.as_deref(),
                         ctx.domain.as_deref(),
+                        ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
                         &self.state.runtime,
                         &self.state.pricing,
                     );
@@ -2145,6 +2150,9 @@ impl ProxyHttp for GatewayProxy {
                     &ctx.model,
                     Some(crab_metrics::CacheTier::Miss),
                 );
+                if let Some(kid) = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()) {
+                    global_metrics().record_upstream_key_latency(kid, latency);
+                }
             }
 
             if let (Some(cache_key), Some(accumulator)) = (&ctx.cache_key, &ctx.stream.accumulator)
@@ -2425,6 +2433,7 @@ impl ProxyHttp for GatewayProxy {
                     if max_resp > 0 {
                         entry.response_preview = build_response_preview(ctx, max_resp);
                     }
+                    entry.upstream_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id().to_string());
                     apply_user_id_audit_to_entry(
                         &mut entry,
                         ctx.request_pipeline,
@@ -2568,6 +2577,7 @@ fn record_usage_metrics(
     model: &str,
     consumer: Option<&str>,
     domain: Option<&str>,
+    upstream_key_id: Option<&str>,
     runtime: &crate::runtime::RuntimeConfig,
     pricing: &crate::context::PricingConfig,
 ) {
@@ -2580,6 +2590,10 @@ fn record_usage_metrics(
         consumer,
         domain,
     );
+
+    if let Some(kid) = upstream_key_id {
+        global_metrics().record_upstream_key_usage(kid, model, usage.prompt_tokens, usage.completion_tokens);
+    }
 
     if usage.prompt_cache_hit_tokens > 0 {
         global_metrics().record_upstream_prompt_cache(

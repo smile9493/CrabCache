@@ -27,6 +27,8 @@ pub struct RequestLog {
     pub upstream_user_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id_audit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +49,8 @@ pub struct RequestDetail {
     pub request_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_cluster: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
