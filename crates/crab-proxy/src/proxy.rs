@@ -1,11 +1,13 @@
 const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
 
+use crate::body_quick_parse::quick_parse_request_fields;
 use crate::cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
 };
 use crate::cache_response::{completion_json_has_visible_client_content, send_cached_response};
 use crate::client_key_limiter::ClientKeyLimitError;
+use crate::connection_helpers::apply_connection_options;
 use crate::context::{GatewayContext, GatewayState, ReasoningConfig};
 use crate::debug_agent_log;
 use crate::error_jsons::{
@@ -19,8 +21,6 @@ use crate::helper_fns::{
     is_models_endpoint, last_user_message_fingerprint, sanitize_for_trace,
     stable_session_log_fields,
 };
-use crate::connection_helpers::apply_connection_options;
-use crate::connection_prewarm::prewarm_via_proxy;
 use crate::metrics_helpers::{
     accumulate_affinity_prompt_cache_usage, finalize_affinity_backend_hint,
     observe_request_timeline, record_usage_metrics, timeline_stamp,
@@ -30,6 +30,7 @@ use crate::send_helpers::{
     send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok,
 };
 use crate::sse::UsageData;
+use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crate::tenant::{
     ProjectResolveError, derive_project_id_from_client_key, effective_cache_namespace,
     resolve_project_id,
@@ -60,7 +61,6 @@ use crab_reasoning::{
     sanitize_client_completion,
 };
 use crab_route::extract_affinity_key;
-use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
@@ -161,6 +161,101 @@ impl GatewayProxy {
         peer
     }
 
+    /// Full JSON parse (deferred for MiMo until cache miss or prepare).
+    fn ensure_client_payload(
+        &self,
+        ctx: &mut GatewayContext,
+        body: &[u8],
+        pipeline: Option<&str>,
+    ) -> Result<Arc<serde_json::Value>, ()> {
+        if let Some(p) = &ctx.parsed_request_payload {
+            return Ok(p.clone());
+        }
+        let parse_start = Instant::now();
+        let parsed = match serde_json::from_slice::<serde_json::Value>(body) {
+            Ok(v) => Arc::new(v),
+            Err(_) => return Err(()),
+        };
+        let parse_elapsed = parse_start.elapsed();
+        global_metrics().record_request_body_stage(
+            "json_parse_client",
+            parse_elapsed,
+            body.len(),
+            pipeline,
+        );
+        ctx.parsed_request_payload = Some(parsed.clone());
+        timeline_stamp(&mut ctx.timeline.json_parse_done);
+        Ok(parsed)
+    }
+
+    /// Exact tiered cache lookup + response for MiMo before full JSON parse.
+    async fn try_early_mimo_exact_cache(
+        &self,
+        session: &mut Session,
+        ctx: &mut GatewayContext,
+        cache_key: &str,
+        display_reasoning: bool,
+    ) -> Result<bool, pingora_core::Error> {
+        ctx.exact_cache_probed = true;
+        let tiered_exact = self
+            .state
+            .tiered_cache
+            .get(cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
+            .await;
+        timeline_stamp(&mut ctx.timeline.cache_lookup_done);
+
+        let Some((entry, tier)) = tiered_exact else {
+            return Ok(false);
+        };
+
+        if !cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+            return Ok(false);
+        }
+
+        let sent_ok = send_cached_response(
+            session,
+            &entry,
+            &ctx.model,
+            ctx.is_streaming,
+            tier,
+            display_reasoning,
+        )
+        .await;
+
+        if !sent_ok {
+            return Ok(false);
+        }
+
+        ctx.cache_tier = Some(tier);
+        ctx.cache_hit = Some(entry.clone());
+        ctx.tokens.last_input = entry.usage.prompt_tokens;
+        ctx.tokens.last_output = entry.usage.completion_tokens;
+        if let Some(body) = &ctx.original_request_body {
+            crate::cache_revalidate::maybe_spawn_swr(session, cache_key, &entry, body);
+        }
+        global_metrics().record_latency(
+            crab_metrics::LatencyKind::CacheFetch,
+            ctx.request_start.elapsed(),
+            &ctx.model,
+            Some(tier),
+        );
+        let cost = self.state.pricing.cost_saved_usd(
+            &ctx.model,
+            entry.usage.prompt_tokens,
+            entry.usage.completion_tokens,
+        );
+        global_metrics().record_cost_saved(
+            &ctx.model,
+            ctx.consumer.as_deref(),
+            ctx.domain.as_deref(),
+            tier,
+            cost,
+        );
+        global_metrics().record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
+        global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
+        Ok(true)
+    }
+
     fn try_acquire_upstream_key(&self, ctx: &mut GatewayContext) -> bool {
         if ctx.upstream.key_guard.is_some() {
             return true;
@@ -211,11 +306,7 @@ impl GatewayProxy {
 
     /// Attempt L2 semantic cache lookup. Returns `true` if the response was served
     /// from the semantic cache (including error responses), `false` if no hit.
-    async fn try_l2_semantic_cache(
-        &self,
-        session: &mut Session,
-        ctx: &mut GatewayContext,
-    ) -> bool {
+    async fn try_l2_semantic_cache(&self, session: &mut Session, ctx: &mut GatewayContext) -> bool {
         let gate = {
             let runtime = self.state.semantic_runtime.read();
             if !runtime.enabled {
@@ -309,7 +400,9 @@ impl GatewayProxy {
             ctx.tokens.last_input = entry.usage.prompt_tokens;
             ctx.tokens.last_output = entry.usage.completion_tokens;
             // Spawn stale-while-revalidate if entry is stale.
-            if let (Some(body), Some(cache_key)) = (&ctx.original_request_body, ctx.cache_key.as_deref()) {
+            if let (Some(body), Some(cache_key)) =
+                (&ctx.original_request_body, ctx.cache_key.as_deref())
+            {
                 crate::cache_revalidate::maybe_spawn_swr(session, cache_key, &entry, body);
             }
             global_metrics().record_cache_hit(
@@ -718,49 +811,18 @@ impl ProxyHttp for GatewayProxy {
         let req_hash = hex::encode(hasher.finalize());
         ctx.req_hash = Some(req_hash);
 
-        let parse_start = Instant::now();
-        let parsed_payload = match serde_json::from_slice::<serde_json::Value>(&full_body) {
-            Ok(v) => Arc::new(v),
-            Err(_) => {
-                let _ = session.respond_error(400).await;
-                return Ok(true);
-            }
-        };
-        let parse_elapsed = parse_start.elapsed();
-        global_metrics().record_request_body_stage(
-            "json_parse_client",
-            parse_elapsed,
-            full_body.len(),
-            None,
-        );
-        ctx.parsed_request_payload = Some(parsed_payload.clone());
-        timeline_stamp(&mut ctx.timeline.json_parse_done);
-        let payload = parsed_payload.as_ref();
-
+        let quick = quick_parse_request_fields(&full_body);
         let profile = self.state.runtime.default_profile();
         let fallback_model = profile.fallback_model.clone();
-        ctx.model = payload
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or(&fallback_model)
-            .to_string();
-        ctx.is_streaming = payload
-            .get("stream")
-            .and_then(|s| s.as_bool())
-            .unwrap_or(false);
+        ctx.model = quick
+            .model
+            .filter(|m| !m.is_empty())
+            .unwrap_or(fallback_model);
+        ctx.is_streaming = quick.stream.unwrap_or(false);
 
-        ctx.conversation_id = payload
-            .get("conversation_id")
-            .and_then(|c| c.as_str())
-            .map(|s| s.to_string())
-            .or(conversation_id_from_header);
+        ctx.conversation_id = quick.conversation_id.or(conversation_id_from_header);
 
-        ctx.prompt_cache_key = payload
-            .get("prompt_cache_key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        ctx.session_fingerprint = session_fingerprint_from_payload(&payload);
+        ctx.prompt_cache_key = quick.prompt_cache_key;
 
         let client_ip = session
             .client_addr()
@@ -792,7 +854,7 @@ impl ProxyHttp for GatewayProxy {
 
         let pipe_ctx = PipelineRequestContext {
             model: &ctx.model,
-            payload: Some(&payload),
+            payload: ctx.parsed_request_payload.as_deref(),
             key_pipeline: key_pipeline.as_deref().map(PipelineOverride::from_str),
             key_upstream_profile: key_upstream_profile.as_deref(),
             domain_pipeline: domain_pipeline.as_deref().map(PipelineOverride::from_str),
@@ -857,6 +919,52 @@ impl ProxyHttp for GatewayProxy {
             &selection.upstream_profile_id,
             selection.reason.as_str(),
         );
+        timeline_stamp(&mut ctx.timeline.pipeline_select_done);
+
+        let reasoning_cfg_early = self.reasoning_config();
+        if Self::is_mimo_pipeline(selection.pipeline) {
+            let fingerprint_early = self.state.runtime.fingerprint.read().clone();
+            let cache_namespace_early = effective_cache_namespace(
+                self.state.cache_key_namespace.as_deref(),
+                ctx.project_id.as_deref(),
+            );
+            if let Ok(early_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
+                &full_body,
+                cache_namespace_early.as_deref(),
+                &fingerprint_early,
+            ) {
+                ctx.cache_key = Some(early_key.clone());
+                if self
+                    .try_early_mimo_exact_cache(
+                        session,
+                        ctx,
+                        &early_key,
+                        reasoning_cfg_early.display_reasoning,
+                    )
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
+        }
+
+        let parsed_payload =
+            match self.ensure_client_payload(ctx, &full_body, Some(selection.pipeline.as_str())) {
+                Ok(p) => p,
+                Err(()) => {
+                    let _ = session.respond_error(400).await;
+                    return Ok(true);
+                }
+            };
+        let parse_elapsed = ctx
+            .timeline
+            .json_parse_done
+            .map(|t| t.duration_since(ctx.request_start))
+            .unwrap_or_default();
+        if ctx.session_fingerprint.is_none() {
+            ctx.session_fingerprint = session_fingerprint_from_payload(parsed_payload.as_ref());
+        }
+        let payload = parsed_payload.as_ref();
 
         // ─── Phase 4: Preparation (reasoning preprocessing, composition extraction) ───
         let active_profile = self.active_upstream_profile(ctx);
@@ -1155,10 +1263,7 @@ impl ProxyHttp for GatewayProxy {
             Some(selection.pipeline.as_str()),
         );
 
-        let new_body = ctx
-            .new_request_body
-            .clone()
-            .unwrap_or(full_body);
+        let new_body = ctx.new_request_body.clone().unwrap_or(full_body);
         ctx.upstream_outbound_body_len = new_body.len();
         // #region agent log
         let outbound_fp: String = {
@@ -1277,7 +1382,9 @@ impl ProxyHttp for GatewayProxy {
             ctx.cache_key = Some(cache_key.clone());
 
             let may_try_l2 = ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4);
-            let tiered_exact = if may_try_l2 {
+            let tiered_exact = if ctx.exact_cache_probed {
+                None
+            } else if may_try_l2 {
                 self.state
                     .tiered_cache
                     .get_defer_miss(&cache_key, ctx.consumer.as_deref(), ctx.domain.as_deref())
@@ -1289,7 +1396,9 @@ impl ProxyHttp for GatewayProxy {
                     .await
             };
             let tiered_was_absent = tiered_exact.is_none();
-            timeline_stamp(&mut ctx.timeline.cache_lookup_done);
+            if !ctx.exact_cache_probed {
+                timeline_stamp(&mut ctx.timeline.cache_lookup_done);
+            }
             if let Some((entry, tier)) = tiered_exact {
                 if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                     info!(
@@ -1351,7 +1460,9 @@ impl ProxyHttp for GatewayProxy {
                         ctx.tokens.last_output = entry.usage.completion_tokens;
                         // Spawn stale-while-revalidate if entry is stale.
                         if let Some(body) = &ctx.original_request_body {
-                            crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
+                            crate::cache_revalidate::maybe_spawn_swr(
+                                session, &cache_key, &entry, body,
+                            );
                         }
                         global_metrics().record_latency(
                             crab_metrics::LatencyKind::CacheFetch,
@@ -1371,7 +1482,8 @@ impl ProxyHttp for GatewayProxy {
                             tier,
                             cost,
                         );
-                        global_metrics().record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
+                        global_metrics()
+                            .record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
                         global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
                         return Ok(true);
                     }
@@ -1435,13 +1547,11 @@ impl ProxyHttp for GatewayProxy {
                     // Extract prefix (everything before the last ':' = messages hash).
                     if let Some(prefix_end) = prefix_key.rfind(':') {
                         let prefix_hash = &prefix_key[..prefix_end];
-                        if let Some(entry) = self
-                            .state
-                            .tiered_cache
-                            .prefix_l0_lookup(prefix_hash)
-                            .await
+                        if let Some(entry) =
+                            self.state.tiered_cache.prefix_l0_lookup(prefix_hash).await
                         {
                             if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
+                                global_metrics().record_prefix_index_warmup();
                                 debug!(
                                     request_id = %ctx.request_id,
                                     prefix_hash = %prefix_hash,
@@ -1451,16 +1561,15 @@ impl ProxyHttp for GatewayProxy {
                             }
                         }
                         // Register prefix → full key for exact-cache and future prefix lookups.
-                        self.state.tiered_cache.update_prefix_index(prefix_hash, &cache_key);
+                        self.state
+                            .tiered_cache
+                            .update_prefix_index(prefix_hash, &cache_key);
                     }
                 }
             }
 
             if may_try_l2 {
-                if self
-                    .try_l2_semantic_cache(session, ctx)
-                    .await
-                {
+                if self.try_l2_semantic_cache(session, ctx).await {
                     return Ok(true);
                 }
                 if tiered_was_absent {
@@ -1541,7 +1650,9 @@ impl ProxyHttp for GatewayProxy {
                                     ctx.tokens.last_output = entry.usage.completion_tokens;
                                     // Spawn stale-while-revalidate if entry is stale.
                                     if let Some(body) = &ctx.original_request_body {
-                                        crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
+                                        crate::cache_revalidate::maybe_spawn_swr(
+                                            session, &cache_key, &entry, body,
+                                        );
                                     }
                                     global_metrics().record_coalesced_request();
                                     global_metrics().record_cache_hit(
@@ -1568,8 +1679,12 @@ impl ProxyHttp for GatewayProxy {
                                         tier,
                                         cost,
                                     );
-                                    global_metrics().record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
-                                    global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
+                                    global_metrics().record_full_response_cache_hit(
+                                        tier.as_str(),
+                                        ctx.domain.as_deref(),
+                                    );
+                                    global_metrics()
+                                        .record_request_saved_by_cache(ctx.domain.as_deref());
                                     return Ok(true);
                                 }
 
@@ -1680,43 +1795,8 @@ impl ProxyHttp for GatewayProxy {
         // #endregion
 
         // ── Connection pre-warm for new session fingerprints ──────────
-        // When connection_prewarm is enabled and a new session fingerprint is detected,
-        // spawn an async task that sends a lightweight request through the proxy loopback
-        // to populate Pingora's connection pool for the target backend.
-        if self.state.features.connection_prewarm {
-            if let Some(sfp) = ctx.session_fingerprint.as_deref() {
-                let is_new = self
-                    .state
-                    .seen_session_fingerprints
-                    .get(sfp)
-                    .is_none();
-                if is_new {
-                    self.state
-                        .seen_session_fingerprints
-                        .insert(sfp.to_string(), ());
-                    if let (Some(loopback), Some(api_key)) = (
-                        self.state.proxy_loopback_addr.as_deref(),
-                        self.state.prewarm_api_key.as_deref(),
-                    ) {
-                        let affinity_key = ctx.upstream.affinity_key.clone();
-                        let loopback = loopback.to_string();
-                        let api_key = api_key.to_string();
-                        let semaphore = self.state.prewarm_semaphore.clone();
-                        let sfp_short = sfp.chars().take(8).collect::<String>();
-                        debug!(
-                            request_id = %ctx.request_id,
-                            sfp = %sfp_short,
-                            affinity_key = %affinity_key.as_deref().unwrap_or("none"),
-                            "New session fingerprint detected, spawning connection pre-warm"
-                        );
-                        tokio::spawn(async move {
-                            prewarm_via_proxy(semaphore, &loopback, &api_key, affinity_key.as_deref())
-                                .await;
-                        });
-                    }
-                }
-            }
-        }
+        // Connection pre-warm trigger is now in upstream_peer (after Ketama selection).
+        // This ensures we construct the correct HttpPeer with the real backend address.
 
         Ok(false)
     }
@@ -1799,12 +1879,12 @@ impl ProxyHttp for GatewayProxy {
         let selected = router
             .select_with_hint(affinity_key.as_bytes(), preferred_backend.as_deref())
             .ok_or_else(|| {
-            tracing::warn!(
-                request_id = %ctx.request_id,
-                "No healthy upstream backend available, returning 503"
-            );
-            Error::new(ErrorType::ConnectProxyFailure)
-        })?;
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    "No healthy upstream backend available, returning 503"
+                );
+                Error::new(ErrorType::ConnectProxyFailure)
+            })?;
 
         debug!(
             request_id = %ctx.request_id,
@@ -1822,6 +1902,20 @@ impl ProxyHttp for GatewayProxy {
         let backend_addr = selected.addr;
         let backend_tls_sni = selected.tls_sni.to_string();
         let peer = self.create_upstream_peer(backend_addr, &backend_tls_sni, ctx);
+
+        // Trigger direct pool pre-warm for new session fingerprints (same peer options as upstream).
+        if self.state.features.connection_prewarm {
+            if let Some(sfp) = ctx.session_fingerprint.as_deref() {
+                crate::connection_prewarm::spawn_direct_prewarm_if_new_session(
+                    &self.state.upstream_connector.read().clone(),
+                    &self.state.seen_session_fingerprints,
+                    sfp,
+                    peer.clone(),
+                    self.state.prewarm_semaphore.clone(),
+                );
+            }
+        }
+
         let conn_config = self.state.runtime.conn_config.read().clone();
         // #region agent log
         debug_agent_log(
@@ -1961,6 +2055,7 @@ impl ProxyHttp for GatewayProxy {
         if let Some(new_body) = ctx.new_request_body.take() {
             let emit_now = end_of_stream || ctx.upstream.retry_buffer_truncated;
             if emit_now {
+                timeline_stamp(&mut ctx.timeline.upstream_body_sent);
                 let header_to_body_ms = ctx
                     .upstream_headers_prepared_at
                     .map(|t| t.elapsed().as_millis())
@@ -2232,9 +2327,10 @@ impl ProxyHttp for GatewayProxy {
                             ctx.consumer.as_deref(),
                             ctx.domain.as_deref(),
                             ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                            ctx.upstream.affinity_key.as_deref().map(|k| {
-                                crab_capture::affinity_kind_from_key(k)
-                            }),
+                            ctx.upstream
+                                .affinity_key
+                                .as_deref()
+                                .map(|k| crab_capture::affinity_kind_from_key(k)),
                             &self.state.runtime,
                             &self.state.pricing,
                         );
@@ -2334,9 +2430,10 @@ impl ProxyHttp for GatewayProxy {
                         ctx.consumer.as_deref(),
                         ctx.domain.as_deref(),
                         ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                        ctx.upstream.affinity_key.as_deref().map(|k| {
-                            crab_capture::affinity_kind_from_key(k)
-                        }),
+                        ctx.upstream
+                            .affinity_key
+                            .as_deref()
+                            .map(|k| crab_capture::affinity_kind_from_key(k)),
                         &self.state.runtime,
                         &self.state.pricing,
                     );
@@ -2366,6 +2463,7 @@ impl ProxyHttp for GatewayProxy {
                         display_reasoning,
                     );
 
+                    timeline_stamp(&mut ctx.timeline.cache_write_done);
                     let tiered_cache = self.state.tiered_cache.clone();
                     let cache_key = cache_key.clone();
                     let model = ctx.model.clone();
@@ -2516,6 +2614,7 @@ impl ProxyHttp for GatewayProxy {
                                 reasoning_cfg.display_reasoning,
                             )
                         };
+                        timeline_stamp(&mut ctx.timeline.cache_write_done);
                         let tiered_cache = self.state.tiered_cache.clone();
                         let cache_key = cache_key.clone();
                         let model = ctx.model.clone();
@@ -2760,10 +2859,7 @@ impl ProxyHttp for GatewayProxy {
         if let Some(raw_logger) = &self.state.raw_capture_logger {
             let req_path = session.req_header().uri.path();
             if !raw_logger.should_skip(req_path) {
-                let has_error = ctx
-                    .upstream
-                    .http_status
-                    .map_or(false, |s| s >= 400);
+                let has_error = ctx.upstream.http_status.map_or(false, |s| s >= 400);
                 let body_bytes = ctx.content_length.max(ctx.upstream_outbound_body_len);
                 if raw_logger.should_sample(has_error, body_bytes)
                     == crate::raw_capture::SampleDecision::Capture

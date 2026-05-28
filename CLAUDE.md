@@ -24,6 +24,14 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 - **Prometheus 可观测性**：Token 成本追踪、延迟监控、成本节省估算
 - **Trace 日志**：结构化 JSONL 文件记录，支持加载分析和命中率模拟
 - **Admin Dashboard**：Leptos WASM 前端 + Axum 后端，提供图形化管理界面
+- **数据面优化（可选 `[features]`）**：
+  - **Prefix-aware L0**：共享消息前缀仅更新索引并继续上游（不短路返回完整缓存）
+  - **连接池直预热**：`connection_prewarm` 通过 Pingora 共享 `Connector` 做 TCP+TLS 握手入池（无 loopback HTTP）；新 `session_fingerprint` 在 `upstream_peer` 选路后触发
+  - **Affinity 反馈**：`affinity_prompt_cache_feedback` 在请求结束时根据上游 `prompt_cache_*` token 更新 Ketama hint（连续 3 次 pure miss 才失效）
+  - **MiMo 快速路径**：`body_quick_parse` + 全量 JSON 解析前 exact cache 探测，降低重复请求解析开销
+  - **请求阶段指标**：`gateway_request_phase_latency_seconds`（body_read、json_parse、pipeline_select、cache_lookup、upstream_*、cache_write 等）
+  - **SSE Pipeline**：Reasoning 改写 / SilentStrip / Passthrough 抽象（见 `crates/crab-proxy/src/sse_pipeline/`）
+  - P3 实验项见 [docs/DATA_PLANE_P3.md](docs/DATA_PLANE_P3.md)（`delta_cache`、`wasm_filters`、`io_uring_backend`，默认关闭）
 
 ## 技术栈
 
@@ -73,6 +81,9 @@ CrabCache/
 │   │   ├── src/context.rs           # GatewayContext / GatewayState / StoredKey
 │   │   ├── src/runtime.rs           # RuntimeConfig（运行时可变配置）
 │   │   ├── src/sse.rs               # SSE 解析、UsageData 提取
+│   │   ├── src/sse_pipeline/        # 流式 SSE 管道（Reasoning / Passthrough 等）
+│   │   ├── src/connection_prewarm.rs # 共享连接池 TCP+TLS 直预热
+│   │   ├── src/body_quick_parse.rs  # 请求体快速字段提取（MiMo 惰性解析）
 │   │   ├── src/error.rs             # ProxyError 枚举
 │   │   └── src/trace_logger.rs      # 脱敏 Trace 日志（JSONL 文件）
 │   ├── crab-route/                  # Ketama 路由
@@ -198,6 +209,7 @@ cp config/gateway.example.toml config/gateway.toml
 - `[reasoning]`: Reasoning 处理配置（思考模式、恢复策略、SQLite 缓存路径）
 - `[connection]`: TCP/H2 连接参数（keepalive、idle timeout、ping）
 - `[trace_logging]`: Trace 日志配置（JSONL 路径、行数限制）
+- `[features]`: 实验性数据面开关（见 `config/gateway.example.toml` 注释）；`connection_prewarm` 依赖 `third_party/pingora-proxy` 的 `Arc<Connector>` 共享（见 `PATCH.md`）
 
 ### 环境变量覆盖
 
@@ -433,6 +445,8 @@ Admin Dashboard Overview 通过 **`GET /api/admin/overview/core`** 每 10s 轮�
 | `gateway_coalesced_requests_total` | Counter | - | 合并请求总数 |
 | `gateway_cache_cost_saved_usd_total` | Counter | `{model, consumer, tier}` | 缓存节省成本估算 (USD) |
 | `gateway_upstream_prompt_cache_tokens_total` | Counter | `{status, model, consumer}` | 上游提示缓存 Token 数 |
+| `gateway_request_phase_latency_seconds` | Histogram | `{phase, pipeline, model}` | 请求生命周期各阶段耗时（如 `pipeline_select_done`、`upstream_body_sent`） |
+| `gateway_prefix_index_warmup_total` | Counter | - | Prefix-aware L0 索引预热（未短路返回，请求继续上游） |
 
 ## 贡献指南
 

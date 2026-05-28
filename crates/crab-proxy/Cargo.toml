@@ -41,4 +41,3 @@ chrono.workspace = true
 thiserror.workspace = true
 indexmap = { workspace = true }
 regex.workspace = true
-reqwest = { workspace = true }

@@ -20,6 +20,7 @@ mod upstream_user_id_limiter;
 mod user_id_audit;
 
 // Extracted helper modules from proxy.rs
+mod body_quick_parse;
 mod cache_helpers;
 mod cache_response;
 mod cache_revalidate;

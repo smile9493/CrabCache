@@ -15,6 +15,7 @@ use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
 use crab_semantic::SemanticCache;
+use pingora_core::connectors::http::Connector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -210,11 +211,14 @@ pub struct TokenStats {
 pub struct RequestTimeline {
     pub body_read_done: Option<Instant>,
     pub json_parse_done: Option<Instant>,
+    pub pipeline_select_done: Option<Instant>,
     pub cache_lookup_done: Option<Instant>,
     pub upstream_connect_done: Option<Instant>,
     pub upstream_headers_sent: Option<Instant>,
+    pub upstream_body_sent: Option<Instant>,
     pub ttft: Option<Instant>,
     pub upstream_body_done: Option<Instant>,
+    pub cache_write_done: Option<Instant>,
     pub logging_done: Option<Instant>,
 }
 
@@ -370,6 +374,10 @@ pub struct GatewayContext {
     pub affinity_prompt_cache_hits: u64,
     /// Accumulated upstream prompt-cache miss tokens (affinity hint finalized in `logging`).
     pub affinity_prompt_cache_misses: u64,
+    /// Consecutive usage chunks with pure prompt-cache miss (no hit tokens).
+    pub affinity_pure_miss_streak: u32,
+    /// Exact tiered cache lookup already attempted (e.g. before full JSON parse).
+    pub exact_cache_probed: bool,
     /// Lifecycle watermarks for `gateway_request_phase_latency_seconds`.
     pub timeline: RequestTimeline,
 }
@@ -423,6 +431,8 @@ impl GatewayContext {
             session_fingerprint: None,
             affinity_prompt_cache_hits: 0,
             affinity_prompt_cache_misses: 0,
+            affinity_pure_miss_streak: 0,
+            exact_cache_probed: false,
             timeline: RequestTimeline::default(),
         }
     }
@@ -488,15 +498,12 @@ pub struct GatewayState {
     /// Tracks session fingerprints that have already been seen (for connection pre-warm).
     /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
     pub seen_session_fingerprints: moka::sync::Cache<String, ()>,
-    /// Proxy loopback address for runtime connection pre-warm (e.g., "127.0.0.1:8080").
-    /// When set, new session fingerprints trigger an async TCP connect + minimal HTTP request
-    /// through the proxy to populate Pingora's connection pool for the target backend.
-    pub proxy_loopback_addr: Option<String>,
-    /// Bootstrap API key for pre-warm requests (raw value, e.g., "sk-cc-...").
-    pub prewarm_api_key: Option<String>,
+    /// Shared Pingora upstream connector (TCP/TLS connection pool).
+    /// Injected from `HttpProxy::connector_arc()` at startup; used for direct pool pre-warm.
+    pub upstream_connector: parking_lot::RwLock<Option<Arc<Connector<()>>>>,
     /// affinity_key → backend_name when upstream prompt cache hits were observed (L3 stickiness).
     pub affinity_backend_hints: moka::sync::Cache<String, String>,
-    /// Limits concurrent runtime loopback pre-warm requests (via proxy listener).
+    /// Limits concurrent direct pool pre-warm requests.
     pub prewarm_semaphore: Arc<Semaphore>,
     /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).
     pub global_rate: Arc<pingora_limits::rate::Rate>,

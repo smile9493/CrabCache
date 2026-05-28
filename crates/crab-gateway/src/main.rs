@@ -19,7 +19,8 @@ use crab_state::{
 use parking_lot::RwLock;
 use pingora_core::server::Server;
 use pingora_core::services::background::background_service;
-use pingora_proxy::http_proxy_service;
+use pingora_core::services::listening::Service;
+use pingora_proxy::http_proxy;
 use prometheus::Registry;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -821,16 +822,7 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
-        proxy_loopback_addr: if config.features.connection_prewarm {
-            Some(config.listen_addr.clone())
-        } else {
-            None
-        },
-        prewarm_api_key: if config.features.connection_prewarm {
-            Some(config.api_key.inner().to_string())
-        } else {
-            None
-        },
+        upstream_connector: parking_lot::RwLock::new(None),
         affinity_backend_hints: moka::sync::Cache::builder()
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
@@ -856,8 +848,12 @@ fn main() -> Result<()> {
         });
     }
 
-    let proxy = GatewayProxy::new(state);
-    let mut proxy_service = http_proxy_service(&server.configuration, proxy);
+    let proxy = GatewayProxy::new(state.clone());
+    let proxy_obj = http_proxy(&server.configuration, proxy);
+    // Inject shared connector for direct pool pre-warm before Service takes ownership.
+    *state.upstream_connector.write() = Some(proxy_obj.connector_arc());
+
+    let mut proxy_service = Service::new("crab-gateway".to_string(), proxy_obj);
     proxy_service.add_tcp(&config.listen_addr);
 
     server.add_service(proxy_service);
@@ -876,80 +872,70 @@ fn main() -> Result<()> {
     );
 
     // ── Backend connection pre-warm ───────────────────────────────
-    // Send lightweight requests THROUGH the Pingora proxy (not directly
-    // to backends) so that Pingora's internal connection pool gets
-    // populated. Each request uses a unique x-request-affinity header
-    // to distribute across all backends via Ketama consistent hashing.
+    // Directly establish TCP+TLS connections to all backends through Pingora's
+    // connection pool. Each peer uses a different affinity key so that Ketama
+    // distributes across all backends. The connections are released back to the
+    // pool (not used for HTTP traffic), so subsequent real requests find a warm
+    // connection ready.
     if config.features.connection_prewarm {
         let profiles = runtime_warmup.upstream_profiles.read().clone();
-        let api_key = config.api_key.as_authorization().to_string();
-        let proxy_addr = config.listen_addr.clone();
-        tokio::spawn(async move {
-            // Wait for the Pingora proxy listener to be ready.
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let connector_ref = state.upstream_connector.read().clone();
+        if let Some(connector) = connector_ref {
+            tokio::spawn(async move {
+                // Small delay so the proxy listener is ready.
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default();
+                let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
+                let mut join_set = tokio::task::JoinSet::new();
 
-            // Collect all unique backends across profiles to determine
-            // how many warmup requests we need.
-            let backend_count: usize = profiles.values().map(|p| p.router.meta().len()).sum();
+                // Collect all backends into owned data to avoid borrow issues.
+                let backends: Vec<(String, std::net::SocketAddr, String, String)> = profiles
+                    .iter()
+                    .flat_map(|(pid, profile)| {
+                        profile.router.meta().iter().map(move |(addr, meta)| {
+                            (pid.clone(), *addr, meta.name.clone(), meta.tls_sni.clone())
+                        })
+                    })
+                    .collect();
 
-            // Send requests through the proxy with varied affinity keys
-            // to cover all Ketama ring positions.
-            let warmup_count = std::cmp::max(backend_count, 1);
-            let proxy_url = format!("http://{}/v1/models", proxy_addr);
-
-            let mut join_set = tokio::task::JoinSet::new();
-            for i in 0..warmup_count {
-                let url = proxy_url.clone();
-                let key = api_key.clone();
-                let client = client.clone();
-                join_set.spawn(async move {
-                    let affinity = format!("warmup-{}", i);
-                    let start = std::time::Instant::now();
-                    let result = client
-                        .get(&url)
-                        .header("Authorization", format!("Bearer {}", key))
-                        .header("x-request-affinity", &affinity)
-                        .send()
-                        .await;
-                    (i, affinity, start.elapsed(), result)
-                });
-            }
-
-            let results = join_set.join_all().await;
-            let mut ok_count = 0u32;
-            for (i, affinity, elapsed, result) in results {
-                match result {
-                    Ok(resp) => {
-                        ok_count += 1;
-                        tracing::debug!(
-                            idx = i,
-                            affinity = %affinity,
-                            status = resp.status().as_u16(),
-                            elapsed_ms = elapsed.as_millis() as u64,
-                            "Warmup request succeeded"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            idx = i,
-                            affinity = %affinity,
-                            error = %e,
-                            "Warmup request failed (non-fatal)"
-                        );
-                    }
+                for (profile_id, addr, name, tls_sni) in backends {
+                    let peer = pingora_core::upstreams::peer::HttpPeer::new(addr, true, tls_sni);
+                    let connector = connector.clone();
+                    let semaphore = semaphore.clone();
+                    join_set.spawn(async move {
+                        let Ok(_permit) = semaphore.try_acquire() else {
+                            return;
+                        };
+                        match connector.get_http_session(&peer).await {
+                            Ok((session, _reused)) => {
+                                connector.release_http_session(session, &peer, None).await;
+                                tracing::debug!(
+                                    profile = %profile_id,
+                                    backend = %name,
+                                    addr = %addr,
+                                    "Startup direct pre-warm OK"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    profile = %profile_id,
+                                    backend = %name,
+                                    addr = %addr,
+                                    error = %e,
+                                    "Startup direct pre-warm failed"
+                                );
+                            }
+                        }
+                    });
                 }
-            }
-            info!(
-                total = warmup_count,
-                succeeded = ok_count,
-                "Backend connection pre-warm completed"
-            );
-        });
+
+                let results = join_set.join_all().await;
+                tracing::info!(
+                    count = results.len(),
+                    "Startup connection pre-warm completed"
+                );
+            });
+        }
     }
 
     server.run_forever();

@@ -71,6 +71,7 @@ pub struct GatewayMetrics {
     pub reasoning_store_lookups: IntCounterVec,
     pub prefix_break: IntCounter,
     pub prefix_block_drift: IntCounter,
+    pub prefix_index_warmup: IntCounter,
     pub context_summary_appended: IntCounter,
     pub state_persist_total: IntCounter,
     pub state_persist_errors_total: IntCounter,
@@ -268,6 +269,11 @@ impl GatewayMetrics {
         let prefix_block_drift = IntCounter::new(
             "gateway_prefix_block_drift_total",
             "Immutable leading system/tools block hash drift for a conversation scope",
+        )?;
+
+        let prefix_index_warmup = IntCounter::new(
+            "gateway_prefix_index_warmup_total",
+            "Prefix-aware L0 index warm-up (request continued upstream, no short-circuit)",
         )?;
 
         let context_summary_appended = IntCounter::new(
@@ -496,6 +502,7 @@ impl GatewayMetrics {
             reasoning_store_lookups,
             prefix_break,
             prefix_block_drift,
+            prefix_index_warmup,
             context_summary_appended,
             state_persist_total,
             state_persist_errors_total,
@@ -548,6 +555,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.reasoning_store_lookups.clone()))?;
         registry.register(Box::new(self.prefix_break.clone()))?;
         registry.register(Box::new(self.prefix_block_drift.clone()))?;
+        registry.register(Box::new(self.prefix_index_warmup.clone()))?;
         registry.register(Box::new(self.context_summary_appended.clone()))?;
         registry.register(Box::new(self.state_persist_total.clone()))?;
         registry.register(Box::new(self.state_persist_errors_total.clone()))?;
@@ -668,6 +676,10 @@ impl GatewayMetrics {
 
     pub fn record_prefix_block_drift(&self) {
         self.prefix_block_drift.inc();
+    }
+
+    pub fn record_prefix_index_warmup(&self) {
+        self.prefix_index_warmup.inc();
     }
 
     pub fn record_context_summary_appended(&self) {

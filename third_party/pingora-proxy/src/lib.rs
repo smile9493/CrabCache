@@ -113,7 +113,7 @@ where
     C: custom::Connector, // Upstream custom connector
 {
     inner: SV, // TODO: name it better than inner
-    client_upstream: Connector<C>,
+    client_upstream: Arc<Connector<C>>,
     shutdown: Notify,
     shutdown_flag: Arc<AtomicBool>,
     pub server_options: Option<HttpServerOptions>,
@@ -147,7 +147,7 @@ impl<SV> HttpProxy<SV, ()> {
     pub fn new(inner: SV, conf: Arc<ServerConf>) -> Self {
         HttpProxy {
             inner,
-            client_upstream: Connector::new(Some(ConnectorOptions::from_server_conf(&conf))),
+            client_upstream: Arc::new(Connector::new(Some(ConnectorOptions::from_server_conf(&conf)))),
             shutdown: Notify::new(),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             server_options: None,
@@ -172,6 +172,16 @@ where
         &self.client_upstream
     }
 
+    /// Returns a cloned `Arc` to the upstream HTTP connector (connection pool).
+    ///
+    /// Use this when the proxy implementation (e.g., CrabCache `GatewayState`)
+    /// needs to share the same connection pool for runtime pre-warming without
+    /// going through a loopback proxy path. The `Arc` ensures that pre-warm
+    /// connections land in the same pool as real upstream requests.
+    pub fn connector_arc(&self) -> Arc<Connector<C>> {
+        self.client_upstream.clone()
+    }
+
     fn new_custom(
         inner: SV,
         conf: Arc<ServerConf>,
@@ -184,7 +194,7 @@ where
         SV::CTX: Send + Sync,
     {
         let client_upstream =
-            Connector::new_custom(Some(ConnectorOptions::from_server_conf(&conf)), connector);
+            Arc::new(Connector::new_custom(Some(ConnectorOptions::from_server_conf(&conf)), connector));
 
         HttpProxy {
             inner,

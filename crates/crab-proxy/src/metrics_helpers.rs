@@ -4,6 +4,9 @@ use crate::sse::UsageData;
 use crab_metrics::global_metrics;
 use std::time::Instant;
 
+/// Invalidate affinity hint after this many consecutive pure prompt-cache misses.
+pub const AFFINITY_MISS_STREAK_THRESHOLD: u32 = 3;
+
 pub fn record_usage_metrics(
     usage: &UsageData,
     model: &str,
@@ -75,6 +78,11 @@ pub fn accumulate_affinity_prompt_cache_usage(
     prompt_cache_hit_tokens: u64,
     prompt_cache_miss_tokens: u64,
 ) {
+    if prompt_cache_hit_tokens > 0 {
+        ctx.affinity_pure_miss_streak = 0;
+    } else if prompt_cache_miss_tokens > 0 {
+        ctx.affinity_pure_miss_streak = ctx.affinity_pure_miss_streak.saturating_add(1);
+    }
     ctx.affinity_prompt_cache_hits = ctx
         .affinity_prompt_cache_hits
         .saturating_add(prompt_cache_hit_tokens);
@@ -105,7 +113,9 @@ pub fn finalize_affinity_backend_hint(
         {
             hints.insert(key.to_string(), backend.to_string());
         }
-    } else if ctx.affinity_prompt_cache_misses > 0 {
+    } else if ctx.affinity_prompt_cache_misses > 0
+        && ctx.affinity_pure_miss_streak >= AFFINITY_MISS_STREAK_THRESHOLD
+    {
         hints.invalidate(key);
     }
 }
@@ -125,12 +135,18 @@ pub fn observe_request_timeline(ctx: &GatewayContext) {
     let timeline = &ctx.timeline;
     mark("body_read_done", timeline.body_read_done);
     mark("json_parse_done", timeline.json_parse_done);
+    mark("pipeline_select_done", timeline.pipeline_select_done);
     mark("cache_lookup_done", timeline.cache_lookup_done);
     mark("upstream_connect_done", timeline.upstream_connect_done);
     mark("upstream_headers_sent", timeline.upstream_headers_sent);
+    mark("upstream_body_sent", timeline.upstream_body_sent);
     mark("ttft", timeline.ttft);
     mark("upstream_body_done", timeline.upstream_body_done);
-    mark("logging_done", timeline.logging_done.or(Some(Instant::now())));
+    mark("cache_write_done", timeline.cache_write_done);
+    mark(
+        "logging_done",
+        timeline.logging_done.or(Some(Instant::now())),
+    );
 }
 
 /// Stamp a timeline watermark if not yet set.
@@ -162,15 +178,29 @@ mod tests {
     }
 
     #[test]
-    fn finalize_affinity_invalidates_only_when_no_hits() {
+    fn finalize_affinity_invalidates_after_miss_streak() {
         let hints: moka::sync::Cache<String, String> =
             moka::sync::Cache::builder().max_capacity(8).build();
         hints.insert("aff-2".to_string(), "stale".to_string());
         let mut ctx = GatewayContext::new("req".into());
         ctx.upstream.affinity_key = Some("aff-2".into());
         ctx.affinity_prompt_cache_misses = 50;
+        ctx.affinity_pure_miss_streak = AFFINITY_MISS_STREAK_THRESHOLD;
         finalize_affinity_backend_hint(&hints, &ctx);
         assert!(hints.get("aff-2").is_none());
+    }
+
+    #[test]
+    fn finalize_affinity_keeps_hint_on_transient_miss_streak() {
+        let hints: moka::sync::Cache<String, String> =
+            moka::sync::Cache::builder().max_capacity(8).build();
+        hints.insert("aff-3".to_string(), "backend-x".to_string());
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.upstream.affinity_key = Some("aff-3".into());
+        ctx.affinity_prompt_cache_misses = 10;
+        ctx.affinity_pure_miss_streak = AFFINITY_MISS_STREAK_THRESHOLD - 1;
+        finalize_affinity_backend_hint(&hints, &ctx);
+        assert_eq!(hints.get("aff-3").as_deref(), Some("backend-x"));
     }
 
     #[test]

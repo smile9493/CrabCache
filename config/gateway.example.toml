@@ -301,10 +301,11 @@ max_files = 5
 # ── Experimental Feature Flags ────────────────────────────────────
 # Each feature is independent and default off. Enable at your own risk.
 # [features]
-# prefix_aware_cache = false         # L0 prefix trie for shared message prefixes
-# streaming_body_forward = false     # Zero-buffer forwarding in request_body_filter
-# connection_prewarm = false         # Pre-warm TLS connections on new session fingerprints
-# affinity_prompt_cache_feedback = false  # Prefer backend with prompt_cache_hit for same affinity key
+# prefix_aware_cache = false         # L0 prefix index only on shared prefixes (no full-response short-circuit)
+# streaming_body_forward = false     # Reserved: stream request body without buffering (not implemented)
+# connection_prewarm = false         # Direct pool pre-warm: shared Pingora Connector, TCP+TLS only (no loopback HTTP).
+#                                    # Startup: all backends; runtime: first upstream_peer per new session_fingerprint.
+# affinity_prompt_cache_feedback = false  # Sticky backend hint from upstream prompt_cache_* tokens; invalidate after 3 consecutive pure misses at request end
 # delta_cache = false                # Experimental differential cache (docs/DATA_PLANE_P3.md)
 # io_uring_backend = false           # Reserved: Pingora io_uring backend
 # wasm_filters = false               # Experimental WASM filters (docs/DATA_PLANE_P3.md)

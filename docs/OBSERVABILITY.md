@@ -13,6 +13,8 @@
 | `cache_hit_ratio`（Trace 页面） | `trace.jsonl` 近 N 小时 | 影子日志实测命中率 |
 | `semantic_hits/rejected/skipped` | `gateway_semantic_cache_requests_total` | 语义守卫状态（非 L2 层级命中） |
 | `coalesced_total` / `coalesced_5m` | `gateway_coalesced_requests_total` | 合并的并发重复键数（5m 来自环增量） |
+| `gateway_request_phase_latency_seconds` | Histogram `{phase,pipeline,model}` | 单请求阶段耗时：`body_read_done`、`json_parse_done`、`pipeline_select_done`、`cache_lookup_done`、`upstream_connect_done`、`upstream_headers_sent`、`upstream_body_sent`、`ttft`、`upstream_body_done`、`cache_write_done`、`logging_done` |
+| `gateway_prefix_index_warmup_total` | Counter | Prefix-aware L0 命中时仅预热索引、请求仍走上游的次数 |
 | `client_key_inflight` | `gateway_client_key_inflight{key_id,consumer}` | 客户端 Key 当前 in-flight 请求数 |
 | `cost_saved_usd_total` / `cost_saved_usd_5m` | `gateway_cache_cost_saved_usd_total` | 网关估算的节省美元金额 |
 | `rejected_total` / `rejected_5m` | `gateway_rejected_requests_total` | 被拒绝的请求数 |
