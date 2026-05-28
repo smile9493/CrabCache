@@ -19,7 +19,11 @@ fn mesh_label(palette: &ChartPalette) -> TextStyle<'_> {
 
 /// Resize a canvas to its CSS layout size scaled by `devicePixelRatio`.
 /// Returns `(logical_w, logical_h)` in CSS pixels.
-fn size_canvas_to_css(canvas: &HtmlCanvasElement, default_w: u32, default_h: u32) -> (u32, u32) {
+pub(crate) fn size_canvas_to_css(
+    canvas: &HtmlCanvasElement,
+    default_w: u32,
+    default_h: u32,
+) -> (u32, u32) {
     let rect = canvas.get_bounding_client_rect();
     let dpr = web_sys::window()
         .map(|w| w.device_pixel_ratio())
@@ -57,7 +61,11 @@ pub fn render_scatter(
     }
     let (xmin, xmax, ymin, ymax) = scatter_range(points);
     let palette = ChartPalette::for_theme(theme);
-    size_canvas_to_css(canvas, super::svg_render::CHART_WIDTH, super::svg_render::CHART_HEIGHT);
+    size_canvas_to_css(
+        canvas,
+        super::svg_render::CHART_WIDTH,
+        super::svg_render::CHART_HEIGHT,
+    );
     let backend = CanvasBackend::with_canvas_object(canvas.clone())?;
     let root = backend.into_drawing_area();
     root.fill(&palette.bg).ok()?;
@@ -108,7 +116,11 @@ pub fn render_scatter(
 // Waterfall
 // ---------------------------------------------------------------------------
 
-pub fn render_waterfall(canvas: &HtmlCanvasElement, stages: &[WaterfallStage], theme: Theme) -> Option<()> {
+pub fn render_waterfall(
+    canvas: &HtmlCanvasElement,
+    stages: &[WaterfallStage],
+    theme: Theme,
+) -> Option<()> {
     if stages.is_empty() {
         return None;
     }
@@ -152,7 +164,9 @@ pub fn render_waterfall(canvas: &HtmlCanvasElement, stages: &[WaterfallStage], t
     for (i, stage) in stages.iter().enumerate() {
         let y0 = i as f64 + (1.0 - bar_h) / 2.0;
         let y1 = y0 + bar_h;
-        let color = waterfall_bar_color(stage.duration_ms, &palette).mix(0.88).filled();
+        let color = waterfall_bar_color(stage.duration_ms, &palette)
+            .mix(0.88)
+            .filled();
         let _ = chart.draw_series(std::iter::once(Rectangle::new(
             [(0.0, y0), (stage.duration_ms.max(0.5), y1)],
             color,
@@ -222,12 +236,7 @@ pub fn render_horizontal_bar_chart(
         .max_light_lines(3)
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .y_label_formatter(&|y| {
-            labels
-                .get(*y as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
+        .y_label_formatter(&|y| labels.get(*y as usize).cloned().unwrap_or_default())
         .y_labels(n)
         .draw()
         .ok()?;
@@ -240,10 +249,7 @@ pub fn render_horizontal_bar_chart(
         let y0 = i as f64 + (1.0 - bar_h) / 2.0;
         let y1 = y0 + bar_h;
         let color = palette.accent.mix(0.85).filled();
-        let _ = chart.draw_series(std::iter::once(Rectangle::new(
-            [(0.0, y0), (v, y1)],
-            color,
-        )));
+        let _ = chart.draw_series(std::iter::once(Rectangle::new([(0.0, y0), (v, y1)], color)));
     }
 
     drop(chart);

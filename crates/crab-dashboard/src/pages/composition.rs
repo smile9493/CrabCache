@@ -1,6 +1,6 @@
 use crate::api::{fetch_composition_debug, fetch_composition_summary, fetch_composition_trends};
 use crate::components::bar_chart::BarChart;
-use crate::components::line_chart::ChartSeries;
+use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::locale::{Locale, use_locale, use_translations};
 use crate::types::{CompositionDebugEntry, CompositionSummary, CompositionTrendsResponse};
 use leptos::prelude::*;
@@ -71,12 +71,15 @@ fn VerticalBarChart(title: String, bars: Vec<(String, usize)>) -> impl IntoView 
     let bars_x = bars.clone();
     let bars_s = bars;
     let x_labels = Signal::derive(move || {
-        bars_x.iter().map(|(l, _)| truncate(l, 10)).collect::<Vec<_>>()
+        bars_x
+            .iter()
+            .map(|(l, _)| truncate(l, 10))
+            .collect::<Vec<_>>()
     });
     let series = Signal::derive(move || {
         vec![ChartSeries {
             label: String::new(),
-            color: "var(--cc-accent)",
+            color: "var(--cc-accent)".to_string(),
             values: bars_s.iter().map(|(_, c)| Some(*c as f64)).collect(),
             dashed: false,
             fill: false,
@@ -115,33 +118,37 @@ fn ComponentRateBar(component: String, present_count: usize, rate: f64) -> impl 
     }
 }
 
-/// Hourly request trend (shared bar chart).
+/// Hourly request trend (line area chart).
 #[component]
-fn TrendBarChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
+fn TrendLineChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     let title_h = title.clone();
     let points_x = points.clone();
     let points_s = points;
     let x_labels = Signal::derive(move || {
-        points_x.iter().map(|(l, _)| truncate(l, 8)).collect::<Vec<_>>()
+        points_x
+            .iter()
+            .map(|(l, _)| truncate(l, 8))
+            .collect::<Vec<_>>()
     });
     let series = Signal::derive(move || {
         vec![ChartSeries {
             label: String::new(),
-            color: "var(--cc-accent)",
+            color: "var(--cc-accent)".to_string(),
             values: points_s.iter().map(|(_, v)| Some(*v as f64)).collect(),
             dashed: false,
-            fill: false,
+            fill: true,
         }]
     });
     view! {
         <div class="glass-card panel-chart">
             <h3 class="text-sm font-semibold text-[var(--text-primary)]">{title_h}</h3>
-            <BarChart
+            <LineChart
                 x_labels=x_labels
                 series=series
                 height_px=220
                 y_unit="req"
                 empty_message=""
+                y_min=Some(0.0)
             />
         </div>
     }
@@ -587,7 +594,7 @@ pub fn CompositionPage() -> impl IntoView {
                             (ts, p.request_count)
                         }).collect();
                         view! {
-                            <TrendBarChart
+                            <TrendLineChart
                                 title=format!("{} ({})", t.composition_trends(), trends.hours)
                                 points=labels
                             />

@@ -3,15 +3,16 @@ use leptos::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::components::candlestick_chart::{CandlestickChart, CandlestickPoint};
+use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
-use crate::components::line_chart::{ChartSeries, LineChart, TokenLineChart};
+use crate::components::line_chart::{ChartSeries, TokenLineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
@@ -307,8 +308,7 @@ pub fn LivePage() -> impl IntoView {
         let live_dirty = Arc::clone(&live_dirty);
         let live_active = Arc::clone(&live_active);
         let alive_for_raf = Arc::clone(&alive);
-        let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> =
-            Rc::new(RefCell::new(None));
+        let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
         let live_raf_state_inner = live_raf_state.clone();
 
         let flush = move || {
@@ -317,7 +317,11 @@ pub fn LivePage() -> impl IntoView {
                 return;
             }
             if *live_dirty.lock().expect("live_dirty lock poisoned") {
-                if let Some(data) = live_buffer.lock().expect("live_buffer lock poisoned").take() {
+                if let Some(data) = live_buffer
+                    .lock()
+                    .expect("live_buffer lock poisoned")
+                    .take()
+                {
                     live_data.set(Some(data));
                     last_update.set(now_hms_string());
                 }
@@ -336,9 +340,7 @@ pub fn LivePage() -> impl IntoView {
                     .request_animation_frame(next_js.unchecked_ref());
             }
         };
-        let closure = wasm_bindgen::closure::Closure::wrap(
-            Box::new(flush) as Box<dyn FnMut()>
-        );
+        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(flush) as Box<dyn FnMut()>);
         let func: js_sys::Function = closure.into_js_value().into();
         *live_raf_state.borrow_mut() = Some(func);
 
@@ -387,7 +389,9 @@ pub fn LivePage() -> impl IntoView {
                                 selected_consumer.set(Some(first.clone()));
                             }
                         }
-                        buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
+                        buf.lock()
+                            .expect("live_buffer lock poisoned")
+                            .replace(Ok(data));
                         *dirty.lock().expect("live_dirty lock poisoned") = true;
                     }
                     Err(e) => {
@@ -812,7 +816,10 @@ fn color_for_index(i: usize, hint: &str) -> String {
 
 /// Build throughput ChartSeries from response. When `series` is non-empty
 /// (group_by active), each series becomes a line; otherwise single aggregated line.
-fn throughput_series_from_response(data: &LiveMetricsResponse, fallback_label: &str) -> Vec<ChartSeries> {
+fn throughput_series_from_response(
+    data: &LiveMetricsResponse,
+    fallback_label: &str,
+) -> Vec<ChartSeries> {
     if !data.series.is_empty() {
         let mut sorted: Vec<&LiveMetricsSeries> = data.series.iter().collect();
         sorted.sort_by(|a, b| b.summary.request_count.cmp(&a.summary.request_count));
@@ -861,7 +868,10 @@ fn throughput_series_from_response(data: &LiveMetricsResponse, fallback_label: &
 /// Build hit-rate ChartSeries from response. Always uses global `buckets`
 /// (cache_hit_count / request_count * 100) regardless of group_by,
 /// because per-group hit rate is meaningless (HIT series would always be 100%).
-fn hit_rate_series_from_response(data: &LiveMetricsResponse, fallback_label: &str) -> Vec<ChartSeries> {
+fn hit_rate_series_from_response(
+    data: &LiveMetricsResponse,
+    fallback_label: &str,
+) -> Vec<ChartSeries> {
     vec![ChartSeries {
         label: fallback_label.to_string(),
         color: color_for_index(0, ""),
@@ -907,8 +917,8 @@ fn LiveTrafficPanel(
         Signal::derive(move || {
             buckets
                 .iter()
-            .map(|b| format_bucket_time(b.timestamp_ms))
-            .collect()
+                .map(|b| format_bucket_time(b.timestamp_ms))
+                .collect()
         })
     };
     let throughput_series = {
@@ -1006,7 +1016,7 @@ fn LiveTrafficPanel(
                         open=throughput_open
                         preview=move || {
                             view! {
-                                <LineChart
+                                <CanvasLineChart
                                     x_labels=x_labels
                                     series=throughput_series
                                     height_px=140
@@ -1018,7 +1028,7 @@ fn LiveTrafficPanel(
                         }
                         detail=move || {
                             view! {
-                                <LineChart
+                                <CanvasLineChart
                                     x_labels=x_labels
                                     series=throughput_series
                                     height_px=380
@@ -1035,7 +1045,7 @@ fn LiveTrafficPanel(
                         open=hit_open
                         preview=move || {
                             view! {
-                                <LineChart
+                                <CanvasLineChart
                                     x_labels=x_labels
                                     series=hit_series
                                     height_px=140
@@ -1047,7 +1057,7 @@ fn LiveTrafficPanel(
                         }
                         detail=move || {
                             view! {
-                                <LineChart
+                                <CanvasLineChart
                                     x_labels=x_labels
                                     series=hit_series
                                     height_px=380
@@ -1403,36 +1413,36 @@ fn LiveLatencyPanel(
         Signal::derive(move || {
             let b = buckets.as_ref();
             vec![
-            ChartSeries {
-                label: e2e_label.clone(),
-                color: "var(--cc-accent)".to_string(),
-                values: b
-                    .iter()
-                    .map(|x| {
-                        if x.request_count > 0 {
-                            Some(x.e2e_latency_ms)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                dashed: false,
-                fill: false,
-            },
-            ChartSeries {
-                label: upstream_label.clone(),
-                color: "var(--warning)".to_string(),
-                values: b.iter().map(|x| x.upstream_latency_ms).collect(),
-                dashed: true,
-                fill: false,
-            },
-            ChartSeries {
-                label: ttft_label.clone(),
-                color: "var(--cc-info)".to_string(),
-                values: b.iter().map(|x| x.ttft_ms).collect(),
-                dashed: false,
-                fill: false,
-            },
+                ChartSeries {
+                    label: e2e_label.clone(),
+                    color: "var(--cc-accent)".to_string(),
+                    values: b
+                        .iter()
+                        .map(|x| {
+                            if x.request_count > 0 {
+                                Some(x.e2e_latency_ms)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    dashed: false,
+                    fill: false,
+                },
+                ChartSeries {
+                    label: upstream_label.clone(),
+                    color: "var(--warning)".to_string(),
+                    values: b.iter().map(|x| x.upstream_latency_ms).collect(),
+                    dashed: true,
+                    fill: false,
+                },
+                ChartSeries {
+                    label: ttft_label.clone(),
+                    color: "var(--cc-info)".to_string(),
+                    values: b.iter().map(|x| x.ttft_ms).collect(),
+                    dashed: false,
+                    fill: false,
+                },
             ]
         })
     };
@@ -1468,7 +1478,7 @@ fn LiveLatencyPanel(
                 open=open
                 preview=move || {
                     view! {
-                        <LineChart
+                        <CanvasLineChart
                             x_labels=x_labels
                             series=series
                             height_px=160
@@ -1481,7 +1491,7 @@ fn LiveLatencyPanel(
                 }
                 detail=move || {
                     view! {
-                        <LineChart
+                        <CanvasLineChart
                             x_labels=x_labels
                             series=series
                             height_px=400
@@ -1502,7 +1512,6 @@ fn LiveLatencyPanel(
     }
 }
 
-
 #[component]
 fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
     let t = use_translations();
@@ -1519,13 +1528,19 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     let input_values = {
         let buckets = std::sync::Arc::clone(&buckets);
         Signal::derive(move || {
-            buckets.iter().map(|x| Some(x.input_tokens as f64)).collect()
+            buckets
+                .iter()
+                .map(|x| Some(x.input_tokens as f64))
+                .collect()
         })
     };
     let output_values = {
         let buckets = std::sync::Arc::clone(&buckets);
         Signal::derive(move || {
-            buckets.iter().map(|x| Some(x.output_tokens as f64)).collect()
+            buckets
+                .iter()
+                .map(|x| Some(x.output_tokens as f64))
+                .collect()
         })
     };
     // OHLC signals for K-line chart.
