@@ -49,7 +49,7 @@ pub fn LogsManagePage() -> impl IntoView {
 
             // Disk Usage Section
             {move || match usage.get() {
-                None => view! { <div class="glass-card"><Spinner /></div> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">{e}</div>
                 }.into_any(),
@@ -58,7 +58,7 @@ pub fn LogsManagePage() -> impl IntoView {
 
             // Retention Policy Section
             {move || match retention.get() {
-                None => view! { <div class="glass-card"><Spinner /></div> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">{e}</div>
                 }.into_any(),

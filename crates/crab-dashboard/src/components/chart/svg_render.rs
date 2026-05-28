@@ -59,8 +59,8 @@ pub fn render_line_chart(
     chart
         .configure_mesh()
         .max_light_lines(4)
-        .bold_line_style(palette.grid.mix(0.4))
-        .light_line_style(palette.grid.mix(0.2))
+        .bold_line_style(palette.grid.mix(0.25))
+        .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
         .x_label_formatter(&|x| {
@@ -156,8 +156,8 @@ pub fn render_stacked_bar_chart(
     chart
         .configure_mesh()
         .max_light_lines(4)
-        .bold_line_style(palette.grid.mix(0.4))
-        .light_line_style(palette.grid.mix(0.2))
+        .bold_line_style(palette.grid.mix(0.25))
+        .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
         .x_label_formatter(&|x| {
@@ -238,8 +238,8 @@ pub fn render_bar_chart(
     chart
         .configure_mesh()
         .max_light_lines(4)
-        .bold_line_style(palette.grid.mix(0.4))
-        .light_line_style(palette.grid.mix(0.2))
+        .bold_line_style(palette.grid.mix(0.25))
+        .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
         .x_label_formatter(&|x| {
@@ -346,8 +346,8 @@ pub fn render_histogram(values: &[f64], theme: Theme, bin_count: usize) -> Optio
     chart
         .configure_mesh()
         .max_light_lines(4)
-        .bold_line_style(palette.grid.mix(0.4))
-        .light_line_style(palette.grid.mix(0.2))
+        .bold_line_style(palette.grid.mix(0.25))
+        .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
         .x_label_formatter(&|x| {
@@ -495,8 +495,8 @@ pub fn render_scatter(
     chart
         .configure_mesh()
         .max_light_lines(4)
-        .bold_line_style(palette.grid.mix(0.4))
-        .light_line_style(palette.grid.mix(0.2))
+        .bold_line_style(palette.grid.mix(0.25))
+        .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
         .x_desc(x_desc)

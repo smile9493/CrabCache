@@ -1,153 +1,176 @@
-/* CrabCache Design Tokens — warm amber palette (1.html reference redesign) */
+/* CrabCache Design Tokens — machine source for docs/DESIGN.md */
 
-/* ── LIGHT (default, warm cream) ─────────────────────────── */
+/* Fallback before theme class hydrates (default: Dark) */
 :root,
-.theme-light {
-  --cc-bg: #faf8f5;
-  --cc-bg-topnav: #ffffff;
-  --cc-bg-card: #ffffff;
-  --cc-bg-elevated: #f5f2ed;
-  --cc-bg-input: #ffffff;
-  --cc-border: #e5e0d8;
-  --cc-border-light: #edeae4;
-  --cc-text: #2d2a26;
-  --cc-text-muted: #8a847a;
-  --cc-accent: #c4841a;
-  --cc-accent-bright: #d9952e;
-  --cc-accent-muted: rgba(196, 132, 26, 0.12);
-  --cc-success: #2d8a4e;
-  --cc-info: #2563eb;
-  --cc-warning: #b8860b;
-  --cc-error: #c44536;
-  --cc-purple: #8250df;
-  --cc-yellow: #b8860b;
-  --cc-shadow: rgba(45, 42, 38, 0.06);
-  --cc-nav-active-bg: rgba(196, 132, 26, 0.10);
-  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), #b8860b);
-  --topnav-height: 52px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --transition-speed: 180ms;
-  --transition-curve: cubic-bezier(0.16, 1, 0.3, 1);
-
-  /* Dashboard compatibility aliases */
-  --bg-primary: var(--cc-bg);
-  --bg-secondary: var(--cc-bg-topnav);
-  --bg-tertiary: var(--cc-bg-elevated);
-  --bg-elevated: var(--cc-bg-elevated);
-  --bg-glass: var(--cc-bg-card);
-  --bg-glass-hover: var(--cc-bg-elevated);
-  --bg-glass-raised: var(--cc-bg-elevated);
-  --text-primary: var(--cc-text);
-  --text-secondary: var(--cc-text-muted);
-  --text-muted: var(--cc-text-muted);
-  --border-color: var(--cc-border);
-  --border-light: var(--cc-border-light);
-  --accent-primary: var(--cc-accent);
-  --accent-secondary: var(--cc-accent-bright);
-  --accent-muted: var(--cc-accent-muted);
-  --success: var(--cc-success);
-  --warning: var(--cc-warning);
-  --error: var(--cc-error);
-  --info: var(--cc-info);
-  --shadow-color: var(--cc-shadow);
-
-  /* Demo page aliases */
-  --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-topnav);
-  --bg-card: var(--cc-bg-card);
-  --border: var(--cc-border);
-  --text: var(--cc-text);
-  --accent: var(--cc-accent);
-  --green: var(--cc-success);
-  --blue: var(--cc-info);
-  --yellow: var(--cc-warning);
-  --purple: var(--cc-purple);
-  --red: var(--cc-error);
-}
-
-/* ── DARK ────────────────────────────────────────────────── */
 .theme-dark {
-  --cc-bg: #1a1714;
-  --cc-bg-topnav: #151210;
-  --cc-bg-card: #211e1a;
-  --cc-bg-elevated: #2a2622;
-  --cc-bg-input: #1a1714;
-  --cc-border: #3a3530;
-  --cc-border-light: #2e2a26;
-  --cc-text: #e8e2da;
-  --cc-text-muted: #8a827a;
-  --cc-accent: #c4841a;
-  --cc-accent-bright: #d9952e;
-  --cc-accent-muted: rgba(196, 132, 26, 0.14);
+  --cc-bg: #0d1117;
+  --cc-bg-topnav: #0a0e13;
+  --cc-bg-sidebar: #0a0e13;
+  --cc-bg-card: #161b22;
+  --cc-bg-elevated: #21262d;
+  --cc-bg-input: #0d1117;
+  --cc-border: #30363d;
+  --cc-border-light: #21262d;
+  --cc-text: #e6edf3;
+  --cc-text-muted: #8b949e;
+  --cc-accent: #f78166;
+  --cc-accent-bright: #ff967d;
+  --cc-accent-muted: color-mix(in srgb, #f78166 14%, transparent);
   --cc-success: #3fb950;
   --cc-info: #58a6ff;
   --cc-warning: #d2991d;
   --cc-error: #f85149;
   --cc-purple: #bc8cff;
   --cc-yellow: #d2991d;
-  --cc-shadow: rgba(0, 0, 0, 0.15);
-  --cc-nav-active-bg: rgba(196, 132, 26, 0.14);
-  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), var(--cc-yellow));
-
-  --bg-primary: var(--cc-bg);
-  --bg-secondary: var(--cc-bg-topnav);
-  --bg-tertiary: var(--cc-bg-elevated);
-  --bg-elevated: var(--cc-bg-elevated);
-  --bg-glass: var(--cc-bg-card);
-  --bg-glass-hover: var(--cc-bg-elevated);
-  --bg-glass-raised: var(--cc-bg-elevated);
-  --text-primary: var(--cc-text);
-  --text-secondary: var(--cc-text-muted);
-  --text-muted: var(--cc-text-muted);
-  --border-color: var(--cc-border);
-  --border-light: var(--cc-border-light);
-  --accent-primary: var(--cc-accent);
-  --accent-secondary: var(--cc-accent-bright);
-  --accent-muted: var(--cc-accent-muted);
-  --success: var(--cc-success);
-  --warning: var(--cc-warning);
-  --error: var(--cc-error);
-  --info: var(--cc-info);
-  --shadow-color: var(--cc-shadow);
-
-  --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-topnav);
-  --bg-card: var(--cc-bg-card);
-  --border: var(--cc-border);
-  --text: var(--cc-text);
-  --accent: var(--cc-accent);
-  --green: var(--cc-success);
-  --blue: var(--cc-info);
-  --yellow: var(--cc-warning);
-  --purple: var(--cc-purple);
-  --red: var(--cc-error);
+  --cc-shadow: color-mix(in srgb, #010409 18%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, #f78166 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, #f78166, #d2991d);
+  --cc-focus-ring: color-mix(in srgb, #f78166 45%, transparent);
+  --cc-tier-l0: #f78166;
+  --cc-tier-l1: #58a6ff;
+  --cc-tier-l2: #d2991d;
+  --cc-tier-l3: #bc8cff;
+  --cc-tier-miss: #484f58;
+  --topnav-height: 52px;
+  --sidebar-width: 230px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --transition-speed: 180ms;
+  --transition-curve: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* ── MIDNIGHT ─────────────────────────────────────────────── */
+.theme-light {
+  --cc-bg: #f6f4f0;
+  --cc-bg-topnav: #ebe8e2;
+  --cc-bg-sidebar: #ebe8e2;
+  --cc-bg-card: #ffffff;
+  --cc-bg-elevated: #f0ede8;
+  --cc-bg-input: #ffffff;
+  --cc-border: #c9c4bc;
+  --cc-border-light: #e5e0d8;
+  --cc-text: #1a1814;
+  --cc-text-muted: #5c574f;
+  --cc-accent: #c44d2f;
+  --cc-accent-bright: #d65a3a;
+  --cc-accent-muted: color-mix(in srgb, #c44d2f 12%, transparent);
+  --cc-success: #1a7f37;
+  --cc-info: #0969da;
+  --cc-warning: #9a6700;
+  --cc-error: #cf222e;
+  --cc-purple: #8250df;
+  --cc-yellow: #9a6700;
+  --cc-shadow: color-mix(in srgb, #1a1814 6%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, #c44d2f 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, #c44d2f, #9a6700);
+  --cc-focus-ring: color-mix(in srgb, #c44d2f 40%, transparent);
+  --cc-tier-l0: #c44d2f;
+  --cc-tier-l1: #0969da;
+  --cc-tier-l2: #9a6700;
+  --cc-tier-l3: #8250df;
+  --cc-tier-miss: #a8a29e;
+}
+
 .theme-midnight {
-  --cc-bg: #14110d;
-  --cc-bg-topnav: #100e0a;
-  --cc-bg-card: #1e1a16;
-  --cc-bg-elevated: #282320;
-  --cc-bg-input: #14110d;
-  --cc-border: #352f2a;
-  --cc-border-light: #2a2520;
-  --cc-text: #e8e2da;
-  --cc-text-muted: #8a827a;
-  --cc-accent: #d9952e;
-  --cc-accent-bright: #e8a840;
-  --cc-accent-muted: rgba(217, 149, 46, 0.14);
+  --cc-bg: #0c0a14;
+  --cc-bg-topnav: #080610;
+  --cc-bg-sidebar: #080610;
+  --cc-bg-card: #14101f;
+  --cc-bg-elevated: #1e1830;
+  --cc-bg-input: #0c0a14;
+  --cc-border: #2e2842;
+  --cc-border-light: #231e36;
+  --cc-text: #ece8f5;
+  --cc-text-muted: #9b92b0;
+  --cc-accent: #c4a1ff;
+  --cc-accent-bright: #d4b8ff;
+  --cc-accent-muted: color-mix(in srgb, #c4a1ff 14%, transparent);
   --cc-success: #3fb950;
   --cc-info: #79b8ff;
   --cc-warning: #d2991d;
   --cc-error: #f85149;
   --cc-purple: #bc8cff;
   --cc-yellow: #d2991d;
-  --cc-shadow: rgba(0, 0, 0, 0.2);
-  --cc-nav-active-bg: rgba(217, 149, 46, 0.14);
-  --cc-brand-gradient: linear-gradient(135deg, var(--cc-accent), var(--cc-purple));
+  --cc-shadow: color-mix(in srgb, #000000 22%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, #c4a1ff 14%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, #c4a1ff, #79b8ff);
+  --cc-focus-ring: color-mix(in srgb, #c4a1ff 45%, transparent);
+  --cc-tier-l0: #c4a1ff;
+  --cc-tier-l1: #79b8ff;
+  --cc-tier-l2: #d2991d;
+  --cc-tier-l3: #bc8cff;
+  --cc-tier-miss: #5a516e;
+}
 
+.theme-ocean {
+  --cc-bg: #0a1218;
+  --cc-bg-topnav: #070e14;
+  --cc-bg-sidebar: #070e14;
+  --cc-bg-card: #111c26;
+  --cc-bg-elevated: #182430;
+  --cc-bg-input: #0a1218;
+  --cc-border: #243444;
+  --cc-border-light: #1a2834;
+  --cc-text: #e2edf4;
+  --cc-text-muted: #7d96a8;
+  --cc-accent: #3db8c9;
+  --cc-accent-bright: #5ecfe0;
+  --cc-accent-muted: color-mix(in srgb, #3db8c9 14%, transparent);
+  --cc-success: #46c880;
+  --cc-info: #58a6ff;
+  --cc-warning: #c9a227;
+  --cc-error: #e85d5d;
+  --cc-purple: #8b9cf6;
+  --cc-yellow: #c9a227;
+  --cc-shadow: color-mix(in srgb, #020608 20%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, #3db8c9 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, #3db8c9, #58a6ff);
+  --cc-focus-ring: color-mix(in srgb, #3db8c9 45%, transparent);
+  --cc-tier-l0: #3db8c9;
+  --cc-tier-l1: #58a6ff;
+  --cc-tier-l2: #c9a227;
+  --cc-tier-l3: #8b9cf6;
+  --cc-tier-miss: #5a6f80;
+}
+
+.theme-sand {
+  --cc-bg: #f4f0e8;
+  --cc-bg-topnav: #ebe5da;
+  --cc-bg-sidebar: #ebe5da;
+  --cc-bg-card: #faf7f2;
+  --cc-bg-elevated: #e8e2d6;
+  --cc-bg-input: #faf7f2;
+  --cc-border: #cfc6b8;
+  --cc-border-light: #ddd6ca;
+  --cc-text: #2a261f;
+  --cc-text-muted: #6f675c;
+  --cc-accent: #b85c28;
+  --cc-accent-bright: #cc6e38;
+  --cc-accent-muted: color-mix(in srgb, #b85c28 12%, transparent);
+  --cc-success: #2d7a48;
+  --cc-info: #1d6b9a;
+  --cc-warning: #8a6d1a;
+  --cc-error: #b83832;
+  --cc-purple: #7a5cad;
+  --cc-yellow: #8a6d1a;
+  --cc-shadow: color-mix(in srgb, #2a261f 7%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, #b85c28 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, #b85c28, #8a6d1a);
+  --cc-focus-ring: color-mix(in srgb, #b85c28 40%, transparent);
+  --cc-tier-l0: #b85c28;
+  --cc-tier-l1: #1d6b9a;
+  --cc-tier-l2: #8a6d1a;
+  --cc-tier-l3: #7a5cad;
+  --cc-tier-miss: #a89e90;
+}
+
+/* Dashboard compatibility aliases (all themes) */
+:root,
+.theme-dark,
+.theme-light,
+.theme-midnight,
+.theme-ocean,
+.theme-sand,
+.theme-system {
   --bg-primary: var(--cc-bg);
   --bg-secondary: var(--cc-bg-topnav);
   --bg-tertiary: var(--cc-bg-elevated);
@@ -168,16 +191,20 @@
   --error: var(--cc-error);
   --info: var(--cc-info);
   --shadow-color: var(--cc-shadow);
-
   --bg: var(--cc-bg);
-  --bg-sidebar: var(--cc-bg-topnav);
+  --bg-sidebar: var(--cc-bg-sidebar);
   --bg-card: var(--cc-bg-card);
   --border: var(--cc-border);
   --text: var(--cc-text);
   --accent: var(--cc-accent);
   --green: var(--cc-success);
   --blue: var(--cc-info);
-  --yellow: var(--cc-warning);
+  --yellow: var(--cc-yellow);
   --purple: var(--cc-purple);
   --red: var(--cc-error);
+  --tier-l0: var(--cc-tier-l0);
+  --tier-l1: var(--cc-tier-l1);
+  --tier-l2: var(--cc-tier-l2);
+  --tier-l3: var(--cc-tier-l3);
+  --tier-miss: var(--cc-tier-miss);
 }

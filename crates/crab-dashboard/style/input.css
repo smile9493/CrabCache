@@ -28,13 +28,36 @@ body {
   color: var(--cc-text);
   background: var(--cc-bg);
   line-height: 1.5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--transition-speed) var(--transition-curve),
+              color var(--transition-speed) var(--transition-curve);
 }
+
 .theme-dark,
-.theme-midnight {
+.theme-midnight,
+.theme-ocean {
   color-scheme: dark;
 }
-.theme-light {
+
+.theme-light,
+.theme-sand {
   color-scheme: light;
+}
+
+/* theme-system: JS resolves to dark/light, color-scheme set by resolved class */
+
+.brand-gradient-text {
+  background: var(--cc-brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cc-focus-ring);
+  outline-offset: 2px;
 }
 
 /* ==============================================================
@@ -223,7 +246,7 @@ body {
 
 .dash-card:hover {
   box-shadow: 0 4px 12px var(--cc-shadow);
-  border-top-color: var(--cc-accent-muted);
+  border-color: color-mix(in srgb, var(--cc-accent) 22%, var(--cc-border));
 }
 
 .dash-card-header {
@@ -617,7 +640,93 @@ body {
   color: oklch(0.99 0 0);
 }
 .live-traffic-panel {
+  overflow: visible;
+}
+
+/* Chart preview card + detail modal */
+.chart-preview-card {
+  border: 1px solid var(--cc-border-light);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  min-width: 0;
+}
+.chart-preview-card:hover,
+.chart-preview-card:focus-visible {
+  border-color: color-mix(in srgb, var(--cc-accent) 45%, var(--cc-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-accent) 12%, transparent);
+  outline: none;
+}
+.chart-preview-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.chart-preview-card-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cc-text-muted);
+}
+.chart-preview-card-hint {
+  font-size: 0.625rem;
+  color: var(--cc-text-muted);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.chart-preview-card-body {
+  pointer-events: none;
+}
+.chart-detail-host--hidden {
+  display: none;
+  pointer-events: none;
+}
+.chart-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--cc-bg) 35%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.chart-detail-modal {
+  width: min(960px, 96vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+.chart-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--cc-border-light);
+}
+.chart-detail-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--cc-text);
+}
+.chart-detail-subtitle {
+  font-size: 0.75rem;
+  color: var(--cc-text-muted);
+  margin-top: 0.25rem;
+}
+.chart-detail-body {
+  padding: 1rem 1.25rem 1.25rem;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Live bottom: 2 rows × 3 cols, cards stretch per row only */
@@ -925,37 +1034,102 @@ body {
    ============================================================== */
 
 .theme-switcher { position: relative; }
+
 .theme-switcher-trigger {
-  display: flex; align-items: center; justify-content: center;
-  width: 2.25rem; height: 2.25rem; border-radius: 0.5rem;
-  background: var(--cc-bg-card); border: 1px solid var(--cc-border);
-  transition: border-color var(--transition-speed) var(--transition-curve);
-  cursor: pointer; font-size: 0.9375rem; color: var(--cc-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-sm);
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  transition: border-color var(--transition-speed) var(--transition-curve),
+              background var(--transition-speed) var(--transition-curve);
+  cursor: pointer;
 }
-.theme-switcher-trigger:hover { border-color: var(--cc-border); color: var(--cc-text); }
+
+.theme-switcher-trigger:hover {
+  border-color: color-mix(in srgb, var(--cc-accent) 35%, var(--cc-border));
+  background: var(--cc-bg-elevated);
+}
 
 .theme-switcher-dropdown {
-  position: absolute; right: 0; top: calc(100% + 0.5rem);
-  z-index: 50; min-width: 170px;
-  background: var(--cc-bg-elevated);
-  border: 1px solid var(--cc-border); border-radius: 0.625rem;
-  padding: 0.375rem; box-shadow: 0 8px 24px var(--cc-shadow);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 50;
+  min-width: 220px;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
+  padding: 0.375rem;
+  box-shadow: 0 12px 32px var(--cc-shadow);
 }
 
 .theme-option {
-  display: flex; align-items: center; gap: 0.6rem;
-  width: 100%; padding: 0.5rem 0.6rem; border-radius: 0.375rem;
-  cursor: pointer; transition: background .12s var(--transition-curve);
-  color: var(--cc-text); background: transparent;
-  border: none; text-align: left; font-size: 0.8125rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-speed) var(--transition-curve);
+  color: var(--cc-text);
+  background: transparent;
+  border: none;
+  text-align: left;
 }
-.theme-option:hover  { background: var(--cc-bg-card); }
+
+.theme-option:hover { background: var(--cc-bg-elevated); }
 .theme-option.active { background: var(--cc-accent-muted); }
 
-.theme-option-icon {
-  width: 1.25rem; height: 1.25rem;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.875rem;
+.theme-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.theme-option-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.theme-option-desc {
+  font-size: 0.6875rem;
+  color: var(--cc-text-muted);
+  line-height: 1.3;
+}
+
+.theme-option-check {
+  width: 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cc-accent-bright);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.theme-swatch {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--cc-text) 12%, transparent);
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ffffff 8%, transparent);
+}
+
+.theme-swatch-dark { background: linear-gradient(135deg, #f78166 50%, #0d1117 50%); }
+.theme-swatch-light { background: linear-gradient(135deg, #c44d2f 50%, #f6f4f0 50%); }
+.theme-swatch-midnight { background: linear-gradient(135deg, #c4a1ff 50%, #0c0a14 50%); }
+.theme-swatch-ocean { background: linear-gradient(135deg, #3db8c9 50%, #0a1218 50%); }
+.theme-swatch-sand { background: linear-gradient(135deg, #b85c28 50%, #f4f0e8 50%); }
+.theme-swatch-system {
+  background: conic-gradient(from 0deg, #f78166 0% 25%, #0d1117 25% 50%, #c44d2f 50% 75%, #f6f4f0 75% 100%);
 }
 
 /* ==============================================================
@@ -1375,6 +1549,7 @@ body {
 }
 .line-chart-y-hint {
   position: absolute; top: 0.25rem; right: 0.5rem;
+  pointer-events: none;
 }
 .line-chart-x-labels {
   display: flex; justify-content: space-between; gap: 0.25rem;
@@ -1447,6 +1622,47 @@ body {
   color: var(--cc-text);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+}
+
+/* HTML crosshair overlays (pointer-events: none; do not rebuild SVG on hover) */
+.chart-hover-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--cc-text-muted);
+  opacity: 0.04;
+  pointer-events: none;
+  z-index: 1;
+}
+.chart-crosshair-v {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--cc-text-muted) 70%, transparent);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-crosshair-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--cc-text-muted) 50%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-hover-dot {
+  position: absolute;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--cc-bg-card);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent);
 }
 
 /* Crosshair axis label (appears on Y axis during hover) */

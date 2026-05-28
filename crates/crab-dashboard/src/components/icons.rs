@@ -16,6 +16,7 @@ pub enum IconName {
     Power,
     Menu,
     X,
+    Table,
 }
 
 #[component]
@@ -126,6 +127,14 @@ pub fn Icon(
         ),
         IconName::X => (
             view! { <path d="M18 6 6 18" /><path d="m6 6 12 12" /> }.into_any(),
+        ),
+        IconName::Table => (
+            view! {
+                <path d="M12 3v18" />
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18" />
+                <path d="M3 15h18" />
+            }.into_any(),
         ),
     };
 

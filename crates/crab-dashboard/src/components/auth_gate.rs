@@ -67,7 +67,7 @@ pub fn AuthGate() -> impl IntoView {
                 <div class="auth-brand">
                     <BrandLogo large=true />
                     <div>
-                        <h1 class="auth-title brand-gradient-text">{Translations::sidebar_brand}</h1>
+                        <h1 class="auth-title brand-text">{Translations::sidebar_brand}</h1>
                         <p class="auth-tagline">{t.auth_tagline()}</p>
                     </div>
                 </div>

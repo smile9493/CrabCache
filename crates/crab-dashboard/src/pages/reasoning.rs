@@ -37,7 +37,7 @@ pub fn ReasoningPage() -> impl IntoView {
             <Alert variant="info" message=feedback.into() />
 
             {move || match config.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="config-card glass-card text-error text-sm">{e}</div>
                 }.into_any(),

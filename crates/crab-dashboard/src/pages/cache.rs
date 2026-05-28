@@ -92,7 +92,7 @@ fn ConfigTab() -> impl IntoView {
             <div class="config-grid-2">
                 // TTL config (slider version from Routing)
                 {move || match cache_config.get() {
-                    None => view! { <div class="config-card glass-card"><Spinner /></div> }.into_any(),
+                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
                         <div class="config-card glass-card text-error text-sm">{e}</div>
                     }.into_any(),
@@ -101,7 +101,7 @@ fn ConfigTab() -> impl IntoView {
 
                 // Semantic config (slider + enabled toggle)
                 {move || match semantic_config.get() {
-                    None => view! { <div class="config-card glass-card"><Spinner /></div> }.into_any(),
+                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
                         <div class="config-card glass-card text-error text-sm">{e}</div>
                     }.into_any(),
@@ -111,7 +111,7 @@ fn ConfigTab() -> impl IntoView {
 
             // Fingerprint + Stream cache (from CacheOps)
             {move || match ops.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">{e}</div>
                 }.into_any(),
@@ -343,7 +343,7 @@ fn RoutingTab() -> impl IntoView {
             <section class="config-section">
                 <h3 class="config-section-title">{t.routing_connection_title()}</h3>
                 {move || match connection_config.get() {
-                    None => view! { <Spinner /> }.into_any(),
+                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
                         <div class="config-card glass-card text-error text-sm">{e}</div>
                     }.into_any(),
@@ -355,7 +355,7 @@ fn RoutingTab() -> impl IntoView {
 
             <section class="config-section">
                 {move || match routing_status.get() {
-                    None => view! { <Spinner /> }.into_any(),
+                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
                         <div class="config-card glass-card text-error text-sm">{e}</div>
                     }.into_any(),
@@ -640,7 +640,7 @@ fn OpsTab() -> impl IntoView {
             <Alert variant="info" message=message.into() />
 
             {move || match ops.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">{e}</div>
                 }.into_any(),
@@ -797,7 +797,7 @@ fn TraceTab() -> impl IntoView {
             </div>
 
             {move || match analysis.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">
                         {format!("{}: {}", use_translations().trace_load_error(), e)}

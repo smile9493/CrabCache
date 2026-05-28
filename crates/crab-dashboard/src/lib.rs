@@ -8,6 +8,7 @@ pub mod datetime;
 pub mod locale;
 pub mod page_visible;
 pub mod pages;
+pub mod table_density;
 pub mod theme;
 pub mod types;
 pub mod view_state;

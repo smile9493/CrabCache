@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::pages::overview::format_number;
 use crate::types::{DomainDetailBundle, DomainPolicy};
@@ -381,7 +380,7 @@ pub fn DomainDetailDrawer(domain: RwSignal<Option<String>>) -> impl IntoView {
 
                     <div class="p-4 space-y-4">
                         {move || match detail.get() {
-                            None => view! { <Spinner /> }.into_any(),
+                            None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
                             Some(Ok(bundle)) => view! {
                                 <DomainDetailBody bundle=bundle policy_save_tick=policy_save_tick />
                             }.into_any(),

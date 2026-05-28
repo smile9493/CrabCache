@@ -195,7 +195,7 @@ fn CatalogPanel() -> impl IntoView {
             }}
 
             {move || match models.get() {
-                None => view! { <Spinner /> }.into_any(),
+                None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">
                         {format!("{}: {}", t.models_sync_result(), e)}

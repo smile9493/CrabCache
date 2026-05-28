@@ -20,26 +20,32 @@ Admin Dashboard（Leptos WASM）与 [demo.html](demo.html) 共用同一套设计
 
 ## 3. 设计令牌
 
-语义前缀 `--cc-*`。三套主题必须包含**相同键名**。
+语义前缀 `--cc-*`。五套主题（`theme-dark` / `theme-light` / `theme-midnight` / `theme-ocean` / `theme-sand`）必须包含**相同键名**。
 
-| Token | 用途 | Dark | Light | Midnight |
-|-------|------|------|-------|----------|
-| `--cc-bg` | 主内容区背景 | `#0d1117` | `#f6f4f0` | `#0c0a14` |
-| `--cc-bg-sidebar` | 侧栏背景 | `#0a0e13` | `#ebe8e2` | `#080610` |
-| `--cc-bg-card` | 卡片/面板 | `#161b22` | `#ffffff` | `#14101f` |
-| `--cc-bg-elevated` | 悬停/下拉/表头 | `#21262d` | `#f0ede8` | `#1e1830` |
-| `--cc-border` | 边框 | `#30363d` | `#c9c4bc` | `#2e2842` |
-| `--cc-text` | 主文字 | `#e6edf3` | `#1a1814` | `#ece8f5` |
-| `--cc-text-muted` | 次要文字 | `#8b949e` | `#5c574f` | `#9b92b0` |
-| `--cc-accent` | 主强调（按钮、选中） | `#f78166` | `#c44d2f` | `#f78166` |
-| `--cc-accent-bright` | 导航 active 文字 | `#ff967d` | `#d65a3a` | `#ffa08a` |
-| `--cc-nav-active-bg` | 导航选中底 | `rgba(247,129,102,0.12)` | 赤陶 12% | 珊瑚 14% |
-| `--cc-success` | 成功/命中 | `#3fb950` | `#1a7f37` | `#3fb950` |
-| `--cc-info` | 信息/L2 | `#58a6ff` | `#0969da` | `#79b8ff` |
-| `--cc-warning` | 警告 | `#d2991d` | `#9a6700` | `#d2991d` |
-| `--cc-error` | 错误/吊销 | `#f85149` | `#cf222e` | `#f85149` |
-| `--sidebar-width` | 侧栏宽度 | `230px` | 同左 | 同左 |
-| `--radius-sm` / `--radius-md` | 圆角 | `6px` / `10px` | 同左 | 同左 |
+| Token | 用途 | Dark | Light | Midnight | Ocean | Sand |
+|-------|------|------|-------|----------|-------|------|
+| `--cc-bg` | 主内容区背景 | `#0d1117` | `#f6f4f0` | `#0c0a14` | `#0a1218` | `#f4f0e8` |
+| `--cc-bg-sidebar` | 侧栏/顶栏背景 | `#0a0e13` | `#ebe8e2` | `#080610` | `#070e14` | `#ebe5da` |
+| `--cc-bg-card` | 卡片/面板 | `#161b22` | `#ffffff` | `#14101f` | `#111c26` | `#faf7f2` |
+| `--cc-bg-elevated` | 悬停/下拉/表头 | `#21262d` | `#f0ede8` | `#1e1830` | `#182430` | `#e8e2d6` |
+| `--cc-border` | 边框 | `#30363d` | `#c9c4bc` | `#2e2842` | `#243444` | `#cfc6b8` |
+| `--cc-text` | 主文字 | `#e6edf3` | `#1a1814` | `#ece8f5` | `#e2edf4` | `#2a261f` |
+| `--cc-text-muted` | 次要文字 | `#8b949e` | `#5c574f` | `#9b92b0` | `#7d96a8` | `#6f675c` |
+| `--cc-accent` | 主强调 | `#f78166` | `#c44d2f` | `#c4a1ff` | `#3db8c9` | `#b85c28` |
+| `--cc-accent-bright` | 导航 active 文字 | `#ff967d` | `#d65a3a` | `#d4b8ff` | `#5ecfe0` | `#cc6e38` |
+| `--cc-success` | 成功/命中 | `#3fb950` | `#1a7f37` | `#3fb950` | `#46c880` | `#2d7a48` |
+| `--cc-info` | 信息/L2 | `#58a6ff` | `#0969da` | `#79b8ff` | `#58a6ff` | `#1d6b9a` |
+| `--cc-warning` | 警告 | `#d2991d` | `#9a6700` | `#d2991d` | `#c9a227` | `#8a6d1a` |
+| `--cc-error` | 错误/吊销 | `#f85149` | `#cf222e` | `#f85149` | `#e85d5d` | `#b83832` |
+| `--cc-tier-l0` | L0 内存缓存 | `#f78166` | `#c44d2f` | `#c4a1ff` | `#3db8c9` | `#b85c28` |
+| `--cc-tier-l1` | L1 Redis | `#58a6ff` | `#0969da` | `#79b8ff` | `#58a6ff` | `#1d6b9a` |
+| `--cc-tier-l2` | L2 语义缓存 | `#d2991d` | `#9a6700` | `#d2991d` | `#c9a227` | `#8a6d1a` |
+| `--cc-tier-l3` | L3 上游前缀 | `#bc8cff` | `#8250df` | `#bc8cff` | `#8b9cf6` | `#7a5cad` |
+| `--cc-tier-miss` | 缓存未命中 | `#484f58` | `#a8a29e` | `#5a516e` | `#5a6f80` | `#a89e90` |
+| `--sidebar-width` | 侧栏宽度 | `230px` | 同左 | 同左 | 同左 | 同左 |
+| `--radius-sm` / `--radius-md` | 圆角 | `6px` / `10px` | 同左 | 同左 | 同左 | 同左 |
+
+主题切换：顶栏 `ThemeSwitcher`，`localStorage` 键 `theme`（`dark` | `light` | `midnight` | `ocean` | `sand` | `system`）。`system` 跟随 `prefers-color-scheme`，解析为 `Dark` 或 `Light`。
 
 Dashboard 兼容别名（过渡期）：`--bg-primary`、`--accent-primary` 等映射至 `--cc-*`，见 `design-tokens.css`。
 
@@ -133,8 +139,11 @@ GitHub Pages：`deploy-docs.yml` 将 `crates/crab-dashboard/style/design-tokens.
 
 ## 10. PR 检查清单
 
-- [ ] 仅改 tokens 即可影响三主题，无散落 hex
-- [ ] Light/Midnight 键名与 Dark 一致
+- [ ] 仅改 tokens 即可影响 5+1 主题（含 System），无散落 hex
+- [ ] 各主题键名与 Dark 一致（含 tier-l0..l3, tier-miss）
 - [ ] 未引入虚构业务指标
 - [ ] `cargo clippy -p crab-dashboard`（若改 Rust）通过
 - [ ] `build_dashboard.sh` 通过
+- [ ] table density 切换生效（comfortable / compact）
+- [ ] 骨架屏替代页面级 Spinner
+- [ ] 品牌色 `brand-text`（非渐变）

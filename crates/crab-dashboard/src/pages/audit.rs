@@ -98,7 +98,7 @@ pub fn AuditLogPage() -> impl IntoView {
 
     view! {
         <div class="page-content space-y-4">
-            <PageHeader title=|| "Audit Log" description=|| "Management operation audit trail">
+            <PageHeader title=move || _t.audit_title() description=move || _t.audit_desc()>
                 <div />
             </PageHeader>
 
@@ -124,7 +124,7 @@ pub fn AuditLogPage() -> impl IntoView {
 
             <div class="glass-card">
                 {move || match entries.get() {
-                    None => view! { <div class="flex justify-center py-8"><Spinner /></div> }.into_any(),
+                    None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
                     Some(Err(e)) => view! {
                         <div class="text-error text-sm py-4">{e}</div>
                     }.into_any(),

@@ -873,8 +873,8 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
                         }}
                     </span>
                     {delta_html.map(|(color, text)| {
-                        view! { <span class=color>{text}</span> }
-                    })}
+                        view! { <span class=color>{text}</span> }.into_any()
+                    }).unwrap_or_else(|| view! { <span></span> }.into_any())}
                 </div>
             </div>
             <div class="flex gap-2 shrink-0">
@@ -1037,10 +1037,14 @@ fn MetricsBento(
                             </div>
                             <div class="text-xs text-theme-muted mt-1">
                                 {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
-                                {(qps_trend.abs() > 0.1).then(|| {
-                                    let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
-                                    view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }
-                                })}
+                                {move || {
+                                    if qps_trend.abs() > 0.1 {
+                                        let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
+                                        view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }
+                                }}
                             </div>
                         </div>
                         <div class="text-3xl opacity-30">"⚡"</div>
@@ -1057,10 +1061,14 @@ fn MetricsBento(
                             </div>
                             <div class="text-xs text-theme-muted mt-0.5">
                                 {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
-                                    {(!insufficient && hit_rate_trend.abs() > 0.01).then(|| {
-                                        let cls = if hit_rate_trend > 0.0 { "ml-1 trend-up" } else { "ml-1 trend-down" };
-                                        view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }
-                                    })}
+                                    {move || {
+                                        if !insufficient && hit_rate_trend.abs() > 0.01 {
+                                            let cls = if hit_rate_trend > 0.0 { "ml-1 trend-up" } else { "ml-1 trend-down" };
+                                            view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }.into_any()
+                                        } else {
+                                            ().into_any()
+                                        }
+                                    }}
                             </div>
                         </div>
                         <div>
@@ -1177,7 +1185,7 @@ fn MetricsBento(
                     return None;
                 }
                 let healthy = h.backends_healthy;
-                let unhealthy = h.backends_unhealthy;
+                let unhealthy = h.backends_total.saturating_sub(h.backends_healthy);
                 let warning = healthy < total || unhealthy > 0;
                 Some(view! {
                     <div class="bento-cell">
@@ -1190,14 +1198,18 @@ fn MetricsBento(
                                 {format!("{}/{}", healthy, total)}
                             </div>
                             <div class="metric-card-sub">{t.routing_summary_healthy_label()}</div>
-                            {(unhealthy > 0).then(|| view! {
-                                <div class="mt-2 flex items-center gap-1.5">
-                                    <span class="w-2 h-2 rounded-full bg-error"></span>
-                                    <span class="text-xs text-error font-medium">
-                                        {format!("{} unhealthy", unhealthy)}
-                                    </span>
-                                </div>
-                            })}
+                            {if unhealthy > 0 {
+                                view! {
+                                    <div class="mt-2 flex items-center gap-1.5">
+                                        <span class="w-2 h-2 rounded-full bg-error"></span>
+                                        <span class="text-xs text-error font-medium">
+                                            {format!("{} unhealthy", unhealthy)}
+                                        </span>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }}
                         </a>
                     </div>
                 })
@@ -1212,22 +1224,22 @@ fn MetricsBento(
                         crate::components::donut_chart::DonutSegment {
                             label: "L0".to_string(),
                             value: d.l0 as f64,
-                            color: "var(--cc-accent)",
+                            color: "var(--cc-tier-l0)",
                         },
                         crate::components::donut_chart::DonutSegment {
                             label: "L1".to_string(),
                             value: d.l1 as f64,
-                            color: "var(--cc-info)",
+                            color: "var(--cc-tier-l1)",
                         },
                         crate::components::donut_chart::DonutSegment {
                             label: "L2".to_string(),
                             value: d.l2 as f64,
-                            color: "var(--cc-warning)",
+                            color: "var(--cc-tier-l2)",
                         },
                         crate::components::donut_chart::DonutSegment {
                             label: t.overview_miss_label().to_string(),
                             value: d.miss as f64,
-                            color: "var(--cc-error-muted)",
+                            color: "var(--cc-tier-miss)",
                         },
                     ];
                     view! {
@@ -1635,22 +1647,22 @@ pub fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
         crate::components::donut_chart::DonutSegment {
             label: crate::locale::Translations::overview_l0_label().to_string(),
             value: d.l0 as f64,
-            color: "var(--cc-accent)",
+            color: "var(--cc-tier-l0)",
         },
         crate::components::donut_chart::DonutSegment {
             label: crate::locale::Translations::overview_l1_label().to_string(),
             value: d.l1 as f64,
-            color: "var(--cc-info)",
+            color: "var(--cc-tier-l1)",
         },
         crate::components::donut_chart::DonutSegment {
             label: crate::locale::Translations::overview_l2_label().to_string(),
             value: d.l2 as f64,
-            color: "var(--cc-warning)",
+            color: "var(--cc-tier-l2)",
         },
         crate::components::donut_chart::DonutSegment {
             label: t.overview_miss_label().to_string(),
             value: d.miss as f64,
-            color: "var(--cc-error-muted)",
+            color: "var(--cc-tier-miss)",
         },
     ];
 
@@ -1854,7 +1866,11 @@ pub fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
                                         <span class="w-20 text-xs text-theme-muted shrink-0 text-right">"P99"</span>
                                         <div class="flex-1 text-xs font-mono tabular-nums text-theme-muted">
                                             {format!("{:.1}ms", p99)}
-                                            {over_slo.then(|| view! { <span class="text-warning ml-2">"over SLO"</span> })}
+                                            {if over_slo {
+                                                view! { <span class="text-warning ml-2">"over SLO"</span> }.into_any()
+                                            } else {
+                                                ().into_any()
+                                            }}
                                         </div>
                                     </div>
                                 }.into_any()

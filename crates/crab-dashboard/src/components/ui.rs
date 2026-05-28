@@ -5,9 +5,12 @@ pub fn MetricCard(
     title: &'static str,
     value: Signal<String>,
     subtitle: &'static str,
+    #[prop(default = false)]
+    static_card: bool,
 ) -> impl IntoView {
+    let class = if static_card { "metric-card metric-card--static" } else { "metric-card" };
     view! {
-        <div class="metric-card">
+        <div class=class>
             <div class="metric-card-label">{title}</div>
             <div class="metric-card-value">{move || value.get()}</div>
             <div class="metric-card-sub">{subtitle}</div>
@@ -90,11 +93,16 @@ pub fn SectionHeader(title: &'static str, description: &'static str) -> impl Int
 }
 
 #[component]
-pub fn EmptyState(message: &'static str) -> impl IntoView {
+pub fn EmptyState(
+    message: &'static str,
+    #[prop(optional)]
+    hint: Option<&'static str>,
+) -> impl IntoView {
     view! {
         <div class="empty-state">
             <div class="empty-state-icon">{crate::locale::Translations::empty_state_icon()}</div>
             <div class="empty-state-title">{message}</div>
+            {hint.map(|h| view! { <div class="empty-state-hint">{h}</div> })}
         </div>
     }
 }

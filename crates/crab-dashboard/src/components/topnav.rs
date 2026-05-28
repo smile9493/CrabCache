@@ -6,6 +6,7 @@ use crate::components::brand_logo::BrandLogo;
 use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::icons::{Icon, IconName};
 use crate::components::theme_switcher::ThemeSwitcher;
+use crate::table_density::{TableDensity, use_table_density};
 use crate::locale::{Translations, use_locale, use_translations};
 
 fn init_mobile_nav() -> RwSignal<bool> {
@@ -33,8 +34,8 @@ pub fn TopNav() -> impl IntoView {
         <header class="topnav">
             <div class="topnav-brand">
                 <BrandLogo />
-                <span class="topnav-brand-name brand-gradient-text">{Translations::sidebar_brand}</span>
-                <span class="topnav-brand-version hidden md:inline">"v0.1.0"</span>
+                <span class="topnav-brand-name brand-text">{Translations::sidebar_brand}</span>
+                <span class="topnav-brand-version hidden md:inline">{format!("v{}", env!("DASHBOARD_PKG_VERSION"))}</span>
             </div>
 
             <nav class=move || {
@@ -68,6 +69,27 @@ pub fn TopNav() -> impl IntoView {
                     <Icon name=IconName::Globe class="icon" />
                 </button>
                 <ThemeSwitcher />
+                {move || {
+                    let density = use_table_density();
+                    let t = use_translations();
+                    let label = if density.get() == TableDensity::Compact { t.table_density_comfortable() } else { t.table_density_compact() };
+                    view! {
+                        <button
+                            on:click=move |_| {
+                                let next = if density.get() == TableDensity::Compact {
+                                    TableDensity::Comfortable
+                                } else {
+                                    TableDensity::Compact
+                                };
+                                density.set(next);
+                            }
+                            class="icon-btn"
+                            title=label
+                        >
+                            <Icon name=IconName::Table class="icon" />
+                        </button>
+                    }
+                }}
                 <button
                     on:click=change_admin_key
                     class="icon-btn"

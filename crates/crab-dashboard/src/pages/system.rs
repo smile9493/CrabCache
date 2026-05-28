@@ -216,7 +216,7 @@ fn GeneralTab() -> impl IntoView {
                     {move || checking.get().then(|| {
                         view! {
                             <div class="flex items-center gap-2 text-sm text-muted-foreground">
-                                <Spinner />
+                                <crate::components::skeleton::SkeletonFormCard />
                                 <span>{t.system_checking()}</span>
                             </div>
                         }.into_any()
@@ -328,7 +328,7 @@ fn GeneralTab() -> impl IntoView {
                     view! {
                         <div class="modal-overlay">
                             <div class="modal-box text-center">
-                                <Spinner />
+                                <crate::components::skeleton::SkeletonFormCard />
                                 <p class="mt-3 text-sm text-muted">Updating, please wait...</p>
                             </div>
                         </div>

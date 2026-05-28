@@ -725,6 +725,18 @@ impl Translations {
             Locale::EnUS => "No requests for this consumer in the selected window",
         }
     }
+    pub fn chart_click_to_expand(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击查看大图",
+            Locale::EnUS => "Click for details",
+        }
+    }
+    pub fn chart_detail_close(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "关闭",
+            Locale::EnUS => "Close",
+        }
+    }
     pub fn sidebar_infra(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "基础设施",
@@ -1603,6 +1615,54 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "系统",
             Locale::EnUS => "System",
+        }
+    }
+    pub fn table_density_comfortable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "舒适",
+            Locale::EnUS => "Comfortable",
+        }
+    }
+    pub fn table_density_compact(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "紧凑",
+            Locale::EnUS => "Compact",
+        }
+    }
+    pub fn session_monitor_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查每会话时间线和每密钥路由分布。",
+            Locale::EnUS => "Inspect per-session timeline and per-key routing distribution.",
+        }
+    }
+    pub fn session_monitor_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话监控",
+            Locale::EnUS => "Session Monitor",
+        }
+    }
+    pub fn session_timeline_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话时间线",
+            Locale::EnUS => "Session Timeline",
+        }
+    }
+    pub fn session_timeline_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话事件时间线（分钟桶）",
+            Locale::EnUS => "Session events timeline (minute buckets)",
+        }
+    }
+    pub fn audit_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "审计日志",
+            Locale::EnUS => "Audit Log",
+        }
+    }
+    pub fn audit_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "管理操作审计轨迹",
+            Locale::EnUS => "Management operation audit trail",
         }
     }
     pub fn system_title(self) -> &'static str {

@@ -1,4 +1,5 @@
 [package]
+build = "build.rs"
 name = "crab-dashboard"
 version = "0.1.0"
 edition = "2024"
@@ -15,7 +16,7 @@ leptos = { version = "0.7", features = ["csr"] }
 leptos_router = "0.7"
 leptos_meta = "0.7"
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument", "Element", "HtmlElement", "HtmlDivElement", "HtmlTextAreaElement", "console", "Navigator", "Clipboard", "Storage", "KeyboardEvent", "CssStyleDeclaration", "MouseEvent", "SvgsvgElement", "SvgGraphicsElement", "SvgMatrix", "EventSource", "MessageEvent", "Event", "DomRect"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Document", "HtmlDocument", "Element", "HtmlElement", "HtmlDivElement", "HtmlTextAreaElement", "console", "Navigator", "Clipboard", "Storage", "KeyboardEvent", "CssStyleDeclaration", "MouseEvent", "SvgsvgElement", "SvgGraphicsElement", "SvgMatrix", "EventSource", "MessageEvent", "Event", "DomRect", "MediaQueryList"] }
 plotters = { version = "0.3.7", default-features = false, features = ["svg_backend", "line_series", "area_series"] }
 crab-admin-types.workspace = true
 serde = { version = "1", features = ["derive"] }

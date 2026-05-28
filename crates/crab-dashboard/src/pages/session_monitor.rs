@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use leptos::prelude::*;
+use crate::locale::use_translations;
 
 use crate::api;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
@@ -40,6 +41,7 @@ pub fn SessionMonitorPage() -> impl IntoView {
     let selected_key = RwSignal::new(String::new());
     let timeline: RwSignal<Option<Result<SessionTimelineResponse, String>>> = RwSignal::new(None);
     let key_routing: RwSignal<Option<Result<KeyRoutingResponse, String>>> = RwSignal::new(None);
+    let t = use_translations();
 
     let load_timeline = move || {
         let fp = fingerprint.get().trim().to_string();
@@ -66,8 +68,8 @@ pub fn SessionMonitorPage() -> impl IntoView {
     view! {
         <div class="page-content space-y-6">
             <SectionHeader
-                title="Session Monitor"
-                description="Inspect per-session timeline and per-key routing distribution."
+                title=t.session_monitor_title()
+                description=t.session_monitor_desc()
             />
 
             <div class="glass-card p-4 space-y-3">
@@ -103,7 +105,7 @@ pub fn SessionMonitorPage() -> impl IntoView {
                     view! {
                         <div class="glass-card p-4 space-y-3">
                             <div class="flex items-center justify-between">
-                                <h3 class="text-sm font-semibold text-theme">"Session Timeline"</h3>
+                                <h3 class="text-sm font-semibold text-theme">t.session_timeline_title()</h3>
                                 <span class="text-xs text-theme-muted">
                                     {format!("events: {}  window: {}s", tl.total_events, tl.window_secs)}
                                 </span>
@@ -122,7 +124,7 @@ pub fn SessionMonitorPage() -> impl IntoView {
                                 </button>
                             </div>
                             <div>
-                                <p class="text-xs text-theme-muted mb-2">"Session events timeline (minute buckets)"</p>
+                                <p class="text-xs text-theme-muted mb-2">t.session_timeline_desc()</p>
                                 <LineChart
                                     x_labels=bucket_labels_sig
                                     series=bucket_series_sig
