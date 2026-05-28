@@ -29,9 +29,9 @@ pub struct GatewayHealth {
     /// Total number of backends (default profile).
     #[serde(default)]
     pub backends_total: usize,
-    /// Number of backends with circuit breaker in Open state.
+    /// Number of unhealthy backends (managed by Pingora health checks).
     #[serde(default)]
-    pub circuit_open_count: usize,
+    pub backends_unhealthy: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub struct SemanticConfig {
     pub similarity_threshold: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimeSeriesPoint {
     pub timestamp: String,
     pub requests: u64,
@@ -50,6 +50,13 @@ pub struct TimeSeriesPoint {
     pub avg_latency_ms: f64,
     #[serde(default)]
     pub hit_rate: f64,
+    /// Per-tier hit rate (% of total requests in bucket), 0–100.
+    #[serde(default)]
+    pub l0_hit_rate: f64,
+    #[serde(default)]
+    pub l1_hit_rate: f64,
+    #[serde(default)]
+    pub l2_hit_rate: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

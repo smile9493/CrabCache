@@ -98,6 +98,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state.clone());
 
     let protected = Router::new()
+        .route("/api/admin/events/token", get(crate::sse::sse_token))
         .route("/api/admin/metrics", get(get_metrics))
         .route("/api/admin/overview", get(get_overview))
         .route("/api/admin/overview/core", get(get_overview_core))
@@ -966,6 +967,7 @@ fn ensure_current_period_stats(
             cache_hits: total_cache_hits,
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         });
     }
     stats
@@ -1002,6 +1004,7 @@ fn generate_hourly_stats_mock(
             },
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         });
     }
     ensure_current_period_stats(
@@ -1045,6 +1048,7 @@ fn generate_daily_stats_mock(
             },
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         });
     }
     ensure_current_period_stats(
@@ -1088,6 +1092,7 @@ fn generate_weekly_stats_mock(
             },
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         });
     }
     ensure_current_period_stats(
@@ -1131,6 +1136,7 @@ fn generate_monthly_stats_mock(
             },
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         });
     }
     ensure_current_period_stats(
@@ -1187,6 +1193,7 @@ fn generate_hourly_stats(
             cache_hits,
             avg_latency_ms,
             hit_rate,
+            ..Default::default()
         });
     }
 
@@ -1237,6 +1244,7 @@ fn generate_daily_stats(
             cache_hits,
             avg_latency_ms,
             hit_rate,
+            ..Default::default()
         });
     }
 
@@ -1287,6 +1295,7 @@ fn generate_weekly_stats(
             cache_hits,
             avg_latency_ms,
             hit_rate,
+            ..Default::default()
         });
     }
 
@@ -1337,6 +1346,7 @@ fn generate_monthly_stats(
             cache_hits,
             avg_latency_ms,
             hit_rate,
+            ..Default::default()
         });
     }
 
@@ -3286,6 +3296,9 @@ async fn get_live_metrics(
         crate::live_metrics::clamp_live_params(query.window_secs, query.bucket_secs);
 
     let consumer = consumer.to_string();
+    let key_id = query.key_id.clone();
+    let session_fingerprint = query.session_fingerprint.clone();
+    let group_by = query.group_by.clone();
     let path_for_blocking = path.clone();
     let state_for_blocking = Arc::clone(&state);
     let entries = tokio::task::spawn_blocking(move || {
@@ -3303,12 +3316,13 @@ async fn get_live_metrics(
     let resp = crate::live_metrics::aggregate_live_metrics(
         entries.as_ref(),
         &consumer,
-        "",
-        "",
+        &key_id,
+        &session_fingerprint,
         window_secs,
         bucket_secs,
         trace_available,
         available_consumers,
+        &group_by,
     );
     Ok(Json(resp))
 }
@@ -3757,7 +3771,12 @@ async fn post_infra_speed_test_upload(
 // ---------------------------------------------------------------------------
 
 /// Helper: insert an audit log entry if PG is available. Fire-and-forget.
-async fn audit_log(state: &AppState, action: &str, target: Option<&str>, detail: Option<serde_json::Value>) {
+async fn audit_log(
+    state: &AppState,
+    action: &str,
+    target: Option<&str>,
+    detail: Option<serde_json::Value>,
+) {
     let pg = state.pg_store.read().clone();
     if let Some(ref pg) = pg {
         let _ = pg
@@ -3783,11 +3802,10 @@ async fn get_audit_log(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<AuditLogQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let pg = state
-        .pg_store
-        .read()
-        .clone()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "PG not available".to_string()))?;
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
 
     let rows = pg
         .load_audit_logs(query.limit, query.offset, query.action.as_deref())
@@ -3796,19 +3814,17 @@ async fn get_audit_log(
 
     let entries: Vec<serde_json::Value> = rows
         .into_iter()
-        .map(
-            |(id, timestamp, action, actor, target, detail, ip)| {
-                serde_json::json!({
-                    "id": id,
-                    "timestamp": timestamp,
-                    "action": action,
-                    "actor": actor,
-                    "target": target,
-                    "detail": detail.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()),
-                    "ip_address": ip,
-                })
-            },
-        )
+        .map(|(id, timestamp, action, actor, target, detail, ip)| {
+            serde_json::json!({
+                "id": id,
+                "timestamp": timestamp,
+                "action": action,
+                "actor": actor,
+                "target": target,
+                "detail": detail.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()),
+                "ip_address": ip,
+            })
+        })
         .collect();
 
     Ok(Json(serde_json::json!({ "entries": entries })))
@@ -3835,6 +3851,7 @@ mod metrics_tests {
             cache_hits: 0,
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         }];
         let out = ensure_current_period_stats(existing.clone(), 100, "now", 9, 9, 9);
         assert_eq!(out.len(), 1);

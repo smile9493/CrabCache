@@ -4,8 +4,9 @@ use wasm_bindgen::JsCast;
 
 use crate::anomaly::detect_and_toast_with;
 use crate::api;
+use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
-use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::line_chart::ChartSeries;
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
 use crate::components::ui::*;
@@ -1544,14 +1545,14 @@ pub fn TimeSeriesChart(
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
             <div class="space-y-2">
-                <LineChart
+                <CanvasLineChart
                     x_labels=x_labels
                     series=token_series
                     height_px=180
                     y_unit="tokens"
                     empty_message=t.overview_collecting_timeseries()
                 />
-                <LineChart
+                <CanvasLineChart
                     x_labels=x_labels
                     series=request_series
                     height_px=180

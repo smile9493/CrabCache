@@ -355,6 +355,18 @@ impl MetricsHistory {
                 let d_hits = last
                     .gateway_cache_hits()
                     .saturating_sub(first.gateway_cache_hits());
+                let d_l0 = last.l0_hits.saturating_sub(first.l0_hits);
+                let d_l1 = last.l1_hits.saturating_sub(first.l1_hits);
+                let d_l2 = last.l2_hits.saturating_sub(first.l2_hits);
+                let d_miss = last.cache_misses.saturating_sub(first.cache_misses);
+                let d_total = d_l0 + d_l1 + d_l2 + d_miss;
+                let tier_pct = |hits: u64| {
+                    if d_total > 0 {
+                        hits as f64 / d_total as f64 * 100.0
+                    } else {
+                        0.0
+                    }
+                };
                 let hit_rate = if d_requests > 0 {
                     d_hits as f64 / d_requests as f64
                 } else {
@@ -367,6 +379,9 @@ impl MetricsHistory {
                     cache_hits: d_hits,
                     avg_latency_ms: 0.0,
                     hit_rate,
+                    l0_hit_rate: tier_pct(d_l0),
+                    l1_hit_rate: tier_pct(d_l1),
+                    l2_hit_rate: tier_pct(d_l2),
                 })
             })
             .collect()
@@ -695,6 +710,7 @@ impl MetricsHistory {
                 cache_hits: dh,
                 avg_latency_ms: 0.0,
                 hit_rate,
+                ..Default::default()
             });
         }
         points

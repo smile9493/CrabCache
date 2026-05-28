@@ -3,14 +3,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
+use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::donut_chart::{DonutChart, DonutSegment};
+use crate::components::line_chart::ChartSeries;
 use crate::components::scatter_chart::{ScatterChart, ScatterPoint};
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
     BackendEndpoint, CacheConfig, CacheOpsView, ConnectionConfig, FingerprintConfigBody,
     InvalidateCacheBody, PutBackendsRequest, RoutingStatus, SemanticConfig, StreamCacheToggle,
-    TraceAnalysis, UpdateCacheConfigRequest, UpdateSemanticConfigRequest,
+    TimeSeriesPoint, TraceAnalysis, UpdateCacheConfigRequest, UpdateSemanticConfigRequest,
 };
 
 #[component]
@@ -654,6 +656,112 @@ fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl I
 }
 
 // ---------------------------------------------------------------------------
+// Tier hit-rate trend (L0/L1/L2) from overview timeseries
+// ---------------------------------------------------------------------------
+
+#[component]
+fn CacheTierHitRateChart() -> impl IntoView {
+    let window = RwSignal::new("24h".to_string());
+    let points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
+    let loading = RwSignal::new(true);
+
+    Effect::new(move |_| {
+        let w = window.get();
+        loading.set(true);
+        leptos::task::spawn_local(async move {
+            match api::fetch_overview_timeseries(&w).await {
+                Ok(resp) => points.set(resp.points),
+                Err(_) => points.set(Vec::new()),
+            }
+            loading.set(false);
+        });
+    });
+
+    let x_labels = Signal::derive(move || {
+        points
+            .get()
+            .iter()
+            .map(|p| p.timestamp.clone())
+            .collect::<Vec<_>>()
+    });
+    let tier_series = Signal::derive(move || {
+        let pts = points.get();
+        vec![
+            ChartSeries {
+                label: "L0".to_string(),
+                color: "var(--cc-tier-l0)".to_string(),
+                values: pts.iter().map(|p| Some(p.l0_hit_rate)).collect(),
+                dashed: false,
+                fill: false,
+            },
+            ChartSeries {
+                label: "L1".to_string(),
+                color: "var(--cc-tier-l1)".to_string(),
+                values: pts.iter().map(|p| Some(p.l1_hit_rate)).collect(),
+                dashed: false,
+                fill: false,
+            },
+            ChartSeries {
+                label: "L2".to_string(),
+                color: "var(--cc-tier-l2)".to_string(),
+                values: pts.iter().map(|p| Some(p.l2_hit_rate)).collect(),
+                dashed: false,
+                fill: false,
+            },
+        ]
+    });
+
+    view! {
+        <div class="glass-card space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-theme">"L0 / L1 / L2 Hit Rate Trend"</h3>
+                <div class="flex gap-1">
+                    <button
+                        type="button"
+                        class=move || if window.get() == "1h" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        on:click=move |_| window.set("1h".to_string())
+                    >
+                        "1h"
+                    </button>
+                    <button
+                        type="button"
+                        class=move || if window.get() == "24h" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        on:click=move |_| window.set("24h".to_string())
+                    >
+                        "24h"
+                    </button>
+                    <button
+                        type="button"
+                        class=move || if window.get() == "7d" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        on:click=move |_| window.set("7d".to_string())
+                    >
+                        "7d"
+                    </button>
+                </div>
+            </div>
+            {move || if loading.get() {
+                view! { <crate::components::skeleton::SkeletonChart /> }.into_any()
+            } else {
+                view! {
+                    <CanvasLineChart
+                        x_labels=x_labels
+                        series=tier_series
+                        height_px=200
+                        y_unit="%"
+                        y_min=Some(0.0)
+                        y_max=Some(100.0)
+                        empty_message="Collecting tier metrics…"
+                    />
+                }.into_any()
+            }}
+            <p class="text-[10px] text-theme-muted">
+                "Per-bucket share of requests served from each cache tier (L0 Moka / L1 Redis / L2 semantic)."
+            </p>
+        </div>
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tab 2: Ops — Cache invalidation
 // ---------------------------------------------------------------------------
 
@@ -678,6 +786,7 @@ fn OpsTab() -> impl IntoView {
 
     view! {
         <div class="space-y-6">
+            <CacheTierHitRateChart />
             <Alert variant="info" message=message.into() />
 
             {move || match ops.get() {

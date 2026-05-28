@@ -144,6 +144,7 @@ mod tests {
                     cache_hits: 50,
                     avg_latency_ms: 0.0,
                     hit_rate: 0.5,
+                    ..Default::default()
                 }]
             },
             daily_stats: vec![],
@@ -196,7 +197,7 @@ mod tests {
                 qdrant_connected: false,
                 backends_healthy: 0,
                 backends_total: 0,
-                circuit_open_count: 0,
+                backends_unhealthy: 0,
             },
             prefix_cache: PrefixCacheMetricsSnapshot {
                 hit_tokens: 0,

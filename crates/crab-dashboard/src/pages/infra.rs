@@ -2,7 +2,8 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 
 use crate::api;
-use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::canvas_line_chart::CanvasLineChart;
+use crate::components::line_chart::ChartSeries;
 use crate::components::page_header::PageHeader;
 use crate::locale::use_translations;
 use crate::page_visible::page_visible;
@@ -250,14 +251,14 @@ fn InfraHistoryChart(
         vec![
             ChartSeries {
                 label: "CPU %".to_string(),
-                color: "var(--accent-primary)",
+                color: "var(--accent-primary)".to_string(),
                 values: ts.cpu.iter().map(|p| Some(p.value)).collect(),
                 dashed: false,
                 fill: true,
             },
             ChartSeries {
                 label: "Mem %".to_string(),
-                color: "var(--info)",
+                color: "var(--info)".to_string(),
                 values: ts.memory.iter().map(|p| Some(p.value)).collect(),
                 dashed: false,
                 fill: true,
@@ -270,7 +271,7 @@ fn InfraHistoryChart(
             <p class="text-xs text-theme-muted mb-3">
                 {t.infra_history_samples()}: {sample_count}
             </p>
-            <LineChart
+            <CanvasLineChart
                 x_labels=x_labels
                 series=series
                 height_px=200

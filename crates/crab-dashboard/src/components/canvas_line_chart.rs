@@ -10,8 +10,8 @@ use wasm_bindgen::JsCast;
 use crate::components::chart::canvas_renderer::CanvasLineRenderer;
 use crate::components::chart::core::{ChartSeries, ThresholdLine, downsample_series, y_range};
 use crate::components::chart::interaction::{
-    bucket_tooltip_rows, line_band_style, line_center_pct, line_tooltip_position_style,
-    value_top_pct,
+    bucket_tooltip_rows_with_pricing, line_band_style, line_center_pct,
+    line_tooltip_position_style, value_top_pct,
 };
 use crate::components::chart::renderer::{ChartRenderer, LineDrawRequest};
 use crate::theme::use_theme_signal;
@@ -83,6 +83,7 @@ pub fn CanvasLineChart(
     #[prop(default = true)] interactive: bool,
     #[prop(default = None)] y_min: Option<f64>,
     #[prop(default = None)] y_max: Option<f64>,
+    #[prop(default = Vec::new())] series_price_per_million: Vec<Option<f64>>,
 ) -> impl IntoView {
     let chart_id = CANVAS_LINE_CHART_ID.fetch_add(1, Ordering::Relaxed);
     let summary_id = format!("canvas-line-chart-summary-{}", chart_id);
@@ -92,6 +93,7 @@ pub fn CanvasLineChart(
     let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
     let plot_ref: NodeRef<leptos::html::Div> = NodeRef::new();
     let thresholds = std::sync::Arc::new(thresholds);
+    let series_price_per_million = std::sync::Arc::new(series_price_per_million);
 
     // Draw canvas whenever data or theme changes.
     Effect::new({
@@ -120,8 +122,9 @@ pub fn CanvasLineChart(
         }
     });
 
-    // Hover: map mouse X to data index.
-    let on_mousemove = move |ev: web_sys::MouseEvent| {
+    // Hover: map mouse X to data index (Callback is Clone — safe inside reactive view).
+    let pricing_mouse = std::sync::Arc::clone(&series_price_per_million);
+    let on_mousemove = leptos::callback::Callback::new(move |ev: web_sys::MouseEvent| {
         if !interactive {
             return;
         }
@@ -149,20 +152,21 @@ pub fn CanvasLineChart(
         let n = geom.n;
         let idx = (rel_x * (n as f64 - 1.0)).round() as usize;
         let idx = idx.min(n.saturating_sub(1));
-        let values = bucket_tooltip_rows(&geom.all_series, idx);
+        let values =
+            bucket_tooltip_rows_with_pricing(&geom.all_series, idx, pricing_mouse.as_ref());
         if values.is_empty() {
             hover_index.set(None);
         } else {
             hover_index.set(Some(idx));
         }
-    };
+    });
 
-    let on_mouseleave = move |_: web_sys::MouseEvent| {
+    let on_mouseleave = leptos::callback::Callback::new(move |_: web_sys::MouseEvent| {
         hover_index.set(None);
         mouse_pos.set(None);
-    };
+    });
 
-    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+    let on_keydown = leptos::callback::Callback::new(move |ev: web_sys::KeyboardEvent| {
         let labels = x_labels.get_untracked();
         let n = labels.len();
         if n == 0 {
@@ -185,11 +189,12 @@ pub fn CanvasLineChart(
         };
         hover_index.set(new_idx);
         ev.prevent_default();
-    };
+    });
 
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 24)>
             {move || {
+                let pricing = std::sync::Arc::clone(&series_price_per_million);
                 let labels = x_labels.get();
                 let raw_series = series.get();
                 let geom = prepare_geom(labels, raw_series, y_min, y_max);
@@ -224,9 +229,9 @@ pub fn CanvasLineChart(
                                         node_ref=plot_ref
                                         style="position: absolute; inset: 0; cursor: crosshair"
                                         tabindex="0"
-                                        on:mousemove=on_mousemove
-                                        on:mouseleave=on_mouseleave
-                                        on:keydown=on_keydown
+                                        on:mousemove=move |ev| on_mousemove.run(ev)
+                                        on:mouseleave=move |ev| on_mouseleave.run(ev)
+                                        on:keydown=move |ev| on_keydown.run(ev)
                                     />
                                 }.into_any()
                             } else {
@@ -245,7 +250,12 @@ pub fn CanvasLineChart(
                                 if idx >= g.labels.len() {
                                     return ().into_any();
                                 }
-                                let values = bucket_tooltip_rows(&g.all_series, idx);
+                                let prices = std::sync::Arc::clone(&pricing);
+                                let values = bucket_tooltip_rows_with_pricing(
+                                    &g.all_series,
+                                    idx,
+                                    prices.as_ref(),
+                                );
                                 if values.is_empty() {
                                     return ().into_any();
                                 }

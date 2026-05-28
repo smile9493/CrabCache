@@ -3,7 +3,7 @@
 #[derive(Clone, PartialEq)]
 pub struct ChartSeries {
     pub label: String,
-    pub color: &'static str,
+    pub color: String,
     pub values: Vec<Option<f64>>,
     pub dashed: bool,
     /// When true, Plotters renders a filled area below the line.
@@ -71,8 +71,8 @@ pub fn downsample_lttb(points: &[(f64, f64)], target_count: usize) -> Vec<(f64, 
     for i in 0..target_count - 2 {
         // Bucket boundaries (for the "next" bucket used in area calculation).
         let bucket_start = ((i + 1) as f64 * bucket_size).floor() as usize + 1;
-        let bucket_end = (((i + 2) as f64 * bucket_size).floor() as usize + 1)
-            .min(points.len() - 1);
+        let bucket_end =
+            (((i + 2) as f64 * bucket_size).floor() as usize + 1).min(points.len() - 1);
 
         // Average of next bucket (for area calculation).
         let (avg_x, avg_y) = {
@@ -88,8 +88,7 @@ pub fn downsample_lttb(points: &[(f64, f64)], target_count: usize) -> Vec<(f64, 
 
         // Current bucket boundaries.
         let cur_start = (i as f64 * bucket_size).floor() as usize + 1;
-        let cur_end = (((i + 1) as f64 * bucket_size).floor() as usize + 1)
-            .min(points.len() - 1);
+        let cur_end = (((i + 1) as f64 * bucket_size).floor() as usize + 1).min(points.len() - 1);
 
         // Find point in current bucket with largest triangle area.
         let (px, py) = points[prev_selected];
@@ -234,8 +233,8 @@ pub fn format_tooltip_value(v: f64) -> String {
     }
 }
 
-use crate::types::{RequestDetail, RequestLog};
 use crate::types::TimeSeriesPoint;
+use crate::types::{RequestDetail, RequestLog};
 
 /// Derive waterfall stages from a request log + detail.
 ///
@@ -336,6 +335,7 @@ mod tests {
                 cache_hits: 8,
                 avg_latency_ms: 0.0,
                 hit_rate: 0.0,
+                ..Default::default()
             },
             TimeSeriesPoint {
                 timestamp: "b".into(),
@@ -344,6 +344,7 @@ mod tests {
                 cache_hits: 0,
                 avg_latency_ms: 0.0,
                 hit_rate: 0.42,
+                ..Default::default()
             },
         ];
         let v = sparkline_hit_rate_pct(&pts);

@@ -1,6 +1,7 @@
 use crate::api::{fetch_composition_debug, fetch_composition_summary, fetch_composition_trends};
-use crate::components::bar_chart::BarChart;
-use crate::components::line_chart::{ChartSeries, LineChart};
+use crate::components::canvas_bar_chart::CanvasBarChart;
+use crate::components::canvas_line_chart::CanvasLineChart;
+use crate::components::line_chart::ChartSeries;
 use crate::locale::{Locale, use_locale, use_translations};
 use crate::types::{CompositionDebugEntry, CompositionSummary, CompositionTrendsResponse};
 use leptos::prelude::*;
@@ -88,7 +89,7 @@ fn VerticalBarChart(title: String, bars: Vec<(String, usize)>) -> impl IntoView 
     view! {
         <div class="glass-card panel-chart">
             <h3 class="text-sm font-semibold text-[var(--text-primary)]">{title_h}</h3>
-            <BarChart
+            <CanvasBarChart
                 x_labels=x_labels
                 series=series
                 height_px=220
@@ -142,7 +143,7 @@ fn TrendLineChart(title: String, points: Vec<(String, u32)>) -> impl IntoView {
     view! {
         <div class="glass-card panel-chart">
             <h3 class="text-sm font-semibold text-[var(--text-primary)]">{title_h}</h3>
-            <LineChart
+            <CanvasLineChart
                 x_labels=x_labels
                 series=series
                 height_px=220

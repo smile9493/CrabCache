@@ -4,11 +4,14 @@ use wasm_bindgen::JsCast;
 
 pub use super::chart::core::ChartSeries;
 pub use super::chart::core::ThresholdLine;
-pub(super) use super::chart::core::{format_tooltip_value, mouse_to_svg_x, value_segments_indexed, y_range};
 use super::chart::core::downsample_series;
+pub(super) use super::chart::core::{
+    format_tooltip_value, mouse_to_svg_x, value_segments_indexed, y_range,
+};
+use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::chart::interaction::{
-    bucket_tooltip_rows, line_band_style, line_center_pct, line_tooltip_position_style,
-    value_top_pct,
+    bucket_tooltip_rows_with_pricing, line_band_style, line_center_pct,
+    line_tooltip_position_style, value_top_pct,
 };
 
 static LINE_CHART_ID: AtomicUsize = AtomicUsize::new(0);
@@ -68,13 +71,19 @@ pub fn LineChart(
     #[prop(default = "ms")] y_unit: &'static str,
     empty_message: &'static str,
     #[prop(default = Vec::new())] thresholds: Vec<ThresholdLine>,
+    /// Per-series USD price per million tokens; when set, tooltips show estimated cost.
+    #[prop(default = Vec::new())]
+    series_price_per_million: Vec<Option<f64>>,
     #[prop(default = true)] interactive: bool,
+    #[prop(default = None)] y_min: Option<f64>,
+    #[prop(default = None)] y_max: Option<f64>,
 ) -> impl IntoView {
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
     // Avoid StoredValue here: it can panic if accessed after scope disposal.
     // Thresholds are immutable per component instance.
     let thresholds = std::sync::Arc::new(thresholds);
+    let series_price_per_million = std::sync::Arc::new(series_price_per_million);
 
     let chart_geom = Memo::new(move |_| {
         let labels = x_labels.get();
@@ -96,13 +105,15 @@ pub fn LineChart(
         if labels.is_empty() || all_series.is_empty() {
             return None;
         }
-        let has_point = all_series.iter().any(|s| {
-            s.values.iter().any(|v| matches!(v, Some(x) if *x > 0.0))
-        });
+        let has_point = all_series
+            .iter()
+            .any(|s| s.values.iter().any(|v| matches!(v, Some(x) if *x > 0.0)));
         if !has_point {
             return None;
         }
-        let (ymin, ymax) = y_range(&all_series);
+        let (auto_ymin, auto_ymax) = y_range(&all_series);
+        let ymin = y_min.unwrap_or(auto_ymin);
+        let ymax = y_max.unwrap_or(auto_ymax);
         const W: f64 = 100.0;
         let n = labels.len().max(1);
         let x_step = if n > 1 { W / (n - 1) as f64 } else { 0.0 };
@@ -170,20 +181,16 @@ pub fn LineChart(
         }
         let current = hover_index.get_untracked();
         let new_idx = match ev.key().as_str() {
-            "ArrowLeft" => {
-                match current {
-                    Some(idx) if idx > 0 => Some(idx - 1),
-                    None => Some(n - 1),
-                    _ => current,
-                }
-            }
-            "ArrowRight" => {
-                match current {
-                    Some(idx) if idx < n - 1 => Some(idx + 1),
-                    None => Some(0),
-                    _ => current,
-                }
-            }
+            "ArrowLeft" => match current {
+                Some(idx) if idx > 0 => Some(idx - 1),
+                None => Some(n - 1),
+                _ => current,
+            },
+            "ArrowRight" => match current {
+                Some(idx) if idx < n - 1 => Some(idx + 1),
+                None => Some(0),
+                _ => current,
+            },
             "Escape" => None,
             _ => return,
         };
@@ -208,6 +215,7 @@ pub fn LineChart(
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 48)>
             {move || {
+                let series_price_per_m = std::sync::Arc::clone(&series_price_per_million);
                 let chart_id = LINE_CHART_ID.fetch_add(1, Ordering::Relaxed);
                 let summary_id = format!("line-chart-summary-{}", chart_id);
                 let Some(geom) = chart_geom.get() else {
@@ -280,7 +288,7 @@ pub fn LineChart(
                                     let last_x = x_offset + (seg_vals.len().saturating_sub(1)) as f64 * x_step;
                                     let poly = format!("{} {:.2},{:.2} {:.2},{:.2}", line_points, last_x, H, first_x, H);
                                     view! {
-                                        <polygon points=poly fill=s.color opacity="0.12" />
+                                        <polygon points=poly fill=s.color.clone() opacity="0.12" />
                                     }
                                 })
                             }).collect_view()}
@@ -295,7 +303,7 @@ pub fn LineChart(
                                         <polyline
                                             points=points
                                             fill="none"
-                                            stroke=s.color
+                                            stroke=s.color.clone()
                                             stroke-width="1.5"
                                             vector-effect="non-scaling-stroke"
                                             stroke-dasharray=dash
@@ -344,7 +352,12 @@ pub fn LineChart(
                             if idx >= geom.labels.len() {
                                 return ().into_any();
                             }
-                            let values = bucket_tooltip_rows(&geom.all_series, idx);
+                            let prices = std::sync::Arc::clone(&series_price_per_m);
+                            let values = bucket_tooltip_rows_with_pricing(
+                                &geom.all_series,
+                                idx,
+                                prices.as_ref(),
+                            );
                             if values.is_empty() {
                                 return ().into_any();
                             }
@@ -393,7 +406,7 @@ pub fn LineChart(
                                         }
                                         let top = value_top_pct(v, geom.ymin, geom.ymax);
                                         let left = line_center_pct(idx, geom.n);
-                                        let color = s.color;
+                                        let color = s.color.clone();
                                         Some(view! {
                                             <span
                                                 class="chart-hover-dot"
@@ -481,6 +494,8 @@ pub fn TokenLineChart(
     output_values: Signal<Vec<Option<f64>>>,
     input_label: String,
     output_label: String,
+    #[prop(default = TOKEN_INPUT_PRICE_PER_M)] input_price_per_million: f64,
+    #[prop(default = TOKEN_OUTPUT_PRICE_PER_M)] output_price_per_million: f64,
     #[prop(default = 220)] height_px: u32,
     #[prop(default = true)] interactive: bool,
     empty_message: &'static str,
@@ -489,28 +504,38 @@ pub fn TokenLineChart(
         vec![
             ChartSeries {
                 label: input_label.clone(),
-                color: "var(--accent-primary)",
+                color: "var(--accent-primary)".to_string(),
                 values: input_values.get(),
                 dashed: false,
                 fill: false,
             },
             ChartSeries {
                 label: output_label.clone(),
-                color: "var(--info)",
+                color: "var(--info)".to_string(),
                 values: output_values.get(),
                 dashed: false,
                 fill: false,
             },
         ]
     });
+    let prices = vec![
+        Some(input_price_per_million),
+        Some(output_price_per_million),
+    ];
     view! {
-        <LineChart
+        <CanvasLineChart
             x_labels=x_labels
             series=series
             height_px=height_px
             y_unit="tokens"
+            series_price_per_million=prices
             interactive=interactive
             empty_message=empty_message
         />
     }
 }
+
+/// Default input token price (USD/M), aligned with gateway `cache.pricing`.
+pub const TOKEN_INPUT_PRICE_PER_M: f64 = 0.55;
+/// Default output token price (USD/M), aligned with gateway `cache.pricing`.
+pub const TOKEN_OUTPUT_PRICE_PER_M: f64 = 2.19;

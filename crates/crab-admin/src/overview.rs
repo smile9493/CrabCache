@@ -880,6 +880,7 @@ mod tests {
             cache_hits: 0,
             avg_latency_ms: 0.0,
             hit_rate: 0.0,
+            ..Default::default()
         }];
         let snap = metrics_snapshot_from_core(&core, &points);
         assert_eq!(snap.hourly_stats.len(), 1);
