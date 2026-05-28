@@ -138,8 +138,13 @@ pub fn OverviewPage() -> impl IntoView {
                 let dirty = dirty.clone();
                 let active = active.clone();
                 let raf_state_inner = raf_state.clone();
+                let alive_for_raf = Arc::clone(&alive);
 
                 let flush = move || {
+                    if !alive_for_raf.load(Ordering::Relaxed) {
+                        *active.borrow_mut() = false;
+                        return;
+                    }
                     if *dirty.borrow() {
                         if let Some(core) = buffer.borrow_mut().take() {
                             detect_and_toast(&core);
@@ -207,7 +212,7 @@ pub fn OverviewPage() -> impl IntoView {
                 > = Rc::new(RefCell::new(Some(tx)));
 
                 let tx_msg = Rc::clone(&tx_shared);
-                let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
+                let message_closure = wasm_bindgen::closure::Closure::wrap(Box::new(
                     move |ev: web_sys::MessageEvent| {
                         if let Some(data) = ev.data().as_string() {
                             if let Some(ref sender) = *tx_msg.borrow() {
@@ -217,8 +222,7 @@ pub fn OverviewPage() -> impl IntoView {
                     },
                 )
                     as Box<dyn FnMut(web_sys::MessageEvent)>);
-                es.set_onmessage(Some(closure.as_ref().unchecked_ref()));
-                closure.forget();
+                es.set_onmessage(Some(message_closure.as_ref().unchecked_ref()));
 
                 // On error, take the sender to close the channel and exit the rx loop
                 let tx_err = Rc::clone(&tx_shared);
@@ -228,7 +232,6 @@ pub fn OverviewPage() -> impl IntoView {
                     })
                         as Box<dyn FnMut(web_sys::Event)>);
                 es.set_onerror(Some(error_closure.as_ref().unchecked_ref()));
-                error_closure.forget();
 
                 // Write incoming data to non-reactive buffer; rAF loop flushes
                 // at most once per animation frame.
@@ -251,6 +254,10 @@ pub fn OverviewPage() -> impl IntoView {
                 }
 
                 // Connection lost — stop rAF loop and retry
+                es.set_onmessage(None);
+                es.set_onerror(None);
+                drop(message_closure);
+                drop(error_closure);
                 if !alive.load(Ordering::Relaxed) {
                     es.close();
                     break;

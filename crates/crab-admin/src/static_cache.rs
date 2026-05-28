@@ -21,14 +21,16 @@ pub async fn static_cache_headers(req: Request<Body>, next: Next) -> Response<Bo
     let path = req.uri().path().to_string();
     let mut res = next.run(req).await;
 
-    let cache_value = if path == "/" || path == "/index.html" {
-        Some("no-cache, no-store, must-revalidate")
-    } else if path.starts_with("/crab-dashboard-")
-        && (path.ends_with(".js") || path.ends_with(".wasm"))
+    // During active dashboard iteration, prefer freshness over long-lived immutable
+    // caching to prevent clients (especially mobile/Firefox) from pinning stale bundles.
+    let cache_value = if path == "/"
+        || path == "/index.html"
+        || path.ends_with(".html")
+        || path.ends_with(".js")
+        || path.ends_with(".wasm")
+        || path.ends_with(".css")
     {
-        Some("public, max-age=31536000, immutable")
-    } else if path.starts_with("/output-") && path.ends_with(".css") {
-        Some("public, max-age=86400")
+        Some("no-store, no-cache, must-revalidate, max-age=0")
     } else {
         None
     };
@@ -38,6 +40,12 @@ pub async fn static_cache_headers(req: Request<Body>, next: Next) -> Response<Bo
     {
         res.headers_mut()
             .insert(header::CACHE_CONTROL, header_value);
+        res.headers_mut()
+            .insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
+        res.headers_mut().insert(
+            header::EXPIRES,
+            header::HeaderValue::from_static("0"),
+        );
     }
 
     // ServeDir SPA fallback returns index.html for missing hashed assets; treat as 404.

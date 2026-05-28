@@ -283,11 +283,16 @@ pub fn LivePage() -> impl IntoView {
         let live_buffer = Arc::clone(&live_buffer);
         let live_dirty = Arc::clone(&live_dirty);
         let live_active = Arc::clone(&live_active);
+        let alive_for_raf = Arc::clone(&alive);
         let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> =
             Rc::new(RefCell::new(None));
         let live_raf_state_inner = live_raf_state.clone();
 
         let flush = move || {
+            if !alive_for_raf.load(Ordering::Relaxed) {
+                live_active.store(false, Ordering::Relaxed);
+                return;
+            }
             if *live_dirty.lock().expect("live_dirty lock poisoned") {
                 if let Some(data) = live_buffer.lock().expect("live_buffer lock poisoned").take() {
                     live_data.set(Some(data));
