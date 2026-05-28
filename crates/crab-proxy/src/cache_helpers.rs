@@ -110,7 +110,7 @@ pub fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<Strin
 /// matches the client's streaming preference. This prevents a non-streaming
 /// cached response from being served to a streaming client (and vice versa).
 ///
-/// This is the Session-independent core extracted from `try_early_mimo_exact_cache`
+/// This is the Session-independent core extracted from `try_early_exact_cache`
 /// to enable standalone unit testing.
 pub async fn tiered_exact_lookup(
     tiered: &TieredCache,

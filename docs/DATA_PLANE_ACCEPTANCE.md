@@ -38,7 +38,7 @@ cargo run --bin crab-gateway -- config/gateway.toml
 
 ### 1. Exact cache（early cache，full parse 前）
 
-**目的**：验证 [`body_quick_parse.rs`](../crates/crab-proxy/src/body_quick_parse.rs) + `try_early_mimo_exact_cache` 在第二次请求时命中 exact cache，跳过 full JSON parse。
+**目的**：验证 [`body_quick_parse.rs`](../crates/crab-proxy/src/body_quick_parse.rs) + `try_early_exact_cache` 在第二次请求时命中 exact cache，跳过 full JSON parse。
 
 ```bash
 # 写入一份缓存

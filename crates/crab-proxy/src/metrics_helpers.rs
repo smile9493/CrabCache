@@ -133,6 +133,7 @@ pub fn observe_request_timeline(ctx: &GatewayContext) {
     };
 
     let timeline = &ctx.timeline;
+    mark("body_read_start", timeline.body_read_start);
     mark("body_read_done", timeline.body_read_done);
     mark("json_parse_done", timeline.json_parse_done);
     mark("pipeline_select_done", timeline.pipeline_select_done);

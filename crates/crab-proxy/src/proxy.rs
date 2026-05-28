@@ -189,8 +189,8 @@ impl GatewayProxy {
         Ok(parsed)
     }
 
-    /// Exact tiered cache lookup + response for MiMo before full JSON parse.
-    async fn try_early_mimo_exact_cache(
+    /// Exact tiered cache lookup + response before full JSON parse (MiMo / GenericRelay).
+    async fn try_early_exact_cache(
         &self,
         session: &mut Session,
         ctx: &mut GatewayContext,
@@ -778,6 +778,7 @@ impl ProxyHttp for GatewayProxy {
 
         // ─── Phase 3: Request Parse (body read, JSON parse, pipeline selection) ───
         session.as_mut().enable_retry_buffering();
+        timeline_stamp(&mut ctx.timeline.body_read_start);
 
         let mut full_body = Vec::new();
         let max_body = self.state.max_request_body_bytes;
@@ -926,7 +927,9 @@ impl ProxyHttp for GatewayProxy {
         timeline_stamp(&mut ctx.timeline.pipeline_select_done);
 
         let reasoning_cfg_early = self.reasoning_config();
-        if Self::is_mimo_pipeline(selection.pipeline) {
+        if Self::is_mimo_pipeline(selection.pipeline)
+            || matches!(selection.pipeline, RequestPipeline::GenericRelay)
+        {
             let fingerprint_early = self.state.runtime.fingerprint.read().clone();
             let cache_namespace_early = effective_cache_namespace(
                 self.state.cache_key_namespace.as_deref(),
@@ -939,7 +942,7 @@ impl ProxyHttp for GatewayProxy {
             ) {
                 ctx.cache_key = Some(early_key.clone());
                 if self
-                    .try_early_mimo_exact_cache(
+                    .try_early_exact_cache(
                         session,
                         ctx,
                         &early_key,

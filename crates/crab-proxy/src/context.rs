@@ -209,6 +209,7 @@ pub struct TokenStats {
 /// Per-request lifecycle watermarks for phase latency histograms.
 #[derive(Default)]
 pub struct RequestTimeline {
+    pub body_read_start: Option<Instant>,
     pub body_read_done: Option<Instant>,
     pub json_parse_done: Option<Instant>,
     pub pipeline_select_done: Option<Instant>,

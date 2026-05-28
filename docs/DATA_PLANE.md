@@ -71,7 +71,7 @@
 
 | 项 | 状态 | 说明 / 代码 |
 |----|------|-------------|
-| `gateway_request_phase_latency_seconds` | ✅ | `body_read_done` … `logging_done`（无 `body_read_start`） |
+| `gateway_request_phase_latency_seconds` | ✅ | `body_read_start` … `logging_done` |
 | `record_request_body_stage` | ✅ | `json_parse_client` / `prepare_upstream_body` 等 |
 | Raw capture 异步化 / logging &lt;1ms | ⬜ | 仍为 writer 线程 + 同步通道 |
 | OpenTelemetry | ⬜ | 仅 `x-request-id` |
