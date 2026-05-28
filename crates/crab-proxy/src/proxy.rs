@@ -1,3 +1,5 @@
+const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
+
 use crate::cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
     cache_entry_matches_stream_mode, prepare_response_body_for_cache, should_store_sse_body,
@@ -52,7 +54,7 @@ use crab_reasoning::{
     prepare_light_request, prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
     sanitize_client_completion,
 };
-use crab_route::{CircuitState, extract_affinity_key};
+use crab_route::extract_affinity_key;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
@@ -136,11 +138,12 @@ impl GatewayProxy {
 
     fn create_upstream_peer(
         &self,
-        backend: &crab_route::Backend,
+        addr: std::net::SocketAddr,
+        tls_sni: &str,
         ctx: &mut GatewayContext,
     ) -> HttpPeer {
-        ctx.upstream.host = Some(backend.tls_sni.clone());
-        let mut peer = HttpPeer::new(backend.addr, true, backend.tls_sni.clone());
+        ctx.upstream.host = Some(tls_sni.to_string());
+        let mut peer = HttpPeer::new(addr, true, tls_sni.to_string());
         let conn_config = self.state.runtime.conn_config.read().clone();
         apply_connection_options(&conn_config, &mut peer.options);
         peer
@@ -264,6 +267,10 @@ impl GatewayProxy {
             ctx.cache_hit = Some(entry.clone());
             ctx.tokens.last_input = entry.usage.prompt_tokens;
             ctx.tokens.last_output = entry.usage.completion_tokens;
+            // Spawn stale-while-revalidate if entry is stale.
+            if let (Some(body), Some(cache_key)) = (&ctx.original_request_body, ctx.cache_key.as_deref()) {
+                crate::cache_revalidate::maybe_spawn_swr(session, cache_key, &entry, body);
+            }
             global_metrics().record_cache_hit(
                 CacheTier::L2Semantic,
                 &ctx.model,
@@ -309,8 +316,24 @@ impl ProxyHttp for GatewayProxy {
         GatewayContext::new(uuid::Uuid::new_v4().to_string())
     }
 
+    /// Enable subrequest spawning for stale-while-revalidate cache refresh.
+    fn allow_spawning_subrequest(&self, _session: &Session, _ctx: &Self::CTX) -> bool {
+        true
+    }
+
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         // ─── Phase 1: Routing Gate (CORS, health, models, path/method validation) ───
+
+        // Detect SWR revalidation subrequests: skip cache lookup, force upstream.
+        if crate::cache_revalidate::is_revalidation_subrequest(session).is_some() {
+            debug!(
+                request_id = %ctx.request_id,
+                "SWR revalidation subrequest detected, skipping cache lookup"
+            );
+            ctx.cache_key = None;
+            // Fall through to normal request processing (auth already in session headers).
+        }
+
         if self.state.cors_enabled
             && session.req_header().method == http::Method::OPTIONS
             && send_cors_preflight(session).await
@@ -1123,6 +1146,10 @@ impl ProxyHttp for GatewayProxy {
             .original_request_body
             .as_deref()
             .expect("original_request_body set");
+
+        // Observe global RPS via pingora-limits
+        self.state.global_rate.observe(&GLOBAL_RATE_KEY, 1);
+
         let cache_namespace = effective_cache_namespace(
             self.state.cache_key_namespace.as_deref(),
             ctx.project_id.as_deref(),
@@ -1206,6 +1233,10 @@ impl ProxyHttp for GatewayProxy {
                         ctx.cache_hit = Some(entry.clone());
                         ctx.tokens.last_input = entry.usage.prompt_tokens;
                         ctx.tokens.last_output = entry.usage.completion_tokens;
+                        // Spawn stale-while-revalidate if entry is stale.
+                        if let Some(body) = &ctx.original_request_body {
+                            crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
+                        }
                         global_metrics().record_latency(
                             crab_metrics::LatencyKind::CacheFetch,
                             ctx.request_start.elapsed(),
@@ -1309,6 +1340,10 @@ impl ProxyHttp for GatewayProxy {
                                     ctx.cache_hit = Some(entry.clone());
                                     ctx.tokens.last_input = entry.usage.prompt_tokens;
                                     ctx.tokens.last_output = entry.usage.completion_tokens;
+                                    // Spawn stale-while-revalidate if entry is stale.
+                                    if let Some(body) = &ctx.original_request_body {
+                                        crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
+                                    }
                                     global_metrics().record_latency(
                                         crab_metrics::LatencyKind::CacheFetch,
                                         ctx.request_start.elapsed(),
@@ -1423,6 +1458,10 @@ impl ProxyHttp for GatewayProxy {
                                     ctx.cache_hit = Some(entry.clone());
                                     ctx.tokens.last_input = entry.usage.prompt_tokens;
                                     ctx.tokens.last_output = entry.usage.completion_tokens;
+                                    // Spawn stale-while-revalidate if entry is stale.
+                                    if let Some(body) = &ctx.original_request_body {
+                                        crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
+                                    }
                                     global_metrics().record_coalesced_request();
                                     global_metrics().record_cache_hit(
                                         tier,
@@ -1594,15 +1633,14 @@ impl ProxyHttp for GatewayProxy {
         if ctx.is_models_list {
             let profile = self.active_upstream_profile(ctx);
             let router = &profile.router;
-            let backend = router
-                .backends()
-                .first()
+            let selected = router
+                .select(b"models")
                 .ok_or_else(|| Error::new(ErrorType::ConnectProxyFailure))?;
 
             ctx.upstream.affinity_key = Some("models".to_string());
-            ctx.upstream.backend_name = Some(backend.name.clone());
-            ctx.upstream.host = Some(backend.tls_sni.clone());
-            let peer = self.create_upstream_peer(backend, ctx);
+            ctx.upstream.backend_name = Some(selected.name.to_string());
+            ctx.upstream.host = Some(selected.tls_sni.to_string());
+            let peer = self.create_upstream_peer(selected.addr, selected.tls_sni, ctx);
             let conn_config = self.state.runtime.conn_config.read().clone();
             // #region agent log
             debug_agent_log(
@@ -1650,55 +1688,26 @@ impl ProxyHttp for GatewayProxy {
         let profile = self.active_upstream_profile(ctx);
         let router = &profile.router;
 
-        // Transition timed-out open circuits to half-open before backend selection.
-        // Read-first: only acquire write lock if there are open circuits.
-        let has_open = {
-            let health = self.state.runtime.backend_health.read();
-            health
-                .values()
-                .any(|h| matches!(h.circuit_state, CircuitState::Open))
-        };
-        if has_open {
-            let mut health = self.state.runtime.backend_health.write();
-            let circuit_cfg = &self.state.runtime.circuit_breaker_config;
-            for h in health.values_mut() {
-                h.check_open_circuit(circuit_cfg);
-            }
-        }
-
-        // Check if we have health information to filter by
-        let backend = {
-            let health = self.state.runtime.backend_health.read();
-            let selected = router
-                .select_healthy(affinity_key.as_bytes(), |name| {
-                    health.get(name).map(|h| h.healthy).unwrap_or(true)
-                })
-                .cloned();
-
-            match selected {
-                Some(b) => b,
-                None => {
-                    // All backends are unhealthy - return 503 immediately
-                    // This prevents entering upstream_request_filter when no healthy backends exist
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        "All upstream backends unhealthy, returning 503"
-                    );
-                    return Err(Error::new(ErrorType::ConnectProxyFailure));
-                }
-            }
-        };
+        let selected = router.select(affinity_key.as_bytes()).ok_or_else(|| {
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                "No healthy upstream backend available, returning 503"
+            );
+            Error::new(ErrorType::ConnectProxyFailure)
+        })?;
 
         debug!(
             request_id = %ctx.request_id,
-            backend = %backend.name,
+            backend = %selected.name,
             affinity_key = %affinity_key,
             "Selected upstream backend"
         );
 
-        ctx.upstream.backend_name = Some(backend.name.clone());
-        ctx.upstream.host = Some(backend.tls_sni.clone());
-        let peer = self.create_upstream_peer(&backend, ctx);
+        ctx.upstream.backend_name = Some(selected.name.to_string());
+        ctx.upstream.host = Some(selected.tls_sni.to_string());
+        let backend_addr = selected.addr;
+        let backend_tls_sni = selected.tls_sni.to_string();
+        let peer = self.create_upstream_peer(backend_addr, &backend_tls_sni, ctx);
         let conn_config = self.state.runtime.conn_config.read().clone();
         // #region agent log
         debug_agent_log(
@@ -1951,14 +1960,6 @@ impl ProxyHttp for GatewayProxy {
                 && guard.is_leader()
             {
                 guard.mark_failed();
-            }
-            if status >= 500
-                && let Some(ref backend_name) = ctx.upstream.backend_name
-            {
-                let mut health = self.state.runtime.backend_health.write();
-                if let Some(h) = health.get_mut(backend_name) {
-                    h.record_failure(&self.state.runtime.circuit_breaker_config);
-                }
             }
             return Ok(());
         }
@@ -2496,15 +2497,6 @@ impl ProxyHttp for GatewayProxy {
                 guard.mark_failed();
             }
 
-            // Record circuit breaker failure on stream error
-            // (covers case where upstream returned 200 but stream died mid-way)
-            if let Some(ref backend_name) = ctx.upstream.backend_name {
-                let mut health = self.state.runtime.backend_health.write();
-                if let Some(h) = health.get_mut(backend_name) {
-                    h.record_failure(&self.state.runtime.circuit_breaker_config);
-                }
-            }
-
             // #region agent log
             debug_agent_log(
                 "F",
@@ -2555,15 +2547,6 @@ impl ProxyHttp for GatewayProxy {
                 upstream_key_id = ?ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
                 "Request completed"
             );
-
-            // Record circuit breaker success after stream completion (not just response headers)
-            // This prevents counting incomplete SSE streams as successes
-            if let Some(ref backend_name) = ctx.upstream.backend_name {
-                let mut health = self.state.runtime.backend_health.write();
-                if let Some(h) = health.get_mut(backend_name) {
-                    h.record_success(&self.state.runtime.circuit_breaker_config);
-                }
-            }
 
             if let Some(trace_logger) = &self.state.trace_logger {
                 let max_payload = trace_logger.max_payload_bytes();

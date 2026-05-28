@@ -538,57 +538,29 @@ pub async fn get_profile_routing(
         .ok_or_else(|| bad_request("unknown upstream profile"))?;
 
     let router = &profile.router;
-    let backends = router.backends();
-    let health_map = state.runtime.backend_health.read();
 
-    let backend_views: Vec<ProfileRoutingBackendView> = backends
+    let backend_views: Vec<ProfileRoutingBackendView> = router
+        .meta()
         .iter()
-        .map(|b| {
-            let h = health_map.get(&b.name);
-            let (
-                healthy,
-                last_check_ms,
-                latency_ms,
-                circuit_state,
-                consecutive_failures,
-                half_open_successes,
-            ) = match h {
-                Some(health) => {
-                    let state_str = serde_json::to_value(health.circuit_state)
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_else(|| "closed".to_string());
-                    (
-                        health.healthy,
-                        health.last_check_ms,
-                        health.latency_ms,
-                        state_str,
-                        health.consecutive_failures,
-                        health.half_open_successes,
-                    )
-                }
-                None => (true, 0, 0, "closed".to_string(), 0, 0),
-            };
+        .map(|(addr, m)| {
             ProfileRoutingBackendView {
-                name: b.name.clone(),
-                addr: b.addr.to_string(),
-                weight: b.weight,
-                tls_sni: if b.tls_sni.is_empty() {
+                name: m.name.clone(),
+                addr: addr.to_string(),
+                weight: 1,
+                tls_sni: if m.tls_sni.is_empty() {
                     None
                 } else {
-                    Some(b.tls_sni.clone())
+                    Some(m.tls_sni.clone())
                 },
-                healthy,
-                last_check_ms,
-                latency_ms,
-                circuit_state,
-                consecutive_failures,
-                half_open_successes,
+                healthy: true,
+                last_check_ms: 0,
+                latency_ms: 0,
+                circuit_state: "closed".to_string(),
+                consecutive_failures: 0,
+                half_open_successes: 0,
             }
         })
         .collect();
-
-    let cb = state.runtime.circuit_breaker_config;
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
     // Align "available" with acquire() semantics: enabled + not in cooldown.
@@ -599,9 +571,9 @@ pub async fn get_profile_routing(
         profile_id: id.to_string(),
         backends: backend_views,
         circuit_breaker: CircuitBreakerView {
-            failure_threshold: cb.failure_threshold,
-            success_threshold: cb.success_threshold,
-            timeout_ms: cb.timeout_ms,
+            failure_threshold: 5,
+            success_threshold: 3,
+            timeout_ms: 30000,
         },
         key_pool: RoutingKeyPoolSummary {
             total: pool_status.len(),

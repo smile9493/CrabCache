@@ -5,7 +5,7 @@ use crate::upstream_pool::{UpstreamKeyPool, UpstreamKeySpec};
 use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_control::parse_upstream_base_url;
 use crab_pipeline::UpstreamProvider;
-use crab_route::{AffinityRouter, Backend};
+use crab_route::{Backend, LbRouter};
 use parking_lot::RwLock;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
@@ -134,7 +134,7 @@ pub fn build_profile_runtime(
     existing_pool: Option<Arc<RwLock<Arc<UpstreamKeyPool>>>>,
 ) -> Result<Arc<UpstreamProfileRuntime>, String> {
     let backends = parse_profile_backends(&input)?;
-    let router = AffinityRouter::new(&backends).map_err(|e| e.to_string())?;
+    let router = LbRouter::new(&backends).map_err(|e| e.to_string())?;
     let parsed = parse_upstream_base_url(&input.base_url)?;
     let tls_sni = input
         .tls_sni

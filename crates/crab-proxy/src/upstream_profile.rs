@@ -1,6 +1,6 @@
 use crate::upstream_pool::UpstreamKeyPool;
 use crab_pipeline::UpstreamProvider;
-use crab_route::AffinityRouter;
+use crab_route::LbRouter;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ pub struct UpstreamProfileRuntime {
     pub base_url: String,
     pub fallback_model: String,
     pub tls_sni: String,
-    pub router: AffinityRouter,
+    pub router: LbRouter,
     /// Shared with `RuntimeConfig::upstream_pool` so Management hot-reload applies to outbound calls.
     pub upstream_pool: Arc<RwLock<Arc<UpstreamKeyPool>>>,
 }

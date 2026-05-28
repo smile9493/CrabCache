@@ -46,6 +46,27 @@ pub struct CacheEntry {
     pub client_display_reasoning: bool,
 }
 
+impl CacheEntry {
+    /// Returns `true` if the entry has exceeded its TTL (is stale).
+    pub fn is_stale(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now > self.created_at + self.ttl_secs
+    }
+
+    /// Seconds elapsed since the entry became stale. Returns `0` if still fresh.
+    pub fn stale_age_secs(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expiry = self.created_at + self.ttl_secs;
+        now.saturating_sub(expiry)
+    }
+}
+
 /// Serde module for `Option<Vec<u8>>` with base64 encoding.
 mod serde_base64_opt {
     use base64::{Engine, engine::general_purpose};

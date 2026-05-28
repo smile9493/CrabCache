@@ -71,6 +71,7 @@ pub struct GatewayMetrics {
     pub prefix_break: IntCounter,
     pub prefix_block_drift: IntCounter,
     pub context_summary_appended: IntCounter,
+    pub cache_swr_refresh_total: IntCounter,
     pub state_persist_total: IntCounter,
     pub state_persist_errors_total: IntCounter,
     pub reasoning_store_rejected_bytes: IntCounter,
@@ -269,6 +270,11 @@ impl GatewayMetrics {
         let context_summary_appended = IntCounter::new(
             "gateway_context_summary_appended_total",
             "Context summary messages appended at tail (strategy B)",
+        )?;
+
+        let cache_swr_refresh_total = IntCounter::new(
+            "gateway_cache_swr_refresh_total",
+            "Number of stale-while-revalidate cache refreshes"
         )?;
 
         let state_persist_total = IntCounter::new(
@@ -479,6 +485,7 @@ impl GatewayMetrics {
             prefix_break,
             prefix_block_drift,
             context_summary_appended,
+            cache_swr_refresh_total,
             state_persist_total,
             state_persist_errors_total,
             reasoning_store_rejected_bytes,
@@ -529,6 +536,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.prefix_break.clone()))?;
         registry.register(Box::new(self.prefix_block_drift.clone()))?;
         registry.register(Box::new(self.context_summary_appended.clone()))?;
+        registry.register(Box::new(self.cache_swr_refresh_total.clone()))?;
         registry.register(Box::new(self.state_persist_total.clone()))?;
         registry.register(Box::new(self.state_persist_errors_total.clone()))?;
         registry.register(Box::new(self.reasoning_store_rejected_bytes.clone()))?;
@@ -651,6 +659,12 @@ impl GatewayMetrics {
     pub fn record_context_summary_appended(&self) {
         self.context_summary_appended.inc();
     }
+
+    pub fn record_cache_swr_refresh(&self) {
+        self.cache_swr_refresh_total.inc();
+    }
+
+
 
     pub fn set_upstream_key_inflight(&self, key_id: &str, inflight: i64) {
         self.upstream_key_inflight

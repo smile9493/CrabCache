@@ -4,7 +4,7 @@ use crate::upstream_pool::UpstreamKeyPool;
 use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_cache::{FingerprintConfig, TtlConfig};
 use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode};
-use crab_route::{AffinityRouter, BackendHealth, CircuitBreakerConfig};
+use crab_route::LbRouter;
 use dashmap::DashMap;
 use indexmap::IndexMap;
 use parking_lot::RwLock;
@@ -34,7 +34,7 @@ pub struct DomainUsage {
 pub struct RuntimeConfig {
     pub keys: DashMap<String, StoredKey>,
     pub ttl: Arc<RwLock<TtlConfig>>,
-    pub router: RwLock<AffinityRouter>,
+    pub router: RwLock<LbRouter>,
     pub conn_config: RwLock<Arc<ConnectionConfig>>,
     pub stream_cache_enabled: AtomicBool,
     pub fingerprint: RwLock<Arc<FingerprintConfig>>,
@@ -53,13 +53,11 @@ pub struct RuntimeConfig {
     pub domain_policies: Arc<RwLock<IndexMap<String, DomainPolicy>>>,
     domain_usage: Mutex<HashMap<String, DomainUsage>>,
     pub started_at: Instant,
-    pub backend_health: Arc<RwLock<IndexMap<String, BackendHealth>>>,
-    pub circuit_breaker_config: CircuitBreakerConfig,
 }
 
 impl RuntimeConfig {
     pub fn new(
-        router: AffinityRouter,
+        router: LbRouter,
         ttl: Arc<RwLock<TtlConfig>>,
         conn_config: ConnectionConfig,
         stream_cache_enabled: bool,
@@ -74,11 +72,6 @@ impl RuntimeConfig {
         legacy_client_tokens: HashSet<String>,
         auto_project_id_from_client_key: bool,
     ) -> Arc<Self> {
-        let backends = router
-            .backends()
-            .iter()
-            .map(|b| (b.name.clone(), BackendHealth::new_healthy()))
-            .collect::<IndexMap<_, _>>();
 
         Arc::new(Self {
             keys: DashMap::new(),
@@ -99,8 +92,6 @@ impl RuntimeConfig {
             domain_policies: Arc::new(RwLock::new(IndexMap::new())),
             domain_usage: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
-            backend_health: Arc::new(RwLock::new(backends)),
-            circuit_breaker_config: CircuitBreakerConfig::default(),
         })
     }
 
@@ -278,10 +269,6 @@ impl RuntimeConfig {
     /// Insert or replace a profile and refresh pipeline globals.
     pub fn upsert_profile(&self, profile: Arc<UpstreamProfileRuntime>) -> Result<(), String> {
         let id = profile.id.clone();
-        {
-            let mut profiles = self.upstream_profiles.write();
-            profiles.insert(id.clone(), profile);
-        }
         self.refresh_known_profile_ids();
         if id == self.default_upstream_profile_id() {
             self.sync_legacy_from_profile_id(&id)?;
@@ -334,27 +321,16 @@ impl RuntimeConfig {
         *self.fallback_model.write() = profile.fallback_model.clone();
         let backends: Vec<crab_route::Backend> = profile
             .router
-            .backends()
+            .meta()
             .iter()
-            .map(|b| (**b).clone())
+            .map(|(addr, m)| crab_route::Backend::new(m.name.clone(), *addr, 1, m.tls_sni.clone()))
             .collect();
         self.router
             .write()
-            .update(&backends)
+            .rebuild(&backends)
             .map_err(|e| e.to_string())?;
         let pool = profile.resolve_upstream_pool();
         self.replace_upstream_pool(pool);
-        {
-            let mut health = self.backend_health.write();
-            let keep: std::collections::HashSet<String> =
-                backends.iter().map(|b| b.name.clone()).collect();
-            health.retain(|name, _| keep.contains(name));
-            for b in &backends {
-                health
-                    .entry(b.name.clone())
-                    .or_insert_with(crab_route::BackendHealth::new_healthy);
-            }
-        }
         Ok(())
     }
 
@@ -362,9 +338,9 @@ impl RuntimeConfig {
         self.profile(profile_id)
             .map(|p| {
                 p.router
-                    .backends()
-                    .iter()
-                    .map(|b| b.addr.to_string())
+                    .meta()
+                    .keys()
+                    .map(|addr| addr.to_string())
                     .collect()
             })
             .unwrap_or_default()

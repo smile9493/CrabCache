@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 pingora-ketama.workspace = true
 pingora-core.workspace = true
+pingora-load-balancing.workspace = true
+async-trait.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
@@ -17,3 +19,6 @@ sha2.workspace = true
 hex.workspace = true
 http.workspace = true
 serde.workspace = true
+arc-swap.workspace = true
+tokio.workspace = true
+futures = "0.3"

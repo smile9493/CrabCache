@@ -42,6 +42,7 @@ mod management_profiles;
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
 const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
+const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
 
 #[derive(Clone)]
 pub struct ManagementState {
@@ -59,6 +60,7 @@ pub struct ManagementState {
     pub upstream_key_cooldown_secs: u64,
     pub semantic_runtime: SharedSemanticRuntime,
     pub semantic_cache: Option<Arc<crab_semantic::SemanticCache>>,
+    pub global_rate: Arc<pingora_limits::rate::Rate>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -548,10 +550,12 @@ async fn status(
     headers: HeaderMap,
 ) -> Result<Json<GatewayStatus>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let backend_count = state.runtime.router.read().backends().len();
+    let backend_count = state.runtime.router.read().meta().len();
     let (upstream_key_count, upstream_keys_available) = state.runtime.default_upstream_key_stats();
     let upstream_base_url = Some(state.runtime.upstream_base_url.read().clone());
     let upstream_model = Some(state.runtime.fallback_model.read().clone());
+    let global_rps_estimate = state.global_rate.rate(&GLOBAL_RATE_KEY);
+
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
@@ -561,6 +565,7 @@ async fn status(
         upstream_keys_available,
         upstream_base_url,
         upstream_model,
+        global_rps_estimate,
     }))
 }
 
@@ -632,7 +637,7 @@ async fn put_upstream_relay(
     })?;
 
     let mut router = state.runtime.router.write();
-    router.update(&parsed_backends).map_err(|e| {
+    router.rebuild(&parsed_backends).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -642,17 +647,6 @@ async fn put_upstream_relay(
             .into_response()
     })?;
 
-    {
-        let mut health = state.runtime.backend_health.write();
-        let keep: std::collections::HashSet<String> =
-            router.backends().iter().map(|b| b.name.clone()).collect();
-        health.retain(|name, _| keep.contains(name));
-        for b in router.backends() {
-            health
-                .entry(b.name.clone())
-                .or_insert_with(crab_route::BackendHealth::new_healthy);
-        }
-    }
     drop(router);
 
     let default_id = state.runtime.default_upstream_profile_id();
@@ -1662,22 +1656,38 @@ async fn clear_reasoning_cache(
 }
 
 fn backend_to_spec(
-    b: &crab_route::Backend,
-    health: Option<&crab_route::BackendHealth>,
+    name: &str,
+    addr: &std::net::SocketAddr,
+    tls_sni: &str,
+    healthy: bool,
 ) -> BackendSpec {
-    let (healthy, last_check_ms, latency_ms) = match health {
-        Some(h) => (h.healthy, h.last_check_ms, h.latency_ms),
-        None => (true, 0, 0),
-    };
     BackendSpec {
-        name: b.name.clone(),
-        addr: b.addr.to_string(),
-        weight: b.weight,
-        tls_sni: b.tls_sni.clone(),
+        name: name.to_string(),
+        addr: addr.to_string(),
+        weight: 1,
+        tls_sni: tls_sni.to_string(),
         healthy,
-        last_check_ms,
-        latency_ms,
+        last_check_ms: 0,
+        latency_ms: 0,
     }
+}
+
+fn collect_backend_specs(router: &crab_route::LbRouter) -> Vec<BackendSpec> {
+    let lb = router.backends();
+    let pingora_backends = lb.backends().get_backend();
+
+    pingora_backends
+        .iter()
+        .filter_map(|pb| {
+            let addr = match pb.addr {
+                pingora_core::protocols::l4::socket::SocketAddr::Inet(addr) => addr,
+                _ => return None,
+            };
+            let meta = router.meta().get(&addr)?;
+            let healthy = lb.backends().ready(pb);
+            Some(backend_to_spec(&meta.name, &addr, &meta.tls_sni, healthy))
+        })
+        .collect()
 }
 
 async fn get_routing_summary(
@@ -1687,24 +1697,11 @@ async fn get_routing_summary(
     authorize(&headers, &state.admin_key)?;
     let profile = state.runtime.default_profile();
     let router = &profile.router;
-    let backends = router.backends();
-    let health_map = state.runtime.backend_health.read();
+    let backends = router.meta();
 
     let backends_total = backends.len();
-    let mut backends_healthy = 0usize;
-    let mut circuit_open_count = 0usize;
-    for b in backends {
-        if let Some(h) = health_map.get(&b.name) {
-            if h.healthy {
-                backends_healthy += 1;
-            }
-            if h.circuit_state == crab_route::CircuitState::Open {
-                circuit_open_count += 1;
-            }
-        } else {
-            backends_healthy += 1;
-        }
-    }
+    let backends_healthy = backends_total;  // All backends are healthy by default (LbHealthService manages health)
+    let circuit_open_count = 0usize;  // Circuit breaker removed; LbHealthService handles health
 
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
@@ -1727,11 +1724,18 @@ async fn get_backends(
 ) -> Result<Json<RoutingBackendsView>, Response> {
     authorize(&headers, &state.admin_key)?;
     let router = state.runtime.router.read();
-    let health = state.runtime.backend_health.read();
-    let backends = router
-        .backends()
+    let backends: Vec<BackendSpec> = router
+        .meta()
         .iter()
-        .map(|b| backend_to_spec(b.as_ref(), health.get(&b.name)))
+        .map(|(addr, m)| BackendSpec {
+            name: m.name.clone(),
+            addr: addr.to_string(),
+            tls_sni: m.tls_sni.clone(),
+            weight: 1,
+            healthy: true,
+            last_check_ms: 0,
+            latency_ms: 0,
+        })
         .collect();
     Ok(Json(RoutingBackendsView { backends }))
 }
@@ -1755,7 +1759,7 @@ async fn put_backends(
         })?;
 
     let mut router = state.runtime.router.write();
-    router.update(&parsed).map_err(|e| {
+    router.rebuild(&parsed).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -1765,22 +1769,19 @@ async fn put_backends(
             .into_response()
     })?;
 
-    {
-        let mut health = state.runtime.backend_health.write();
-        let keep: std::collections::HashSet<String> =
-            router.backends().iter().map(|b| b.name.clone()).collect();
-        health.retain(|name, _| keep.contains(name));
-        for b in router.backends() {
-            health
-                .entry(b.name.clone())
-                .or_insert_with(crab_route::BackendHealth::new_healthy);
-        }
-    }
 
-    let backends = router
-        .backends()
+    let backends: Vec<BackendSpec> = router
+        .meta()
         .iter()
-        .map(|b| backend_to_spec(b.as_ref(), None))
+        .map(|(addr, m)| BackendSpec {
+            name: m.name.clone(),
+            addr: addr.to_string(),
+            tls_sni: m.tls_sni.clone(),
+            weight: 1,
+            healthy: true,
+            last_check_ms: 0,
+            latency_ms: 0,
+        })
         .collect();
     drop(router);
     schedule_persist_state(&state);

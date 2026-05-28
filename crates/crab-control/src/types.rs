@@ -21,6 +21,8 @@ pub struct GatewayStatus {
     pub upstream_base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
+    #[serde(default)]
+    pub global_rps_estimate: f64,
 }
 
 /// Detailed response from `GET /v1/ready` including subsystem health.

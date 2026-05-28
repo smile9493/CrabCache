@@ -4,7 +4,7 @@ use crab_pipeline::{
     UpstreamProvider, validate_cursor_models,
 };
 use crab_proxy::{FeaturesConfig, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
-use crab_route::AffinityRouter;
+use crab_route::LbRouter;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -598,7 +598,7 @@ impl GatewayConfig {
         let mut map = indexmap::IndexMap::new();
         for profile in self.resolved_upstream_profiles() {
             let backends = self.parse_profile_endpoints(&profile)?;
-            let router = rt.block_on(async { AffinityRouter::new(&backends) })?;
+            let router = rt.block_on(async { LbRouter::new(&backends) })?;
             let base_url = profile
                 .base_url
                 .clone()

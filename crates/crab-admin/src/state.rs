@@ -124,6 +124,8 @@ pub struct AppState {
     pub pg_health_cache: RwLock<Option<(Instant, crate::types::PgHealth)>>,
     /// SSE broadcast channel for real-time metric push to dashboard.
     pub sse_broadcast: tokio::sync::broadcast::Sender<crate::sse::SseEvent>,
+    /// Short-lived SSE tokens (token -> expiration Instant).
+    pub sse_tokens: DashMap<String, Instant>,
 }
 
 impl AppState {
@@ -518,6 +520,7 @@ impl AppState {
             pg_write_lock: Arc::new(AsyncMutex::new(())),
             pg_health_cache: RwLock::new(None),
             sse_broadcast: crate::sse::create_broadcast(),
+            sse_tokens: DashMap::new(),
         };
 
         // Initialize PostgreSQL store (async) if configured.

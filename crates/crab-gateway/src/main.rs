@@ -10,7 +10,7 @@ use crab_proxy::{
     UpstreamUserIdLimiter,
 };
 use crab_reasoning::ReasoningBackend;
-use crab_route::AffinityRouter;
+use crab_route::LbRouter;
 use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
@@ -356,12 +356,12 @@ fn main() -> Result<()> {
         .expect("at least one upstream profile");
     let default_backends: Vec<crab_route::Backend> = default_profile
         .router
-        .backends()
+        .meta()
         .iter()
-        .map(|b| (**b).clone())
+        .map(|(addr, m)| crab_route::Backend::new(m.name.clone(), *addr, 1, m.tls_sni.clone()))
         .collect();
-    let router = AffinityRouter::new(&default_backends)?;
-    let backends = router.backends().to_vec();
+    let router = LbRouter::new(&default_backends)?;
+    let backends = router.meta().keys().copied().collect::<Vec<_>>();
     info!(
         backend_count = backends.len(),
         profile_count = upstream_profiles.len(),
@@ -604,6 +604,9 @@ fn main() -> Result<()> {
         None
     };
 
+    // Extract lb_swap Arc before router is moved into RuntimeConfig
+    let lb_swap = router.lb_swap();
+
     let runtime = RuntimeConfig::new(
         router,
         ttl_config,
@@ -723,70 +726,9 @@ fn main() -> Result<()> {
         None
     };
 
-    for profile in runtime.upstream_profiles.read().values() {
-        {
-            let mut health = runtime.backend_health.write();
-            for b in profile.router.backends() {
-                health
-                    .entry(b.name.clone())
-                    .or_insert_with(crab_route::BackendHealth::new_healthy);
-            }
-        }
-    }
 
-    // Background task: TCP health check for upstream backends (integrated with circuit breaker)
-    {
-        let runtime = runtime.clone();
-        let health_interval = config.upstream.health_check_interval_secs;
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("health check runtime");
-            rt.block_on(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(health_interval));
-                loop {
-                    interval.tick().await;
-                    let backends: Vec<(String, std::net::SocketAddr)> = {
-                        let router = runtime.router.read();
-                        router.backends().iter().map(|b| (b.name.clone(), b.addr)).collect()
-                    };
-
-                    for (name, addr) in &backends {
-                        let start = std::time::Instant::now();
-                        let result = tokio::net::TcpStream::connect(addr).await;
-                        let elapsed_ms = start.elapsed().as_millis() as u64;
-
-                        {
-                            let mut health_map = runtime.backend_health.write();
-                            let entry = health_map.entry(name.clone())
-                                .or_insert_with(crab_route::BackendHealth::new_healthy);
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64;
-                            let circuit_cfg = &runtime.circuit_breaker_config;
-                            match result {
-                                Ok(_) => {
-                                    entry.healthy = true;
-                                    entry.last_check_ms = now_ms;
-                                    entry.latency_ms = elapsed_ms;
-                                    // Health check success helps HalfOpen → Closed transition
-                                    entry.record_success(circuit_cfg);
-                                }
-                                Err(e) => {
-                                    tracing::warn!(backend = %name, addr = %addr, error = %e, "Health check failed");
-                                    entry.healthy = false;
-                                    entry.last_check_ms = now_ms;
-                                    // Don't record_failure from health probes — let real traffic
-                                    // failures handle circuit breaker transitions. A TCP blip
-                                    // during a health probe shouldn't re-open a HalfOpen circuit.
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        });
-    }
-
+    let lb_health_svc = crab_route::LbHealthService::new(lb_swap);
+    server.add_service(background_service("lb-health", lb_health_svc));
     let reasoning_config_shared = Arc::new(RwLock::new(reasoning_config));
 
     let client_key_limiter = ClientKeyLimiter::new();
@@ -805,6 +747,8 @@ fn main() -> Result<()> {
             },
         )));
 
+    let global_rate = Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(1)));
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -820,6 +764,7 @@ fn main() -> Result<()> {
         upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
         semantic_runtime: semantic_runtime.clone(),
         semantic_cache: semantic_cache.clone(),
+        global_rate: global_rate.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -840,6 +785,7 @@ fn main() -> Result<()> {
         config.upstream.deepseek_user_concurrency.clone();
     let deepseek_user_id_limiter = UpstreamUserIdLimiter::new(deepseek_user_concurrency.clone());
 
+    let runtime_warmup = runtime.clone();
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -868,6 +814,9 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
+        global_rate: Arc::new(pingora_limits::rate::Rate::new(
+            std::time::Duration::from_secs(1),
+        )),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -905,9 +854,9 @@ fn main() -> Result<()> {
     // warmup — Pingora's lazy-connect model means the first real request
     // to a backend would otherwise pay the full connect latency.
     if config.features.connection_prewarm {
-        let profiles = runtime.upstream_profiles.read().clone();
+        let profiles = runtime_warmup.upstream_profiles.read().clone();
         let api_key = config.api_key.as_authorization().to_string();
-        let listen_addr = config.listen_addr.clone();
+        let _listen_addr = config.listen_addr.clone();
         tokio::spawn(async move {
             // Wait for the proxy listener to be ready.
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -918,14 +867,14 @@ fn main() -> Result<()> {
                 .unwrap_or_default();
 
             for (profile_id, profile) in &profiles {
-                for backend in profile.router.backends() {
-                    let use_tls = !backend.tls_sni.is_empty()
-                        && backend.tls_sni != backend.addr.to_string();
+                for (addr, meta) in profile.router.meta() {
+                    let use_tls = !meta.tls_sni.is_empty()
+                        && meta.tls_sni != addr.to_string();
                     let scheme = if use_tls { "https" } else { "http" };
                     let host = if use_tls {
-                        &backend.tls_sni
+                        meta.tls_sni.clone()
                     } else {
-                        &backend.addr.to_string()
+                        addr.to_string()
                     };
                     let url = format!("{}://{}/v1/models", scheme, host);
                     let start = std::time::Instant::now();
@@ -939,7 +888,7 @@ fn main() -> Result<()> {
                         Ok(resp) => {
                             let elapsed = start.elapsed();
                             info!(
-                                backend = %backend.name,
+                                backend = %meta.name,
                                 profile = %profile_id,
                                 status = resp.status().as_u16(),
                                 elapsed_ms = elapsed.as_millis() as u64,
@@ -947,8 +896,8 @@ fn main() -> Result<()> {
                             );
                         }
                         Err(e) => {
-                            debug!(
-                                backend = %backend.name,
+                            tracing::debug!(
+                                backend = %meta.name,
                                 profile = %profile_id,
                                 error = %e,
                                 "Backend pre-warm failed (non-fatal)"

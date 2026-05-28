@@ -142,13 +142,13 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
     let backends: Vec<BackendSnapshot> = runtime
         .router
         .read()
-        .backends()
+        .meta()
         .iter()
-        .map(|b| BackendSnapshot {
-            name: b.name.clone(),
-            addr: b.addr.to_string(),
-            weight: b.weight,
-            tls_sni: b.tls_sni.clone(),
+        .map(|(addr, m)| BackendSnapshot {
+            name: m.name.clone(),
+            addr: addr.to_string(),
+            weight: 1,
+            tls_sni: m.tls_sni.clone(),
         })
         .collect();
 
@@ -178,13 +178,13 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                 let profile = map.get(&id)?;
                 let endpoints: Vec<BackendSnapshot> = profile
                     .router
-                    .backends()
+                    .meta()
                     .iter()
-                    .map(|b| BackendSnapshot {
-                        name: b.name.clone(),
-                        addr: b.addr.to_string(),
-                        weight: b.weight,
-                        tls_sni: b.tls_sni.clone(),
+                    .map(|(addr, m)| BackendSnapshot {
+                        name: m.name.clone(),
+                        addr: addr.to_string(),
+                        weight: 1,
+                        tls_sni: m.tls_sni.clone(),
                     })
                     .collect();
                 let keys: Vec<UpstreamKeySnapshot> = profile
@@ -278,16 +278,9 @@ pub fn apply_snapshot_to_runtime(
             let endpoints: Vec<String> = rt.backends.iter().map(|b| b.addr.clone()).collect();
             let route_backends = parse_backend_endpoints(&endpoints, 1, &tls_sni)
                 .map_err(|errors| anyhow::anyhow!("{}", errors.join("; ")))?;
-            let backend_names: Vec<String> =
+            let _backend_names: Vec<String> =
                 route_backends.iter().map(|b| b.name.clone()).collect();
-            runtime.router.write().update(&route_backends)?;
-            {
-                let mut health = runtime.backend_health.write();
-                health.clear();
-                for name in backend_names {
-                    health.insert(name, crab_route::BackendHealth::new_healthy());
-                }
-            }
+            runtime.router.write().rebuild(&route_backends)?;
         }
     }
 

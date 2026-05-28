@@ -33,6 +33,7 @@ crab-semantic.workspace = true
 crab-reasoning.workspace = true
 crab-pipeline.workspace = true
 crab-control.workspace = true
+pingora-limits.workspace = true
 crab-state.workspace = true
 axum = "0.8"
 uuid.workspace = true

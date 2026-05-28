@@ -765,6 +765,7 @@ fn empty_gateway_status() -> GatewayStatus {
         upstream_keys_available: 0,
         upstream_base_url: None,
         upstream_model: None,
+        global_rps_estimate: 0.0,
     }
 }
 

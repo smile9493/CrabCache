@@ -29,6 +29,7 @@ mod metrics_helpers;
 mod semantic_runtime;
 mod send_helpers;
 mod sse_rewrite;
+mod cache_revalidate;
 
 pub use cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
