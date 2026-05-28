@@ -9,6 +9,23 @@ CrabCache 维护两套独立的缓存指标，请勿混谈「缓存命中率」�
 
 L3 由 DeepSeek API 在服务端维护 KV/前缀缓存；CrabCache 通过稳定 `messages` 前缀与粘滞路由提高命中率。L0/L1/L2 为网关响应缓存，与 L3 正交。
 
+另有一套 **L0 prefix-aware（网关侧前缀索引）**，与 L3 无关：见下文 [L0 prefix-aware（网关侧）](#l0-prefix-aware-网关侧)。完整对照见 [DATA_PLANE.md](./DATA_PLANE.md)。
+
+## L0 prefix-aware（网关侧）
+
+在 `[features].prefix_aware_cache = true` 或 **MiMo 中继管道**（`mimo_relay` / `mimo_token_plan_relay` / `mimo_payg_relay`）下，网关对「共享消息前缀、仅最后一条 user 不同」的请求维护 **prefix → full cache key** 索引（[`tiered.rs`](../crates/crab-cache/src/tiered.rs) `prefix_index`）。
+
+**当前行为（与早期设计稿不同）**：
+
+| 动作 | 是否发生 |
+|------|----------|
+| 发现 prefix 在 L0 有历史 entry | 是（`prefix_l0_lookup`） |
+| 更新 `prefix_index`，便于后续 exact 命中 | 是 |
+| 递增 `gateway_prefix_index_warmup_total` | 是（仅索引预热、仍走上游） |
+| 直接 `send_cached_response` 返回旧轮完整响应 | **否** |
+
+因此 prefix-aware **不替代** 当前请求的推理；它加速的是**后续**与相同前缀、不同尾消息组合的 **exact L0/L1** 命中。运维上勿将 `gateway_prefix_index_warmup_total` 误读为「网关响应命中」。
+
 ## 应用层五大实践
 
 1. **固定 system 前缀**：Agent 指令、工具定义放在对话前部且保持不变。
@@ -42,9 +59,14 @@ missing_reasoning_strategy = "recover"
 
 Ketama 将亲和键映射到 `[upstream].deepseek_endpoints` 中的固定 peer；peer 切换会导致 L3 暂时下跌。
 
+### 可选：affinity 反馈（`affinity_prompt_cache_feedback`）
+
+启用 `[features].affinity_prompt_cache_feedback` 时，网关根据上游 `usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 在**请求结束**更新 `affinity_key → backend_name` 提示（非每个 SSE chunk 立即 invalidate）。连续 **3** 次 pure miss（`AFFINITY_MISS_STREAK_THRESHOLD`）后清除提示，避免瞬时 miss 导致错误换路。与 Ketama `select_with_hint` 配合使用。
+
 ## 指标与告警
 
-- Prometheus：`gateway_upstream_prompt_cache_tokens_total`
+- Prometheus：`gateway_upstream_prompt_cache_tokens_total`（L3）
+- Prometheus：`gateway_prefix_index_warmup_total`（L0 索引预热次数，非响应命中）
 - Admin：`GET /api/admin/metrics`（含 `prefix_cache_hit_ratio`）
 - Admin：`GET /api/admin/metrics/prefix-cache`（按 model 分桶）
 - 示例告警：[`deploy/prometheus/alerts.example.yml`](../deploy/prometheus/alerts.example.yml) 中 `CrabCacheL3PrefixCacheHitRateLow`

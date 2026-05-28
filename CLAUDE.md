@@ -31,7 +31,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
   - **MiMo 快速路径**：`body_quick_parse` + 全量 JSON 解析前 exact cache 探测，降低重复请求解析开销
   - **请求阶段指标**：`gateway_request_phase_latency_seconds`（body_read、json_parse、pipeline_select、cache_lookup、upstream_*、cache_write 等）
   - **SSE Pipeline**：Reasoning 改写 / SilentStrip / Passthrough 抽象（见 `crates/crab-proxy/src/sse_pipeline/`）
-  - P3 实验项见 [docs/DATA_PLANE_P3.md](docs/DATA_PLANE_P3.md)（`delta_cache`、`wasm_filters`、`io_uring_backend`，默认关闭）
+  - 实现状态总表见 [docs/DATA_PLANE.md](docs/DATA_PLANE.md)；P3 实验项见 [docs/DATA_PLANE_P3.md](docs/DATA_PLANE_P3.md)（`delta_cache`、`wasm_filters`、`io_uring_backend`，默认关闭）
 
 ## 技术栈
 

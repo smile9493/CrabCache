@@ -2,6 +2,8 @@
 
 三层架构：**Prometheus（实时）**、**Admin Dashboard（运维）**、**影子追踪日志（离线调优）**。
 
+数据面请求阶段耗时（`gateway_request_phase_latency_seconds`）与 prefix 索引预热计数见 [DATA_PLANE.md](./DATA_PLANE.md) 与下文指标表。
+
 ## 指标定义
 
 | 指标 / UI 字段 | 来源 | 含义 |

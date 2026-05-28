@@ -1,8 +1,16 @@
 # CrabCache 文档
 
-欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现多供应商 LLM API 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。以 DeepSeek V4 为重点参考实现，专注缓存优化与可观测透明分析。详见 [上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md)。
+欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现多供应商 LLM API 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。以 DeepSeek V4 为重点参考实现，专注缓存优化与可观测透明分析。详见 [上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md) 与 [数据面实现状态](DATA_PLANE.md)。
 
 ## 快速导航
+
+### 📐 数据面（Proxy 热路径）
+
+| 文档 | 说明 |
+|------|------|
+| [数据面实现状态](DATA_PLANE.md) | P0–P2 交付对照、feature 开关、与代码权威行为 |
+| [数据面优化展望](../数据面优化.md) | 六维改进论证、优先级矩阵、proxy 拆分附录 |
+| [数据面 P3 实验](DATA_PLANE_P3.md) | 差分缓存、WASM、io_uring 设计与回滚 |
 
 ### 🚀 入门指南
 

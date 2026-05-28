@@ -219,11 +219,19 @@ crab-admin（管理面板后端 - Axum HTTP 服务器）
 | [从 new-api 迁移](docs/NEW_API_MIGRATION.md) | 从 new-api + deepseek-cursor-proxy 双栈迁移 |
 | [Agent Key 迁移](docs/AGENT_CLIENT_KEY_MIGRATION.md) | 客户端 API Key 升级指南 |
 
+### 数据面（Proxy 热路径）
+
+| 文档 | 说明 |
+|------|------|
+| [数据面实现状态](docs/DATA_PLANE.md) | P0–P2 交付对照、feature 开关、验收要点 |
+| [数据面 P3 实验](docs/DATA_PLANE_P3.md) | 差分缓存、WASM、io_uring 设计 |
+| [数据面优化展望](数据面优化.md) | 完整论证与优先级矩阵（仓库根目录） |
+
 ### 供应商集成
 
 | 文档 | 说明 |
 |------|------|
-| [上游前缀缓存 L3](docs/DEEPSEEK_PREFIX_CACHE.md) | DeepSeek 服务端 KV 前缀缓存实践 |
+| [上游前缀缓存 L3](docs/DEEPSEEK_PREFIX_CACHE.md) | L3 实践 + L0 prefix 索引行为 |
 | [Cursor Proxy 对照](docs/DEEPSEEK_CURSOR_PROXY_PARITY.md) | 与 deepseek-cursor-proxy 功能对照 |
 | [功能吸收计划](docs/CURSOR_DEEPSEEK_ABSORPTION_PLAN.md) | 迁移路线图 |
 
