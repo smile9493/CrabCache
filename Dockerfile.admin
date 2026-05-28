@@ -30,7 +30,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp /app/target/release/crab-admin /app/crab-admin
 
 WORKDIR /app/crates/crab-dashboard
-RUN trunk build --release
+ENV TRUNK_LOG=trace
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    --mount=type=cache,target=/root/.cache/trunk \
+    trunk build --release -v
 
 FROM ubuntu:latest
 

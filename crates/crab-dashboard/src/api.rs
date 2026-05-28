@@ -63,9 +63,28 @@ async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T,
         return Err(http_error(resp, epoch).await);
     }
 
-    resp.json::<T>()
-        .await
-        .map_err(|e| format!("Parse error: {}", e))
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let body = resp.text().await.unwrap_or_default();
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let prefix: String = body.chars().take(200).collect();
+        let hint = if prefix.trim_start().starts_with("<!doctype")
+            || prefix.trim_start().starts_with("<html")
+            || prefix.trim_start().starts_with("<")
+        {
+            " (looks like HTML; route may be missing and fell through to index.html)"
+        } else {
+            ""
+        };
+        format!(
+            "Parse error: {} (HTTP {}, content-type: {}){}; url={}; body_prefix={:?}",
+            e, status, ct, hint, url, prefix
+        )
+    })
 }
 
 async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
@@ -84,9 +103,20 @@ async fn post_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         return Err(http_error(resp, epoch).await);
     }
 
-    resp.json::<T>()
-        .await
-        .map_err(|e| format!("Parse error: {}", e))
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let body = resp.text().await.unwrap_or_default();
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let prefix: String = body.chars().take(200).collect();
+        format!(
+            "Parse error: {} (HTTP {}, content-type: {}); body_prefix={:?}",
+            e, status, ct, prefix
+        )
+    })
 }
 
 async fn delete_json(url: &str) -> Result<(), String> {
@@ -119,9 +149,20 @@ async fn put_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         return Err(http_error(resp, epoch).await);
     }
 
-    resp.json::<T>()
-        .await
-        .map_err(|e| format!("Parse error: {}", e))
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let body = resp.text().await.unwrap_or_default();
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let prefix: String = body.chars().take(200).collect();
+        format!(
+            "Parse error: {} (HTTP {}, content-type: {}); body_prefix={:?}",
+            e, status, ct, prefix
+        )
+    })
 }
 
 async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
@@ -140,9 +181,20 @@ async fn patch_json<T: for<'de> serde::Deserialize<'de>, B: serde::Serialize>(
         return Err(http_error(resp, epoch).await);
     }
 
-    resp.json::<T>()
-        .await
-        .map_err(|e| format!("Parse error: {}", e))
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let body = resp.text().await.unwrap_or_default();
+    serde_json::from_str::<T>(&body).map_err(|e| {
+        let prefix: String = body.chars().take(200).collect();
+        format!(
+            "Parse error: {} (HTTP {}, content-type: {}); body_prefix={:?}",
+            e, status, ct, prefix
+        )
+    })
 }
 
 pub async fn fetch_prefix_cache_metrics() -> Result<PrefixCacheMetricsSnapshot, String> {

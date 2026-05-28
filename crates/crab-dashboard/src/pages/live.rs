@@ -195,6 +195,12 @@ pub fn LivePage() -> impl IntoView {
     let consumers_loaded = RwSignal::new(false);
     let consumers_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
+    // Keep chart detail open/close state stable across polling refreshes.
+    let throughput_open = RwSignal::new(false);
+    let hit_open = RwSignal::new(false);
+    let latency_open = RwSignal::new(false);
+    let cache_open = RwSignal::new(false);
+    let token_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
@@ -619,10 +625,15 @@ pub fn LivePage() -> impl IntoView {
                                 buckets=chart_buckets.clone()
                                 consumer=consumer_name
                                 window_secs=window
+                                throughput_open=throughput_open
+                                hit_open=hit_open
                             />
                             <LiveBottomRow
                                 data=data
                                 buckets=chart_buckets
+                                latency_open=latency_open
+                                cache_open=cache_open
+                                token_open=token_open
                                 routing_profiles=routing_profiles
                                 routing_key_ids=routing_key_ids
                                 selected_routing_key=selected_routing_key
@@ -743,6 +754,8 @@ fn LiveTrafficPanel(
     buckets: Vec<LiveMetricsBucket>,
     consumer: String,
     window_secs: u32,
+    throughput_open: RwSignal<bool>,
+    hit_open: RwSignal<bool>,
 ) -> impl IntoView {
     let t = use_translations();
     let s = data.summary.clone();
@@ -813,8 +826,6 @@ fn LiveTrafficPanel(
     };
 
     let chart_subtitle = format!("{consumer} · {window_lbl}");
-    let throughput_open = RwSignal::new(false);
-    let hit_open = RwSignal::new(false);
     let throughput_title = t.live_chart_throughput().to_string();
     let hit_title = t.live_cache_hit_trend().to_string();
     let no_data = t.live_no_data();
@@ -938,6 +949,9 @@ fn LiveTrafficPanel(
 fn LiveBottomRow(
     data: LiveMetricsResponse,
     buckets: Vec<LiveMetricsBucket>,
+    latency_open: RwSignal<bool>,
+    cache_open: RwSignal<bool>,
+    token_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
     routing_key_ids: RwSignal<Vec<String>>,
     selected_routing_key: RwSignal<Option<String>>,
@@ -948,7 +962,7 @@ fn LiveBottomRow(
         <div class="space-y-4">
             <div class="live-detail-row">
                 <LiveRoutingSummaryPanel profiles=routing_profiles />
-                <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() />
+                <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() open=latency_open />
                 <LiveLatestPanel data=data />
             </div>
             <div class="live-detail-row">
@@ -957,13 +971,13 @@ fn LiveBottomRow(
                     selected_routing_key=selected_routing_key
                     routing_key_data=routing_key_data
                 />
-                <LiveCacheLayerPanel buckets=buckets.clone() />
+                <LiveCacheLayerPanel buckets=buckets.clone() open=cache_open />
                 <LiveKeyActivityPanel
                     routing_key_data=routing_key_data
                     routing_key_concurrency=routing_key_concurrency
                 />
             </div>
-            <LiveTokenPanel buckets=buckets />
+            <LiveTokenPanel buckets=buckets open=token_open />
         </div>
     }
 }
@@ -1231,6 +1245,7 @@ fn RoutingMetricRow(label: &'static str, value: String, pct: f64) -> impl IntoVi
 fn LiveLatencyPanel(
     buckets: Vec<LiveMetricsBucket>,
     summary: LiveMetricsSummary,
+    open: RwSignal<bool>,
 ) -> impl IntoView {
     let t = use_translations();
     let buckets = std::sync::Arc::new(buckets);
@@ -1286,7 +1301,6 @@ fn LiveLatencyPanel(
             ]
         })
     };
-    let latency_open = RwSignal::new(false);
     let latency_title = t.live_latency_chart().to_string();
     let no_data = t.live_no_data();
     view! {
@@ -1316,7 +1330,7 @@ fn LiveLatencyPanel(
             </div>
             <ChartPreviewCard
                 title=latency_title
-                open=latency_open
+                open=open
                 preview=move || {
                     view! {
                         <BarChart
@@ -1354,52 +1368,50 @@ fn LiveLatencyPanel(
 }
 
 #[component]
-fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
     let t = use_translations();
-    let stored = StoredValue::new(buckets);
-    let x_labels = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
-            .map(|b| format_bucket_time(b.timestamp_ms))
-            .collect()
-    });
-    let hit_series = Signal::derive(move || {
-        let b = stored.get_value();
-        vec![
-            ChartSeries {
-                label: "hits".to_string(),
-                color: "var(--cc-success)",
-                values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
-                dashed: false,
-                fill: false,
-            },
-            ChartSeries {
-                label: "miss".to_string(),
-                color: "var(--cc-warning)",
-                values: b
-                    .iter()
-                    .map(|x| {
-                        Some((x.request_count.saturating_sub(x.cache_hit_count)) as f64)
-                    })
-                    .collect(),
-                dashed: false,
-                fill: false,
-            },
-        ]
-    });
-    let total_hits: u32 = stored.get_value().iter().map(|b| b.cache_hit_count).sum();
-    let total_req: u32 = stored
-        .get_value()
-        .iter()
-        .map(|b| b.request_count)
-        .sum();
+    let buckets = std::sync::Arc::new(buckets);
+    let x_labels = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|b| format_bucket_time(b.timestamp_ms))
+                .collect()
+        })
+    };
+    let hit_series = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            let b = buckets.as_ref();
+            vec![
+                ChartSeries {
+                    label: "hits".to_string(),
+                    color: "var(--cc-success)",
+                    values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
+                    dashed: false,
+                    fill: false,
+                },
+                ChartSeries {
+                    label: "miss".to_string(),
+                    color: "var(--cc-warning)",
+                    values: b
+                        .iter()
+                        .map(|x| Some((x.request_count.saturating_sub(x.cache_hit_count)) as f64))
+                        .collect(),
+                    dashed: false,
+                    fill: false,
+                },
+            ]
+        })
+    };
+    let total_hits: u32 = buckets.iter().map(|b| b.cache_hit_count).sum();
+    let total_req: u32 = buckets.iter().map(|b| b.request_count).sum();
     let hit_pct = if total_req > 0 {
         total_hits as f64 / total_req as f64 * 100.0
     } else {
         0.0
     };
-    let cache_open = RwSignal::new(false);
     let cache_title = t.live_cache_hit_trend().to_string();
     let no_data = t.live_no_data();
     view! {
@@ -1410,7 +1422,7 @@ fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
             </div>
             <ChartPreviewCard
                 title=cache_title
-                open=cache_open
+                open=open
                 preview=move || {
                     view! {
                         <BarChart
@@ -1443,31 +1455,30 @@ fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
 }
 
 #[component]
-fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
     let t = use_translations();
-    let stored = StoredValue::new(buckets);
-    let x_labels = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
-            .map(|b| format_bucket_time(b.timestamp_ms))
-            .collect()
-    });
-    let input_values = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
-            .map(|x| Some(x.input_tokens as f64))
-            .collect()
-    });
-    let output_values = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
-            .map(|x| Some(x.output_tokens as f64))
-            .collect()
-    });
-    let token_open = RwSignal::new(false);
+    let buckets = std::sync::Arc::new(buckets);
+    let x_labels = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|b| format_bucket_time(b.timestamp_ms))
+                .collect()
+        })
+    };
+    let input_values = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets.iter().map(|x| Some(x.input_tokens as f64)).collect()
+        })
+    };
+    let output_values = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets.iter().map(|x| Some(x.output_tokens as f64)).collect()
+        })
+    };
     let token_title = t.live_token_chart().to_string();
     let no_data = t.live_no_data();
     let in_lbl = t.live_tokens_input().to_string();
@@ -1480,7 +1491,7 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         <div class="glass-card p-4">
             <ChartPreviewCard
                 title=token_title
-                open=token_open
+                open=open
                 preview=move || {
                     view! {
                         <TokenLineChart

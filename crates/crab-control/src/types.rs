@@ -17,12 +17,13 @@ pub struct GatewayStatus {
     pub stream_cache_enabled: bool,
     pub upstream_key_count: usize,
     pub upstream_keys_available: usize,
+    /// Best-effort global request rate estimate (may be 0 when idle/unknown).
+    #[serde(default)]
+    pub global_rps_estimate: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
-    #[serde(default)]
-    pub global_rps_estimate: f64,
 }
 
 /// Detailed response from `GET /v1/ready` including subsystem health.
@@ -250,6 +251,9 @@ pub struct TtlConfigView {
     /// Combined overrides keyed by `"consumer:model"`.
     #[serde(default)]
     pub consumer_model_overrides: HashMap<String, u64>,
+    /// Grace period (seconds) for stale-while-revalidate.
+    #[serde(default)]
+    pub stale_while_revalidate_ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +266,9 @@ pub struct PutTtlConfigRequest {
     /// Combined overrides keyed by `"consumer:model"`.
     #[serde(default)]
     pub consumer_model_overrides: HashMap<String, u64>,
+    /// Grace period (seconds) for stale-while-revalidate.
+    #[serde(default)]
+    pub stale_while_revalidate_ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,6 +410,15 @@ pub struct ConnectionRuntimeView {
     pub tcp_keepalive_count: usize,
     pub idle_timeout_secs: u64,
     pub h2_ping_interval_secs: u64,
+    /// When true, force upstream HTTP/1.1 ALPN.
+    #[serde(default)]
+    pub upstream_force_http1: bool,
+    /// When true, send `Connection: close` and avoid pooling idle upstream sockets.
+    #[serde(default)]
+    pub upstream_disable_keepalive: bool,
+    /// Optional TLS curve override in OpenSSL group list syntax. Empty string uses defaults.
+    #[serde(default)]
+    pub upstream_tls_curves: String,
 }
 
 /// Hot-reloadable L2 semantic cache settings (Management API).
@@ -532,7 +548,7 @@ pub struct ProfileRoutingView {
 pub struct RoutingSummaryView {
     pub backends_healthy: usize,
     pub backends_total: usize,
-    pub circuit_open_count: usize,
+    pub backends_unhealthy: usize,
     pub upstream_keys_available: usize,
     pub upstream_keys_total: usize,
     pub profile_id: String,

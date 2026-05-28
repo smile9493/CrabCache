@@ -51,8 +51,8 @@ use crab_pipeline::{
 };
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, prepare_generic_request,
-    prepare_light_request, prepare_upstream_request, rewrite_response_body, rewrite_sse_chunk,
-    sanitize_client_completion,
+    prepare_light_request, prepare_mimo_request, prepare_upstream_request, rewrite_response_body,
+    rewrite_sse_chunk, sanitize_client_completion,
 };
 use crab_route::extract_affinity_key;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -154,14 +154,44 @@ impl GatewayProxy {
             return true;
         }
         let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
+        let available_before = pool.available_count();
+        let total = pool.len();
         match pool.acquire() {
             Some(guard) => {
                 ctx.upstream.miss = true;
                 ctx.upstream.key_guard = Some(guard);
+                // #region agent log
+                debug_agent_log(
+                    "UPKEY1",
+                    "proxy.rs:try_acquire_upstream_key",
+                    "acquired upstream key guard",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "upstream_profile": ctx.upstream_profile_id,
+                        "pool_total": total,
+                        "pool_available_before": available_before,
+                        "pool_available_after": pool.available_count(),
+                        "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                    }),
+                );
+                // #endregion
                 true
             }
             None => {
                 global_metrics().record_rejected("upstream_key_exhausted");
+                // #region agent log
+                debug_agent_log(
+                    "UPKEY2",
+                    "proxy.rs:try_acquire_upstream_key",
+                    "failed to acquire upstream key guard",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "upstream_profile": ctx.upstream_profile_id,
+                        "pool_total": total,
+                        "pool_available": available_before,
+                    }),
+                );
+                // #endregion
                 false
             }
         }
@@ -350,6 +380,22 @@ impl ProxyHttp for GatewayProxy {
             .unwrap_or("")
             .to_string();
         let provided_key = auth.strip_prefix("Bearer ").unwrap_or(&auth).to_string();
+        // #region agent log
+        debug_agent_log(
+            "AUTH1",
+            "proxy.rs:request_filter",
+            "auth header extracted",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "path": req_path,
+                "method": format!("{}", req_method),
+                "auth_present": !auth.is_empty(),
+                "is_bearer": auth.starts_with("Bearer "),
+                "provided_key_len": provided_key.len(),
+                "looks_like_sk_cc": provided_key.starts_with("sk-cc-"),
+            }),
+        );
+        // #endregion
         let conversation_id_from_header = session
             .req_header()
             .headers
@@ -444,6 +490,25 @@ impl ProxyHttp for GatewayProxy {
             key_pipeline,
             key_upstream_profile,
         ) = self.authorize_client(&provided_key, &auth);
+
+        // #region agent log
+        debug_agent_log(
+            "AUTH2",
+            "proxy.rs:request_filter",
+            "authorize_client decision",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "authorized": is_authorized,
+                "stored_key_present": self.state.runtime.keys.contains_key(&provided_key),
+                "legacy_match_enabled": self.state.runtime.legacy_api_key_as_client_auth,
+                "key_has_consumer": consumer_from_key.is_some(),
+                "key_has_domain": domain_from_key.is_some(),
+                "key_has_project_id": key_project_id.is_some(),
+                "key_has_pipeline": key_pipeline.is_some(),
+                "key_has_upstream_profile": key_upstream_profile.is_some(),
+            }),
+        );
+        // #endregion
 
         if !is_authorized {
             let _ = session.respond_error(401).await;
@@ -729,6 +794,29 @@ impl ProxyHttp for GatewayProxy {
             &pipe_ctx,
         );
 
+        // #region agent log
+        debug_agent_log(
+            "SEL1",
+            "proxy.rs:request_filter",
+            "pipeline/profile selection",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "model": ctx.model,
+                "alias_hit": alias_hit,
+                "alias_upstream_model": alias_upstream_model,
+                "alias_pipeline": model_alias_pipeline.map(|p| p.as_str()),
+                "key_pipeline": pipe_ctx.key_pipeline.map(|p| p.as_str()),
+                "key_upstream_profile": pipe_ctx.key_upstream_profile,
+                "domain_pipeline": pipe_ctx.domain_pipeline.map(|p| p.as_str()),
+                "domain_upstream_profile": pipe_ctx.domain_upstream_profile,
+                "selected_profile": selection.upstream_profile_id,
+                "selected_provider": selection.provider.as_str(),
+                "selected_pipeline": selection.pipeline.as_str(),
+                "selected_reason": selection.reason.as_str(),
+            }),
+        );
+        // #endregion
+
         if let Some(msg) = validate_pipeline_override(
             pipe_ctx
                 .key_pipeline
@@ -845,11 +933,20 @@ impl ProxyHttp for GatewayProxy {
                     serde_json::to_vec(&light.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::GenericRelay | RequestPipeline::MimoRelay => {
+            RequestPipeline::GenericRelay => {
                 let generic = prepare_generic_request(&payload);
                 upstream_model_log = generic.model.clone();
                 ctx.new_request_body = Some(Bytes::from(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
+                ));
+            }
+            RequestPipeline::MimoRelay
+            | RequestPipeline::MimoTokenPlanRelay
+            | RequestPipeline::MimoPaygRelay => {
+                let mimo = prepare_mimo_request(&payload, &profile_fallback);
+                upstream_model_log = mimo.model.clone();
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&mimo.payload).unwrap_or_default(),
                 ));
             }
         }
@@ -1767,10 +1864,53 @@ impl ProxyHttp for GatewayProxy {
             // #endregion
         }
 
+        // #region agent log
+        let had_auth_before = upstream_request
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .is_some();
+        debug_agent_log(
+            "UPAUTH1",
+            "proxy.rs:upstream_request_filter",
+            "upstream authorization header state (before upstream key inject)",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "had_auth_header_before": had_auth_before,
+                "has_upstream_key_guard": ctx.upstream.key_guard.is_some(),
+                "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+            }),
+        );
+        // #endregion
+
         if let Some(guard) = ctx.upstream.key_guard.as_ref() {
-            let bearer = format!("Bearer {}", guard.bearer_secret());
-            let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
+            // Xiaomi MiMo Token Plan uses `api-key: tp-...` (not Bearer).
+            // Pay-as-you-go keys may still use Bearer semantics depending on upstream.
+            let secret = guard.bearer_secret();
+            if secret.starts_with("tp-") {
+                let _ = upstream_request.remove_header(&http::header::AUTHORIZATION);
+                let _ = upstream_request.insert_header("api-key", secret);
+            } else {
+                let bearer = format!("Bearer {}", secret);
+                let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
+            }
         }
+        // #region agent log
+        let had_auth_after = upstream_request
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .is_some();
+        debug_agent_log(
+            "UPAUTH2",
+            "proxy.rs:upstream_request_filter",
+            "upstream authorization header state (after upstream key inject)",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "had_auth_header_after": had_auth_after,
+                "has_upstream_key_guard": ctx.upstream.key_guard.is_some(),
+                "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+            }),
+        );
+        // #endregion
 
         let conn_config = self.state.runtime.conn_config.read().clone();
         if conn_config.upstream_disable_keepalive {

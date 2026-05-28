@@ -9,7 +9,8 @@ pub struct StoredKey {
     pub domain: Option<String>,
     /// DeepSeek `user_id` / tenant bucket; bound to this client key when set.
     pub project_id: Option<String>,
-    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `mimo_relay` | `generic_relay`
+    /// `auto` | `cursor_deepseek_v4` | `deepseek_light` | `mimo_relay`
+    /// | `mimo_token_plan_relay` | `mimo_payg_relay` | `generic_relay`
     pub pipeline: Option<String>,
     pub upstream_profile: Option<String>,
     /// Max simultaneous in-flight requests (0 = unlimited).

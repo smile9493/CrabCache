@@ -12,7 +12,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs", "trace", "compression-gzip", "compression-br"] }

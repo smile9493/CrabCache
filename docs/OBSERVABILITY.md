@@ -167,7 +167,7 @@ pub struct RequestComposition {
     consumer: String,           // API Key name / consumer 标签
     domain: String,             // 业务域（来自 API Key domain 或 "default"）
     project_id: Option<String>, // 多租户项目 ID（X-Project-Id）
-    pipeline: String,           // 请求管线：cursor_deepseek_v4 / deepseek_light / generic_relay / mimo_relay
+    pipeline: String,           // 请求管线：cursor_deepseek_v4 / deepseek_light / generic_relay / mimo_relay / mimo_token_plan_relay / mimo_payg_relay
     user_agent: Option<String>, // User-Agent（超 128 字符时截断）
 
     // ── 模型 ──

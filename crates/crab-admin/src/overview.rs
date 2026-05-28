@@ -283,7 +283,7 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
     {
         health.backends_healthy = summary.backends_healthy;
         health.backends_total = summary.backends_total;
-        health.circuit_open_count = summary.circuit_open_count;
+        // `GatewayHealth` wire shape may not include backends_unhealthy; keep only totals here.
     }
 
     let semantic_cfg = state.semantic_config.read().clone();
@@ -763,9 +763,9 @@ fn empty_gateway_status() -> GatewayStatus {
         stream_cache_enabled: false,
         upstream_key_count: 0,
         upstream_keys_available: 0,
+        global_rps_estimate: 0.0,
         upstream_base_url: None,
         upstream_model: None,
-        global_rps_estimate: 0.0,
     }
 }
 

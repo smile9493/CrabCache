@@ -594,6 +594,8 @@ pub fn KeysPage() -> impl IntoView {
                                         <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
                                         <option value="deepseek_light">"deepseek_light"</option>
                                         <option value="mimo_relay">"mimo_relay"</option>
+                                        <option value="mimo_token_plan_relay">"mimo_token_plan_relay"</option>
+                                        <option value="mimo_payg_relay">"mimo_payg_relay"</option>
                                         <option value="generic_relay">"generic_relay"</option>
                                     </select>
                                 </div>
@@ -648,11 +650,8 @@ pub fn KeysPage() -> impl IntoView {
                                 } class="input w-full" />
                             </div>
                             {move || {
-                                if !create_error.get().is_empty() {
-                                    view! { <div class="text-xs text-error">{create_error.get()}</div> }.into_any()
-                                } else {
-                                    view! { <div></div> }.into_any()
-                                }
+                                let err = create_error.get();
+                                (!err.is_empty()).then(|| view! { <div class="text-xs text-error">{err}</div> })
                             }}
                             <div class="flex gap-2">
                                 <button
@@ -886,6 +885,8 @@ pub fn KeysPage() -> impl IntoView {
                                                                                 <option value="cursor_deepseek_v4">"cursor_deepseek_v4"</option>
                                                                                 <option value="deepseek_light">"deepseek_light"</option>
                                                                                 <option value="mimo_relay">"mimo_relay"</option>
+                                                                                <option value="mimo_token_plan_relay">"mimo_token_plan_relay"</option>
+                                                                                <option value="mimo_payg_relay">"mimo_payg_relay"</option>
                                                                                 <option value="generic_relay">"generic_relay"</option>
                                                                             </select>
                                                                         </div>
@@ -915,11 +916,7 @@ pub fn KeysPage() -> impl IntoView {
                                                                     </div>
                                                                     {move || {
                                                                         let err = edit_error.get();
-                                                                        if !err.is_empty() {
-                                                                            view! { <p class="text-xs text-error mt-2">{err}</p> }.into_any()
-                                                                        } else {
-                                                                            ().into_any()
-                                                                        }
+                                                                        (!err.is_empty()).then(|| view! { <p class="text-xs text-error mt-2">{err}</p> })
                                                                     }}
                                                                     <div class="flex gap-2 mt-3">
                                                                         <button on:click={

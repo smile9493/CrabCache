@@ -79,6 +79,20 @@ fn pipeline_from_override(
                 Some(RequestPipeline::GenericRelay)
             }
         }
+        PipelineOverride::MimoTokenPlanRelay => {
+            if provider == UpstreamProvider::Mimo {
+                Some(RequestPipeline::MimoTokenPlanRelay)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
+        PipelineOverride::MimoPaygRelay => {
+            if provider == UpstreamProvider::Mimo {
+                Some(RequestPipeline::MimoPaygRelay)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
         PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
     }
 }
@@ -109,7 +123,10 @@ fn auto_pipeline_with_reason(
                     PipelineSelectionReason::ModelAlias,
                 );
             }
-            PipelineOverride::MimoRelay | PipelineOverride::Auto => {}
+            PipelineOverride::MimoRelay
+            | PipelineOverride::MimoTokenPlanRelay
+            | PipelineOverride::MimoPaygRelay
+            | PipelineOverride::Auto => {}
         }
     }
 
@@ -117,11 +134,15 @@ fn auto_pipeline_with_reason(
         && let Some(alias_pipe) = ctx.model_alias_pipeline
     {
         match alias_pipe {
-            PipelineOverride::MimoRelay | PipelineOverride::GenericRelay => {
-                let pipeline = if alias_pipe == PipelineOverride::MimoRelay {
-                    RequestPipeline::MimoRelay
-                } else {
-                    RequestPipeline::GenericRelay
+            PipelineOverride::MimoRelay
+            | PipelineOverride::MimoTokenPlanRelay
+            | PipelineOverride::MimoPaygRelay
+            | PipelineOverride::GenericRelay => {
+                let pipeline = match alias_pipe {
+                    PipelineOverride::MimoTokenPlanRelay => RequestPipeline::MimoTokenPlanRelay,
+                    PipelineOverride::MimoPaygRelay => RequestPipeline::MimoPaygRelay,
+                    PipelineOverride::MimoRelay => RequestPipeline::MimoRelay,
+                    _ => RequestPipeline::GenericRelay,
                 };
                 return (pipeline, PipelineSelectionReason::ModelAlias);
             }
@@ -134,7 +155,9 @@ fn auto_pipeline_with_reason(
     let reason = match pipeline {
         RequestPipeline::CursorDeepSeekV4 => PipelineSelectionReason::CursorSignals,
         RequestPipeline::DeepSeekLight => PipelineSelectionReason::DeepSeekNonV4,
-        RequestPipeline::MimoRelay => PipelineSelectionReason::MimoProvider,
+        RequestPipeline::MimoRelay
+        | RequestPipeline::MimoTokenPlanRelay
+        | RequestPipeline::MimoPaygRelay => PipelineSelectionReason::MimoProvider,
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
     };
     (pipeline, reason)
@@ -176,8 +199,14 @@ pub fn validate_pipeline_override(
         {
             Some("cursor_deepseek_v4 and deepseek_light require a deepseek upstream profile")
         }
-        PipelineOverride::MimoRelay if provider != UpstreamProvider::Mimo => {
-            Some("mimo_relay requires a mimo upstream profile")
+        PipelineOverride::MimoRelay
+        | PipelineOverride::MimoTokenPlanRelay
+        | PipelineOverride::MimoPaygRelay
+            if provider != UpstreamProvider::Mimo =>
+        {
+            Some(
+                "mimo_relay / mimo_token_plan_relay / mimo_payg_relay require a mimo upstream profile",
+            )
         }
         _ => None,
     }

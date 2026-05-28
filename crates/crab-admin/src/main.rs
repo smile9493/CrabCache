@@ -26,10 +26,12 @@ mod update;
 mod upstream;
 mod upstream_profiles;
 
-use axum::{Router, middleware};
+use axum::{Json, Router, middleware, response::IntoResponse};
+use axum::http::{Request, StatusCode};
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tower::ServiceExt;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -404,10 +406,38 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(middleware::from_fn(static_cache::static_cache_headers));
 
+    // Important: avoid falling through to SPA `index.html` for API paths.
+    // If an `/api/admin/*` route is missing, return a JSON 404 so the dashboard
+    // shows a clear error instead of "Parse error: expected value".
+    let dashboard_fallback = {
+        let dashboard_static = dashboard_static.clone();
+        tower::service_fn(move |req: Request<axum::body::Body>| {
+            let dashboard_static = dashboard_static.clone();
+            async move {
+                if req.uri().path().starts_with("/api/admin/") {
+                    Ok::<_, std::convert::Infallible>(
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({
+                                "error": format!("not_found: {}", req.uri().path())
+                            })),
+                        )
+                            .into_response(),
+                    )
+                } else {
+                    // `Router` is an infallible service; `.oneshot` returns `Result<Response, Infallible>`.
+                    Ok::<_, std::convert::Infallible>(
+                        dashboard_static.oneshot(req).await.unwrap_or_else(|e| match e {}),
+                    )
+                }
+            }
+        })
+    };
+
     let app = routes::router(state)
         .layer(cors)
         .layer(CompressionLayer::new())
-        .fallback_service(dashboard_static);
+        .fallback_service(dashboard_fallback);
 
     let protocol = if config.is_https() { "https" } else { "http" };
 

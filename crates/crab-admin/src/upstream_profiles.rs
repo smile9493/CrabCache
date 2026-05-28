@@ -1,6 +1,7 @@
 //! Admin API proxy for gateway upstream profiles.
 
 use crate::state::{AppState, UpstreamPoolSecret};
+use crate::persist::PersistedUpstreamPoolSecret;
 use crate::types::upstream_test_from_control;
 use crate::types::{
     PatchUpstreamKeyRequest, PutUpstreamProfileAdminRequest, UpstreamKeyInput,
@@ -115,6 +116,30 @@ pub async fn put_profile_keys(
         let mut map = state.upstream_profile_secrets.write();
         map.insert(id.to_string(), secrets);
     }
+
+    // Persist key pool to PostgreSQL (Admin DB) when available.
+    // Important: never hold a parking_lot lock guard across an `.await`.
+    let pg = { state.pg_store.read().clone() };
+    if let Some(pg) = pg {
+        let _guard = state.pg_write_lock.lock().await;
+        let persisted: Vec<PersistedUpstreamPoolSecret> = state
+            .upstream_profile_secrets
+            .read()
+            .get(id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| PersistedUpstreamPoolSecret {
+                id: s.id,
+                secret: s.secret,
+                enabled: s.enabled,
+            })
+            .collect();
+        pg.replace_profile_secrets(id, &persisted)
+            .await
+            .map_err(|e| format!("persist upstream keys to postgres: {e}"))?;
+    }
+
     let req = put_upstream_profile_keys_to_control(&keys, mode);
     let view = state
         .gateway
@@ -143,6 +168,52 @@ pub async fn patch_profile_key(
         .patch_upstream_profile_key(profile_id, key_id, &patch_upstream_key_to_control(&req))
         .await
         .map_err(|e| e.to_string())?;
+
+    // Best-effort: reflect enabled toggle into Admin PG persistence when available.
+    if let Some(enabled) = req.enabled {
+        let pg = { state.pg_store.read().clone() };
+        if let Some(pg) = pg {
+            let _guard = state.pg_write_lock.lock().await;
+            let mut updated: Vec<PersistedUpstreamPoolSecret> = state
+                .upstream_profile_secrets
+                .read()
+                .get(profile_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| {
+                    let id = s.id.clone();
+                    PersistedUpstreamPoolSecret {
+                        enabled: if id == key_id { enabled } else { s.enabled },
+                        id: s.id,
+                        secret: s.secret,
+                    }
+                })
+                .collect();
+            // If admin did not have this key cached, don't attempt to synthesize a secret.
+            if updated.iter().any(|s| s.id == key_id) {
+                pg.replace_profile_secrets(profile_id, &updated)
+                    .await
+                    .map_err(|e| format!("persist upstream key enabled to postgres: {e}"))?;
+                // keep in-memory cache aligned
+                {
+                    let mut map = state.upstream_profile_secrets.write();
+                    map.insert(
+                        profile_id.to_string(),
+                        updated
+                            .drain(..)
+                            .map(|p| UpstreamPoolSecret {
+                                id: p.id,
+                                secret: p.secret,
+                                enabled: p.enabled,
+                            })
+                            .collect(),
+                    );
+                }
+            }
+        }
+    }
+
     state.flush_persist();
     Ok(upstream_key_view_from_control(view))
 }

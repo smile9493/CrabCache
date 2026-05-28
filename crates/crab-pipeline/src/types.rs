@@ -8,6 +8,8 @@ pub enum RequestPipeline {
     CursorDeepSeekV4,
     DeepSeekLight,
     MimoRelay,
+    MimoTokenPlanRelay,
+    MimoPaygRelay,
     GenericRelay,
 }
 
@@ -17,6 +19,8 @@ impl RequestPipeline {
             RequestPipeline::CursorDeepSeekV4 => "cursor_deepseek_v4",
             RequestPipeline::DeepSeekLight => "deepseek_light",
             RequestPipeline::MimoRelay => "mimo_relay",
+            RequestPipeline::MimoTokenPlanRelay => "mimo_token_plan_relay",
+            RequestPipeline::MimoPaygRelay => "mimo_payg_relay",
             RequestPipeline::GenericRelay => "generic_relay",
         }
     }
@@ -63,6 +67,8 @@ pub enum PipelineOverride {
     CursorDeepSeekV4,
     DeepSeekLight,
     MimoRelay,
+    MimoTokenPlanRelay,
+    MimoPaygRelay,
     GenericRelay,
 }
 
@@ -73,6 +79,8 @@ impl PipelineOverride {
             "cursor_deepseek_v4" => Self::CursorDeepSeekV4,
             "deepseek_light" => Self::DeepSeekLight,
             "mimo_relay" => Self::MimoRelay,
+            "mimo_token_plan_relay" => Self::MimoTokenPlanRelay,
+            "mimo_payg_relay" => Self::MimoPaygRelay,
             "generic_relay" => Self::GenericRelay,
             _ => Self::Auto,
         }
@@ -84,6 +92,8 @@ impl PipelineOverride {
             PipelineOverride::CursorDeepSeekV4 => "cursor_deepseek_v4",
             PipelineOverride::DeepSeekLight => "deepseek_light",
             PipelineOverride::MimoRelay => "mimo_relay",
+            PipelineOverride::MimoTokenPlanRelay => "mimo_token_plan_relay",
+            PipelineOverride::MimoPaygRelay => "mimo_payg_relay",
             PipelineOverride::GenericRelay => "generic_relay",
         }
     }

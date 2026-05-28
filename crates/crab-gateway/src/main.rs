@@ -361,9 +361,9 @@ fn main() -> Result<()> {
         .map(|(addr, m)| crab_route::Backend::new(m.name.clone(), *addr, 1, m.tls_sni.clone()))
         .collect();
     let router = LbRouter::new(&default_backends)?;
-    let backends = router.meta().keys().copied().collect::<Vec<_>>();
+    let backend_count = router.meta().len();
     info!(
-        backend_count = backends.len(),
+        backend_count = backend_count,
         profile_count = upstream_profiles.len(),
         default_profile = %default_profile_id,
         "Upstream profiles initialized"
@@ -604,9 +604,6 @@ fn main() -> Result<()> {
         None
     };
 
-    // Extract lb_swap Arc before router is moved into RuntimeConfig
-    let lb_swap = router.lb_swap();
-
     let runtime = RuntimeConfig::new(
         router,
         ttl_config,
@@ -726,9 +723,12 @@ fn main() -> Result<()> {
         None
     };
 
+    // Health checking is now handled by Pingora's LoadBalancer<Consistent> with
+    // TcpHealthCheck. The LoadBalancer runs as a BackgroundService (registered below).
+    //
+    // The LB's built-in consecutive-threshold mechanism replaces our custom
+    // BackendHealth + CircuitBreakerConfig + TCP health check thread.
 
-    let lb_health_svc = crab_route::LbHealthService::new(lb_swap);
-    server.add_service(background_service("lb-health", lb_health_svc));
     let reasoning_config_shared = Arc::new(RwLock::new(reasoning_config));
 
     let client_key_limiter = ClientKeyLimiter::new();
@@ -755,6 +755,7 @@ fn main() -> Result<()> {
         reasoning_store: reasoning_store.clone(),
         reasoning_config: reasoning_config_shared.clone(),
         admin_key: mgmt_admin_key,
+        global_rate: global_rate.clone(),
         state_store: state_store.clone(),
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),
         invalidate_job: Arc::new(Mutex::new(None)),
@@ -764,7 +765,6 @@ fn main() -> Result<()> {
         upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
         semantic_runtime: semantic_runtime.clone(),
         semantic_cache: semantic_cache.clone(),
-        global_rate: global_rate.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -786,6 +786,11 @@ fn main() -> Result<()> {
     let deepseek_user_id_limiter = UpstreamUserIdLimiter::new(deepseek_user_concurrency.clone());
 
     let runtime_warmup = runtime.clone();
+    // Extract LB health service handle before runtime moves into GatewayState.
+    let lb_health_svc = {
+        let lb_router = runtime.router.read();
+        lb_router.health_service()
+    };
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -814,9 +819,7 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
-        global_rate: Arc::new(pingora_limits::rate::Rate::new(
-            std::time::Duration::from_secs(1),
-        )),
+        global_rate: Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(1))),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -840,6 +843,12 @@ fn main() -> Result<()> {
 
     server.add_service(proxy_service);
 
+    // Register Pingora's LoadBalancer health check as a BackgroundService.
+    // This replaces the custom TCP health check thread that was previously
+    // spawned in a std::thread. The LB's TcpHealthCheck uses consecutive
+    // failure/success thresholds to manage backend health state.
+    server.add_service(background_service("lb-health-check", lb_health_svc));
+
     info!(
         listen_addr = %config.listen_addr,
         metrics_addr = %config.metrics_addr,
@@ -848,65 +857,82 @@ fn main() -> Result<()> {
     );
 
     // ── Backend connection pre-warm ───────────────────────────────
-    // After the server starts, send lightweight GET /v1/models to each
-    // upstream backend to trigger Pingora's internal connection pool
-    // establishment (TCP + TLS handshake). This is an application-layer
-    // warmup — Pingora's lazy-connect model means the first real request
-    // to a backend would otherwise pay the full connect latency.
+    // Send lightweight requests THROUGH the Pingora proxy (not directly
+    // to backends) so that Pingora's internal connection pool gets
+    // populated. Each request uses a unique x-request-affinity header
+    // to distribute across all backends via Ketama consistent hashing.
     if config.features.connection_prewarm {
         let profiles = runtime_warmup.upstream_profiles.read().clone();
         let api_key = config.api_key.as_authorization().to_string();
-        let _listen_addr = config.listen_addr.clone();
+        let proxy_addr = config.listen_addr.clone();
         tokio::spawn(async move {
-            // Wait for the proxy listener to be ready.
+            // Wait for the Pingora proxy listener to be ready.
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
             let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default();
 
-            for (profile_id, profile) in &profiles {
-                for (addr, meta) in profile.router.meta() {
-                    let use_tls = !meta.tls_sni.is_empty()
-                        && meta.tls_sni != addr.to_string();
-                    let scheme = if use_tls { "https" } else { "http" };
-                    let host = if use_tls {
-                        meta.tls_sni.clone()
-                    } else {
-                        addr.to_string()
-                    };
-                    let url = format!("{}://{}/v1/models", scheme, host);
+            // Collect all unique backends across profiles to determine
+            // how many warmup requests we need.
+            let backend_count: usize = profiles
+                .values()
+                .map(|p| p.router.meta().len())
+                .sum();
+
+            // Send requests through the proxy with varied affinity keys
+            // to cover all Ketama ring positions.
+            let warmup_count = std::cmp::max(backend_count, 1);
+            let proxy_url = format!("http://{}/v1/models", proxy_addr);
+
+            let mut join_set = tokio::task::JoinSet::new();
+            for i in 0..warmup_count {
+                let url = proxy_url.clone();
+                let key = api_key.clone();
+                let client = client.clone();
+                join_set.spawn(async move {
+                    let affinity = format!("warmup-{}", i);
                     let start = std::time::Instant::now();
-                    match client
+                    let result = client
                         .get(&url)
-                        .header("Authorization", format!("Bearer {}", api_key))
-                        .header("Host", host)
+                        .header("Authorization", format!("Bearer {}", key))
+                        .header("x-request-affinity", &affinity)
                         .send()
-                        .await
-                    {
-                        Ok(resp) => {
-                            let elapsed = start.elapsed();
-                            info!(
-                                backend = %meta.name,
-                                profile = %profile_id,
-                                status = resp.status().as_u16(),
-                                elapsed_ms = elapsed.as_millis() as u64,
-                                "Backend pre-warm succeeded"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                backend = %meta.name,
-                                profile = %profile_id,
-                                error = %e,
-                                "Backend pre-warm failed (non-fatal)"
-                            );
-                        }
+                        .await;
+                    (i, affinity, start.elapsed(), result)
+                });
+            }
+
+            let results = join_set.join_all().await;
+            let mut ok_count = 0u32;
+            for (i, affinity, elapsed, result) in results {
+                match result {
+                    Ok(resp) => {
+                        ok_count += 1;
+                        tracing::debug!(
+                            idx = i,
+                            affinity = %affinity,
+                            status = resp.status().as_u16(),
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            "Warmup request succeeded"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            idx = i,
+                            affinity = %affinity,
+                            error = %e,
+                            "Warmup request failed (non-fatal)"
+                        );
                     }
                 }
             }
-            info!("Backend connection pre-warm completed");
+            info!(
+                total = warmup_count,
+                succeeded = ok_count,
+                "Backend connection pre-warm completed"
+            );
         });
     }
 

@@ -42,7 +42,6 @@ mod management_profiles;
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
 const INVALIDATE_ALL_COOLDOWN: Duration = Duration::from_secs(60);
-const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
 
 #[derive(Clone)]
 pub struct ManagementState {
@@ -52,6 +51,8 @@ pub struct ManagementState {
     pub state_store: Option<Arc<RedisStateStore>>,
     pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
     pub admin_key: String,
+    /// Global rate limiter bucket (used by some deployments; kept for compatibility).
+    pub global_rate: Arc<pingora_limits::rate::Rate>,
     pub invalidate_all_in_progress: Arc<AtomicBool>,
     pub invalidate_job: Arc<Mutex<Option<InvalidateJobSnapshot>>>,
     pub invalidate_rate: Arc<Mutex<InvalidateRateState>>,
@@ -60,7 +61,6 @@ pub struct ManagementState {
     pub upstream_key_cooldown_secs: u64,
     pub semantic_runtime: SharedSemanticRuntime,
     pub semantic_cache: Option<Arc<crab_semantic::SemanticCache>>,
-    pub global_rate: Arc<pingora_limits::rate::Rate>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -554,8 +554,6 @@ async fn status(
     let (upstream_key_count, upstream_keys_available) = state.runtime.default_upstream_key_stats();
     let upstream_base_url = Some(state.runtime.upstream_base_url.read().clone());
     let upstream_model = Some(state.runtime.fallback_model.read().clone());
-    let global_rps_estimate = state.global_rate.rate(&GLOBAL_RATE_KEY);
-
     Ok(Json(GatewayStatus {
         uptime_secs: state.runtime.uptime_secs(),
         active_keys: state.runtime.keys.len() as u64,
@@ -563,9 +561,9 @@ async fn status(
         stream_cache_enabled: state.runtime.stream_cache_enabled(),
         upstream_key_count,
         upstream_keys_available,
+        global_rps_estimate: 0.0,
         upstream_base_url,
         upstream_model,
-        global_rps_estimate,
     }))
 }
 
@@ -646,7 +644,6 @@ async fn put_upstream_relay(
         )
             .into_response()
     })?;
-
     drop(router);
 
     let default_id = state.runtime.default_upstream_profile_id();
@@ -1197,10 +1194,20 @@ async fn patch_key(
         }
     }
     if let Some(pipeline) = req.pipeline {
-        entry.pipeline = Some(pipeline);
+        let p = pipeline.trim();
+        if p.is_empty() {
+            entry.pipeline = None;
+        } else {
+            entry.pipeline = Some(p.to_string());
+        }
     }
     if let Some(upstream_profile) = req.upstream_profile {
-        entry.upstream_profile = Some(upstream_profile);
+        let p = upstream_profile.trim();
+        if p.is_empty() {
+            entry.upstream_profile = None;
+        } else {
+            entry.upstream_profile = Some(p.to_string());
+        }
     }
     if let Some(max_concurrent) = req.max_concurrent {
         entry.max_concurrent = max_concurrent;
@@ -1228,6 +1235,7 @@ async fn get_ttl(
         model_overrides: cfg.model_overrides.clone(),
         consumer_overrides: cfg.consumer_overrides.clone(),
         consumer_model_overrides: cfg.consumer_model_overrides.clone(),
+        stale_while_revalidate_ttl_secs: 0,
     }))
 }
 
@@ -1247,6 +1255,7 @@ async fn put_ttl(
         model_overrides: cfg.model_overrides.clone(),
         consumer_overrides: cfg.consumer_overrides.clone(),
         consumer_model_overrides: cfg.consumer_model_overrides.clone(),
+        stale_while_revalidate_ttl_secs: 0,
     };
     drop(cfg);
     // Sync the ArcSwap in TieredCache so DynamicTtlExpiry picks up the change.
@@ -1285,6 +1294,9 @@ fn connection_runtime_view(conn: &crab_proxy::ConnectionConfig) -> ConnectionRun
         tcp_keepalive_count: conn.tcp_keepalive_count.unwrap_or(3),
         idle_timeout_secs: conn.idle_timeout_secs.unwrap_or(90),
         h2_ping_interval_secs: conn.h2_ping_interval_secs.unwrap_or(30),
+        upstream_force_http1: conn.upstream_force_http1,
+        upstream_disable_keepalive: conn.upstream_disable_keepalive,
+        upstream_tls_curves: conn.upstream_tls_curves.clone(),
     }
 }
 
@@ -1309,6 +1321,9 @@ async fn put_connection_runtime(
     conn.tcp_keepalive_count = Some(req.tcp_keepalive_count);
     conn.idle_timeout_secs = Some(req.idle_timeout_secs);
     conn.h2_ping_interval_secs = Some(req.h2_ping_interval_secs);
+    conn.upstream_force_http1 = req.upstream_force_http1;
+    conn.upstream_disable_keepalive = req.upstream_disable_keepalive;
+    conn.upstream_tls_curves = req.upstream_tls_curves.clone();
     *state.runtime.conn_config.write() = Arc::new(conn);
     Ok(Json(req))
 }
@@ -1672,24 +1687,6 @@ fn backend_to_spec(
     }
 }
 
-fn collect_backend_specs(router: &crab_route::LbRouter) -> Vec<BackendSpec> {
-    let lb = router.backends();
-    let pingora_backends = lb.backends().get_backend();
-
-    pingora_backends
-        .iter()
-        .filter_map(|pb| {
-            let addr = match pb.addr {
-                pingora_core::protocols::l4::socket::SocketAddr::Inet(addr) => addr,
-                _ => return None,
-            };
-            let meta = router.meta().get(&addr)?;
-            let healthy = lb.backends().ready(pb);
-            Some(backend_to_spec(&meta.name, &addr, &meta.tls_sni, healthy))
-        })
-        .collect()
-}
-
 async fn get_routing_summary(
     State(state): State<ManagementState>,
     headers: HeaderMap,
@@ -1697,11 +1694,26 @@ async fn get_routing_summary(
     authorize(&headers, &state.admin_key)?;
     let profile = state.runtime.default_profile();
     let router = &profile.router;
-    let backends = router.meta();
 
-    let backends_total = backends.len();
-    let backends_healthy = backends_total;  // All backends are healthy by default (LbHealthService manages health)
-    let circuit_open_count = 0usize;  // Circuit breaker removed; LbHealthService handles health
+    // Query Pingora's built-in health map instead of our custom backend_health.
+    let backends_meta = router.meta();
+
+    let backends_total = backends_meta.len();
+    let mut backends_healthy = 0usize;
+    let mut backends_unhealthy = 0usize;
+    for (addr, _meta) in backends_meta.iter() {
+        // Check Pingora's health map using the backend's hash key.
+        let pb = pingora_load_balancing::Backend {
+            addr: pingora_core::protocols::l4::socket::SocketAddr::Inet(*addr),
+            weight: 1,
+            ext: pingora_load_balancing::Extensions::new(),
+        };
+        if router.backends().backends().ready(&pb) {
+            backends_healthy += 1;
+        } else {
+            backends_unhealthy += 1;
+        }
+    }
 
     let pool = profile.resolve_upstream_pool();
     let pool_status = pool.list_status();
@@ -1711,7 +1723,7 @@ async fn get_routing_summary(
     Ok(Json(RoutingSummaryView {
         backends_healthy,
         backends_total,
-        circuit_open_count,
+        backends_unhealthy,
         upstream_keys_available,
         upstream_keys_total: pool_status.len(),
         profile_id: profile.id.clone(),
@@ -1723,18 +1735,19 @@ async fn get_backends(
     headers: HeaderMap,
 ) -> Result<Json<RoutingBackendsView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    let router = state.runtime.router.read();
-    let backends: Vec<BackendSpec> = router
+    let profile = state.runtime.default_profile();
+    let router = &profile.router;
+    let backends = router
         .meta()
         .iter()
-        .map(|(addr, m)| BackendSpec {
-            name: m.name.clone(),
-            addr: addr.to_string(),
-            tls_sni: m.tls_sni.clone(),
-            weight: 1,
-            healthy: true,
-            last_check_ms: 0,
-            latency_ms: 0,
+        .map(|(addr, meta)| {
+            let pb = pingora_load_balancing::Backend {
+                addr: pingora_core::protocols::l4::socket::SocketAddr::Inet(*addr),
+                weight: 1,
+                ext: pingora_load_balancing::Extensions::new(),
+            };
+            let healthy = router.backends().backends().ready(&pb);
+            backend_to_spec(&meta.name, addr, &meta.tls_sni, healthy)
         })
         .collect();
     Ok(Json(RoutingBackendsView { backends }))
@@ -1769,19 +1782,10 @@ async fn put_backends(
             .into_response()
     })?;
 
-
-    let backends: Vec<BackendSpec> = router
+    let backends = router
         .meta()
         .iter()
-        .map(|(addr, m)| BackendSpec {
-            name: m.name.clone(),
-            addr: addr.to_string(),
-            tls_sni: m.tls_sni.clone(),
-            weight: 1,
-            healthy: true,
-            last_check_ms: 0,
-            latency_ms: 0,
-        })
+        .map(|(addr, meta)| backend_to_spec(&meta.name, addr, &meta.tls_sni, true))
         .collect();
     drop(router);
     schedule_persist_state(&state);
