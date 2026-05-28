@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen::JsCast;
 
 use crate::api;
-use crate::components::candlestick_chart::{CandlestickChart, CandlestickPoint};
 use crate::components::canvas_line_chart::CanvasLineChart;
+use crate::components::chart::core::ThresholdLine;
 use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::{
-    ChartSeries, TokenLineChart, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M,
+    ChartSeries, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M, TokenLineChart,
 };
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
@@ -139,10 +139,7 @@ fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Optio
             format!("{} · {}", b.backend_name, kind)
         })
         .collect();
-    let values: Vec<Option<f64>> = rows
-        .iter()
-        .map(|b| Some(b.request_count as f64))
-        .collect();
+    let values: Vec<Option<f64>> = rows.iter().map(|b| Some(b.request_count as f64)).collect();
     (labels, values)
 }
 
@@ -1067,6 +1064,11 @@ fn LiveTrafficPanel(
                                     series=hit_series
                                     height_px=140
                                     y_unit="req"
+                                    thresholds=vec![ThresholdLine {
+                                        value: 95.0,
+                                        label: "95% target".into(),
+                                        color: "var(--cc-success)",
+                                    }]
                                     empty_message=no_data
                                 />
                             }
@@ -1079,6 +1081,11 @@ fn LiveTrafficPanel(
                                     series=hit_series
                                     height_px=380
                                     y_unit="req"
+                                    thresholds=vec![ThresholdLine {
+                                        value: 95.0,
+                                        label: "95% target".into(),
+                                        color: "var(--cc-success)",
+                                    }]
                                     empty_message=no_data
                                 />
                             }
@@ -1140,7 +1147,7 @@ fn LiveBottomRow(
                 />
             </div>
             <LiveTokenPanel buckets=buckets.clone() open=token_open />
-            <LiveDetailTable buckets=buckets />
+            <LiveHeatmapTable buckets=buckets />
         </div>
     }
 }
@@ -1511,6 +1518,11 @@ fn LiveLatencyPanel(
                             height_px=100
                             y_unit="ms"
                             interactive=true
+                            thresholds=vec![ThresholdLine {
+                                value: 500.0,
+                                label: "SLO 500ms".into(),
+                                color: "var(--cc-error)",
+                            }]
                             empty_message=no_data
                         />
                     }
@@ -1524,6 +1536,11 @@ fn LiveLatencyPanel(
                             height_px=220
                             y_unit="ms"
                             interactive=true
+                            thresholds=vec![ThresholdLine {
+                                value: 500.0,
+                                label: "SLO 500ms".into(),
+                                color: "var(--cc-error)",
+                            }]
                             empty_message=no_data
                         />
                     }
@@ -1601,42 +1618,7 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
                 .collect()
         })
     };
-    // OHLC signals for K-line chart.
-    let input_ohlc = {
-        let buckets = std::sync::Arc::clone(&buckets);
-        Signal::derive(move || {
-            buckets
-                .iter()
-                .map(|x| {
-                    x.input_tokens_ohlc.map(|o| CandlestickPoint {
-                        open: o.open as f64,
-                        high: o.high as f64,
-                        low: o.low as f64,
-                        close: o.close as f64,
-                    })
-                })
-                .collect()
-        })
-    };
-    let output_ohlc = {
-        let buckets = std::sync::Arc::clone(&buckets);
-        Signal::derive(move || {
-            buckets
-                .iter()
-                .map(|x| {
-                    x.output_tokens_ohlc.map(|o| CandlestickPoint {
-                        open: o.open as f64,
-                        high: o.high as f64,
-                        low: o.low as f64,
-                        close: o.close as f64,
-                    })
-                })
-                .collect()
-        })
-    };
-    let kline_mode: RwSignal<KlineMode> = RwSignal::new(KlineMode::Input);
     let token_title = t.live_token_chart().to_string();
-    let kline_title = "Token K-Line".to_string();
     let no_data = t.live_no_data();
     let in_lbl = t.live_tokens_input().to_string();
     let out_lbl = t.live_tokens_output().to_string();
@@ -1644,21 +1626,11 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     let out_lbl_preview = out_lbl.clone();
     let in_lbl_detail = in_lbl.clone();
     let out_lbl_detail = out_lbl.clone();
-    let kline_open = RwSignal::new(false);
     let (window_input_tokens, window_output_tokens) = sum_bucket_tokens(buckets.as_ref());
     let window_input_cost = token_cost_usd(window_input_tokens, TOKEN_INPUT_PRICE_PER_M);
     let window_output_cost = token_cost_usd(window_output_tokens, TOKEN_OUTPUT_PRICE_PER_M);
     let window_total_cost = window_input_cost + window_output_cost;
     let token_x_labels = x_labels;
-    let kline_x_labels = {
-        let buckets = std::sync::Arc::clone(&buckets);
-        Signal::derive(move || {
-            buckets
-                .iter()
-                .map(|b| format_bucket_time(b.timestamp_ms))
-                .collect()
-        })
-    };
     view! {
         <div class="space-y-4">
             <div class="glass-card p-4">
@@ -1717,99 +1689,33 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
                     )}
                 </p>
             </div>
-            <div class="glass-card p-4">
-                <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-sm font-semibold text-theme">{kline_title}</h3>
-                    <div class="flex gap-1">
-                        <button
-                            type="button"
-                            class=move || {
-                                if kline_mode.get() == KlineMode::Input {
-                                    "live-pill live-pill-active text-xs"
-                                } else {
-                                    "live-pill text-xs"
-                                }
-                            }
-                            on:click=move |_| kline_mode.set(KlineMode::Input)
-                        >
-                            {t.live_tokens_input()}
-                        </button>
-                        <button
-                            type="button"
-                            class=move || {
-                                if kline_mode.get() == KlineMode::Output {
-                                    "live-pill live-pill-active text-xs"
-                                } else {
-                                    "live-pill text-xs"
-                                }
-                            }
-                            on:click=move |_| kline_mode.set(KlineMode::Output)
-                        >
-                            {t.live_tokens_output()}
-                        </button>
-                    </div>
-                </div>
-                <ChartPreviewCard
-                    title="OHLC".to_string()
-                    open=kline_open
-                    preview=move || {
-                        let ohlc_sig = match kline_mode.get() {
-                            KlineMode::Input => input_ohlc,
-                            KlineMode::Output => output_ohlc,
-                        };
-                        let unit = match kline_mode.get() {
-                            KlineMode::Input => "input tokens",
-                            KlineMode::Output => "output tokens",
-                        };
-                        view! {
-                            <CandlestickChart
-                                x_labels=kline_x_labels
-                                ohlc=ohlc_sig
-                                height_px=180
-                                y_unit=unit
-                                interactive=true
-                                empty_message=no_data
-                            />
-                        }.into_any()
-                    }
-                    detail=move || {
-                        let ohlc_sig = match kline_mode.get() {
-                            KlineMode::Input => input_ohlc,
-                            KlineMode::Output => output_ohlc,
-                        };
-                        let unit = match kline_mode.get() {
-                            KlineMode::Input => "input tokens",
-                            KlineMode::Output => "output tokens",
-                        };
-                        view! {
-                            <CandlestickChart
-                                x_labels=kline_x_labels
-                                ohlc=ohlc_sig
-                                height_px=400
-                                y_unit=unit
-                                interactive=true
-                                empty_message=no_data
-                            />
-                        }.into_any()
-                    }
-                />
-            </div>
         </div>
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum KlineMode {
-    Input,
-    Output,
+/// Map a normalised ratio (0.0 ..= 1.0) to a CSS background colour string.
+/// Uses 7 discrete levels from green (good/low) through yellow to red (bad/high).
+/// `invert` flips the scale so that higher values are greener (e.g. Hit%).
+fn heatmap_bg(ratio: f64, invert: bool) -> &'static str {
+    let r = if invert { 1.0 - ratio } else { ratio };
+    // Clamp to [0, 1]
+    let r = r.clamp(0.0, 1.0);
+    match (r * 6.0).round() as u8 {
+        0 => "rgba(34,197,94,0.18)", // green-500  18%
+        1 => "rgba(34,197,94,0.12)", // green-500  12%
+        2 => "rgba(234,179,8,0.12)", // yellow-500 12%
+        3 => "rgba(234,179,8,0.18)", // yellow-500 18%
+        4 => "rgba(239,68,68,0.12)", // red-500    12%
+        5 => "rgba(239,68,68,0.18)", // red-500    18%
+        _ => "rgba(239,68,68,0.25)", // red-500    25%
+    }
 }
 
 #[component]
-fn LiveDetailTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
     if buckets.is_empty() {
         return ().into_any();
     }
-    // Show last N non-empty buckets.
     const MAX_ROWS: usize = 20;
     let rows: Vec<&LiveMetricsBucket> = buckets
         .iter()
@@ -1820,21 +1726,43 @@ fn LiveDetailTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
     if rows.is_empty() {
         return ().into_any();
     }
+    // Compute column maxes for normalisation.
+    let max_req = rows
+        .iter()
+        .map(|b| b.request_count)
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
+    let max_e2e = rows
+        .iter()
+        .map(|b| b.e2e_latency_ms)
+        .fold(0.0_f64, f64::max)
+        .max(1.0);
+    let max_in = rows
+        .iter()
+        .map(|b| b.input_tokens)
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
+    let max_out = rows
+        .iter()
+        .map(|b| b.output_tokens)
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
     view! {
         <div class="glass-card p-4 space-y-2">
-            <h3 class="text-sm font-semibold text-theme">"Bucket Detail"</h3>
+            <h3 class="text-sm font-semibold text-theme">"Bucket Heatmap"</h3>
             <div class="overflow-x-auto">
-                <table class="w-full text-[11px] font-mono">
+                <table class="w-full text-[11px] font-mono border-collapse">
                     <thead>
                         <tr class="text-theme-muted border-b border-theme">
                             <th class="text-left py-1 pr-3">"Time"</th>
                             <th class="text-right py-1 px-2">"Req"</th>
-                            <th class="text-right py-1 px-2">"E2E"</th>
-                            <th class="text-right py-1 px-2">"Upstream"</th>
-                            <th class="text-right py-1 px-2">"TTFT"</th>
+                            <th class="text-right py-1 px-2">"E2E (ms)"</th>
+                            <th class="text-right py-1 px-2">"Hit%"</th>
                             <th class="text-right py-1 px-2">"In Tok"</th>
                             <th class="text-right py-1 px-2">"Out Tok"</th>
-                            <th class="text-right py-1 px-2">"Hit%"</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1844,22 +1772,31 @@ fn LiveDetailTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             } else {
                                 0.0
                             };
+                            let req_bg = heatmap_bg(b.request_count as f64 / max_req, false);
+                            let e2e_bg = heatmap_bg(b.e2e_latency_ms / max_e2e, false);
+                            let hit_bg = heatmap_bg(hit_pct / 100.0, true);
+                            let in_bg = heatmap_bg(b.input_tokens as f64 / max_in, false);
+                            let out_bg = heatmap_bg(b.output_tokens as f64 / max_out, false);
                             view! {
-                                <tr class="border-b border-theme/30 hover:bg-[var(--cc-bg-hover)]">
+                                <tr class="border-b border-theme/30">
                                     <td class="py-1 pr-3 text-theme">
                                         {format_bucket_time(b.timestamp_ms)}
                                     </td>
-                                    <td class="text-right py-1 px-2">{b.request_count}</td>
-                                    <td class="text-right py-1 px-2">{format!("{:.0}", b.e2e_latency_ms)}</td>
-                                    <td class="text-right py-1 px-2">
-                                        {b.upstream_latency_ms.map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into())}
+                                    <td class="text-right py-1 px-2" style=format!("background:{req_bg}")>
+                                        {b.request_count}
                                     </td>
-                                    <td class="text-right py-1 px-2">
-                                        {b.ttft_ms.map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into())}
+                                    <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
+                                        {format!("{:.0}", b.e2e_latency_ms)}
                                     </td>
-                                    <td class="text-right py-1 px-2">{b.input_tokens}</td>
-                                    <td class="text-right py-1 px-2">{b.output_tokens}</td>
-                                    <td class="text-right py-1 px-2">{format!("{hit_pct:.0}")}</td>
+                                    <td class="text-right py-1 px-2" style=format!("background:{hit_bg}")>
+                                        {format!("{:.0}%", hit_pct)}
+                                    </td>
+                                    <td class="text-right py-1 px-2" style=format!("background:{in_bg}")>
+                                        {b.input_tokens}
+                                    </td>
+                                    <td class="text-right py-1 px-2" style=format!("background:{out_bg}")>
+                                        {b.output_tokens}
+                                    </td>
                                 </tr>
                             }
                         }).collect_view()}

@@ -2,8 +2,9 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::anomaly::detect_and_toast;
+use crate::anomaly::detect_and_toast_with;
 use crate::api;
+use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::{ChartSeries, LineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
@@ -106,6 +107,7 @@ pub fn OverviewPage() -> impl IntoView {
     let etag = RwSignal::new(String::new());
     let ts_etag = RwSignal::new(String::new());
     let alive = Arc::new(AtomicBool::new(true));
+    let toasts = crate::components::toast::use_toast();
 
     // SSE connection — receives pushed metrics, reducing polling overhead.
     // Data flows through a non-reactive buffer + rAF flush to decouple SSE
@@ -117,6 +119,7 @@ pub fn OverviewPage() -> impl IntoView {
         let last_update_ts = last_update_ts;
         let sse_active = sse_active;
         let alive = Arc::clone(&alive);
+        let toasts = toasts;
         leptos::task::spawn_local(async move {
             use futures::StreamExt;
             use std::cell::RefCell;
@@ -131,8 +134,7 @@ pub fn OverviewPage() -> impl IntoView {
 
             // Start a self-rescheduling requestAnimationFrame loop that flushes
             // the buffer to Leptos signals at most once per frame.
-            let raf_state: Rc<RefCell<Option<js_sys::Function>>> =
-                Rc::new(RefCell::new(None));
+            let raf_state: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
             {
                 let buffer = buffer.clone();
                 let dirty = dirty.clone();
@@ -147,7 +149,7 @@ pub fn OverviewPage() -> impl IntoView {
                     }
                     if *dirty.borrow() {
                         if let Some(core) = buffer.borrow_mut().take() {
-                            detect_and_toast(&core);
+                            detect_and_toast_with(toasts, &core);
                             overview_core.set(Some(Ok(core)));
                             last_update.set(now_hms_string());
                             last_update_ts.set(js_sys::Date::now() as u64);
@@ -158,9 +160,7 @@ pub fn OverviewPage() -> impl IntoView {
                         let state = raf_state_inner.clone();
                         let next_closure = wasm_bindgen::closure::Closure::once(move || {
                             if let Some(func) = state.borrow().as_ref() {
-                                let _ = web_sys::window()
-                                    .unwrap()
-                                    .request_animation_frame(func);
+                                let _ = web_sys::window().unwrap().request_animation_frame(func);
                             }
                         });
                         let next_js = next_closure.into_js_value();
@@ -170,9 +170,8 @@ pub fn OverviewPage() -> impl IntoView {
                     }
                 };
 
-                let closure = wasm_bindgen::closure::Closure::wrap(
-                    Box::new(flush) as Box<dyn FnMut()>
-                );
+                let closure =
+                    wasm_bindgen::closure::Closure::wrap(Box::new(flush) as Box<dyn FnMut()>);
                 let func: js_sys::Function = closure.into_js_value().into();
                 *raf_state.borrow_mut() = Some(func);
             }
@@ -181,7 +180,7 @@ pub fn OverviewPage() -> impl IntoView {
                 if !alive.load(Ordering::Relaxed) {
                     break;
                 }
-                let es = match api::connect_sse() {
+                let es = match api::connect_sse().await {
                     Ok(es) => es,
                     Err(_) => {
                         if !alive.load(Ordering::Relaxed) {
@@ -198,9 +197,7 @@ pub fn OverviewPage() -> impl IntoView {
 
                 // Kick off the rAF loop if not already running.
                 if let Some(func) = raf_state.borrow().as_ref() {
-                    let _ = web_sys::window()
-                        .unwrap()
-                        .request_animation_frame(func);
+                    let _ = web_sys::window().unwrap().request_animation_frame(func);
                 }
 
                 // Bridge EventSource callbacks to an async channel.
@@ -307,7 +304,7 @@ pub fn OverviewPage() -> impl IntoView {
                     if load_generation.get() == request_id
                         && let Some(core) = result.core
                     {
-                        detect_and_toast(&core);
+                        detect_and_toast_with(toasts, &core);
                         overview_core.set(Some(Ok(core)));
                         last_update.set(now_hms_string());
                         last_update_ts.set(js_sys::Date::now() as u64);
@@ -1482,7 +1479,7 @@ pub fn TimeSeriesChart(
         let points = chart_points.get();
         vec![ChartSeries {
             label: t.overview_input_tokens().to_string(),
-            color: "var(--accent-primary)",
+            color: "var(--accent-primary)".to_string(),
             values: points.iter().map(|p| Some(p.tokens as f64)).collect(),
             dashed: false,
             fill: true,
@@ -1493,7 +1490,7 @@ pub fn TimeSeriesChart(
         let points = chart_points.get();
         vec![ChartSeries {
             label: t.overview_requests().to_string(),
-            color: "var(--info)",
+            color: "var(--info)".to_string(),
             values: points.iter().map(|p| Some(p.requests as f64)).collect(),
             dashed: false,
             fill: false,
@@ -1668,41 +1665,45 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let sort_by = RwSignal::new(ConsumerSortField::HitTokens);
     let sort_desc = RwSignal::new(true);
+    let consumer_buckets = std::sync::Arc::new(metrics.consumer_buckets);
 
-    let sorted_buckets = Memo::new(move |_| {
-        let mut buckets = metrics.consumer_buckets.clone();
-        let desc = sort_desc.get();
-        match sort_by.get() {
-            ConsumerSortField::Consumer => {
-                buckets.sort_by(|a, b| {
-                    let ord = a.consumer.cmp(&b.consumer);
-                    if desc { ord.reverse() } else { ord }
-                });
+    let sorted_buckets = {
+        let data = std::sync::Arc::clone(&consumer_buckets);
+        Memo::new(move |_| {
+            let mut buckets = (*data).clone();
+            let desc = sort_desc.get();
+            match sort_by.get() {
+                ConsumerSortField::Consumer => {
+                    buckets.sort_by(|a, b| {
+                        let ord = a.consumer.cmp(&b.consumer);
+                        if desc { ord.reverse() } else { ord }
+                    });
+                }
+                ConsumerSortField::HitTokens => {
+                    buckets.sort_by(|a, b| {
+                        let ord = a.hit_tokens.cmp(&b.hit_tokens);
+                        if desc { ord.reverse() } else { ord }
+                    });
+                }
+                ConsumerSortField::MissTokens => {
+                    buckets.sort_by(|a, b| {
+                        let ord = a.miss_tokens.cmp(&b.miss_tokens);
+                        if desc { ord.reverse() } else { ord }
+                    });
+                }
+                ConsumerSortField::Ratio => {
+                    buckets.sort_by(|a, b| {
+                        let ord = a
+                            .hit_ratio
+                            .partial_cmp(&b.hit_ratio)
+                            .unwrap_or(std::cmp::Ordering::Equal);
+                        if desc { ord.reverse() } else { ord }
+                    });
+                }
             }
-            ConsumerSortField::HitTokens => {
-                buckets.sort_by(|a, b| {
-                    let ord = a.hit_tokens.cmp(&b.hit_tokens);
-                    if desc { ord.reverse() } else { ord }
-                });
-            }
-            ConsumerSortField::MissTokens => {
-                buckets.sort_by(|a, b| {
-                    let ord = a.miss_tokens.cmp(&b.miss_tokens);
-                    if desc { ord.reverse() } else { ord }
-                });
-            }
-            ConsumerSortField::Ratio => {
-                buckets.sort_by(|a, b| {
-                    let ord = a
-                        .hit_ratio
-                        .partial_cmp(&b.hit_ratio)
-                        .unwrap_or(std::cmp::Ordering::Equal);
-                    if desc { ord.reverse() } else { ord }
-                });
-            }
-        }
-        buckets
-    });
+            buckets
+        })
+    };
 
     let sort_icon = move |field: ConsumerSortField| {
         move || {
@@ -1725,9 +1726,44 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
         }
     };
 
+    // Top 10 consumers by total tokens for the horizontal bar chart.
+    let top10_labels: Signal<Vec<String>> = {
+        let buckets = std::sync::Arc::clone(&consumer_buckets);
+        Signal::derive(move || {
+            let mut sorted = (*buckets).clone();
+            sorted.sort_by(|a, b| {
+                (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
+            });
+            sorted.iter().take(10).map(|b| b.consumer.clone()).collect()
+        })
+    };
+    let top10_values: Signal<Vec<f64>> = {
+        let buckets = std::sync::Arc::clone(&consumer_buckets);
+        Signal::derive(move || {
+            let mut sorted = (*buckets).clone();
+            sorted.sort_by(|a, b| {
+                (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
+            });
+            sorted
+                .iter()
+                .take(10)
+                .map(|b| (b.hit_tokens + b.miss_tokens) as f64)
+                .collect()
+        })
+    };
+
     view! {
         <div class="glass-card">
             <h3 class="text-sm font-semibold text-theme mb-4">{t.overview_consumer_table_title()}</h3>
+            <div class="mb-4">
+                <HorizontalBarChart
+                    labels=top10_labels
+                    values=top10_values
+                    width=520
+                    height_px=160
+                    empty_message="No consumer data."
+                />
+            </div>
             {move || {
                 let buckets = sorted_buckets.get();
                 if buckets.is_empty() {
