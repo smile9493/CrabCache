@@ -1,4 +1,5 @@
-use crab_cache::{CacheEntry, UsageInfo};
+use crab_cache::{CacheEntry, TieredCache, UsageInfo};
+use crab_metrics::CacheTier;
 use crab_reasoning::sanitize_client_completion;
 
 pub fn prepare_response_body_for_cache(body: Vec<u8>, display_reasoning: bool) -> Vec<u8> {
@@ -103,6 +104,28 @@ pub fn build_semantic_query_text(messages: &[serde_json::Value]) -> Option<Strin
     }
 }
 
+/// Exact tiered cache lookup that enforces stream-mode matching.
+///
+/// Returns `Some((entry, tier))` only when the cached entry's `is_stream` flag
+/// matches the client's streaming preference. This prevents a non-streaming
+/// cached response from being served to a streaming client (and vice versa).
+///
+/// This is the Session-independent core extracted from `try_early_mimo_exact_cache`
+/// to enable standalone unit testing.
+pub async fn tiered_exact_lookup(
+    tiered: &TieredCache,
+    cache_key: &str,
+    consumer: Option<&str>,
+    domain: Option<&str>,
+    is_streaming: bool,
+) -> Option<(CacheEntry, CacheTier)> {
+    let (entry, tier) = tiered.get(cache_key, consumer, domain).await?;
+    if !cache_entry_matches_stream_mode(&entry, is_streaming) {
+        return None;
+    }
+    Some((entry, tier))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +147,91 @@ mod tests {
         let msg = &parsed["choices"][0]["message"];
         assert!(msg.get("reasoning_content").is_none());
         assert_eq!(msg["content"].as_str(), Some("hi"));
+    }
+
+    // --- cache_entry_matches_stream_mode ---
+
+    #[test]
+    fn stream_mode_matches_when_flags_equal() {
+        let entry = CacheEntry {
+            response_body: vec![],
+            model: "m".into(),
+            usage: UsageInfo::default(),
+            created_at: 0,
+            ttl_secs: 60,
+            sse_body: None,
+            is_stream: false,
+            client_display_reasoning: false,
+        };
+        assert!(cache_entry_matches_stream_mode(&entry, false));
+        assert!(!cache_entry_matches_stream_mode(&entry, true));
+
+        let stream_entry = CacheEntry {
+            is_stream: true,
+            ..entry
+        };
+        assert!(cache_entry_matches_stream_mode(&stream_entry, true));
+        assert!(!cache_entry_matches_stream_mode(&stream_entry, false));
+    }
+
+    // --- build_semantic_query_text ---
+
+    #[test]
+    fn semantic_query_extracts_text_content() {
+        let messages = vec![
+            serde_json::json!({"role":"system","content":"You are helpful."}),
+            serde_json::json!({"role":"user","content":"What is Rust?"}),
+        ];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("You are helpful.\nWhat is Rust?".to_string()));
+    }
+
+    #[test]
+    fn semantic_query_skips_empty_messages() {
+        let messages = vec![
+            serde_json::json!({"role":"user","content":""}),
+            serde_json::json!({"role":"assistant","content":""}),
+        ];
+        assert!(build_semantic_query_text(&messages).is_none());
+    }
+
+    #[test]
+    fn semantic_query_handles_array_content() {
+        let messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type":"text","text":"hello"},{"type":"text","text":"world"}]
+        })];
+        let result = build_semantic_query_text(&messages);
+        assert_eq!(result, Some("hello world".to_string()));
+    }
+
+    // --- tiered_exact_lookup ---
+
+    /// TieredCache not available without Redis; test the stream-mode guard in isolation.
+    /// The Redis roundtrip for `tiered_exact_lookup` is covered by
+    /// `crates/crab-gateway/tests/data_plane.rs` (exact_key_roundtrip_l0_hit + stream flag).
+    #[test]
+    fn stream_mode_guard_prevents_mismatched_entry() {
+        let non_stream = CacheEntry {
+            response_body: vec![],
+            model: "m".into(),
+            usage: UsageInfo::default(),
+            created_at: 0,
+            ttl_secs: 60,
+            sse_body: None,
+            is_stream: false,
+            client_display_reasoning: false,
+        };
+        // Mismatch: entry is non-stream, client wants stream.
+        assert!(!cache_entry_matches_stream_mode(&non_stream, true));
+
+        let stream = CacheEntry {
+            is_stream: true,
+            ..non_stream
+        };
+        // Match: both stream.
+        assert!(cache_entry_matches_stream_mode(&stream, true));
+        // Mismatch: entry is stream, client wants non-stream.
+        assert!(!cache_entry_matches_stream_mode(&stream, false));
     }
 }

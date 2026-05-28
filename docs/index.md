@@ -9,6 +9,7 @@
 | 文档 | 说明 |
 |------|------|
 | [数据面实现状态](DATA_PLANE.md) | P0–P2 交付对照、feature 开关、与代码权威行为 |
+| [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) | MiMo/DeepSeek 双线路径灰度验收清单 + Prometheus 核对 |
 | [数据面优化展望](../数据面优化.md) | 六维改进论证、优先级矩阵、proxy 拆分附录 |
 | [数据面 P3 实验](DATA_PLANE_P3.md) | 差分缓存、WASM、io_uring 设计与回滚 |
 

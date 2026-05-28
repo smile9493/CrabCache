@@ -61,6 +61,7 @@ nav:
       - Agent Key 迁移: AGENT_CLIENT_KEY_MIGRATION.md
   - 数据面:
       - 实现状态 P0-P2: DATA_PLANE.md
+      - P2 验收手册: DATA_PLANE_ACCEPTANCE.md
       - P3 实验设计: DATA_PLANE_P3.md
   - 供应商集成:
       - 上游前缀缓存 L3: DEEPSEEK_PREFIX_CACHE.md

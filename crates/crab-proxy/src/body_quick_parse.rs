@@ -80,4 +80,60 @@ mod tests {
         assert_eq!(q.prompt_cache_key.as_deref(), Some("pck"));
         assert_eq!(q.stream, Some(false));
     }
+
+    #[test]
+    fn quick_parse_reversed_field_order() {
+        let body =
+            br#"{"stream":false,"prompt_cache_key":"pck-rev","conversation_id":"c-rev","model":"deepseek-v4-pro","messages":[]}"#;
+        let q = quick_parse_request_fields(body);
+        assert_eq!(q.model.as_deref(), Some("deepseek-v4-pro"));
+        assert_eq!(q.stream, Some(false));
+        assert_eq!(q.conversation_id.as_deref(), Some("c-rev"));
+        assert_eq!(q.prompt_cache_key.as_deref(), Some("pck-rev"));
+    }
+
+    #[test]
+    fn quick_parse_model_with_escaped_quotes_in_nearby_value() {
+        // Model value itself doesn't contain quotes, but a later string value does.
+        // This tests that the parser doesn't bleed across fields.
+        let body = br#"{"model":"mimo-v2","messages":[{"role":"user","content":"He said \"hello\" to me"}]}"#;
+        let q = quick_parse_request_fields(body);
+        assert_eq!(q.model.as_deref(), Some("mimo-v2"));
+    }
+
+    #[test]
+    fn quick_parse_missing_model_returns_none() {
+        let body = br#"{"stream":true,"messages":[]}"#;
+        let q = quick_parse_request_fields(body);
+        assert!(q.model.is_none());
+        assert_eq!(q.stream, Some(true));
+    }
+
+    #[test]
+    fn quick_parse_empty_string_fields_ignored() {
+        let body = br#"{"model":"","conversation_id":"","prompt_cache_key":"pk","stream":true}"#;
+        let q = quick_parse_request_fields(body);
+        assert!(q.model.is_none(), "empty model string should be None");
+        assert!(
+            q.conversation_id.is_none(),
+            "empty conversation_id should be None"
+        );
+        assert_eq!(q.prompt_cache_key.as_deref(), Some("pk"));
+    }
+
+    #[test]
+    fn quick_parse_whitespace_around_colon() {
+        let body = br#"{ "model" : "mimo-v2" , "stream" : true }"#;
+        let q = quick_parse_request_fields(body);
+        assert_eq!(q.model.as_deref(), Some("mimo-v2"));
+        assert_eq!(q.stream, Some(true));
+    }
+
+    #[test]
+    fn quick_parse_invalid_utf8_returns_defaults() {
+        let body: &[u8] = &[0xFF, 0xFE, 0xFD];
+        let q = quick_parse_request_fields(body);
+        assert!(q.model.is_none());
+        assert!(q.stream.is_none());
+    }
 }

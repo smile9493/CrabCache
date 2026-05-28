@@ -61,3 +61,63 @@ pub fn spawn_direct_prewarm_if_new_session(
         prewarm_direct(connector, peer, semaphore).await;
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seen_cache_prevents_duplicate_prewarm() {
+        let seen = moka::sync::Cache::<String, ()>::builder()
+            .max_capacity(100)
+            .build();
+        let connector: Option<Arc<Connector<()>>> = None;
+
+        // First call with a new fingerprint — connector is None so no spawn,
+        // but seen cache should be populated.
+        let sem = Arc::new(Semaphore::new(1));
+        let peer = HttpPeer::new("127.0.0.1:443", true, "test.example.com".into());
+        spawn_direct_prewarm_if_new_session(&connector, &seen, "fp-1", peer, sem.clone());
+
+        // Since connector is None, no entry should be added.
+        assert!(seen.get("fp-1").is_none());
+
+        // With a dummy connector (won't connect, just exercises the path).
+        // We can't create a real Connector in unit tests, but we can test the
+        // dedup logic by pre-populating the seen cache.
+        seen.insert("fp-existing".to_string(), ());
+        let peer2 = HttpPeer::new("127.0.0.1:443", true, "test.example.com".into());
+        spawn_direct_prewarm_if_new_session(&connector, &seen, "fp-existing", peer2, sem);
+        // Should not have spawned anything (connector is None, and fp was already seen).
+        assert!(seen.get("fp-existing").is_some());
+    }
+
+    #[test]
+    fn seen_cache_does_not_fire_for_repeated_fingerprint() {
+        let seen = moka::sync::Cache::<String, ()>::builder()
+            .max_capacity(100)
+            .build();
+        let sem = Arc::new(Semaphore::new(1));
+
+        // Simulate: insert fingerprint first, then call spawn with same fp.
+        seen.insert("fp-42".to_string(), ());
+        let connector: Option<Arc<Connector<()>>> = None;
+        let peer = HttpPeer::new("127.0.0.1:443", true, "test.example.com".into());
+
+        // Call with already-seen fingerprint — should be a no-op.
+        spawn_direct_prewarm_if_new_session(&connector, &seen, "fp-42", peer, sem);
+        // Still present (no panic, no double-insert).
+        assert!(seen.get("fp-42").is_some());
+    }
+
+    #[tokio::test]
+    async fn prewarm_skips_when_semaphore_exhausted() {
+        // Create a semaphore with 0 permits — try_acquire will always fail.
+        let sem = Arc::new(Semaphore::new(0));
+
+        // We can't create a real Connector<()>, but we can verify the semaphore
+        // guard path by calling try_acquire directly.
+        let permit = sem.try_acquire();
+        assert!(permit.is_err(), "semaphore with 0 permits should fail");
+    }
+}

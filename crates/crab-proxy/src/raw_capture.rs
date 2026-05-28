@@ -254,7 +254,7 @@ impl Sampler {
             return SampleDecision::Capture;
         }
         let seq = self.counter.fetch_add(1, Ordering::Relaxed);
-        if seq % self.every_n == 0 {
+        if seq.is_multiple_of(self.every_n) {
             global_metrics().record_raw_capture_sample("sampled");
             SampleDecision::Capture
         } else {

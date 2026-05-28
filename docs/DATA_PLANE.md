@@ -2,7 +2,7 @@
 
 本文档是 [数据面优化.md](../数据面优化.md) 的**交付对照表**：说明哪些建议已落地、哪些仍为展望、与正式文档/代码的权威行为差异。
 
-**最后对齐提交**：`1f9ed97` 及此前 `fff766f`（proxy 数据面 P0–P2）。
+**最后对齐提交**：`48082e1` 及此前 `fff766f`、`1f9ed97`（proxy 数据面 P0–P2）。
 
 ---
 
@@ -16,6 +16,7 @@
 | [DEEPSEEK_PREFIX_CACHE.md](./DEEPSEEK_PREFIX_CACHE.md) | L3 上游前缀缓存 + **L0 prefix 索引** |
 | [../third_party/pingora-proxy/PATCH.md](../third_party/pingora-proxy/PATCH.md) | Fork：`Arc<Connector>` 与直预热 |
 | [../CLAUDE.md](../CLAUDE.md) | 特性开关、`[features]` 配置摘要 |
+| [./DATA_PLANE_ACCEPTANCE.md](./DATA_PLANE_ACCEPTANCE.md) | P2 验收手册（MiMo/DeepSeek 双线路径 + Prometheus 核对） |
 | [../config/gateway.example.toml](../config/gateway.example.toml) | `[features]` 注释 |
 
 ---
@@ -31,7 +32,7 @@
 | `original_request_body` → `Bytes` | ✅ | [`context.rs`](../crates/crab-proxy/src/context.rs) |
 | 增量 SHA-256 | ✅ | [`proxy.rs`](../crates/crab-proxy/src/proxy.rs) `read_request_body` 循环 |
 | Raw capture 复用 `Arc<Value>` | ✅ | `parsed_request_payload` / `parsed_upstream_payload` |
-| `body_quick_parse` + MiMo early exact cache | 🟡 | [`body_quick_parse.rs`](../crates/crab-proxy/src/body_quick_parse.rs)；命中 exact 前可跳过 full parse；miss 后仍 parse + `prepare_mimo` |
+| `body_quick_parse` + MiMo early exact cache | ✅ | [`body_quick_parse.rs`](../crates/crab-proxy/src/body_quick_parse.rs)；命中 exact 前可跳过 full parse；miss 后仍 parse + `prepare_mimo`；单测覆盖边界用例 |
 | 首 chunk 选 pipeline（无全量 body） | ⬜ | 仍需读满 body（`max_request_body_bytes`） |
 | `streaming_body_forward` | ⬜ | 配置预留，[`gateway.example.toml`](../config/gateway.example.toml) 标注未实现 |
 | MiMo 近似缓存键（sfp + msg count） | ⬜ | 精确键仍为 body SHA-256 |
@@ -131,7 +132,7 @@
 | Prefix 共享前缀 | `gateway_prefix_index_warmup_total` 增加，响应仍来自上游 |
 | `select_with_hint` + weight≠1 |  hinted 后端可被 `ready()` 选中 |
 
-自动化：单元测试见 `crab-proxy`（`body_quick_parse`、`metrics_helpers` affinity）、`crab-route`（`select_with_hint`）；**尚无**独立 gateway 集成测文档化用例。
+自动化：单元测试见 `crab-proxy`（`body_quick_parse`、`metrics_helpers` affinity）、`crab-route`（`select_with_hint`）；集成测试见 [`crates/crab-gateway/tests/data_plane.rs`](../crates/crab-gateway/tests/data_plane.rs)。验收手册见 [`DATA_PLANE_ACCEPTANCE.md`](./DATA_PLANE_ACCEPTANCE.md)。
 
 ---
 
