@@ -240,6 +240,7 @@ crab-admin（管理面板后端 - Axum HTTP 服务器）
 
 | 文档 | 说明 |
 |------|------|
+| [热更新 SOP（免重建镜像）](docs/HOT_UPDATE.md) | 一键更新 gateway/admin 二进制与 dashboard dist |
 | [1Panel + OpenResty 部署](docs/deploy-1panel-openresty.md) | 使用 1Panel 和 OpenResty 反代 |
 | [网络地址配置](docs/network-config.md) | 网关地址自动检测与局域网配置 |
 | [自签名证书](docs/self-signed-cert.md) | 为管理面板生成 SSL 证书 |
@@ -257,6 +258,14 @@ cp .env.example .env
 # 编辑 .env：设置 CRABCACHE_API_KEY、CRABCACHE_GATEWAY_ADMIN_KEY
 docker compose up -d --build
 ```
+
+日常代码发布推荐使用热更新（无需重建镜像）：
+
+```bash
+make hot-update
+```
+
+详细步骤与排错见 [`docs/HOT_UPDATE.md`](docs/HOT_UPDATE.md)。
 
 默认启动服务：**gateway + Redis**（L2 语义缓存关闭），Redis 不暴露宿主机端口。
 

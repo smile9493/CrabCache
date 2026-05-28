@@ -2,6 +2,9 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use wasm_bindgen::JsCast;
 
 use crate::api;
@@ -19,6 +22,16 @@ use crate::types::{
     LiveMetricsSummary, ProfileRoutingView,
 };
 use crate::view_state;
+
+fn now_hms_string() -> String {
+    let d = js_sys::Date::new_0();
+    format!(
+        "{:02}:{:02}:{:02}",
+        d.get_hours(),
+        d.get_minutes(),
+        d.get_seconds()
+    )
+}
 
 const MAX_CHART_POINTS: usize = 240;
 
@@ -184,7 +197,6 @@ pub fn LivePage() -> impl IntoView {
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
-    let manual_refresh = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
         RwSignal::new(None);
     let routing_key_ids: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
@@ -193,6 +205,7 @@ pub fn LivePage() -> impl IntoView {
         RwSignal::new(None);
     let routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>> =
         RwSignal::new(None);
+    let alive = Arc::new(AtomicBool::new(true));
 
     Effect::new(move |_| {
         let consumer = selected_consumer.get();
@@ -203,9 +216,17 @@ pub fn LivePage() -> impl IntoView {
         view_state::save_view_state(&state);
     });
 
-    let load_consumers = move || {
+    let alive_for_load_consumers = Arc::clone(&alive);
+    let load_consumers = || {
+        let alive = Arc::clone(&alive_for_load_consumers);
         leptos::task::spawn_local(async move {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             if let Ok(val) = api::fetch_live_consumers(window_secs.get_untracked()).await {
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
                 let names: Vec<String> = val
                     .get("available_consumers")
                     .and_then(|c| c.as_array())
@@ -228,6 +249,9 @@ pub fn LivePage() -> impl IntoView {
             }
             match api::fetch_keys().await {
                 Ok(keys) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     let names: Vec<String> = keys
                         .into_iter()
                         .map(|k| k.name)
@@ -251,27 +275,27 @@ pub fn LivePage() -> impl IntoView {
     // rAF buffer for live_data: decouples polling frequency from signal propagation.
     // With 2-60s polling this is primarily for future-proofing; the pattern ensures
     // that increasing poll frequency won't cause cascading signal writes.
-    let live_buffer: Rc<RefCell<Option<Result<LiveMetricsResponse, String>>>> =
-        Rc::new(RefCell::new(None));
-    let live_dirty: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
-    let live_active: Rc<RefCell<bool>> = Rc::new(RefCell::new(true));
+    let live_buffer: Arc<Mutex<Option<Result<LiveMetricsResponse, String>>>> =
+        Arc::new(Mutex::new(None));
+    let live_dirty: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let live_active: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     {
-        let live_buffer = live_buffer.clone();
-        let live_dirty = live_dirty.clone();
-        let live_active = live_active.clone();
+        let live_buffer = Arc::clone(&live_buffer);
+        let live_dirty = Arc::clone(&live_dirty);
+        let live_active = Arc::clone(&live_active);
         let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> =
             Rc::new(RefCell::new(None));
         let live_raf_state_inner = live_raf_state.clone();
 
         let flush = move || {
-            if *live_dirty.borrow() {
-                if let Some(data) = live_buffer.borrow_mut().take() {
+            if *live_dirty.lock().expect("live_dirty lock poisoned") {
+                if let Some(data) = live_buffer.lock().expect("live_buffer lock poisoned").take() {
                     live_data.set(Some(data));
-                    last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                    last_update.set(now_hms_string());
                 }
-                *live_dirty.borrow_mut() = false;
+                *live_dirty.lock().expect("live_dirty lock poisoned") = false;
             }
-            if *live_active.borrow() {
+            if live_active.load(Ordering::Relaxed) {
                 let state = live_raf_state_inner.clone();
                 let next = wasm_bindgen::closure::Closure::once(move || {
                     if let Some(func) = state.borrow().as_ref() {
@@ -296,9 +320,16 @@ pub fn LivePage() -> impl IntoView {
         }
     }
 
+    let live_buffer_for_loader = Arc::clone(&live_buffer);
+    let live_dirty_for_loader = Arc::clone(&live_dirty);
+    let alive_for_loader = Arc::clone(&alive);
     let load_live_fn: Rc<RefCell<dyn FnMut()>> = {
         let consumers = consumers;
         Rc::new(RefCell::new(move || {
+            let alive = Arc::clone(&alive_for_loader);
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             let Some(consumer) = selected_consumer.get() else {
                 live_data.set(None);
                 return;
@@ -306,11 +337,15 @@ pub fn LivePage() -> impl IntoView {
             load_generation.update(|g| *g += 1);
             let request_id = load_generation.get();
             let window = window_secs.get();
-            let buf = live_buffer.clone();
-            let dirty = live_dirty.clone();
+            let buf = Arc::clone(&live_buffer_for_loader);
+            let dirty = Arc::clone(&live_dirty_for_loader);
+            let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
                 match api::fetch_live_metrics(&consumer, window).await {
                     Ok(data) => {
+                        if !alive.load(Ordering::Relaxed) {
+                            return;
+                        }
                         if load_generation.get() != request_id {
                             return;
                         }
@@ -322,10 +357,13 @@ pub fn LivePage() -> impl IntoView {
                                 selected_consumer.set(Some(first.clone()));
                             }
                         }
-                        buf.borrow_mut().replace(Ok(data));
-                        *dirty.borrow_mut() = true;
+                        buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
+                        *dirty.lock().expect("live_dirty lock poisoned") = true;
                     }
                     Err(e) => {
+                        if !alive.load(Ordering::Relaxed) {
+                            return;
+                        }
                         if load_generation.get() == request_id {
                             live_data.set(Some(Err(e)));
                         }
@@ -335,39 +373,55 @@ pub fn LivePage() -> impl IntoView {
         }))
     };
 
+    let alive_for_routing = Arc::clone(&alive);
+    let routing_profiles_for_routing = routing_profiles;
+    let routing_key_ids_for_routing = routing_key_ids;
+    let selected_routing_key_for_routing = selected_routing_key;
+    let routing_key_data_for_routing = routing_key_data;
+    let routing_key_concurrency_for_routing = routing_key_concurrency;
     let load_routing = move || {
+        let alive = Arc::clone(&alive_for_routing);
         leptos::task::spawn_local(async move {
-            routing_profiles.set(Some(api::fetch_routing_profiles().await));
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            routing_profiles_for_routing.set(Some(api::fetch_routing_profiles().await));
             match api::fetch_keys().await {
                 Ok(keys) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     let ids: Vec<String> = keys
                         .into_iter()
                         .map(|k| k.id)
                         .filter(|id| !id.is_empty())
                         .collect();
                     if !ids.is_empty() {
-                        let chosen = selected_routing_key
+                        let chosen = selected_routing_key_for_routing
                             .get_untracked()
                             .filter(|id| ids.iter().any(|x| x == id))
                             .unwrap_or_else(|| ids[0].clone());
-                        selected_routing_key.set(Some(chosen.clone()));
-                        routing_key_ids.set(ids);
+                        selected_routing_key_for_routing.set(Some(chosen.clone()));
+                        routing_key_ids_for_routing.set(ids);
                         let routing = api::fetch_key_routing(&chosen).await;
                         let concurrency = api::fetch_key_concurrency(&chosen).await;
-                        routing_key_data.set(Some(routing));
-                        routing_key_concurrency.set(Some(concurrency));
+                        routing_key_data_for_routing.set(Some(routing));
+                        routing_key_concurrency_for_routing.set(Some(concurrency));
                     } else {
-                        routing_key_ids.set(Vec::new());
-                        selected_routing_key.set(None);
-                        routing_key_data.set(None);
-                        routing_key_concurrency.set(None);
+                        routing_key_ids_for_routing.set(Vec::new());
+                        selected_routing_key_for_routing.set(None);
+                        routing_key_data_for_routing.set(None);
+                        routing_key_concurrency_for_routing.set(None);
                     }
                 }
                 Err(e) => {
-                    routing_key_ids.set(Vec::new());
-                    selected_routing_key.set(None);
-                    routing_key_data.set(Some(Err(e)));
-                    routing_key_concurrency.set(None);
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    routing_key_ids_for_routing.set(Vec::new());
+                    selected_routing_key_for_routing.set(None);
+                    routing_key_data_for_routing.set(Some(Err(e)));
+                    routing_key_concurrency_for_routing.set(None);
                 }
             }
         });
@@ -381,32 +435,43 @@ pub fn LivePage() -> impl IntoView {
         move |_| {
             let _ = selected_consumer.get();
             let _ = window_secs.get();
-            let _ = manual_refresh.get();
             ll.borrow_mut()();
         }
     });
 
+    let alive_for_key_effect = Arc::clone(&alive);
     Effect::new(move |_| {
+        if !alive_for_key_effect.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(key_id) = selected_routing_key.get() else {
             routing_key_concurrency.set(None);
             return;
         };
+        let alive = Arc::clone(&alive_for_key_effect);
         leptos::task::spawn_local(async move {
             let (routing, concurrency) = futures::join!(
                 api::fetch_key_routing(&key_id),
                 api::fetch_key_concurrency(&key_id),
             );
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             routing_key_data.set(Some(routing));
             routing_key_concurrency.set(Some(concurrency));
         });
     });
 
+    let alive_poll = Arc::clone(&alive);
     leptos::task::spawn_local({
         let ll = load_live_fn.clone();
         async move {
             loop {
                 let interval = poll_interval_ms(window_secs.get_untracked());
                 TimeoutFuture::new(interval).await;
+                if !alive_poll.load(Ordering::Relaxed) {
+                    break;
+                }
                 if auto_refresh.get()
                     && selected_consumer.get_untracked().is_some()
                     && page_visible()
@@ -422,7 +487,11 @@ pub fn LivePage() -> impl IntoView {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
         let ll = load_live_fn.clone();
+        let alive_vis = Arc::clone(&alive);
         let vis_cb = Closure::wrap(Box::new(move || {
+            if !alive_vis.load(Ordering::Relaxed) {
+                return;
+            }
             if !web_sys::window().unwrap().document().unwrap().hidden()
                 && auto_refresh.get_untracked()
                 && selected_consumer.get_untracked().is_some()
@@ -437,13 +506,61 @@ pub fn LivePage() -> impl IntoView {
         vis_cb.forget();
     }
 
+    let alive_cleanup = Arc::clone(&alive);
+    on_cleanup(move || {
+        alive_cleanup.store(false, Ordering::Relaxed);
+        live_active.store(false, Ordering::Relaxed);
+    });
+
     view! {
         <div class="page-content space-y-5">
             <PageHeader
                 title=move || t.live_title()
                 description=move || t.live_desc()
             >
-                <button on:click=move |_| manual_refresh.update(|v| *v += 1) class="btn btn-secondary text-xs">
+                <button on:click=move |_| {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let Some(consumer) = selected_consumer.get() else {
+                        live_data.set(None);
+                        return;
+                    };
+                    load_generation.update(|g| *g += 1);
+                    let request_id = load_generation.get();
+                    let window = window_secs.get();
+                    let buf = Arc::clone(&live_buffer);
+                    let dirty = Arc::clone(&live_dirty);
+                    let consumers = consumers;
+                    let alive = Arc::clone(&alive);
+                    leptos::task::spawn_local(async move {
+                        match api::fetch_live_metrics(&consumer, window).await {
+                            Ok(data) => {
+                                if !alive.load(Ordering::Relaxed) || load_generation.get() != request_id {
+                                    return;
+                                }
+                                if !data.available_consumers.is_empty() {
+                                    consumers.set(data.available_consumers.clone());
+                                    if selected_consumer.get_untracked().is_none()
+                                        && let Some(first) = data.available_consumers.first()
+                                    {
+                                        selected_consumer.set(Some(first.clone()));
+                                    }
+                                }
+                                buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
+                                *dirty.lock().expect("live_dirty lock poisoned") = true;
+                            }
+                            Err(e) => {
+                                if !alive.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if load_generation.get() == request_id {
+                                    live_data.set(Some(Err(e)));
+                                }
+                            }
+                        }
+                    });
+                } class="btn btn-secondary text-xs">
                     {move || t.overview_refresh()}
                 </button>
             </PageHeader>
@@ -715,7 +832,7 @@ fn LiveTrafficPanel(
                                     series=throughput_series
                                     height_px=140
                                     y_unit="req"
-                                    interactive=false
+                                    interactive=true
                                     empty_message=no_data
                                 />
                             }
@@ -746,7 +863,7 @@ fn LiveTrafficPanel(
                                     series=hit_series
                                     height_px=140
                                     y_unit="%"
-                                    interactive=false
+                                    interactive=true
                                     empty_message=no_data
                                 />
                             }
@@ -1176,7 +1293,7 @@ fn LiveLatencyPanel(
                             series=series
                             height_px=110
                             y_unit="ms"
-                            interactive=false
+                            interactive=true
                             empty_message=no_data
                         />
                     }
@@ -1270,7 +1387,7 @@ fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             series=hit_series
                             height_px=100
                             y_unit="req"
-                            interactive=false
+                            interactive=true
                             empty_message=no_data
                         />
                     }
@@ -1342,7 +1459,7 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             input_label=in_lbl_preview.clone()
                             output_label=out_lbl_preview.clone()
                             height_px=140
-                            interactive=false
+                            interactive=true
                             empty_message=no_data
                         />
                     }

@@ -208,21 +208,15 @@ pub fn y_range(series: &[ChartSeries]) -> (f64, f64) {
 
 /// Convert a mouse event's client position to SVG viewBox X (0..100).
 pub fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) -> Option<f64> {
-    let ctm = svg.get_screen_ctm()?;
-    let inv = ctm.inverse().ok()?;
-    let cx = ev.client_x() as f64;
-    let cy = ev.client_y() as f64;
-    let a = inv.a() as f64;
-    let b = inv.b() as f64;
-    let c = inv.c() as f64;
-    let d = inv.d() as f64;
-    let e = inv.e() as f64;
-    let f = inv.f() as f64;
-    let det = a * d - b * c;
-    if det.abs() < 1e-10 {
+    // Use client rect mapping for robust cross-browser behavior in nested flex/grid
+    // layouts and modal contexts; CTM-based mapping can become unstable in these cases.
+    let rect = svg.get_bounding_client_rect();
+    let width = rect.width();
+    if width <= f64::EPSILON {
         return None;
     }
-    Some((d * (cx - e) - c * (cy - f)) / det)
+    let x = ev.client_x() as f64 - rect.left();
+    Some(((x / width) * 100.0).clamp(0.0, 100.0))
 }
 
 pub fn format_tooltip_value(v: f64) -> String {

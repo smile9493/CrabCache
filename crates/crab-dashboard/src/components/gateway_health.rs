@@ -1,5 +1,7 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::locale::use_translations;
@@ -26,13 +28,15 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
     let health: RwSignal<Option<GatewayHealth>> = RwSignal::new(None);
 
     Effect::new(move |_| {
-        let alive = StoredValue::new(true);
+        let alive = Arc::new(AtomicBool::new(true));
 
         let fetch_health = {
             let health = health;
+            let alive = Arc::clone(&alive);
             move || {
+                let alive = Arc::clone(&alive);
                 leptos::task::spawn_local(async move {
-                    if !alive.get_value() {
+                    if !alive.load(Ordering::Relaxed) {
                         return;
                     }
                     let next = match api::fetch_gateway_health().await {
@@ -43,7 +47,7 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
                             ..GatewayHealth::default()
                         },
                     };
-                    if !alive.get_value() {
+                    if !alive.load(Ordering::Relaxed) {
                         return;
                     }
                     health.set(Some(next));
@@ -53,10 +57,11 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
 
         fetch_health();
 
+        let alive_loop = Arc::clone(&alive);
         leptos::task::spawn_local(async move {
             loop {
                 TimeoutFuture::new(POLL_INTERVAL_MS).await;
-                if !alive.get_value() {
+                if !alive_loop.load(Ordering::Relaxed) {
                     break;
                 }
                 if page_visible() {
@@ -66,7 +71,7 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
         });
 
         on_cleanup(move || {
-            alive.set_value(false);
+            alive.store(false, Ordering::Relaxed);
         });
     });
 

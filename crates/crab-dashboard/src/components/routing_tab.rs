@@ -4,7 +4,10 @@ use crate::api;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::ProfileRoutingView;
+use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Renders the "路由与健康" tab content for a given profile.
 #[component]
@@ -12,20 +15,35 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
     let routing: RwSignal<Option<ProfileRoutingView>> = RwSignal::new(None);
     let error: RwSignal<String> = RwSignal::new(String::new());
     let loading: RwSignal<bool> = RwSignal::new(true);
+    let alive = Arc::new(AtomicBool::new(true));
 
     // Fetch routing data when profile_id changes.
     let pid = profile_id.clone();
+    let alive_for_effect = Arc::clone(&alive);
     Effect::new(move |_| {
+        if !alive_for_effect.load(Ordering::Relaxed) {
+            return;
+        }
         let pid = pid.clone();
+        let alive = Arc::clone(&alive_for_effect);
         loading.set(true);
         error.set(String::new());
         leptos::task::spawn_local(async move {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             match api::fetch_profile_routing(&pid).await {
                 Ok(data) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     routing.set(Some(data));
                     loading.set(false);
                 }
                 Err(e) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     error.set(e);
                     loading.set(false);
                 }
@@ -35,18 +53,27 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
 
     // Auto-refresh every 10 seconds.
     let pid_refresh = profile_id.clone();
-    let _refresh_handle = set_interval_with_handle(
-        move || {
+    let alive_for_interval = Arc::clone(&alive);
+    leptos::task::spawn_local(async move {
+        loop {
+            TimeoutFuture::new(10_000).await;
+            if !alive_for_interval.load(Ordering::Relaxed) {
+                break;
+            }
             let pid = pid_refresh.clone();
-            leptos::task::spawn_local(async move {
-                if let Ok(data) = api::fetch_profile_routing(&pid).await {
-                    routing.set(Some(data));
+            let alive = Arc::clone(&alive_for_interval);
+            if let Ok(data) = api::fetch_profile_routing(&pid).await {
+                if !alive.load(Ordering::Relaxed) {
+                    break;
                 }
-            });
-        },
-        std::time::Duration::from_secs(10),
-    )
-    .ok();
+                routing.set(Some(data));
+            }
+        }
+    });
+
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
+    });
 
     view! {
         <div class="space-y-4">

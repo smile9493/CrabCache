@@ -16,6 +16,18 @@ use crate::types::{
     OverviewSuggestion, PrefixCacheMetricsSnapshot, SemanticConfig, TraceSummary,
 };
 use crate::view_state;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+fn now_hms_string() -> String {
+    let d = js_sys::Date::new_0();
+    format!(
+        "{:02}:{:02}:{:02}",
+        d.get_hours(),
+        d.get_minutes(),
+        d.get_seconds()
+    )
+}
 
 fn metrics_from_core(
     core: &MetricsSnapshotCore,
@@ -93,6 +105,7 @@ pub fn OverviewPage() -> impl IntoView {
     let ts_generation = RwSignal::new(0u64);
     let etag = RwSignal::new(String::new());
     let ts_etag = RwSignal::new(String::new());
+    let alive = Arc::new(AtomicBool::new(true));
 
     // SSE connection — receives pushed metrics, reducing polling overhead.
     // Data flows through a non-reactive buffer + rAF flush to decouple SSE
@@ -103,6 +116,7 @@ pub fn OverviewPage() -> impl IntoView {
         let last_update = last_update;
         let last_update_ts = last_update_ts;
         let sse_active = sse_active;
+        let alive = Arc::clone(&alive);
         leptos::task::spawn_local(async move {
             use futures::StreamExt;
             use std::cell::RefCell;
@@ -130,8 +144,7 @@ pub fn OverviewPage() -> impl IntoView {
                         if let Some(core) = buffer.borrow_mut().take() {
                             detect_and_toast(&core);
                             overview_core.set(Some(Ok(core)));
-                            last_update
-                                .set(chrono::Local::now().format("%H:%M:%S").to_string());
+                            last_update.set(now_hms_string());
                             last_update_ts.set(js_sys::Date::now() as u64);
                         }
                         *dirty.borrow_mut() = false;
@@ -160,9 +173,15 @@ pub fn OverviewPage() -> impl IntoView {
             }
 
             loop {
+                if !alive.load(Ordering::Relaxed) {
+                    break;
+                }
                 let es = match api::connect_sse() {
                     Ok(es) => es,
                     Err(_) => {
+                        if !alive.load(Ordering::Relaxed) {
+                            break;
+                        }
                         sse_active.set(false);
                         *active.borrow_mut() = false;
                         gloo_timers::future::TimeoutFuture::new(5_000).await;
@@ -214,6 +233,9 @@ pub fn OverviewPage() -> impl IntoView {
                 // Write incoming data to non-reactive buffer; rAF loop flushes
                 // at most once per animation frame.
                 while let Some(data) = rx.next().await {
+                    if !alive.load(Ordering::Relaxed) {
+                        break;
+                    }
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
                         if parsed.get("type").and_then(|t| t.as_str()) == Some("metrics") {
                             if let Some(metrics_data) = parsed.get("data") {
@@ -229,6 +251,10 @@ pub fn OverviewPage() -> impl IntoView {
                 }
 
                 // Connection lost — stop rAF loop and retry
+                if !alive.load(Ordering::Relaxed) {
+                    es.close();
+                    break;
+                }
                 sse_active.set(false);
                 *active.borrow_mut() = false;
                 es.close();
@@ -237,14 +263,22 @@ pub fn OverviewPage() -> impl IntoView {
         });
     }
 
-    let load_core = move || {
+    let alive_for_core = Arc::clone(&alive);
+    let load_core: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        if !alive_for_core.load(Ordering::Relaxed) {
+            return;
+        }
         load_generation.update(|g| *g += 1);
         let request_id = load_generation.get();
         let current_etag = etag.get();
         is_loading.set(true);
         // Watchdog: avoid endless skeleton when request hangs (network/proxy issues).
+        let alive = Arc::clone(&alive_for_core);
         leptos::task::spawn_local(async move {
             TimeoutFuture::new(12_000).await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             if load_generation.get() == request_id {
                 if overview_core.get().is_none() {
                     overview_core.set(Some(Err(
@@ -255,20 +289,27 @@ pub fn OverviewPage() -> impl IntoView {
                 is_loading.set(false);
             }
         });
+        let alive = Arc::clone(&alive_for_core);
         leptos::task::spawn_local(async move {
             match api::fetch_overview_core(&current_etag).await {
                 Ok(result) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     etag.set(result.etag);
                     if load_generation.get() == request_id
                         && let Some(core) = result.core
                     {
                         detect_and_toast(&core);
                         overview_core.set(Some(Ok(core)));
-                        last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                        last_update.set(now_hms_string());
                         last_update_ts.set(js_sys::Date::now() as u64);
                     }
                 }
                 Err(e) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     if load_generation.get() == request_id {
                         overview_core.set(Some(Err(e)));
                     }
@@ -276,24 +317,40 @@ pub fn OverviewPage() -> impl IntoView {
             }
             is_loading.set(false);
         });
-    };
+    });
 
-    let load_trace = move || {
+    let alive_for_trace = Arc::clone(&alive);
+    let load_trace: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let alive = Arc::clone(&alive_for_trace);
         leptos::task::spawn_local(async move {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             if let Ok(summary) = api::fetch_overview_trace().await {
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
                 trace_summary.set(Some(summary));
             }
         });
-    };
+    });
 
-    let load_timeseries = move || {
+    let alive_for_ts = Arc::clone(&alive);
+    let load_timeseries: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        if !alive_for_ts.load(Ordering::Relaxed) {
+            return;
+        }
         ts_generation.update(|g| *g += 1);
         let request_id = ts_generation.get();
         let window = ts_window.get_untracked();
         let current_ts_etag = ts_etag.get();
+        let alive = Arc::clone(&alive_for_ts);
         leptos::task::spawn_local(async move {
             match api::fetch_overview_timeseries_etag(&window, &current_ts_etag).await {
                 Ok(result) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     ts_etag.set(result.etag);
                     if ts_generation.get() == request_id {
                         if let Some(points) = result.points {
@@ -308,15 +365,15 @@ pub fn OverviewPage() -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
     let deferred_loaded = RwSignal::new(false);
 
     load_core();
 
     Effect::new({
-        let load_trace = load_trace;
-        let load_timeseries = load_timeseries;
+        let load_trace = Arc::clone(&load_trace);
+        let load_timeseries = Arc::clone(&load_timeseries);
         move |_| {
             if deferred_loaded.get() {
                 return;
@@ -330,7 +387,7 @@ pub fn OverviewPage() -> impl IntoView {
     });
 
     Effect::new({
-        let load_timeseries = load_timeseries;
+        let load_timeseries = Arc::clone(&load_timeseries);
         move |_| {
             if !deferred_loaded.get() {
                 return;
@@ -350,19 +407,26 @@ pub fn OverviewPage() -> impl IntoView {
         view_state::save_view_state(&state);
     });
 
+    let alive_poll = Arc::clone(&alive);
+    let load_core_poll = Arc::clone(&load_core);
+    let load_ts_poll = Arc::clone(&load_timeseries);
+    let load_trace_poll = Arc::clone(&load_trace);
     leptos::task::spawn_local(async move {
         let mut tick: u64 = 0;
         loop {
             TimeoutFuture::new(10_000).await;
+            if !alive_poll.load(Ordering::Relaxed) {
+                break;
+            }
             tick += 1;
             // Skip polling when SSE is actively pushing updates.
             if auto_refresh.get() && page_visible() && !sse_active.get() {
-                load_core();
+                load_core_poll();
                 // Timeseries and trace refresh every 60s (every 6th tick)
                 // to align with the 60s backend sampling interval.
                 if tick.is_multiple_of(6) && deferred_loaded.get_untracked() {
-                    load_timeseries();
-                    load_trace();
+                    load_ts_poll();
+                    load_trace_poll();
                 }
             }
         }
@@ -370,9 +434,13 @@ pub fn OverviewPage() -> impl IntoView {
 
     // Relative time updater
     let relative_time = RwSignal::new(String::new());
+    let alive_clock = Arc::clone(&alive);
     leptos::task::spawn_local(async move {
         loop {
             TimeoutFuture::new(1_000).await;
+            if !alive_clock.load(Ordering::Relaxed) {
+                break;
+            }
             let ts = last_update_ts.get();
             if ts > 0 {
                 let now = js_sys::Date::now() as u64;
@@ -389,6 +457,10 @@ pub fn OverviewPage() -> impl IntoView {
                 relative_time.set(text);
             }
         }
+    });
+
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
     });
 
     view! {

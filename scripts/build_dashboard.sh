@@ -11,6 +11,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}/crates/crab-dashboard"
 
+# Some toolchains convert NO_COLOR=1 into `--no-color=1`, but Trunk expects
+# boolean true/false. Normalize to avoid CLI parsing failure in CI/shell envs.
+if [ "${NO_COLOR:-}" = "1" ]; then
+  export NO_COLOR=true
+fi
+
 if ! command -v trunk >/dev/null 2>&1; then
   echo "Installing trunk..."
   cargo install trunk --locked

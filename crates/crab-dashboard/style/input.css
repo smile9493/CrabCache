@@ -679,7 +679,7 @@ body {
   white-space: nowrap;
 }
 .chart-preview-card-body {
-  pointer-events: none;
+  pointer-events: auto;
 }
 .chart-detail-host--hidden {
   display: none;
