@@ -269,6 +269,14 @@ impl RuntimeConfig {
     /// Insert or replace a profile and refresh pipeline globals.
     pub fn upsert_profile(&self, profile: Arc<UpstreamProfileRuntime>) -> Result<(), String> {
         let id = profile.id.clone();
+        {
+            let mut profiles = self.upstream_profiles.write();
+            profiles.insert(id.clone(), profile);
+        }
+        debug_assert!(
+            self.upstream_profiles.read().contains_key(&id),
+            "upsert_profile must make profile immediately readable"
+        );
         self.refresh_known_profile_ids();
         if id == self.default_upstream_profile_id() {
             self.sync_legacy_from_profile_id(&id)?;

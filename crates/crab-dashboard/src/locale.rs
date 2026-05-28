@@ -4151,6 +4151,24 @@ impl Translations {
             Locale::EnUS => "N/A",
         }
     }
+    pub fn upstream_quota_test_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "测试失败",
+            Locale::EnUS => "Failed",
+        }
+    }
+    pub fn upstream_quota_auth_failed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "认证失败",
+            Locale::EnUS => "Auth Failed",
+        }
+    }
+    pub fn upstream_quota_rate_limited(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "限流",
+            Locale::EnUS => "Rate Limited",
+        }
+    }
     pub fn upstream_connection_test_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "连接测试",

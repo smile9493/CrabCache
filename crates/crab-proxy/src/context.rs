@@ -293,7 +293,7 @@ pub struct GatewayContext {
     pub accumulated_body: Vec<u8>,
     pub is_coalesced_follower: bool,
     pub coalesce_guard: Option<CoalesceGuard>,
-    pub original_request_body: Option<Vec<u8>>,
+    pub original_request_body: Option<Bytes>,
     /// Parsed client JSON payload reused across pipeline/composition/raw-capture to avoid re-parse.
     pub parsed_request_payload: Option<Arc<serde_json::Value>>,
     pub prepared_request: Option<PreparedRequest>,
@@ -432,9 +432,9 @@ pub struct GatewayState {
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
     pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
     pub features: FeaturesConfig,
-    /// Global RPS estimate from pingora-limits (updated per request).
-    pub global_rate: Arc<pingora_limits::rate::Rate>,
     /// Tracks session fingerprints that have already been seen (for connection pre-warm).
     /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
     pub seen_session_fingerprints: moka::sync::Cache<String, ()>,
+    /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).
+    pub global_rate: Arc<pingora_limits::rate::Rate>,
 }

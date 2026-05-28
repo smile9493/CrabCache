@@ -2,6 +2,21 @@ use http::HeaderMap;
 use sha2::{Digest, Sha256};
 use tracing::trace;
 
+/// Extract an affinity key for consistent-hash routing.
+///
+/// The key is resolved by priority (first match wins):
+/// 1. `x-conversation-id` header → `conv:{id}`
+/// 2. `x-prompt-cache-key` header → `pck:{key}`
+/// 3. `body_prompt_cache_key` param → `pck:{key}`
+/// 4. `body_user_id` param → `user:{id}`
+/// 5. `x-user-id` header → `user:{id}`
+/// 6. `session_fingerprint` param → `sfp:{fp}`
+/// 7. SHA-256 truncated client IP → `ip:{hash}`
+///
+/// **Header dependency:** This function reads exactly three headers from `headers`:
+/// `x-conversation-id`, `x-prompt-cache-key`, and `x-user-id`.
+/// Callers that build a minimal `HeaderMap` (e.g. `proxy.rs` request_filter /
+/// upstream_peer) must include all three — update both sites if this list changes.
 pub fn extract_affinity_key(
     headers: &HeaderMap,
     client_ip: &str,

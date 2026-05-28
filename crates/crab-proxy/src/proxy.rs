@@ -173,7 +173,6 @@ impl GatewayProxy {
         &self,
         session: &mut Session,
         ctx: &mut GatewayContext,
-        cache_key_body: &[u8],
     ) -> bool {
         let gate = {
             let runtime = self.state.semantic_runtime.read();
@@ -185,7 +184,7 @@ impl GatewayProxy {
         let Some(semantic_cache) = &self.state.semantic_cache else {
             return false;
         };
-        let Ok(payload_value) = serde_json::from_slice::<serde_json::Value>(cache_key_body) else {
+        let Some(payload_value) = ctx.parsed_request_payload.as_ref() else {
             return false;
         };
         let Some(messages) = payload_value.get("messages").and_then(|m| m.as_array()) else {
@@ -610,6 +609,7 @@ impl ProxyHttp for GatewayProxy {
 
         let mut full_body = Vec::new();
         let max_body = self.state.max_request_body_bytes;
+        let mut hasher = Sha256::new();
         loop {
             match session.downstream_session.read_request_body().await? {
                 Some(data) => {
@@ -618,6 +618,7 @@ impl ProxyHttp for GatewayProxy {
                         let _ = session.respond_error(413).await;
                         return Ok(true);
                     }
+                    hasher.update(&data);
                     full_body.extend_from_slice(&data);
                 }
                 None => break,
@@ -632,13 +633,12 @@ impl ProxyHttp for GatewayProxy {
             return Ok(true);
         }
 
+        let full_body = Bytes::from(full_body);
+        ctx.content_length = full_body.len();
         ctx.original_request_body = Some(full_body.clone());
 
-        let mut hasher = Sha256::new();
-        hasher.update(&full_body);
         let req_hash = hex::encode(hasher.finalize());
         ctx.req_hash = Some(req_hash);
-        ctx.content_length = full_body.len();
 
         let parse_start = Instant::now();
         let parsed_payload = match serde_json::from_slice::<serde_json::Value>(&full_body) {
@@ -687,13 +687,16 @@ impl ProxyHttp for GatewayProxy {
             .client_addr()
             .map(|a| a.to_string())
             .unwrap_or_default();
-        let affinity_headers = HeaderMap::from_iter(
-            session
-                .req_header()
-                .headers
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+        // Build a minimal HeaderMap with only the headers needed for affinity extraction,
+        // avoiding a full HeaderMap clone of all request headers.
+        // Headers must match extract_affinity_key() — see its doc comment.
+        let mut affinity_headers = HeaderMap::with_capacity(3);
+        let req_hdrs = &session.req_header().headers;
+        for hdr in ["x-conversation-id", "x-prompt-cache-key", "x-user-id"] {
+            if let Some(v) = req_hdrs.get(hdr) {
+                affinity_headers.insert(hdr, v.clone());
+            }
+        }
         ctx.upstream.affinity_key = Some(extract_affinity_key(
             &affinity_headers,
             &client_ip,
@@ -1043,7 +1046,7 @@ impl ProxyHttp for GatewayProxy {
         let new_body = ctx
             .new_request_body
             .clone()
-            .unwrap_or_else(|| Bytes::from(full_body));
+            .unwrap_or(full_body);
         ctx.upstream_outbound_body_len = new_body.len();
         // #region agent log
         let outbound_fp: String = {
@@ -1375,9 +1378,8 @@ impl ProxyHttp for GatewayProxy {
             }
 
             if may_try_l2 {
-                let cache_key_body_owned = cache_key_body.to_vec();
                 if self
-                    .try_l2_semantic_cache(session, ctx, &cache_key_body_owned)
+                    .try_l2_semantic_cache(session, ctx)
                     .await
                 {
                     return Ok(true);
@@ -1666,18 +1668,20 @@ impl ProxyHttp for GatewayProxy {
             .map(|a| a.to_string())
             .unwrap_or_default();
 
-        let headers = HeaderMap::from_iter(
-            req_header
-                .headers
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+        // Build minimal HeaderMap for affinity fallback (only needed headers).
+        // Headers must match extract_affinity_key() — see its doc comment.
+        let mut affinity_headers_fallback = HeaderMap::with_capacity(3);
+        for hdr in ["x-conversation-id", "x-prompt-cache-key", "x-user-id"] {
+            if let Some(v) = req_header.headers.get(hdr) {
+                affinity_headers_fallback.insert(hdr, v.clone());
+            }
+        }
 
         // Reuse affinity key from request_filter if available (avoids redundant SHA-256 hash)
         let body_pck = ctx.prompt_cache_key.as_deref();
         let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
             extract_affinity_key(
-                &headers,
+                &affinity_headers_fallback,
                 &client_ip,
                 body_pck,
                 ctx.project_id.as_deref(),

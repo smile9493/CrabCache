@@ -1250,8 +1250,14 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                                 }.into_any()
                                                                                             } else {
                                                                                                 let err_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
+                                                                                                let (label, cls) = match result.status_code {
+                                                                                                    401 | 403 => (t.upstream_quota_auth_failed(), "text-xs text-error"),
+                                                                                                    402 => (t.upstream_quota_exhausted(), "text-xs text-error"),
+                                                                                                    429 => (t.upstream_quota_rate_limited(), "text-xs text-warning"),
+                                                                                                    _ => (t.upstream_quota_test_failed(), "text-xs text-error"),
+                                                                                                };
                                                                                                 view! {
-                                                                                                    <span class="text-xs text-error" title={err_msg}>{t.upstream_quota_exhausted()}</span>
+                                                                                                    <span class=cls title={err_msg}>{label}</span>
                                                                                                 }.into_any()
                                                                                             }
                                                                                         }

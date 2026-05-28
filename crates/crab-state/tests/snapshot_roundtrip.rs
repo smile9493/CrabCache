@@ -5,7 +5,7 @@ use crab_pipeline::{PipelineGlobals, UpstreamProvider};
 use crab_proxy::{
     ConnectionConfig, DomainPolicy, RuntimeConfig, UpstreamKeyPool, UpstreamProfileRuntime,
 };
-use crab_route::AffinityRouter;
+use crab_route::LbRouter;
 use crab_state::{ControlPlaneSnapshot, apply_snapshot_to_runtime, build_snapshot_from_runtime};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
@@ -19,7 +19,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
         "api.deepseek.com",
     )
     .unwrap();
-    let router = AffinityRouter::new(&backends).unwrap();
+    let router = LbRouter::new(&backends).unwrap();
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
@@ -32,7 +32,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             base_url: "https://api.deepseek.com".to_string(),
             fallback_model: "deepseek-v4-pro".to_string(),
             tls_sni: "api.deepseek.com".to_string(),
-            router: AffinityRouter::new(&backends).unwrap(),
+            router: LbRouter::new(&backends).unwrap(),
             upstream_pool: pool_handle.clone(),
         }),
     );
@@ -273,4 +273,35 @@ fn connection_config_roundtrip() {
     apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply");
     let loaded = runtime_b.conn_config.read().clone();
     assert_eq!(loaded.tcp_keepalive_idle_secs, Some(120));
+}
+
+#[test]
+fn upsert_profile_is_immediately_readable() {
+    let runtime = test_runtime();
+    assert!(runtime.profile("mimo").is_none());
+
+    let mimo_backends = crab_control::parse_backend_endpoints(
+        &["127.0.0.1:443".to_string()],
+        1,
+        "api.xiaomimimo.com",
+    )
+    .unwrap();
+    let mimo_pool =
+        UpstreamKeyPool::from_secrets(vec!["sk-mimo-upsert-test-key-12345678".into()], 60);
+    let mimo_pool_handle = Arc::new(RwLock::new(mimo_pool));
+    let mimo_profile = Arc::new(UpstreamProfileRuntime {
+        id: "mimo".to_string(),
+        provider: UpstreamProvider::Mimo,
+        base_url: "https://api.xiaomimimo.com".to_string(),
+        fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+        tls_sni: "api.xiaomimimo.com".to_string(),
+        router: LbRouter::new(&mimo_backends).unwrap(),
+        upstream_pool: mimo_pool_handle,
+    });
+
+    runtime.upsert_profile(mimo_profile).expect("upsert");
+
+    let loaded = runtime.profile("mimo").expect("profile should exist right after upsert");
+    assert_eq!(loaded.base_url, "https://api.xiaomimimo.com");
+    assert_eq!(loaded.fallback_model, "xiaomi/mimo-v2.5-pro");
 }

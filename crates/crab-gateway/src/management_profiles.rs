@@ -69,6 +69,24 @@ async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo>
     None
 }
 
+fn format_upstream_test_error(status_code: u16, body: &str) -> String {
+    match status_code {
+        401 | 403 => format!("authentication failed (HTTP {status_code})"),
+        402 => format!(
+            "insufficient balance/quota (HTTP 402): {}",
+            body.chars().take(200).collect::<String>()
+        ),
+        429 => format!(
+            "rate limited or quota exhausted (HTTP 429): {}",
+            body.chars().take(200).collect::<String>()
+        ),
+        _ => format!(
+            "HTTP {status_code}: {}",
+            body.chars().take(200).collect::<String>()
+        ),
+    }
+}
+
 fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<UpstreamProfileView> {
     let profile = runtime.profile(id)?;
     let pool = profile.resolve_upstream_pool();
@@ -108,6 +126,13 @@ pub async fn list_upstream_profiles(
     Ok(Json(profiles_response(&state.runtime)))
 }
 
+/// Upsert an upstream profile by id.
+///
+/// Semantics:
+/// - Create if profile does not exist.
+/// - Replace if profile already exists.
+/// - Write-after-read is guaranteed: after a successful `PUT`, subsequent `GET /v1/upstream/profiles`
+///   should immediately include this profile id.
 pub async fn put_upstream_profile(
     State(state): State<ManagementState>,
     headers: HeaderMap,
@@ -149,18 +174,50 @@ pub async fn put_upstream_profile(
         state.upstream_key_cooldown_secs,
         existing_pool,
     )
-    .map_err(|e| bad_request(&e))?;
+    .map_err(|e| {
+        tracing::warn!(
+            profile_id = %id,
+            provider = %req.provider.trim().to_lowercase(),
+            base_url = %req.base_url.trim(),
+            error = %e,
+            "Failed to build upstream profile runtime"
+        );
+        bad_request(&e)
+    })?;
 
     state
         .runtime
         .upsert_profile(profile)
-        .map_err(|e| bad_request(&e))?;
+        .map_err(|e| {
+            tracing::warn!(
+                profile_id = %id,
+                provider = %req.provider.trim().to_lowercase(),
+                base_url = %req.base_url.trim(),
+                error = %e,
+                "Failed to upsert upstream profile"
+            );
+            bad_request(&e)
+        })?;
 
-    tracing::info!(profile_id = %id, "Upstream profile upserted");
+    tracing::info!(
+        profile_id = %id,
+        provider = %req.provider.trim().to_lowercase(),
+        base_url = %req.base_url.trim(),
+        "Upstream profile upserted"
+    );
     schedule_persist_state(&state);
 
-    let view = profile_view(&state.runtime, &id)
-        .ok_or_else(|| internal_error("profile missing after upsert"))?;
+    let view = profile_view(&state.runtime, &id).ok_or_else(|| {
+        tracing::error!(
+            profile_id = %id,
+            provider = %req.provider.trim().to_lowercase(),
+            base_url = %req.base_url.trim(),
+            "Profile not found immediately after successful upsert"
+        );
+        internal_error(&format!(
+            "upstream profile '{id}' missing after upsert; write-after-read violated"
+        ))
+    })?;
     Ok(Json(view))
 }
 
@@ -366,18 +423,20 @@ pub async fn test_upstream_profile(
         Ok(r) => {
             let status = r.status();
             let ok = status.is_success();
-            let model_count = if ok {
-                r.json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len()))
+            let (model_count, error) = if ok {
+                (
+                    r.json::<serde_json::Value>()
+                        .await
+                        .ok()
+                        .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len())),
+                    None,
+                )
             } else {
-                None
-            };
-            let error = if ok {
-                None
-            } else {
-                Some(format!("HTTP {}", status.as_u16()))
+                let body = r.text().await.unwrap_or_default();
+                (
+                    None,
+                    Some(format_upstream_test_error(status.as_u16(), &body)),
+                )
             };
             // Try balance endpoint for quota info (all providers).
             let mut quota = None;
@@ -492,18 +551,20 @@ pub async fn test_upstream_profile_key(
         Ok(r) => {
             let status = r.status();
             let ok = status.is_success();
-            let model_count = if ok {
-                r.json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len()))
+            let (model_count, error) = if ok {
+                (
+                    r.json::<serde_json::Value>()
+                        .await
+                        .ok()
+                        .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len())),
+                    None,
+                )
             } else {
-                None
-            };
-            let error = if ok {
-                None
-            } else {
-                Some(format!("HTTP {}", status.as_u16()))
+                let body = r.text().await.unwrap_or_default();
+                (
+                    None,
+                    Some(format_upstream_test_error(status.as_u16(), &body)),
+                )
             };
             Ok(Json(UpstreamTestResult {
                 ok,

@@ -62,6 +62,9 @@ async fn test_management_state() -> Option<ManagementState> {
             SemanticGateConfig::default(),
         ))),
         semantic_cache: None,
+        global_rate: Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(
+            1,
+        ))),
     })
 }
 
@@ -1037,6 +1040,333 @@ async fn upstream_profiles_list_and_upsert() {
         .unwrap();
     let get_json: serde_json::Value = serde_json::from_slice(&get_bytes).unwrap();
     assert_eq!(get_json["keys"][0]["enabled"], false);
+}
+
+#[tokio::test]
+async fn upstream_profile_put_is_immediately_listed() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_body = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_bytes).unwrap();
+    let profiles = list_json["profiles"].as_array().expect("profiles array");
+    assert!(
+        profiles.iter().any(|p| p["id"].as_str() == Some("mimo")),
+        "newly upserted profile should be visible immediately in profile list"
+    );
+}
+
+#[tokio::test]
+async fn upstream_profile_put_invalid_payload_rejected_and_not_persisted() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let invalid_cases = [
+        serde_json::json!({
+            "provider": "",
+            "base_url": "https://api.example.com",
+            "fallback_model": "m1",
+            "endpoints": ["api.example.com:443"],
+            "default_weight": 1
+        }),
+        serde_json::json!({
+            "provider": "mimo",
+            "base_url": "https://api.example.com",
+            "fallback_model": "",
+            "endpoints": ["api.example.com:443"],
+            "default_weight": 1
+        }),
+        serde_json::json!({
+            "provider": "mimo",
+            "base_url": "not-a-url",
+            "fallback_model": "m1",
+            "endpoints": ["api.example.com:443"],
+            "default_weight": 1
+        }),
+    ];
+
+    for body in invalid_cases {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/upstream/profiles/mimo-invalid")
+                    .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_bytes).unwrap();
+    let profiles = list_json["profiles"].as_array().expect("profiles array");
+    assert!(
+        profiles
+            .iter()
+            .all(|p| p["id"].as_str() != Some("mimo-invalid")),
+        "invalid upsert requests must not leak partial profile state"
+    );
+}
+
+#[tokio::test]
+async fn upstream_profile_upsert_overwrites_without_duplicate_entries() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let first = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let second = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-plus",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+
+    for body in [first, second] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/upstream/profiles/mimo-overwrite")
+                    .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_bytes).unwrap();
+    let profiles = list_json["profiles"].as_array().expect("profiles array");
+    let matches: Vec<&serde_json::Value> = profiles
+        .iter()
+        .filter(|p| p["id"].as_str() == Some("mimo-overwrite"))
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "upsert must overwrite existing profile instead of creating duplicates"
+    );
+    assert_eq!(
+        matches[0]["fallback_model"].as_str(),
+        Some("xiaomi/mimo-v2.5-plus")
+    );
+}
+
+#[tokio::test]
+async fn upstream_profile_upsert_concurrent_no_500_and_consistent() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0..8 {
+        let app_cloned = app.clone();
+        set.spawn(async move {
+            let body = serde_json::json!({
+                "provider": "mimo",
+                "base_url": "https://api.xiaomimimo.com",
+                "fallback_model": format!("xiaomi/mimo-concurrent-{i}"),
+                "endpoints": ["api.xiaomimimo.com:443"],
+                "default_weight": 1
+            });
+            app_cloned
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/v1/upstream/profiles/mimo-concurrent")
+                        .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        });
+    }
+
+    while let Some(joined) = set.join_next().await {
+        let status = joined.expect("task join");
+        assert!(
+            status.is_success(),
+            "concurrent upsert should not fail, got status {status}"
+        );
+    }
+
+    let list_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_bytes).unwrap();
+    let profiles = list_json["profiles"].as_array().expect("profiles array");
+    let matches: Vec<&serde_json::Value> = profiles
+        .iter()
+        .filter(|p| p["id"].as_str() == Some("mimo-concurrent"))
+        .collect();
+    assert_eq!(matches.len(), 1, "concurrent upsert should converge to one profile entry");
+}
+
+/// Upstream profiles written via Management API are visible after reload from Redis.
+#[tokio::test]
+async fn upstream_profiles_persisted_in_redis_state() {
+    let Some(mut state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let redis_url = std::env::var("CRABCACHE_TEST_REDIS_URL")
+        .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+    let store = match RedisStateStore::connect(&RedisStateConfig::new(
+        redis_url,
+        format!("crab:state:test:{}", uuid::Uuid::new_v4()),
+    ))
+    .await
+    {
+        Ok(s) => Arc::new(s),
+        Err(_) => {
+            skip_or_panic_redis_unavailable();
+            return;
+        }
+    };
+    state.state_store = Some(store.clone());
+
+    let app = router(state.clone());
+    let body = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-persist")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let (_, snap) = store.load_all().await.expect("load redis state");
+    let persisted_profiles = snap
+        .upstream_profiles
+        .as_ref()
+        .expect("upstream profiles must be present in snapshot");
+    assert!(
+        persisted_profiles.iter().any(|p| p.id == "mimo-persist"),
+        "upserted profile should be persisted in Redis control plane"
+    );
+
+    let runtime_b = common::test_runtime();
+    apply_snapshot_to_runtime(&runtime_b, &snap, 60).expect("apply snapshot");
+    assert!(
+        runtime_b.profile("mimo-persist").is_some(),
+        "second runtime should see profile after Redis reload"
+    );
 }
 
 #[tokio::test]

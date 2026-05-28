@@ -19,6 +19,7 @@ pingora.workspace = true
 pingora-core.workspace = true
 pingora-proxy.workspace = true
 pingora-http.workspace = true
+pingora-limits.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 bytes.workspace = true
@@ -33,10 +34,9 @@ dashmap.workspace = true
 parking_lot.workspace = true
 crab-composition.workspace = true
 crab-capture.workspace = true
-pingora-limits.workspace = true
-reqwest.workspace = true
 sha2.workspace = true
 hex.workspace = true
+memchr.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 indexmap = { workspace = true }
