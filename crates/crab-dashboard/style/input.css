@@ -736,8 +736,15 @@ body {
   gap: 1rem;
   align-items: stretch;
 }
+.live-detail-row-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: stretch;
+}
 @media (max-width: 1023px) {
-  .live-detail-row {
+  .live-detail-row,
+  .live-detail-row-2col {
     grid-template-columns: 1fr;
   }
 }

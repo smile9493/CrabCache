@@ -8,10 +8,10 @@ use std::sync::Mutex;
 use wasm_bindgen::JsCast;
 
 use crate::api;
-use crate::components::bar_chart::BarChart;
+use crate::components::candlestick_chart::{CandlestickChart, CandlestickPoint};
 use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
-use crate::components::line_chart::{ChartSeries, TokenLineChart};
+use crate::components::line_chart::{ChartSeries, LineChart, TokenLineChart};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
@@ -19,9 +19,26 @@ use crate::page_visible::page_visible;
 use crate::pages::overview::format_number;
 use crate::types::{
     KeyConcurrencyResponse, KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse,
-    LiveMetricsSummary, ProfileRoutingView,
+    LiveMetricsSeries, LiveMetricsSummary, ProfileRoutingView, SERIES_COLORS,
 };
 use crate::view_state;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveGroupBy {
+    None,
+    Model,
+    CacheHit,
+}
+
+impl LiveGroupBy {
+    fn as_slice(&self) -> &'static [&'static str] {
+        match self {
+            LiveGroupBy::None => &[],
+            LiveGroupBy::Model => &["model"],
+            LiveGroupBy::CacheHit => &["cache_hit"],
+        }
+    }
+}
 
 fn now_hms_string() -> String {
     let d = js_sys::Date::new_0();
@@ -195,11 +212,11 @@ pub fn LivePage() -> impl IntoView {
     let consumers_loaded = RwSignal::new(false);
     let consumers_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
+    let group_by = RwSignal::new(LiveGroupBy::None);
     // Keep chart detail open/close state stable across polling refreshes.
     let throughput_open = RwSignal::new(false);
     let hit_open = RwSignal::new(false);
     let latency_open = RwSignal::new(false);
-    let cache_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
@@ -348,11 +365,13 @@ pub fn LivePage() -> impl IntoView {
             load_generation.update(|g| *g += 1);
             let request_id = load_generation.get();
             let window = window_secs.get();
+            let gb = group_by.get().as_slice().to_vec();
             let buf = Arc::clone(&live_buffer_for_loader);
             let dirty = Arc::clone(&live_dirty_for_loader);
             let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
-                match api::fetch_live_metrics(&consumer, window).await {
+                let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
+                match api::fetch_live_metrics_v2(&consumer, window, &gb_refs, "", "").await {
                     Ok(data) => {
                         if !alive.load(Ordering::Relaxed) {
                             return;
@@ -540,12 +559,14 @@ pub fn LivePage() -> impl IntoView {
                     load_generation.update(|g| *g += 1);
                     let request_id = load_generation.get();
                     let window = window_secs.get();
+                    let gb = group_by.get().as_slice().to_vec();
                     let buf = Arc::clone(&live_buffer);
                     let dirty = Arc::clone(&live_dirty);
                     let consumers = consumers;
                     let alive = Arc::clone(&alive);
                     leptos::task::spawn_local(async move {
-                        match api::fetch_live_metrics(&consumer, window).await {
+                        let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
+                        match api::fetch_live_metrics_v2(&consumer, window, &gb_refs, "", "").await {
                             Ok(data) => {
                                 if !alive.load(Ordering::Relaxed) || load_generation.get() != request_id {
                                     return;
@@ -582,6 +603,7 @@ pub fn LivePage() -> impl IntoView {
                 window_secs=window_secs
                 auto_refresh=auto_refresh
                 last_update=last_update
+                group_by=group_by
             />
 
             {move || {
@@ -632,7 +654,6 @@ pub fn LivePage() -> impl IntoView {
                                 data=data
                                 buckets=chart_buckets
                                 latency_open=latency_open
-                                cache_open=cache_open
                                 token_open=token_open
                                 routing_profiles=routing_profiles
                                 routing_key_ids=routing_key_ids
@@ -655,10 +676,11 @@ fn LiveTopConfigRow(
     window_secs: RwSignal<u32>,
     auto_refresh: RwSignal<bool>,
     last_update: RwSignal<String>,
+    group_by: RwSignal<LiveGroupBy>,
 ) -> impl IntoView {
     let t = use_translations();
     view! {
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div class="live-config-card">
                 <div class="live-config-card-title">{t.live_config_consumer()}</div>
                 <select
@@ -706,6 +728,38 @@ fn LiveTopConfigRow(
                     </span>
                 </div>
             </div>
+
+            <div class="live-config-card">
+                <div class="live-config-card-title">{"分线维度"}</div>
+                <div class="live-window-pills">
+                    {move || {
+                        let items: [(LiveGroupBy, &str, &str); 3] = [
+                            (LiveGroupBy::None, "group_none", t.live_group_by_all()),
+                            (LiveGroupBy::Model, "group_model", t.live_group_by_model()),
+                            (LiveGroupBy::CacheHit, "group_cache", t.live_group_by_cache()),
+                        ];
+                        items.into_iter().map(|(val, id, label)| {
+                            let label = label.to_string();
+                            let _id = id.to_string();
+                            view! {
+                                <button
+                                    type="button"
+                                    class=move || {
+                                        if group_by.get() == val {
+                                            "live-pill live-pill-active"
+                                        } else {
+                                            "live-pill"
+                                        }
+                                    }
+                                    on:click=move |_| group_by.set(val)
+                                >
+                                    {label}
+                                </button>
+                            }
+                        }).collect_view()
+                    }}
+                </div>
+            </div>
         </div>
     }
 }
@@ -748,6 +802,85 @@ fn LiveStatTile(label: &'static str, value: String, variant: LiveTileVariant) ->
     }
 }
 
+fn color_for_index(i: usize, hint: &str) -> String {
+    if !hint.is_empty() {
+        hint.to_string()
+    } else {
+        SERIES_COLORS[i % SERIES_COLORS.len()].to_string()
+    }
+}
+
+/// Build throughput ChartSeries from response. When `series` is non-empty
+/// (group_by active), each series becomes a line; otherwise single aggregated line.
+fn throughput_series_from_response(data: &LiveMetricsResponse, fallback_label: &str) -> Vec<ChartSeries> {
+    if !data.series.is_empty() {
+        let mut sorted: Vec<&LiveMetricsSeries> = data.series.iter().collect();
+        sorted.sort_by(|a, b| b.summary.request_count.cmp(&a.summary.request_count));
+        sorted
+            .iter()
+            .enumerate()
+            .map(|(i, s)| ChartSeries {
+                label: s.label.clone(),
+                color: color_for_index(i, &s.color_hint),
+                values: s
+                    .buckets
+                    .iter()
+                    .map(|b| {
+                        if b.request_count > 0 {
+                            Some(b.request_count as f64)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                dashed: false,
+                fill: false,
+            })
+            .collect()
+    } else {
+        vec![ChartSeries {
+            label: fallback_label.to_string(),
+            color: color_for_index(0, ""),
+            values: data
+                .buckets
+                .iter()
+                .map(|b| {
+                    if b.request_count > 0 {
+                        Some(b.request_count as f64)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            dashed: false,
+            fill: false,
+        }]
+    }
+}
+
+/// Build hit-rate ChartSeries from response. Always uses global `buckets`
+/// (cache_hit_count / request_count * 100) regardless of group_by,
+/// because per-group hit rate is meaningless (HIT series would always be 100%).
+fn hit_rate_series_from_response(data: &LiveMetricsResponse, fallback_label: &str) -> Vec<ChartSeries> {
+    vec![ChartSeries {
+        label: fallback_label.to_string(),
+        color: color_for_index(0, ""),
+        values: data
+            .buckets
+            .iter()
+            .map(|b| {
+                if b.request_count > 0 {
+                    Some(b.cache_hit_count as f64 / b.request_count as f64 * 100.0)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        dashed: false,
+        fill: false,
+    }]
+}
+
 #[component]
 fn LiveTrafficPanel(
     data: LiveMetricsResponse,
@@ -765,20 +898,9 @@ fn LiveTrafficPanel(
         0.0
     };
     let hit_pct = cache_hit_pct(&data);
-    let upstream_display = if s.avg_upstream_latency_ms > 0.0 {
-        format!("{:.0} ms", s.avg_upstream_latency_ms)
-    } else {
-        t.live_upstream_na().to_string()
-    };
-    let ttft_display = if s.avg_ttft_ms > 0.0 {
-        format!("{:.0} ms", s.avg_ttft_ms)
-    } else {
-        t.live_upstream_na().to_string()
-    };
     let window_lbl = window_label(window_secs, t).to_string();
     let buckets = std::sync::Arc::new(buckets);
     let throughput_label = t.live_chart_throughput().to_string();
-    let hit_label = t.live_cache_hit_trend().to_string();
 
     let x_labels = {
         let buckets = std::sync::Arc::clone(&buckets);
@@ -790,44 +912,77 @@ fn LiveTrafficPanel(
         })
     };
     let throughput_series = {
+        let d = data.clone();
         let buckets = std::sync::Arc::clone(&buckets);
+        let label = throughput_label.clone();
         Signal::derive(move || {
             let b = buckets.as_ref();
-            vec![ChartSeries {
-                label: throughput_label.clone(),
-                color: "var(--cc-accent)",
-                values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
-                dashed: false,
-                fill: false,
-            }]
+            if !d.series.is_empty() {
+                let ts_map: std::collections::HashMap<u64, usize> = b
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bucket)| (bucket.timestamp_ms, i))
+                    .collect();
+                let mut sorted: Vec<&LiveMetricsSeries> = d.series.iter().collect();
+                sorted.sort_by(|a, b| b.summary.request_count.cmp(&a.summary.request_count));
+                sorted
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let mut values: Vec<Option<f64>> = vec![None; b.len()];
+                        for sb in &s.buckets {
+                            if let Some(&idx) = ts_map.get(&sb.timestamp_ms) {
+                                if sb.request_count > 0 {
+                                    values[idx] = Some(sb.request_count as f64);
+                                }
+                            }
+                        }
+                        ChartSeries {
+                            label: s.label.clone(),
+                            color: color_for_index(i, &s.color_hint),
+                            values,
+                            dashed: false,
+                            fill: false,
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![ChartSeries {
+                    label: label.clone(),
+                    color: "var(--cc-accent)".to_string(),
+                    values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
+                    dashed: false,
+                    fill: true,
+                }]
+            }
         })
     };
     let hit_series = {
         let buckets = std::sync::Arc::clone(&buckets);
         Signal::derive(move || {
             let b = buckets.as_ref();
-            vec![ChartSeries {
-                label: hit_label.clone(),
-                color: "var(--cc-success)",
-                values: b
-                    .iter()
-                    .map(|x| {
-                        if x.request_count > 0 {
-                            Some(x.cache_hit_count as f64 / x.request_count as f64 * 100.0)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                dashed: false,
-                fill: false,
-            }]
+            vec![
+                ChartSeries {
+                    label: "total".to_string(),
+                    color: "var(--cc-border-light)".to_string(),
+                    values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
+                    dashed: false,
+                    fill: true,
+                },
+                ChartSeries {
+                    label: "hits".to_string(),
+                    color: "var(--cc-success)".to_string(),
+                    values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
+                    dashed: false,
+                    fill: true,
+                },
+            ]
         })
     };
 
     let chart_subtitle = format!("{consumer} · {window_lbl}");
     let throughput_title = t.live_chart_throughput().to_string();
-    let hit_title = t.live_cache_hit_trend().to_string();
+    let hit_title = format!("{} ({hit_pct:.1}%)", t.live_cache_hit_trend());
     let no_data = t.live_no_data();
 
     view! {
@@ -851,12 +1006,11 @@ fn LiveTrafficPanel(
                         open=throughput_open
                         preview=move || {
                             view! {
-                                <BarChart
+                                <LineChart
                                     x_labels=x_labels
                                     series=throughput_series
                                     height_px=140
                                     y_unit="req"
-                                    interactive=true
                                     empty_message=no_data
                                 />
                             }
@@ -864,12 +1018,11 @@ fn LiveTrafficPanel(
                         }
                         detail=move || {
                             view! {
-                                <BarChart
+                                <LineChart
                                     x_labels=x_labels
                                     series=throughput_series
                                     height_px=380
                                     y_unit="req"
-                                    interactive=true
                                     empty_message=no_data
                                 />
                             }
@@ -882,12 +1035,11 @@ fn LiveTrafficPanel(
                         open=hit_open
                         preview=move || {
                             view! {
-                                <BarChart
+                                <LineChart
                                     x_labels=x_labels
                                     series=hit_series
                                     height_px=140
-                                    y_unit="%"
-                                    interactive=true
+                                    y_unit="req"
                                     empty_message=no_data
                                 />
                             }
@@ -895,19 +1047,18 @@ fn LiveTrafficPanel(
                         }
                         detail=move || {
                             view! {
-                                <BarChart
+                                <LineChart
                                     x_labels=x_labels
                                     series=hit_series
                                     height_px=380
-                                    y_unit="%"
-                                    interactive=true
+                                    y_unit="req"
                                     empty_message=no_data
                                 />
                             }
                             .into_any()
                         }
                     />
-                    <div class="grid grid-cols-2 gap-2">
+                    <div class="grid grid-cols-3 gap-2">
                         <LiveStatTile
                             label=t.live_qps()
                             value=format!("{:.2}", qps)
@@ -923,21 +1074,6 @@ fn LiveTrafficPanel(
                             value=format!("{hit_pct:.1}%")
                             variant=LiveTileVariant::Green
                         />
-                        <LiveStatTile
-                            label=t.live_avg_e2e()
-                            value=format!("{:.0} ms", s.avg_e2e_latency_ms)
-                            variant=LiveTileVariant::Orange
-                        />
-                        <LiveStatTile
-                            label=t.live_avg_upstream()
-                            value=upstream_display
-                            variant=LiveTileVariant::Muted
-                        />
-                        <LiveStatTile
-                            label=t.live_avg_ttft()
-                            value=ttft_display
-                            variant=LiveTileVariant::Warn
-                        />
                     </div>
                 </div>
             </div>
@@ -950,7 +1086,6 @@ fn LiveBottomRow(
     data: LiveMetricsResponse,
     buckets: Vec<LiveMetricsBucket>,
     latency_open: RwSignal<bool>,
-    cache_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
     routing_key_ids: RwSignal<Vec<String>>,
@@ -965,19 +1100,19 @@ fn LiveBottomRow(
                 <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() open=latency_open />
                 <LiveLatestPanel data=data />
             </div>
-            <div class="live-detail-row">
+            <div class="live-detail-row-2col">
                 <LiveKeyDistributionPanel
                     routing_key_ids=routing_key_ids
                     selected_routing_key=selected_routing_key
                     routing_key_data=routing_key_data
                 />
-                <LiveCacheLayerPanel buckets=buckets.clone() open=cache_open />
                 <LiveKeyActivityPanel
                     routing_key_data=routing_key_data
                     routing_key_concurrency=routing_key_concurrency
                 />
             </div>
-            <LiveTokenPanel buckets=buckets open=token_open />
+            <LiveTokenPanel buckets=buckets.clone() open=token_open />
+            <LiveDetailTable buckets=buckets />
         </div>
     }
 }
@@ -1270,7 +1405,7 @@ fn LiveLatencyPanel(
             vec![
             ChartSeries {
                 label: e2e_label.clone(),
-                color: "var(--cc-accent)",
+                color: "var(--cc-accent)".to_string(),
                 values: b
                     .iter()
                     .map(|x| {
@@ -1286,14 +1421,14 @@ fn LiveLatencyPanel(
             },
             ChartSeries {
                 label: upstream_label.clone(),
-                color: "var(--warning)",
+                color: "var(--warning)".to_string(),
                 values: b.iter().map(|x| x.upstream_latency_ms).collect(),
                 dashed: true,
                 fill: false,
             },
             ChartSeries {
                 label: ttft_label.clone(),
-                color: "var(--cc-info)",
+                color: "var(--cc-info)".to_string(),
                 values: b.iter().map(|x| x.ttft_ms).collect(),
                 dashed: false,
                 fill: false,
@@ -1333,10 +1468,10 @@ fn LiveLatencyPanel(
                 open=open
                 preview=move || {
                     view! {
-                        <BarChart
+                        <LineChart
                             x_labels=x_labels
                             series=series
-                            height_px=110
+                            height_px=160
                             y_unit="ms"
                             interactive=true
                             empty_message=no_data
@@ -1346,10 +1481,10 @@ fn LiveLatencyPanel(
                 }
                 detail=move || {
                     view! {
-                        <BarChart
+                        <LineChart
                             x_labels=x_labels
                             series=series
-                            height_px=360
+                            height_px=400
                             y_unit="ms"
                             interactive=true
                             empty_message=no_data
@@ -1367,92 +1502,6 @@ fn LiveLatencyPanel(
     }
 }
 
-#[component]
-fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
-    let t = use_translations();
-    let buckets = std::sync::Arc::new(buckets);
-    let x_labels = {
-        let buckets = std::sync::Arc::clone(&buckets);
-        Signal::derive(move || {
-            buckets
-                .iter()
-                .map(|b| format_bucket_time(b.timestamp_ms))
-                .collect()
-        })
-    };
-    let hit_series = {
-        let buckets = std::sync::Arc::clone(&buckets);
-        Signal::derive(move || {
-            let b = buckets.as_ref();
-            vec![
-                ChartSeries {
-                    label: "hits".to_string(),
-                    color: "var(--cc-success)",
-                    values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
-                    dashed: false,
-                    fill: false,
-                },
-                ChartSeries {
-                    label: "miss".to_string(),
-                    color: "var(--cc-warning)",
-                    values: b
-                        .iter()
-                        .map(|x| Some((x.request_count.saturating_sub(x.cache_hit_count)) as f64))
-                        .collect(),
-                    dashed: false,
-                    fill: false,
-                },
-            ]
-        })
-    };
-    let total_hits: u32 = buckets.iter().map(|b| b.cache_hit_count).sum();
-    let total_req: u32 = buckets.iter().map(|b| b.request_count).sum();
-    let hit_pct = if total_req > 0 {
-        total_hits as f64 / total_req as f64 * 100.0
-    } else {
-        0.0
-    };
-    let cache_title = t.live_cache_hit_trend().to_string();
-    let no_data = t.live_no_data();
-    view! {
-        <div class="glass-card p-4 live-detail-card space-y-2 flex flex-col">
-            <div class="flex items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold text-theme">{t.live_cache_hit_trend()}</h3>
-                <span class="text-xs font-mono text-theme-muted">{format!("{hit_pct:.1}%")}</span>
-            </div>
-            <ChartPreviewCard
-                title=cache_title
-                open=open
-                preview=move || {
-                    view! {
-                        <BarChart
-                            x_labels=x_labels
-                            series=hit_series
-                            height_px=100
-                            y_unit="req"
-                            interactive=true
-                            empty_message=no_data
-                        />
-                    }
-                    .into_any()
-                }
-                detail=move || {
-                    view! {
-                        <BarChart
-                            x_labels=x_labels
-                            series=hit_series
-                            height_px=360
-                            y_unit="req"
-                            interactive=true
-                            empty_message=no_data
-                        />
-                    }
-                    .into_any()
-                }
-            />
-        </div>
-    }
-}
 
 #[component]
 fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
@@ -1479,7 +1528,42 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
             buckets.iter().map(|x| Some(x.output_tokens as f64)).collect()
         })
     };
+    // OHLC signals for K-line chart.
+    let input_ohlc = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|x| {
+                    x.input_tokens_ohlc.map(|o| CandlestickPoint {
+                        open: o.open as f64,
+                        high: o.high as f64,
+                        low: o.low as f64,
+                        close: o.close as f64,
+                    })
+                })
+                .collect()
+        })
+    };
+    let output_ohlc = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|x| {
+                    x.output_tokens_ohlc.map(|o| CandlestickPoint {
+                        open: o.open as f64,
+                        high: o.high as f64,
+                        low: o.low as f64,
+                        close: o.close as f64,
+                    })
+                })
+                .collect()
+        })
+    };
+    let kline_mode: RwSignal<KlineMode> = RwSignal::new(KlineMode::Input);
     let token_title = t.live_token_chart().to_string();
+    let kline_title = "Token K-Line".to_string();
     let no_data = t.live_no_data();
     let in_lbl = t.live_tokens_input().to_string();
     let out_lbl = t.live_tokens_output().to_string();
@@ -1487,44 +1571,206 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     let out_lbl_preview = out_lbl.clone();
     let in_lbl_detail = in_lbl.clone();
     let out_lbl_detail = out_lbl.clone();
+    let kline_open = RwSignal::new(false);
+    let token_x_labels = x_labels;
+    let kline_x_labels = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|b| format_bucket_time(b.timestamp_ms))
+                .collect()
+        })
+    };
     view! {
-        <div class="glass-card p-4">
-            <ChartPreviewCard
-                title=token_title
-                open=open
-                preview=move || {
-                    view! {
-                        <TokenLineChart
-                            x_labels=x_labels
-                            input_values=input_values
-                            output_values=output_values
-                            input_label=in_lbl_preview.clone()
-                            output_label=out_lbl_preview.clone()
-                            height_px=140
-                            interactive=true
-                            empty_message=no_data
-                        />
+        <div class="space-y-4">
+            <div class="glass-card p-4">
+                <ChartPreviewCard
+                    title=token_title
+                    open=open
+                    preview=move || {
+                        view! {
+                            <TokenLineChart
+                                x_labels=token_x_labels
+                                input_values=input_values
+                                output_values=output_values
+                                input_label=in_lbl_preview.clone()
+                                output_label=out_lbl_preview.clone()
+                                height_px=140
+                                interactive=true
+                                empty_message=no_data
+                            />
+                        }
+                        .into_any()
                     }
-                    .into_any()
-                }
-                detail=move || {
-                    view! {
-                        <TokenLineChart
-                            x_labels=x_labels
-                            input_values=input_values
-                            output_values=output_values
-                            input_label=in_lbl_detail.clone()
-                            output_label=out_lbl_detail.clone()
-                            height_px=380
-                            interactive=true
-                            empty_message=no_data
-                        />
+                    detail=move || {
+                        view! {
+                            <TokenLineChart
+                                x_labels=token_x_labels
+                                input_values=input_values
+                                output_values=output_values
+                                input_label=in_lbl_detail.clone()
+                                output_label=out_lbl_detail.clone()
+                                height_px=380
+                                interactive=true
+                                empty_message=no_data
+                            />
+                        }
+                        .into_any()
                     }
-                    .into_any()
-                }
-            />
+                />
+            </div>
+            <div class="glass-card p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-theme">{kline_title}</h3>
+                    <div class="flex gap-1">
+                        <button
+                            type="button"
+                            class=move || {
+                                if kline_mode.get() == KlineMode::Input {
+                                    "live-pill live-pill-active text-xs"
+                                } else {
+                                    "live-pill text-xs"
+                                }
+                            }
+                            on:click=move |_| kline_mode.set(KlineMode::Input)
+                        >
+                            {t.live_tokens_input()}
+                        </button>
+                        <button
+                            type="button"
+                            class=move || {
+                                if kline_mode.get() == KlineMode::Output {
+                                    "live-pill live-pill-active text-xs"
+                                } else {
+                                    "live-pill text-xs"
+                                }
+                            }
+                            on:click=move |_| kline_mode.set(KlineMode::Output)
+                        >
+                            {t.live_tokens_output()}
+                        </button>
+                    </div>
+                </div>
+                <ChartPreviewCard
+                    title="OHLC".to_string()
+                    open=kline_open
+                    preview=move || {
+                        let ohlc_sig = match kline_mode.get() {
+                            KlineMode::Input => input_ohlc,
+                            KlineMode::Output => output_ohlc,
+                        };
+                        let unit = match kline_mode.get() {
+                            KlineMode::Input => "input tokens",
+                            KlineMode::Output => "output tokens",
+                        };
+                        view! {
+                            <CandlestickChart
+                                x_labels=kline_x_labels
+                                ohlc=ohlc_sig
+                                height_px=180
+                                y_unit=unit
+                                interactive=true
+                                empty_message=no_data
+                            />
+                        }.into_any()
+                    }
+                    detail=move || {
+                        let ohlc_sig = match kline_mode.get() {
+                            KlineMode::Input => input_ohlc,
+                            KlineMode::Output => output_ohlc,
+                        };
+                        let unit = match kline_mode.get() {
+                            KlineMode::Input => "input tokens",
+                            KlineMode::Output => "output tokens",
+                        };
+                        view! {
+                            <CandlestickChart
+                                x_labels=kline_x_labels
+                                ohlc=ohlc_sig
+                                height_px=400
+                                y_unit=unit
+                                interactive=true
+                                empty_message=no_data
+                            />
+                        }.into_any()
+                    }
+                />
+            </div>
         </div>
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum KlineMode {
+    Input,
+    Output,
+}
+
+#[component]
+fn LiveDetailTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+    if buckets.is_empty() {
+        return ().into_any();
+    }
+    // Show last N non-empty buckets.
+    const MAX_ROWS: usize = 20;
+    let rows: Vec<&LiveMetricsBucket> = buckets
+        .iter()
+        .filter(|b| b.request_count > 0)
+        .rev()
+        .take(MAX_ROWS)
+        .collect();
+    if rows.is_empty() {
+        return ().into_any();
+    }
+    view! {
+        <div class="glass-card p-4 space-y-2">
+            <h3 class="text-sm font-semibold text-theme">"Bucket Detail"</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-[11px] font-mono">
+                    <thead>
+                        <tr class="text-theme-muted border-b border-theme">
+                            <th class="text-left py-1 pr-3">"Time"</th>
+                            <th class="text-right py-1 px-2">"Req"</th>
+                            <th class="text-right py-1 px-2">"E2E"</th>
+                            <th class="text-right py-1 px-2">"Upstream"</th>
+                            <th class="text-right py-1 px-2">"TTFT"</th>
+                            <th class="text-right py-1 px-2">"In Tok"</th>
+                            <th class="text-right py-1 px-2">"Out Tok"</th>
+                            <th class="text-right py-1 px-2">"Hit%"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.into_iter().map(|b| {
+                            let hit_pct = if b.request_count > 0 {
+                                b.cache_hit_count as f64 / b.request_count as f64 * 100.0
+                            } else {
+                                0.0
+                            };
+                            view! {
+                                <tr class="border-b border-theme/30 hover:bg-[var(--cc-bg-hover)]">
+                                    <td class="py-1 pr-3 text-theme">
+                                        {format_bucket_time(b.timestamp_ms)}
+                                    </td>
+                                    <td class="text-right py-1 px-2">{b.request_count}</td>
+                                    <td class="text-right py-1 px-2">{format!("{:.0}", b.e2e_latency_ms)}</td>
+                                    <td class="text-right py-1 px-2">
+                                        {b.upstream_latency_ms.map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into())}
+                                    </td>
+                                    <td class="text-right py-1 px-2">
+                                        {b.ttft_ms.map(|v| format!("{v:.0}")).unwrap_or_else(|| "—".into())}
+                                    </td>
+                                    <td class="text-right py-1 px-2">{b.input_tokens}</td>
+                                    <td class="text-right py-1 px-2">{b.output_tokens}</td>
+                                    <td class="text-right py-1 px-2">{format!("{hit_pct:.0}")}</td>
+                                </tr>
+                            }
+                        }).collect_view()}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }.into_any()
 }
 
 #[component]
