@@ -3,8 +3,14 @@
 //! Reference implementation: local `plotters/` clone (gitignored). Production uses the
 //! crates.io `plotters` dependency with `svg_backend` only (no bitmap/fonts).
 
+pub mod canvas_render;
 pub mod core;
+pub mod renderer;
+pub mod canvas_renderer;
+#[cfg(feature = "gpu-spike")]
+pub mod gpu;
 pub mod host;
+pub mod interaction;
 pub mod svg_render;
 pub mod theme;
 

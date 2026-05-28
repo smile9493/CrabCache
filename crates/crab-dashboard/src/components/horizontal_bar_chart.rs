@@ -1,9 +1,10 @@
-//! Horizontal categorical bar chart (Plotters SVG).
+//! Horizontal categorical bar chart (Canvas rendering).
 
 use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use wasm_bindgen::JsCast;
 
-use crate::components::chart::svg_render;
+use crate::components::chart::canvas_render;
 use crate::theme::use_theme_signal;
 
 static HORIZONTAL_BAR_CHART_ID: AtomicUsize = AtomicUsize::new(0);
@@ -19,16 +20,24 @@ pub fn HorizontalBarChart(
     let chart_id = HORIZONTAL_BAR_CHART_ID.fetch_add(1, Ordering::Relaxed);
     let summary_id = format!("horizontal-bar-chart-summary-{}", chart_id);
     let theme = use_theme_signal();
+    let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
 
-    let svg = Signal::derive(move || {
+    Effect::new(move |_| {
+        let Some(canvas_el) = canvas_ref.get() else {
+            return;
+        };
+        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
         let _ = theme.get();
-        svg_render::render_horizontal_bar_chart(
-            &labels.get(),
-            &values.get(),
+        let lbls = labels.get();
+        let vals = values.get();
+        canvas_render::render_horizontal_bar_chart(
+            &canvas_dom,
+            &lbls,
+            &vals,
             theme.get(),
             width,
             height_px,
-        )
+        );
     });
 
     let summary_id_clone = summary_id.clone();
@@ -38,7 +47,6 @@ pub fn HorizontalBarChart(
             {move || {
                 let lbls = labels.get();
                 let vals = values.get();
-                // Generate data summary for screen readers
                 let data_summary = if lbls.is_empty() || vals.is_empty() {
                     "Empty horizontal bar chart.".to_string()
                 } else {
@@ -55,22 +63,22 @@ pub fn HorizontalBarChart(
                     )
                 };
 
-                if let Some(doc) = svg.get() {
+                if lbls.is_empty() || vals.is_empty() || !vals.iter().any(|v| *v > 0.0 && v.is_finite()) {
+                    view! {
+                        <div class="text-center py-6 text-theme-muted text-sm">{empty_message}</div>
+                    }.into_any()
+                } else {
                     view! {
                         <>
                             <div id={summary_id_clone.clone()} class="sr-only">{data_summary}</div>
-                            <div
-                                class="waterfall-chart-svg-host"
-                                prop:inner_html=doc
+                            <canvas
+                                node_ref=canvas_ref
+                                style=format!("width: 100%; height: {}px", height_px)
                                 role="img"
                                 aria-label="Horizontal bar chart"
                                 aria-describedby={summary_id_clone.clone()}
                             />
                         </>
-                    }.into_any()
-                } else {
-                    view! {
-                        <div class="text-center py-6 text-theme-muted text-sm">{empty_message}</div>
                     }.into_any()
                 }
             }}

@@ -95,6 +95,8 @@ pub fn OverviewPage() -> impl IntoView {
     let ts_etag = RwSignal::new(String::new());
 
     // SSE connection — receives pushed metrics, reducing polling overhead.
+    // Data flows through a non-reactive buffer + rAF flush to decouple SSE
+    // message frequency from Leptos signal propagation frequency.
     let sse_active = RwSignal::new(false);
     {
         let overview_core = overview_core;
@@ -105,16 +107,77 @@ pub fn OverviewPage() -> impl IntoView {
             use futures::StreamExt;
             use std::cell::RefCell;
             use std::rc::Rc;
+
+            // rAF flush state: buffer holds the latest OverviewCore, dirty
+            // marks whether a new value arrived since the last flush, and
+            // active keeps the rAF loop running while the SSE connection is up.
+            let buffer: Rc<RefCell<Option<OverviewCore>>> = Rc::new(RefCell::new(None));
+            let dirty: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+            let active: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+            // Start a self-rescheduling requestAnimationFrame loop that flushes
+            // the buffer to Leptos signals at most once per frame.
+            let raf_state: Rc<RefCell<Option<js_sys::Function>>> =
+                Rc::new(RefCell::new(None));
+            {
+                let buffer = buffer.clone();
+                let dirty = dirty.clone();
+                let active = active.clone();
+                let raf_state_inner = raf_state.clone();
+
+                let flush = move || {
+                    if *dirty.borrow() {
+                        if let Some(core) = buffer.borrow_mut().take() {
+                            detect_and_toast(&core);
+                            overview_core.set(Some(Ok(core)));
+                            last_update
+                                .set(chrono::Local::now().format("%H:%M:%S").to_string());
+                            last_update_ts.set(js_sys::Date::now() as u64);
+                        }
+                        *dirty.borrow_mut() = false;
+                    }
+                    if *active.borrow() {
+                        let state = raf_state_inner.clone();
+                        let next_closure = wasm_bindgen::closure::Closure::once(move || {
+                            if let Some(func) = state.borrow().as_ref() {
+                                let _ = web_sys::window()
+                                    .unwrap()
+                                    .request_animation_frame(func);
+                            }
+                        });
+                        let next_js = next_closure.into_js_value();
+                        let _ = web_sys::window()
+                            .unwrap()
+                            .request_animation_frame(next_js.unchecked_ref());
+                    }
+                };
+
+                let closure = wasm_bindgen::closure::Closure::wrap(
+                    Box::new(flush) as Box<dyn FnMut()>
+                );
+                let func: js_sys::Function = closure.into_js_value().into();
+                *raf_state.borrow_mut() = Some(func);
+            }
+
             loop {
                 let es = match api::connect_sse() {
                     Ok(es) => es,
                     Err(_) => {
                         sse_active.set(false);
+                        *active.borrow_mut() = false;
                         gloo_timers::future::TimeoutFuture::new(5_000).await;
                         continue;
                     }
                 };
                 sse_active.set(true);
+                *active.borrow_mut() = true;
+
+                // Kick off the rAF loop if not already running.
+                if let Some(func) = raf_state.borrow().as_ref() {
+                    let _ = web_sys::window()
+                        .unwrap()
+                        .request_animation_frame(func);
+                }
 
                 // Bridge EventSource callbacks to an async channel.
                 // Wrap sender in Rc<RefCell<Option>> so both closures can drop it
@@ -148,7 +211,8 @@ pub fn OverviewPage() -> impl IntoView {
                 es.set_onerror(Some(error_closure.as_ref().unchecked_ref()));
                 error_closure.forget();
 
-                // Process incoming messages until the channel closes
+                // Write incoming data to non-reactive buffer; rAF loop flushes
+                // at most once per animation frame.
                 while let Some(data) = rx.next().await {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
                         if parsed.get("type").and_then(|t| t.as_str()) == Some("metrics") {
@@ -156,19 +220,17 @@ pub fn OverviewPage() -> impl IntoView {
                                 if let Ok(core) =
                                     serde_json::from_value::<OverviewCore>(metrics_data.clone())
                                 {
-                                    detect_and_toast(&core);
-                                    overview_core.set(Some(Ok(core)));
-                                    last_update
-                                        .set(chrono::Local::now().format("%H:%M:%S").to_string());
-                                    last_update_ts.set(js_sys::Date::now() as u64);
+                                    *buffer.borrow_mut() = Some(core);
+                                    *dirty.borrow_mut() = true;
                                 }
                             }
                         }
                     }
                 }
 
-                // Connection lost — retry after delay
+                // Connection lost — stop rAF loop and retry
                 sse_active.set(false);
+                *active.borrow_mut() = false;
                 es.close();
                 gloo_timers::future::TimeoutFuture::new(3_000).await;
             }
@@ -1185,7 +1247,7 @@ fn MetricsBento(
                     return None;
                 }
                 let healthy = h.backends_healthy;
-                let unhealthy = h.backends_total.saturating_sub(h.backends_healthy);
+                let unhealthy = total.saturating_sub(healthy);
                 let warning = healthy < total || unhealthy > 0;
                 Some(view! {
                     <div class="bento-cell">

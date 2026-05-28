@@ -1,8 +1,12 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::components::bar_chart::BarChart;
+use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::{ChartSeries, TokenLineChart};
 use crate::components::page_header::PageHeader;
@@ -180,6 +184,7 @@ pub fn LivePage() -> impl IntoView {
     let auto_refresh = RwSignal::new(true);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
+    let manual_refresh = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
         RwSignal::new(None);
     let routing_key_ids: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
@@ -243,9 +248,57 @@ pub fn LivePage() -> impl IntoView {
         });
     };
 
-    let load_live = {
+    // rAF buffer for live_data: decouples polling frequency from signal propagation.
+    // With 2-60s polling this is primarily for future-proofing; the pattern ensures
+    // that increasing poll frequency won't cause cascading signal writes.
+    let live_buffer: Rc<RefCell<Option<Result<LiveMetricsResponse, String>>>> =
+        Rc::new(RefCell::new(None));
+    let live_dirty: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let live_active: Rc<RefCell<bool>> = Rc::new(RefCell::new(true));
+    {
+        let live_buffer = live_buffer.clone();
+        let live_dirty = live_dirty.clone();
+        let live_active = live_active.clone();
+        let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> =
+            Rc::new(RefCell::new(None));
+        let live_raf_state_inner = live_raf_state.clone();
+
+        let flush = move || {
+            if *live_dirty.borrow() {
+                if let Some(data) = live_buffer.borrow_mut().take() {
+                    live_data.set(Some(data));
+                    last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                }
+                *live_dirty.borrow_mut() = false;
+            }
+            if *live_active.borrow() {
+                let state = live_raf_state_inner.clone();
+                let next = wasm_bindgen::closure::Closure::once(move || {
+                    if let Some(func) = state.borrow().as_ref() {
+                        let _ = web_sys::window().unwrap().request_animation_frame(func);
+                    }
+                });
+                let next_js = next.into_js_value();
+                let _ = web_sys::window()
+                    .unwrap()
+                    .request_animation_frame(next_js.unchecked_ref());
+            }
+        };
+        let closure = wasm_bindgen::closure::Closure::wrap(
+            Box::new(flush) as Box<dyn FnMut()>
+        );
+        let func: js_sys::Function = closure.into_js_value().into();
+        *live_raf_state.borrow_mut() = Some(func);
+
+        // Kick off the rAF loop.
+        if let Some(func) = live_raf_state.borrow().as_ref() {
+            let _ = web_sys::window().unwrap().request_animation_frame(func);
+        }
+    }
+
+    let load_live_fn: Rc<RefCell<dyn FnMut()>> = {
         let consumers = consumers;
-        move || {
+        Rc::new(RefCell::new(move || {
             let Some(consumer) = selected_consumer.get() else {
                 live_data.set(None);
                 return;
@@ -253,6 +306,8 @@ pub fn LivePage() -> impl IntoView {
             load_generation.update(|g| *g += 1);
             let request_id = load_generation.get();
             let window = window_secs.get();
+            let buf = live_buffer.clone();
+            let dirty = live_dirty.clone();
             leptos::task::spawn_local(async move {
                 match api::fetch_live_metrics(&consumer, window).await {
                     Ok(data) => {
@@ -267,8 +322,8 @@ pub fn LivePage() -> impl IntoView {
                                 selected_consumer.set(Some(first.clone()));
                             }
                         }
-                        live_data.set(Some(Ok(data)));
-                        last_update.set(chrono::Local::now().format("%H:%M:%S").to_string());
+                        buf.borrow_mut().replace(Ok(data));
+                        *dirty.borrow_mut() = true;
                     }
                     Err(e) => {
                         if load_generation.get() == request_id {
@@ -277,7 +332,7 @@ pub fn LivePage() -> impl IntoView {
                     }
                 }
             });
-        }
+        }))
     };
 
     let load_routing = move || {
@@ -322,11 +377,12 @@ pub fn LivePage() -> impl IntoView {
     load_routing();
 
     Effect::new({
-        let load_live = load_live;
+        let ll = load_live_fn.clone();
         move |_| {
             let _ = selected_consumer.get();
             let _ = window_secs.get();
-            load_live();
+            let _ = manual_refresh.get();
+            ll.borrow_mut()();
         }
     });
 
@@ -346,7 +402,7 @@ pub fn LivePage() -> impl IntoView {
     });
 
     leptos::task::spawn_local({
-        let load_live = load_live;
+        let ll = load_live_fn.clone();
         async move {
             loop {
                 let interval = poll_interval_ms(window_secs.get_untracked());
@@ -355,7 +411,7 @@ pub fn LivePage() -> impl IntoView {
                     && selected_consumer.get_untracked().is_some()
                     && page_visible()
                 {
-                    load_live();
+                    ll.borrow_mut()();
                     load_routing();
                 }
             }
@@ -365,13 +421,13 @@ pub fn LivePage() -> impl IntoView {
     {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
-        let load_live = load_live;
+        let ll = load_live_fn.clone();
         let vis_cb = Closure::wrap(Box::new(move || {
             if !web_sys::window().unwrap().document().unwrap().hidden()
                 && auto_refresh.get_untracked()
                 && selected_consumer.get_untracked().is_some()
             {
-                load_live();
+                ll.borrow_mut()();
             }
         }) as Box<dyn FnMut()>);
         web_sys::window()
@@ -387,7 +443,7 @@ pub fn LivePage() -> impl IntoView {
                 title=move || t.live_title()
                 description=move || t.live_desc()
             >
-                <button on:click=move |_| load_live() class="btn btn-secondary text-xs">
+                <button on:click=move |_| manual_refresh.update(|v| *v += 1) class="btn btn-secondary text-xs">
                     {move || t.overview_refresh()}
                 </button>
             </PageHeader>
@@ -626,6 +682,13 @@ fn LiveTrafficPanel(
         }]
     });
 
+    let chart_subtitle = format!("{consumer} · {window_lbl}");
+    let throughput_open = RwSignal::new(false);
+    let hit_open = RwSignal::new(false);
+    let throughput_title = t.live_chart_throughput().to_string();
+    let hit_title = t.live_cache_hit_trend().to_string();
+    let no_data = t.live_no_data();
+
     view! {
         <div class="glass-card-flush live-traffic-panel">
             <div class="panel-header">
@@ -641,30 +704,68 @@ fn LiveTrafficPanel(
             </div>
             <div class="p-4">
                 <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_11.5rem] gap-4">
-                    <div class="space-y-2 min-w-0">
-                        <h4 class="text-xs font-semibold text-theme-muted uppercase tracking-wide">
-                            {t.live_chart_throughput()}
-                        </h4>
-                        <BarChart
-                            x_labels=x_labels
-                            series=throughput_series
-                            height_px=160
-                            y_unit="req"
-                            empty_message=t.live_no_data()
-                        />
-                    </div>
-                    <div class="space-y-2 min-w-0">
-                        <h4 class="text-xs font-semibold text-theme-muted uppercase tracking-wide">
-                            {t.live_cache_hit_trend()}
-                        </h4>
-                        <BarChart
-                            x_labels=x_labels
-                            series=hit_series
-                            height_px=160
-                            y_unit="%"
-                            empty_message=t.live_no_data()
-                        />
-                    </div>
+                    <ChartPreviewCard
+                        title=throughput_title.clone()
+                        subtitle=chart_subtitle.clone()
+                        open=throughput_open
+                        preview=move || {
+                            view! {
+                                <BarChart
+                                    x_labels=x_labels
+                                    series=throughput_series
+                                    height_px=140
+                                    y_unit="req"
+                                    interactive=false
+                                    empty_message=no_data
+                                />
+                            }
+                            .into_any()
+                        }
+                        detail=move || {
+                            view! {
+                                <BarChart
+                                    x_labels=x_labels
+                                    series=throughput_series
+                                    height_px=380
+                                    y_unit="req"
+                                    interactive=true
+                                    empty_message=no_data
+                                />
+                            }
+                            .into_any()
+                        }
+                    />
+                    <ChartPreviewCard
+                        title=hit_title.clone()
+                        subtitle=chart_subtitle.clone()
+                        open=hit_open
+                        preview=move || {
+                            view! {
+                                <BarChart
+                                    x_labels=x_labels
+                                    series=hit_series
+                                    height_px=140
+                                    y_unit="%"
+                                    interactive=false
+                                    empty_message=no_data
+                                />
+                            }
+                            .into_any()
+                        }
+                        detail=move || {
+                            view! {
+                                <BarChart
+                                    x_labels=x_labels
+                                    series=hit_series
+                                    height_px=380
+                                    y_unit="%"
+                                    interactive=true
+                                    empty_message=no_data
+                                />
+                            }
+                            .into_any()
+                        }
+                    />
                     <div class="grid grid-cols-2 gap-2">
                         <LiveStatTile
                             label=t.live_qps()
@@ -1037,6 +1138,9 @@ fn LiveLatencyPanel(
             },
         ]
     });
+    let latency_open = RwSignal::new(false);
+    let latency_title = t.live_latency_chart().to_string();
+    let no_data = t.live_no_data();
     view! {
         <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
             <h3 class="text-sm font-semibold text-theme">{t.live_nodes_title()}</h3>
@@ -1062,12 +1166,35 @@ fn LiveLatencyPanel(
                     variant=LiveTileVariant::Warn
                 />
             </div>
-            <BarChart
-                x_labels=x_labels
-                series=series
-                height_px=130
-                y_unit="ms"
-                empty_message=t.live_no_data()
+            <ChartPreviewCard
+                title=latency_title
+                open=latency_open
+                preview=move || {
+                    view! {
+                        <BarChart
+                            x_labels=x_labels
+                            series=series
+                            height_px=110
+                            y_unit="ms"
+                            interactive=false
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
+                detail=move || {
+                    view! {
+                        <BarChart
+                            x_labels=x_labels
+                            series=series
+                            height_px=360
+                            y_unit="ms"
+                            interactive=true
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
             />
             <p class="text-[10px] text-theme-muted leading-snug">
                 {format!("Max upstream: {}", format_latency_opt(max_upstream, na))}
@@ -1124,18 +1251,44 @@ fn LiveCacheLayerPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
     } else {
         0.0
     };
+    let cache_open = RwSignal::new(false);
+    let cache_title = t.live_cache_hit_trend().to_string();
+    let no_data = t.live_no_data();
     view! {
         <div class="glass-card p-4 live-detail-card space-y-2 flex flex-col">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold text-theme">{t.live_cache_hit_trend()}</h3>
                 <span class="text-xs font-mono text-theme-muted">{format!("{hit_pct:.1}%")}</span>
             </div>
-            <BarChart
-                x_labels=x_labels
-                series=hit_series
-                height_px=110
-                y_unit="req"
-                empty_message=t.live_no_data()
+            <ChartPreviewCard
+                title=cache_title
+                open=cache_open
+                preview=move || {
+                    view! {
+                        <BarChart
+                            x_labels=x_labels
+                            series=hit_series
+                            height_px=100
+                            y_unit="req"
+                            interactive=false
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
+                detail=move || {
+                    view! {
+                        <BarChart
+                            x_labels=x_labels
+                            series=hit_series
+                            height_px=360
+                            y_unit="req"
+                            interactive=true
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
             />
         </div>
     }
@@ -1166,17 +1319,50 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
             .map(|x| Some(x.output_tokens as f64))
             .collect()
     });
+    let token_open = RwSignal::new(false);
+    let token_title = t.live_token_chart().to_string();
+    let no_data = t.live_no_data();
+    let in_lbl = t.live_tokens_input().to_string();
+    let out_lbl = t.live_tokens_output().to_string();
+    let in_lbl_preview = in_lbl.clone();
+    let out_lbl_preview = out_lbl.clone();
+    let in_lbl_detail = in_lbl.clone();
+    let out_lbl_detail = out_lbl.clone();
     view! {
         <div class="glass-card p-4">
-            <h3 class="text-sm font-semibold text-theme mb-3">{t.live_token_chart()}</h3>
-            <TokenLineChart
-                x_labels=x_labels
-                input_values=input_values
-                output_values=output_values
-                input_label=t.live_tokens_input().to_string()
-                output_label=t.live_tokens_output().to_string()
-                height_px=180
-                empty_message=t.live_no_data()
+            <ChartPreviewCard
+                title=token_title
+                open=token_open
+                preview=move || {
+                    view! {
+                        <TokenLineChart
+                            x_labels=x_labels
+                            input_values=input_values
+                            output_values=output_values
+                            input_label=in_lbl_preview.clone()
+                            output_label=out_lbl_preview.clone()
+                            height_px=140
+                            interactive=false
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
+                detail=move || {
+                    view! {
+                        <TokenLineChart
+                            x_labels=x_labels
+                            input_values=input_values
+                            output_values=output_values
+                            input_label=in_lbl_detail.clone()
+                            output_label=out_lbl_detail.clone()
+                            height_px=380
+                            interactive=true
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
             />
         </div>
     }

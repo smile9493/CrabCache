@@ -2,15 +2,27 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
+use crate::components::chart::interaction::{
+    bucket_center_pct, bucket_width_pct, tooltip_position_style, value_top_pct,
+};
 use super::line_chart::{format_tooltip_value, mouse_to_svg_x};
 
 static HISTOGRAM_ID: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Bin {
     range_start: f64,
     range_end: f64,
     count: usize,
+}
+
+#[derive(Clone, PartialEq)]
+struct HistogramGeom {
+    bins: Vec<Bin>,
+    max_count: f64,
+    n: usize,
+    bar_w: f64,
+    pad: f64,
 }
 
 fn auto_bins(values: &[f64], bin_count: usize) -> Vec<Bin> {
@@ -53,45 +65,90 @@ pub fn HistogramChart(
     values: Signal<Vec<f64>>,
     #[prop(default = 10)] bin_count: usize,
     #[prop(default = 200)] height_px: u32,
+    #[prop(default = true)] interactive: bool,
     y_unit: &'static str,
     empty_message: &'static str,
 ) -> impl IntoView {
-    let chart_id = HISTOGRAM_ID.fetch_add(1, Ordering::Relaxed);
-    let summary_id = format!("histogram-summary-{}", chart_id);
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
+    let hover_pending: RwSignal<Option<usize>> = RwSignal::new(None);
+    let hover_raf_scheduled = RwSignal::new(false);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
     let bins_sig = Signal::derive(move || auto_bins(&values.get(), bin_count));
 
-    let on_mousemove = move |ev: web_sys::MouseEvent| {
-        let Some(svg_el) = svg_ref.get() else { return };
-        let svg_dom: web_sys::SvgsvgElement = svg_el.dyn_into().unwrap();
-        let Some(svg_x) = mouse_to_svg_x(&ev, &svg_dom) else {
-            hover_index.set(None);
-            return;
-        };
-        let n = bins_sig.get_untracked().len();
-        if n == 0 {
-            hover_index.set(None);
+    let chart_geom = Memo::new(move |_| {
+        let bins = bins_sig.get();
+        if bins.is_empty() || bins.iter().all(|b| b.count == 0) {
+            return None;
+        }
+        let max_count = bins.iter().map(|b| b.count).max().unwrap_or(1) as f64;
+        let n = bins.len();
+        let bar_w = 100.0 / n as f64;
+        let pad = bar_w * 0.1;
+        Some(HistogramGeom {
+            bins,
+            max_count,
+            n,
+            bar_w,
+            pad,
+        })
+    });
+
+    let queue_hover = move |idx: Option<usize>| {
+        hover_pending.set(idx);
+        if hover_raf_scheduled.get_untracked() {
             return;
         }
-        let bar_w = 100.0 / n as f64;
-        let idx = (svg_x / bar_w).floor() as usize;
-        if idx < n {
-            hover_index.set(Some(idx));
+        hover_raf_scheduled.set(true);
+        let next = wasm_bindgen::closure::Closure::once(move || {
+            hover_raf_scheduled.set(false);
+            hover_index.set(hover_pending.get_untracked());
+        });
+        let next_js = next.into_js_value();
+        let _ = web_sys::window()
+            .unwrap()
+            .request_animation_frame(next_js.unchecked_ref());
+    };
+
+    let on_mousemove = move |ev: web_sys::MouseEvent| {
+        if !interactive {
+            return;
+        }
+        let Some(svg_el) = svg_ref.get() else {
+            return;
+        };
+        let svg_dom: web_sys::SvgsvgElement = svg_el.dyn_into().unwrap();
+        let Some(svg_x) = mouse_to_svg_x(&ev, &svg_dom) else {
+            queue_hover(None);
+            return;
+        };
+        let Some(geom) = chart_geom.get() else {
+            queue_hover(None);
+            return;
+        };
+        let idx = (svg_x / geom.bar_w).floor() as usize;
+        if idx < geom.n {
+            queue_hover(Some(idx));
         } else {
-            hover_index.set(None);
+            queue_hover(None);
         }
     };
 
     let on_mouseleave = move |_: web_sys::MouseEvent| {
-        hover_index.set(None);
+        queue_hover(None);
     };
 
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
-        let bins = bins_sig.get_untracked();
-        let n = bins.len();
-        if n == 0 { return; }
+        if !interactive {
+            return;
+        }
+        let Some(geom) = chart_geom.get() else {
+            return;
+        };
+        let n = geom.n;
+        if n == 0 {
+            return;
+        }
         let current = hover_index.get_untracked();
         let new_idx = match ev.key().as_str() {
             "ArrowLeft" => match current {
@@ -112,206 +169,180 @@ pub fn HistogramChart(
     };
 
     let on_focus = move |_: web_sys::FocusEvent| {
-        let bins = bins_sig.get_untracked();
-        if !bins.is_empty() && hover_index.get_untracked().is_none() {
+        if !interactive {
+            return;
+        }
+        if chart_geom.get().is_some() && hover_index.get_untracked().is_none() {
             hover_index.set(Some(0));
         }
     };
 
     let on_blur = move |_: web_sys::FocusEvent| {
-        hover_index.set(None);
+        queue_hover(None);
     };
-
-    let summary_id_clone = summary_id.clone();
 
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 48)>
             {move || {
-                let bins = bins_sig.get();
-                if bins.is_empty() || bins.iter().all(|b| b.count == 0) {
+                let chart_id = HISTOGRAM_ID.fetch_add(1, Ordering::Relaxed);
+                let summary_id = format!("histogram-summary-{}", chart_id);
+                let Some(geom) = chart_geom.get() else {
                     return view! {
                         <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
-                    }.into_any();
-                }
-                let max_count = bins.iter().map(|b| b.count).max().unwrap_or(1) as f64;
-                let n = bins.len();
-                let bar_w = 100.0 / n as f64;
-                let pad = bar_w * 0.1;
-                let hover_idx = hover_index.get();
-
+                    }
+                    .into_any();
+                };
+                let HistogramGeom {
+                    bins,
+                    max_count,
+                    n,
+                    bar_w,
+                    pad,
+                } = geom;
                 let total_requests: usize = bins.iter().map(|b| b.count).sum();
                 let data_summary = format!(
                     "Histogram with {} bins and {} total requests. Y range: 0 to {} {}.",
-                    n, total_requests, format_tooltip_value(max_count), y_unit
+                    n,
+                    total_requests,
+                    format_tooltip_value(max_count),
+                    y_unit
                 );
-
-                let tooltip_data = hover_idx.and_then(|idx| {
-                    let bin = bins.get(idx)?;
-                    let label = format!("{} \u{2013} {}",
-                        format_tooltip_value(bin.range_start),
-                        format_tooltip_value(bin.range_end));
-                    Some((idx, label, bin.count))
-                });
-
-                // Y value for horizontal crosshair (max count at hover)
-                let crosshair_y = hover_idx.and_then(|idx| {
-                    let bin = bins.get(idx)?;
-                    if bin.count > 0 {
-                        let norm = (bin.count as f64 / max_count).clamp(0.0, 1.0);
-                        Some(40.0 - norm * 38.0)
-                    } else {
-                        None
-                    }
-                });
+                let y_hint = format!("0 \u{2013} {} {}", format_tooltip_value(max_count), y_unit);
+                let tab_idx = if interactive { "0" } else { "-1" };
 
                 view! {
-                    <div class="line-chart-plot" style="position: relative">
-                        <div id={summary_id_clone.clone()} class="sr-only">{data_summary}</div>
+                    <div
+                        class="line-chart-plot"
+                        style="position: relative"
+                        on:mousemove=on_mousemove
+                        on:mouseleave=on_mouseleave
+                        on:keydown=on_keydown
+                        on:focus=on_focus
+                        on:blur=on_blur
+                        tabindex=tab_idx
+                        role="group"
+                    >
+                        <div id=summary_id.clone() class="sr-only">{data_summary}</div>
                         <svg
                             node_ref=svg_ref
                             class="line-chart-svg"
                             viewBox="0 0 100 40"
                             preserveAspectRatio="xMidYMid meet"
-                            style=format!("height: {}px", height_px)
+                            style=format!("height: {}px; cursor: {}", height_px, if interactive { "crosshair" } else { "default" })
                             role="img"
                             aria-label="Histogram"
-                            aria-describedby={summary_id_clone.clone()}
-                            tabindex="0"
-                            on:mousemove=on_mousemove
-                            on:mouseleave=on_mouseleave
-                            on:keydown=on_keydown
-                            on:focus=on_focus
-                            on:blur=on_blur
+                            aria-describedby=summary_id
                         >
-                            // Grid
                             <line x1="0" y1="40" x2="100" y2="40" class="line-chart-grid" />
                             <line x1="0" y1="0" x2="0" y2="40" class="line-chart-grid" />
-                            // Horizontal grid lines
-                            {move || {
-                                let steps = 4;
-                                (1..steps).map(|i| {
-                                    let y = 40.0 - (38.0 * i as f64 / steps as f64);
-                                    view! {
-                                        <line
-                                            x1="0" y1=y x2="100" y2=y
-                                            stroke="var(--cc-border-light)"
-                                            stroke-width="0.15"
-                                            stroke-dasharray="1 2"
-                                            vector-effect="non-scaling-stroke"
-                                            opacity="0.4"
-                                        />
-                                    }
-                                }).collect_view()
-                            }}
-                            // Bars
+                            <line x1="0" y1="10.5" x2="100" y2="10.5" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
+                            <line x1="0" y1="21" x2="100" y2="21" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
+                            <line x1="0" y1="31.5" x2="100" y2="31.5" stroke="var(--cc-border-light)" stroke-width="0.15" stroke-dasharray="1 2" vector-effect="non-scaling-stroke" opacity="0.4" />
                             {bins.iter().enumerate().map(|(i, bin)| {
-                                let h = if max_count > 0.0 { (bin.count as f64 / max_count) * 38.0 } else { 0.0 };
+                                let h = if max_count > 0.0 {
+                                    (bin.count as f64 / max_count) * 38.0
+                                } else {
+                                    0.0
+                                };
                                 let x = i as f64 * bar_w + pad;
                                 let w = (bar_w - 2.0 * pad).max(0.5);
                                 let y = 40.0 - h;
-                                let is_hover = hover_idx == Some(i);
-                                let color = if is_hover { "var(--accent-primary)" } else { "var(--cc-border-light)" };
                                 view! {
                                     <rect
                                         x=format!("{:.2}", x)
                                         y=format!("{:.2}", y)
                                         width=format!("{:.2}", w)
                                         height=format!("{:.2}", h)
-                                        fill=color
+                                        fill="var(--cc-border-light)"
                                         rx="0.35"
                                     />
                                 }
                             }).collect_view()}
-
-                            // === Financial Crosshair ===
-                            // Hover column highlight
-                            {hover_idx.map(|idx| {
-                                let x = idx as f64 * bar_w;
-                                view! {
-                                    <rect
-                                        x=x y="0"
-                                        width=bar_w height="40"
-                                        fill="var(--cc-text-muted)"
-                                        opacity="0.04"
-                                    />
-                                }
-                            })}
-                            // Vertical crosshair
-                            {hover_idx.map(|idx| {
-                                let cx = idx as f64 * bar_w + bar_w / 2.0;
-                                view! {
-                                    <line
-                                        x1=cx y1="0" x2=cx y2="40"
-                                        stroke="var(--cc-text-muted)"
-                                        stroke-width="0.25"
-                                        stroke-dasharray="1.5 1"
-                                        vector-effect="non-scaling-stroke"
-                                        opacity="0.7"
-                                    />
-                                }
-                            })}
-                            // Horizontal crosshair
-                            {crosshair_y.map(|cy| view! {
-                                <line
-                                    x1="0" y1=cy x2="100" y2=cy
-                                    stroke="var(--cc-text-muted)"
-                                    stroke-width="0.2"
-                                    stroke-dasharray="1 1.5"
-                                    vector-effect="non-scaling-stroke"
-                                    opacity="0.5"
-                                />
-                            })}
-
-                            <rect x="0" y="0" width="100" height="40" fill="transparent" style="cursor: crosshair" />
+                            <rect x="0" y="0" width="100" height="40" fill="transparent" />
                         </svg>
 
-                        // Y-axis value label
-                        {crosshair_y.map(|cy| {
-                            let val_pct = ((40.0 - cy) / 38.0).clamp(0.0, 1.0);
-                            let count_val = val_pct * max_count;
-                            let top_pct = (cy / 40.0) * 100.0;
-                            view! {
-                                <div
-                                    class="chart-axis-label"
-                                    style=format!("top: {:.1}%", top_pct)
-                                >
-                                    {format_tooltip_value(count_val)}
-                                </div>
+                        {move || {
+                            if !interactive {
+                                return ().into_any();
                             }
-                        })}
-
-                        // Financial tooltip
-                        {tooltip_data.map(|(idx, label, count)| {
-                            let pct = (idx as f64 + 0.5) / n as f64 * 100.0;
-                            let side = if pct > 70.0 { "right" } else { "left" };
-                            let pos_style = if side == "right" {
-                                format!("right: {:.1}%", 100.0 - pct)
-                            } else {
-                                format!("left: {:.1}%", pct)
+                            let Some(geom) = chart_geom.get() else {
+                                return ().into_any();
                             };
-                            view! {
-                                <div
-                                    class="chart-tooltip"
-                                    style=format!("position: absolute; top: 8px; {}", pos_style)
-                                >
-                                    <div class="chart-tooltip-label">{label}</div>
-                                    <div class="chart-tooltip-row">
-                                        <span class="chart-tooltip-row-name">
-                                            <span class="chart-tooltip-dot" style="background: var(--accent-primary)"></span>
-                                            <span>{"Requests"}</span>
-                                        </span>
-                                                <span class="chart-tooltip-value">{format!("{}", count)}</span>
-                                    </div>
-                                </div>
-                            }
-                        })}
+                            let Some(idx) = hover_index.get() else {
+                                return ().into_any();
+                            };
+                            let Some(bin) = geom.bins.get(idx) else {
+                                return ().into_any();
+                            };
+                            let n = geom.n;
+                            let band_w = bucket_width_pct(n);
+                            let band_left = idx as f64 / n as f64 * 100.0;
+                            let center_pct = bucket_center_pct(idx, n);
+                            let label = format!(
+                                "{} \u{2013} {}",
+                                format_tooltip_value(bin.range_start),
+                                format_tooltip_value(bin.range_end)
+                            );
+                            let pos_style = tooltip_position_style(idx, n);
+                            let top_pct = if bin.count > 0 && geom.max_count > 0.0 {
+                                Some(value_top_pct(
+                                    bin.count as f64,
+                                    0.0,
+                                    geom.max_count,
+                                ))
+                            } else {
+                                None
+                            };
 
-                        <div class="line-chart-y-hint text-xs text-theme-muted font-mono">
-                            {format!("0 \u{2013} {} {}", format_tooltip_value(max_count), y_unit)}
-                        </div>
+                            view! {
+                                <>
+                                    <div
+                                        class="chart-hover-band"
+                                        style=format!("left: {:.2}%; width: {:.2}%", band_left, band_w)
+                                    ></div>
+                                    <div
+                                        class="chart-crosshair-v"
+                                        style=format!("left: {:.2}%", center_pct)
+                                    ></div>
+                                    {top_pct.map(|top| {
+                                        view! {
+                                            <div
+                                                class="chart-crosshair-h"
+                                                style=format!("top: {:.1}%", top)
+                                            ></div>
+                                            <div
+                                                class="chart-axis-label"
+                                                style=format!("top: {:.1}%", top)
+                                            >
+                                                {format_tooltip_value(bin.count as f64)}
+                                            </div>
+                                        }
+                                    })}
+                                    <div
+                                        class="chart-tooltip"
+                                        style=format!("position: absolute; top: 8px; {}", pos_style)
+                                    >
+                                        <div class="chart-tooltip-label">{label}</div>
+                                        <div class="chart-tooltip-row">
+                                            <span class="chart-tooltip-row-name">
+                                                <span
+                                                    class="chart-tooltip-dot"
+                                                    style="background: var(--accent-primary)"
+                                                ></span>
+                                                <span>{"Requests"}</span>
+                                            </span>
+                                            <span class="chart-tooltip-value">{format!("{}", bin.count)}</span>
+                                        </div>
+                                    </div>
+                                </>
+                            }
+                            .into_any()
+                        }}
+
+                        <div class="line-chart-y-hint text-xs text-theme-muted font-mono">{y_hint}</div>
                     </div>
                     <div class="line-chart-x-labels">
-                        {bins.iter().enumerate().filter_map(|(i, bin)| {
+                        {bins.into_iter().enumerate().filter_map(|(i, bin)| {
                             if n <= 8 || i == 0 || i == n - 1 || i % (n / 6).max(1) == 0 {
                                 Some(view! {
                                     <span class="line-chart-x-tick">{format_tooltip_value(bin.range_start)}</span>
@@ -321,7 +352,8 @@ pub fn HistogramChart(
                             }
                         }).collect_view()}
                     </div>
-                }.into_any()
+                }
+                .into_any()
             }}
         </div>
     }

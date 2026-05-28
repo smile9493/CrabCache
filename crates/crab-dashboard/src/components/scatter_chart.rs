@@ -1,17 +1,16 @@
-//! Scatter plot (Plotters SVG + hover tooltip) — Financial Grade.
+//! Scatter plot (Canvas + hover tooltip) — Financial Grade.
 
 use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
 pub use crate::components::chart::core::ScatterPoint;
-use crate::components::chart::core::{scatter_range};
-use crate::components::chart::svg_render;
+use crate::components::chart::core::scatter_range;
+use crate::components::chart::canvas_render;
 use crate::theme::use_theme_signal;
 
 static SCATTER_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Format a numeric value with full precision for the financial tooltip.
 fn format_precise_value(v: f64) -> String {
     if v >= 1_000_000.0 {
         format!("{:.1}M", v / 1_000_000.0)
@@ -41,49 +40,46 @@ pub fn ScatterChart(
     let summary_id = format!("scatter-chart-summary-{}", chart_id);
     let theme = use_theme_signal();
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
-    // Track mouse position relative to container for tooltip positioning
     let mouse_pos: RwSignal<Option<(f64, f64)>> = RwSignal::new(None);
-    let svg_ref: NodeRef<leptos::html::Div> = NodeRef::new();
+    let plot_ref: NodeRef<leptos::html::Div> = NodeRef::new();
+    let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
     let x_label_stored = StoredValue::new(x_label);
     let y_label_stored = StoredValue::new(y_label);
 
-    let svg = Signal::derive(move || {
+    // Draw canvas whenever data or theme changes.
+    Effect::new(move |_| {
+        let Some(canvas_el) = canvas_ref.get() else {
+            return;
+        };
+        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
         let _ = theme.get();
-        svg_render::render_scatter(
-            &points.get(),
-            theme.get(),
-            &x_label_stored.get_value(),
-            &y_label_stored.get_value(),
-            fit_line,
-        )
+        let pts = points.get();
+        let x_l = x_label_stored.get_value();
+        let y_l = y_label_stored.get_value();
+        canvas_render::render_scatter(&canvas_dom, &pts, theme.get(), &x_l, &y_l, fit_line);
     });
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {
-        let Some(host) = svg_ref.get() else { return };
-
-        // Track mouse position relative to the container for tooltip placement
+        let Some(host) = plot_ref.get() else { return };
         let rect = host.get_bounding_client_rect();
         let mx = ev.client_x() as f64 - rect.left();
         let my = ev.client_y() as f64 - rect.top();
         mouse_pos.set(Some((mx, my)));
 
-        let Some(svg_el) = host.query_selector("svg").ok().flatten() else {
+        let Some(canvas_el) = canvas_ref.get() else {
             hover_index.set(None);
             return;
         };
-        let Ok(html) = svg_el.dyn_into::<web_sys::HtmlElement>() else {
-            hover_index.set(None);
-            return;
-        };
-        let svg_rect = html.get_bounding_client_rect();
-        let width = svg_rect.width();
-        let height = svg_rect.height();
+        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+        let c_rect = canvas_dom.get_bounding_client_rect();
+        let width = c_rect.width();
+        let height = c_rect.height();
         if width <= 0.0 || height <= 0.0 {
             hover_index.set(None);
             return;
         }
-        let rel_x = ((ev.client_x() as f64 - svg_rect.left()) / width).clamp(0.0, 1.0);
-        let rel_y = ((ev.client_y() as f64 - svg_rect.top()) / height).clamp(0.0, 1.0);
+        let rel_x = ((ev.client_x() as f64 - c_rect.left()) / width).clamp(0.0, 1.0);
+        let rel_y = ((ev.client_y() as f64 - c_rect.top()) / height).clamp(0.0, 1.0);
         let pts = points.get_untracked();
         if pts.is_empty() {
             hover_index.set(None);
@@ -96,7 +92,9 @@ pub fn ScatterChart(
         let mut closest = 0usize;
         let mut min_dist = f64::MAX;
         for (i, p) in pts.iter().enumerate() {
-            if !(p.x.is_finite() && p.y.is_finite()) { continue; }
+            if !(p.x.is_finite() && p.y.is_finite()) {
+                continue;
+            }
             let dx = (p.x - plot_x) / (xmax - xmin).max(1.0);
             let dy = (p.y - plot_y) / (ymax - ymin).max(1.0);
             let dist = dx * dx + dy * dy;
@@ -120,7 +118,9 @@ pub fn ScatterChart(
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         let pts = points.get_untracked();
         let n = pts.len();
-        if n == 0 { return; }
+        if n == 0 {
+            return;
+        }
         let current = hover_index.get_untracked();
         let new_idx = match ev.key().as_str() {
             "ArrowLeft" => match current {
@@ -155,7 +155,7 @@ pub fn ScatterChart(
     let summary_id_clone = summary_id.clone();
 
     view! {
-        <div class="line-chart-wrap plotters-chart-wrap" style=format!("min-height: {}px", height_px + 24)>
+        <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 24)>
             {move || {
                 let pts = points.get();
                 let x_l = x_label_stored.get_value();
@@ -170,18 +170,24 @@ pub fn ScatterChart(
                     )
                 };
 
-                if let Some(doc) = svg.get() {
+                if pts.is_empty() {
+                    view! {
+                        <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
+                    }.into_any()
+                } else {
                     view! {
                         <div class="line-chart-plot" style="position: relative; width: 100%">
                             <div id={summary_id_clone.clone()} class="sr-only">{data_summary}</div>
-                            <div
-                                node_ref=svg_ref
-                                class="chart-plotters-svg"
-                                style=format!("width: 100%; cursor: crosshair; min-height: {}px", height_px)
-                                prop:inner_html=doc
+                            <canvas
+                                node_ref=canvas_ref
+                                style=format!("width: 100%; height: {}px; cursor: crosshair", height_px)
                                 role="img"
                                 aria-label="Scatter chart"
                                 aria-describedby={summary_id_clone.clone()}
+                            />
+                            <div
+                                node_ref=plot_ref
+                                style="position: absolute; inset: 0; cursor: crosshair"
                                 tabindex="0"
                                 on:mousemove=on_mousemove
                                 on:mouseleave=on_mouseleave
@@ -189,7 +195,6 @@ pub fn ScatterChart(
                                 on:focus=on_focus
                                 on:blur=on_blur
                             />
-                            // Financial tooltip positioned at mouse cursor
                             {move || {
                                 let idx = hover_index.get();
                                 let pos = mouse_pos.get();
@@ -198,8 +203,7 @@ pub fn ScatterChart(
                                     let pos = pos?;
                                     let x_l = x_label_stored.get_value();
                                     let y_l = y_label_stored.get_value();
-                                    // Position tooltip: flip if near right edge
-                                    let container_width = svg_ref.get()
+                                    let container_width = plot_ref.get()
                                         .map(|el| el.get_bounding_client_rect().width())
                                         .unwrap_or(400.0);
                                     let tooltip_left = pos.0 + 16.0;
@@ -239,10 +243,6 @@ pub fn ScatterChart(
                                 })
                             }}
                         </div>
-                    }.into_any()
-                } else {
-                    view! {
-                        <div class="text-center py-10 text-theme-muted text-sm">{empty_message}</div>
                     }.into_any()
                 }
             }}

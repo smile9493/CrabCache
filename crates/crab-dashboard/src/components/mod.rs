@@ -2,6 +2,8 @@ pub mod auth_gate;
 pub mod bar_chart;
 pub mod brand_logo;
 pub mod chart;
+pub mod chart_detail_modal;
+pub mod chart_preview_card;
 pub mod confirm;
 pub mod donut_chart;
 pub mod gateway_health;

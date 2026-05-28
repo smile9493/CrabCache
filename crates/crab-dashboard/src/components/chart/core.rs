@@ -1,6 +1,6 @@
 //! Shared chart data types and coordinate math (used by Plotters renderers and hover overlays).
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ChartSeries {
     pub label: String,
     pub color: &'static str,
@@ -51,6 +51,97 @@ pub fn scatter_range(points: &[ScatterPoint]) -> (f64, f64, f64, f64) {
         (ymin - pad_y).max(0.0),
         ymax + pad_y,
     )
+}
+
+/// Largest-Triangle-Three-Buckets (LTTB) downsampling for time series data.
+/// Reduces `points` to at most `target_count` points while preserving visual shape.
+/// Points are `(x, y)` tuples where x is typically a timestamp.
+pub fn downsample_lttb(points: &[(f64, f64)], target_count: usize) -> Vec<(f64, f64)> {
+    if points.len() <= target_count || target_count < 3 {
+        return points.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(target_count);
+    result.push(points[0]); // Always include first point.
+
+    let bucket_size = (points.len() - 2) as f64 / (target_count - 2) as f64;
+
+    let mut prev_selected = 0usize;
+
+    for i in 0..target_count - 2 {
+        // Bucket boundaries (for the "next" bucket used in area calculation).
+        let bucket_start = ((i + 1) as f64 * bucket_size).floor() as usize + 1;
+        let bucket_end = (((i + 2) as f64 * bucket_size).floor() as usize + 1)
+            .min(points.len() - 1);
+
+        // Average of next bucket (for area calculation).
+        let (avg_x, avg_y) = {
+            let mut sx = 0.0f64;
+            let mut sy = 0.0f64;
+            let count = (bucket_end - bucket_start + 1) as f64;
+            for p in &points[bucket_start..=bucket_end] {
+                sx += p.0;
+                sy += p.1;
+            }
+            (sx / count, sy / count)
+        };
+
+        // Current bucket boundaries.
+        let cur_start = (i as f64 * bucket_size).floor() as usize + 1;
+        let cur_end = (((i + 1) as f64 * bucket_size).floor() as usize + 1)
+            .min(points.len() - 1);
+
+        // Find point in current bucket with largest triangle area.
+        let (px, py) = points[prev_selected];
+        let mut max_area = -1.0f64;
+        let mut max_idx = cur_start;
+
+        for (j, &(cx, cy)) in points[cur_start..=cur_end].iter().enumerate() {
+            let area = ((px - avg_x) * (cy - py) - (px - cx) * (avg_y - py)).abs();
+            if area > max_area {
+                max_area = area;
+                max_idx = cur_start + j;
+            }
+        }
+
+        result.push(points[max_idx]);
+        prev_selected = max_idx;
+    }
+
+    result.push(points[points.len() - 1]); // Always include last point.
+    result
+}
+
+/// Downsample a `ChartSeries`'s values to at most `target_count` points using LTTB.
+/// Returns a new Vec<Option<f64>> with `None` values preserved as gaps.
+pub fn downsample_series(values: &[Option<f64>], target_count: usize) -> Vec<Option<f64>> {
+    if values.len() <= target_count {
+        return values.to_vec();
+    }
+
+    // Build contiguous (index, value) pairs for non-None values.
+    let pairs: Vec<(f64, f64)> = values
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| v.map(|y| (i as f64, y)))
+        .collect();
+
+    if pairs.len() <= target_count {
+        // Fewer real points than target — just clone.
+        return values.to_vec();
+    }
+
+    let downsampled = downsample_lttb(&pairs, target_count);
+
+    // Map back to indexed Option<f64>.
+    let mut result = vec![None; values.len()];
+    for (x, y) in downsampled {
+        let idx = x.round() as usize;
+        if idx < result.len() {
+            result[idx] = Some(y);
+        }
+    }
+    result
 }
 
 #[derive(Clone)]

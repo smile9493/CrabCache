@@ -3,7 +3,8 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use super::core::{ChartSeries, format_tooltip_value};
+use super::core::ChartSeries;
+use super::interaction::series_tooltip_at;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ChartHoverMode {
@@ -138,27 +139,3 @@ pub fn PlottersChartFrame(
     }
 }
 
-/// Build tooltip rows for the hovered index.
-pub fn series_tooltip_at(
-    labels: &[String],
-    series: &[ChartSeries],
-    idx: Option<usize>,
-) -> Option<(String, Vec<(String, String, &'static str)>)> {
-    let idx = idx?;
-    if idx >= labels.len() {
-        return None;
-    }
-    let label = labels[idx].clone();
-    let values: Vec<(String, String, &'static str)> = series
-        .iter()
-        .filter_map(|s| {
-            let v = s.values.get(idx).and_then(|opt| *opt)?;
-            Some((s.label.clone(), format_tooltip_value(v), s.color))
-        })
-        .collect();
-    if values.is_empty() {
-        None
-    } else {
-        Some((label, values))
-    }
-}

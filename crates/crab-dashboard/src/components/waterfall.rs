@@ -1,10 +1,11 @@
-//! Request lifecycle waterfall (Plotters horizontal bars).
+//! Request lifecycle waterfall (Canvas rendering).
 
 use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use wasm_bindgen::JsCast;
 
 pub use crate::components::chart::core::WaterfallStage;
-use crate::components::chart::svg_render;
+use crate::components::chart::canvas_render;
 use crate::theme::use_theme_signal;
 
 static WATERFALL_CHART_ID: AtomicUsize = AtomicUsize::new(0);
@@ -15,8 +16,8 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
     let summary_id = format!("waterfall-chart-summary-{}", chart_id);
     let theme = use_theme_signal();
     let stored = StoredValue::new(stages.clone());
+    let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
 
-    // Generate data summary for screen readers
     let stage_descriptions: Vec<String> = stages
         .iter()
         .map(|s| format!("{}: {:.1}ms", s.label, s.duration_ms))
@@ -27,28 +28,32 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
         stage_descriptions.join(", ")
     );
 
-    let svg = Signal::derive(move || {
+    Effect::new(move |_| {
+        let Some(canvas_el) = canvas_ref.get() else {
+            return;
+        };
+        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
         let _ = theme.get();
-        svg_render::render_waterfall(&stored.get_value(), theme.get())
+        canvas_render::render_waterfall(&canvas_dom, &stored.get_value(), theme.get());
     });
 
     view! {
         <div class="waterfall-chart">
             <div id={summary_id.clone()} class="sr-only">{data_summary}</div>
             {move || {
-                if let Some(doc) = svg.get() {
+                if stored.get_value().is_empty() {
                     view! {
-                        <div
-                            class="waterfall-chart-svg-host"
-                            prop:inner_html=doc
+                        <div class="text-center py-6 text-theme-muted text-sm">"No stage data"</div>
+                    }.into_any()
+                } else {
+                    view! {
+                        <canvas
+                            node_ref=canvas_ref
+                            style="width: 100%; min-height: 120px"
                             role="img"
                             aria-label="Waterfall chart"
                             aria-describedby={summary_id.clone()}
                         />
-                    }.into_any()
-                } else {
-                    view! {
-                        <div class="text-center py-6 text-theme-muted text-sm">"No stage data"</div>
                     }.into_any()
                 }
             }}
