@@ -17,6 +17,7 @@
 | [../third_party/pingora-proxy/PATCH.md](../third_party/pingora-proxy/PATCH.md) | Fork：`Arc<Connector>` 与直预热 |
 | [../CLAUDE.md](../CLAUDE.md) | 特性开关、`[features]` 配置摘要 |
 | [./DATA_PLANE_ACCEPTANCE.md](./DATA_PLANE_ACCEPTANCE.md) | P2 验收手册（MiMo/DeepSeek 双线路径 + Prometheus 核对） |
+| [./OPS_RUNBOOK.md](./OPS_RUNBOOK.md) | 运行时 Trace 对照、P0 事故处置、非数据面遗漏项 |
 | [../config/gateway.example.toml](../config/gateway.example.toml) | `[features]` 注释 |
 
 ---
@@ -136,8 +137,47 @@
 
 ---
 
+## 运行时分析对照（2026-05 内测）
+
+完整处置步骤见 **[OPS_RUNBOOK.md](./OPS_RUNBOOK.md)**。下表说明：**继续推进数据面能否明显改善该问题**。
+
+| 报告现象 | 数据面（已做 + 文档剩余） | 明显改善？ | 更应优先 |
+|----------|---------------------------|------------|----------|
+| MiMo 429 / 单上游 Key | 预热、early cache △；近似键 ⬜ | **否** | 加 Key、降 Cursor 并行 |
+| 命中率 ~25% | Prefix 索引 ✅（不短路）；L2 ⬜/关 | **部分** | 启用 L2、减 context；勿对标 98% |
+| MISS P99 数秒+ | 阶段指标 ✅；SSE 异步写 ⬜ | **否** | 上游与 body 体量 |
+| Coalescing Follower 502 | 设计行为 | **否**（除非改产品策略） | 降并发；近似键 ⬜ |
+| ConnectionClosed | 预热 ✅ | **部分** | 限流/TE/CL，见 CURSOR_SETUP |
+| Trace 截断 / Redis 启动 | 不在数据面 | **否** | OBSERVABILITY、PERSISTENCE |
+| DeepSeek L3 prompt cache 高 | affinity 反馈 ✅ | **是**（DeepSeek 线） | 与 MiMo 429 无关 |
+
+### 数据面 ROI 排序（在内测场景下）
+
+1. **启用 L2 语义缓存**（配置 `[semantic]`，见 `gateway.example.toml`）  
+2. **MiMo 近似缓存键**（§1.3 折中，⬜）— 利于 Coalescing，缓解高峰上游压力  
+3. **`streaming_body_forward`**（P3）— 大 body 内存与读 body 延迟  
+4. 差分缓存 / io_uring / WASM — 长期或大促，**非**当前 429 主药  
+
+### 命中率目标口径
+
+文档性能目标 **>98%** 指 **高重复、短对话、精确键可复用** 的流量。Cursor 内测（大 body、低重复）应观测 `hit_rate_5m`、`token_hit_rate_5m` 及 consumer 维度，详见 OPS_RUNBOOK §1。
+
+### 非数据面遗漏（单独排期）
+
+| 项 | 说明 |
+|----|------|
+| 上游 Key 池与 per-key in-flight | Management `profiles/{id}/keys`；避免单 Key 耗尽 |
+| 429/503 `limit_source` | 区分客户端 RPM、厂商 429、池冷却、Coalesce Leader 失败 |
+| Coalescing 失败体验 | Retry-After / 是否排队 |
+| 上游 429 熔断 | 短时拒新请求保护冷却 |
+| Trace / Admin 读取上限 | 与 `trace_logging`、Admin API 相关 |
+| Cursor 并行与 context 裁剪 | 运维与客户端，非 proxy 代码 |
+
+---
+
 ## 维护约定
 
 - 数据面行为变更：更新 **本文件** + `CLAUDE.md` / `gateway.example.toml` / 相关指标段（`OBSERVABILITY.md`）。
+- 生产事故复盘：更新 **[OPS_RUNBOOK.md](./OPS_RUNBOOK.md)** §1 样本表与本节对照表。
 - P3 实现启动时：在 `DATA_PLANE_P3.md` 增加「实现状态」小节，并将上表对应行改为 🟡/✅。
 - 《数据面优化.md》保留为**愿景与论证**；勿单独改其优先级表而不改本文件。

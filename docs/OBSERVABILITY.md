@@ -4,6 +4,8 @@
 
 数据面请求阶段耗时（`gateway_request_phase_latency_seconds`）与 prefix 索引预热计数见 [DATA_PLANE.md](./DATA_PLANE.md) 与下文指标表。
 
+**事故处置**（MiMo 429、低命中率解读、Trace 截断）：见 [OPS_RUNBOOK.md](./OPS_RUNBOOK.md)。
+
 ## 指标定义
 
 | 指标 / UI 字段 | 来源 | 含义 |
@@ -19,7 +21,8 @@
 | `gateway_prefix_index_warmup_total` | Counter | Prefix-aware L0 命中时仅预热索引、请求仍走上游的次数 |
 | `client_key_inflight` | `gateway_client_key_inflight{key_id,consumer}` | 客户端 Key 当前 in-flight 请求数 |
 | `cost_saved_usd_total` / `cost_saved_usd_5m` | `gateway_cache_cost_saved_usd_total` | 网关估算的节省美元金额 |
-| `rejected_total` / `rejected_5m` | `gateway_rejected_requests_total` | 被拒绝的请求数 |
+| `rejected_total` / `rejected_5m` | `gateway_rejected_requests_total` | 被拒绝的请求数（含 `upstream_key_exhausted` 等 `reason` 标签） |
+| `upstream_key_retries` | `gateway_upstream_key_retries_total{outcome}` | 上游 Key 429 后轮换；单 Key 时常为 `cooldown_only` |
 | `ttft_ms` | `gateway_stream_first_token_latency_seconds` | 平均首字延迟（直方图） |
 | `tier_deltas_5m` | 按层级 `gateway_cache_requests_total` | 5 分钟窗口内的 L0/L1/L2/未命中请求计数 |
 | `trace_summary.cache_hit_ratio` | `trace.jsonl`（24h，缓存 60s） | Trace 对比横幅的影子日志命中率 |
@@ -136,6 +139,8 @@ max_files = 5
 ```
 
 每行是一个 `SanitizedLogEntry`（不含原始 body）。包含 `consumer`（API Key name）、`cache_tier`、`prompt_cache_hit_ratio`，以及（当前网关构建版本）`upstream_latency_ms`、`ttft_ms`、`input_tokens`、`output_tokens`。
+
+**Admin 读取**：Trace 页与部分 API 对单行/单响应有体积上限（约 **4MB**）；超大 `raw_capture` 会导致「截断」警告，不利于高峰事后分析。缓解：`max_lines` 轮转、控制 `raw_capture`、见 [OPS_RUNBOOK.md](./OPS_RUNBOOK.md) §P1。
 
 ### DeepSeek `user_id` 隔离审计字段
 

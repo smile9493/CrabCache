@@ -196,13 +196,31 @@ bash scripts/verify_cursor_e2e.sh
 
 ## 限流排查（`User API Key Rate limit exceeded`）
 
-该错误来自 **DeepSeek 上游账号**（`CRABCACHE_UPSTREAM_KEYS`），不是 Cursor 里的 `sk-cc-*`。
+Cursor 常把该文案显示为 **「用户提供的 API Key 限流」**，多数情况下指 **网关转发的上游厂商 Key**，而不是 Cursor 里填的 `sk-cc-*`（客户端 Key 默认 `rpm_limit=0` 即不限）。
 
-1. 确认 `.env` 中上游 Key 与手动 `curl api.deepseek.com` 测试用的是**同一批新 Key**。
-2. `curl -s http://127.0.0.1:9080/v1/upstream/keys -H "x-gateway-admin-key: ..." | jq` 查看 `cooldown_remaining_secs`。
-3. 增加 `CRABCACHE_UPSTREAM_KEYS` 条目（对齐 new-api 渠道 MultiKey）。
+完整对照表与 Prometheus 核对见 **[OPS_RUNBOOK.md](OPS_RUNBOOK.md)**。
+
+### DeepSeek Profile（`default` / CursorDeepSeekV4）
+
+上游账号来自 Profile 的 API Key 池（环境变量 `CRABCACHE_UPSTREAM_KEYS` 或 Management `PUT /v1/upstream/profiles/{id}/keys`）。
+
+1. 确认上游 Key 与手动 `curl api.deepseek.com` 测试用的是**同一批有效 Key**。
+2. `GET /v1/upstream/profiles/default/keys`（或 `GET /v1/upstream/keys` 视部署）查看 `cooldown_remaining_secs`。
+3. 增加池内 Key 数量（对齐 new-api MultiKey）。
 4. 将 `reasoning_effort` 降为 `medium`（热更新见上文）。
-5. 高峰仍不足时：临时 `missing_reasoning_strategy=recover`（省 token，牺牲 L3 前缀命中）。
+5. 高峰仍不足：临时 `missing_reasoning_strategy=recover`（省 token，牺牲 L3 前缀命中）。
+
+### MiMo Profile
+
+日志表现为 `upstream rate limited, attempting key rotation`、HTTP **429**；仅 **1 把** 上游 Key 时 Prometheus 可见 `gateway_upstream_key_retries_total{outcome="cooldown_only"}`，并可能出现 `gateway_rejected_requests_total{reason="upstream_key_exhausted"}`（503，未打到厂商）。
+
+1. `GET /v1/upstream/profiles/mimo/keys` — 至少 **2 把** 启用 Key；429 轮换仅在 **`account_id` 不同** 的 Key 间进行。
+2. 高峰 **降低 Cursor 并行**（多 Agent/Task）；大 body（数百 KB）会放大 QPS 压力。
+3. 勿与「网关 sk-cc 限流」混淆：日志中不应出现 `Rate limit exceeded for this API key`（除非 Management 显式设置了 `rpm_limit`）。
+4. Coalescing：Leader 上游 429/失败时 Follower **不会**再打上游；可能出现批量 Follower 502，属防雪崩设计。
+
+### 通用
+
 6. 网关 Coalescing：Leader 上游失败时 Follower **不会**再打上游（避免雪崩）；日志中不应再出现大量 `falling through to upstream` 紧随 429。
 
 从 new-api 迁移：见 [`NEW_API_MIGRATION.md`](NEW_API_MIGRATION.md)。
@@ -225,7 +243,7 @@ Cursor 可使用：
 |------|------|
 | **Chunked + Content-Length 冲突** | Cursor 经 OpenResty 多为 HTTP/2 入站；Pingora 转上游 H1 时可能带 `Transfer-Encoding: chunked`，网关已在 `upstream_request_filter` **去掉 TE、只保留 Content-Length**（`upstream_headers.rs`）。 |
 | **>64KiB body 未发到上游** | `request_filter` 读光 body 后 Pingora retry buffer 仅 64KiB；超限则跳过首次 `send_body_to_pipe`，导致只发头不发 body。已 patch `third_party/pingora-proxy`（`retry_buffer_truncated` 时仍触发 body filter）+ `request_body_filter` 注入 `new_request_body`。 |
-| DeepSeek 限流 / WAF | 对端在返回 HTTP 头前关连接；文案常为 `User API Key Rate limit exceeded` → 加 `CRABCACHE_UPSTREAM_KEYS` |
+| DeepSeek / **MiMo** 限流 / WAF | 对端在返回 HTTP 头前关连接；文案常为 `User API Key Rate limit exceeded` → 加对应 Profile 上游 Key，MiMo 见上文 [MiMo Profile](#mimo-profile) |
 | Coalescing 雪崩 | 已修复：Leader 失败时 Follower **不再** `falling through to upstream` |
 
 网关对替换后的上游请求还会：

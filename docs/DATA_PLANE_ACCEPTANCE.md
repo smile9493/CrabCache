@@ -3,7 +3,8 @@
 本文档提供 **MiMo 中继** 和 **DeepSeek/Cursor** 两条流量路径的操作验收清单，对应 [DATA_PLANE.md](./DATA_PLANE.md) 建议验收表。
 
 > [!NOTE]
-> 本文档用于**手工 + 自动化**验证已落地的数据面 feature。自动化回归测试见 `crates/crab-gateway/tests/data_plane.rs`。
+> 本文档用于**手工 + 自动化**验证已落地的数据面 feature。自动化回归测试见 `crates/crab-gateway/tests/data_plane.rs`。  
+> **生产事故 / MiMo 429 / 低命中率解读** 不在本验收范围内，见 [OPS_RUNBOOK.md](./OPS_RUNBOOK.md)。
 
 ---
 
