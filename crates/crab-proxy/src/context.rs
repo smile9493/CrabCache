@@ -205,6 +205,19 @@ pub struct TokenStats {
     pub last_prompt_cache_miss: u64,
 }
 
+/// Per-request lifecycle watermarks for phase latency histograms.
+#[derive(Default)]
+pub struct RequestTimeline {
+    pub body_read_done: Option<Instant>,
+    pub json_parse_done: Option<Instant>,
+    pub cache_lookup_done: Option<Instant>,
+    pub upstream_connect_done: Option<Instant>,
+    pub upstream_headers_sent: Option<Instant>,
+    pub ttft: Option<Instant>,
+    pub upstream_body_done: Option<Instant>,
+    pub logging_done: Option<Instant>,
+}
+
 /// Upstream connection, retry, and error state.
 pub struct UpstreamState {
     /// HTTP `Host` / TLS SNI for the selected upstream peer.
@@ -258,7 +271,6 @@ impl Default for UpstreamState {
 }
 
 /// Streaming response processing state (SSE rewriting, reasoning accumulation).
-#[derive(Default)]
 pub struct StreamState {
     pub accumulator: Option<StreamAccumulator>,
     pub display_adapter: Option<CursorReasoningDisplayAdapter>,
@@ -271,6 +283,23 @@ pub struct StreamState {
     pub pending_recovery_notice: Option<String>,
     /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
     pub reasoning_bypass_warned: bool,
+    /// Pipeline-specific SSE processing handler (created once per streaming request).
+    pub(crate) stream_pipeline: Option<crate::sse_pipeline::StreamPipeline>,
+}
+
+impl Default for StreamState {
+    fn default() -> Self {
+        Self {
+            accumulator: None,
+            display_adapter: None,
+            reasoning_finalized: false,
+            sse_remainder: Vec::new(),
+            client_sse_body: Vec::new(),
+            pending_recovery_notice: None,
+            reasoning_bypass_warned: false,
+            stream_pipeline: None,
+        }
+    }
 }
 
 pub struct GatewayContext {
@@ -297,6 +326,8 @@ pub struct GatewayContext {
     /// Parsed client JSON payload reused across pipeline/composition/raw-capture to avoid re-parse.
     pub parsed_request_payload: Option<Arc<serde_json::Value>>,
     pub prepared_request: Option<PreparedRequest>,
+    /// Copied from `PreparedRequest` for trace/capture after streaming moves `prepared_request` into SSE pipeline.
+    pub retired_prefix_messages: Option<usize>,
     pub new_request_body: Option<Bytes>,
     /// Snapshot of the upstream JSON body for raw capture (survives `new_request_body.take()`).
     pub upstream_body_for_capture: Option<Bytes>,
@@ -335,6 +366,12 @@ pub struct GatewayContext {
     /// Session fingerprint derived from the first user message (SHA-256 prefix).
     /// Computed once in `request_filter` and shared by trace logger + raw capture.
     pub session_fingerprint: Option<String>,
+    /// Accumulated upstream prompt-cache hit tokens (affinity hint finalized in `logging`).
+    pub affinity_prompt_cache_hits: u64,
+    /// Accumulated upstream prompt-cache miss tokens (affinity hint finalized in `logging`).
+    pub affinity_prompt_cache_misses: u64,
+    /// Lifecycle watermarks for `gateway_request_phase_latency_seconds`.
+    pub timeline: RequestTimeline,
 }
 
 impl GatewayContext {
@@ -361,6 +398,7 @@ impl GatewayContext {
             original_request_body: None,
             parsed_request_payload: None,
             prepared_request: None,
+            retired_prefix_messages: None,
             new_request_body: None,
             upstream_body_for_capture: None,
             parsed_upstream_payload: None,
@@ -383,6 +421,9 @@ impl GatewayContext {
             response_body_preview: Vec::new(),
             cached_reasoning_config: ReasoningConfig::default(),
             session_fingerprint: None,
+            affinity_prompt_cache_hits: 0,
+            affinity_prompt_cache_misses: 0,
+            timeline: RequestTimeline::default(),
         }
     }
 }
@@ -399,6 +440,18 @@ pub struct FeaturesConfig {
     /// Pre-warm upstream connections on new session fingerprints.
     #[serde(default)]
     pub connection_prewarm: bool,
+    /// Prefer upstream backends that recently returned prompt_cache_hit_tokens > 0 for the same affinity key.
+    #[serde(default)]
+    pub affinity_prompt_cache_feedback: bool,
+    /// Experimental: delta (differential) response cache for long sessions.
+    #[serde(default)]
+    pub delta_cache: bool,
+    /// Reserved: io_uring network backend (requires Pingora support).
+    #[serde(default)]
+    pub io_uring_backend: bool,
+    /// Reserved: WASM filter plugins for body/SSE transforms.
+    #[serde(default)]
+    pub wasm_filters: bool,
     /// Enable MiMo context compression (auto-summarize old messages).
     #[serde(default)]
     pub mimo_context_compression: bool,
@@ -435,6 +488,16 @@ pub struct GatewayState {
     /// Tracks session fingerprints that have already been seen (for connection pre-warm).
     /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
     pub seen_session_fingerprints: moka::sync::Cache<String, ()>,
+    /// Proxy loopback address for runtime connection pre-warm (e.g., "127.0.0.1:8080").
+    /// When set, new session fingerprints trigger an async TCP connect + minimal HTTP request
+    /// through the proxy to populate Pingora's connection pool for the target backend.
+    pub proxy_loopback_addr: Option<String>,
+    /// Bootstrap API key for pre-warm requests (raw value, e.g., "sk-cc-...").
+    pub prewarm_api_key: Option<String>,
+    /// affinity_key → backend_name when upstream prompt cache hits were observed (L3 stickiness).
+    pub affinity_backend_hints: moka::sync::Cache<String, String>,
+    /// Limits concurrent runtime loopback pre-warm requests (via proxy listener).
+    pub prewarm_semaphore: Arc<Semaphore>,
     /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).
     pub global_rate: Arc<pingora_limits::rate::Rate>,
 }

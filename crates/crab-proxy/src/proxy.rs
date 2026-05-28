@@ -6,7 +6,7 @@ use crate::cache_helpers::{
 };
 use crate::cache_response::{completion_json_has_visible_client_content, send_cached_response};
 use crate::client_key_limiter::ClientKeyLimitError;
-use crate::context::{ConnectionConfig, GatewayContext, GatewayState, ReasoningConfig};
+use crate::context::{GatewayContext, GatewayState, ReasoningConfig};
 use crate::debug_agent_log;
 use crate::error_jsons::{
     client_concurrency_exceeded_error_json, coalesce_leader_failed_error_json,
@@ -19,12 +19,17 @@ use crate::helper_fns::{
     is_models_endpoint, last_user_message_fingerprint, sanitize_for_trace,
     stable_session_log_fields,
 };
+use crate::connection_helpers::apply_connection_options;
+use crate::connection_prewarm::prewarm_via_proxy;
+use crate::metrics_helpers::{
+    accumulate_affinity_prompt_cache_usage, finalize_affinity_backend_hint,
+    observe_request_timeline, record_usage_metrics, timeline_stamp,
+};
 use crate::runtime::RuntimeConfig;
 use crate::send_helpers::{
     send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok,
 };
-use crate::sse::{UsageData, parse_sse_chunk};
-use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
+use crate::sse::UsageData;
 use crate::tenant::{
     ProjectResolveError, derive_project_id_from_client_key, effective_cache_namespace,
     resolve_project_id,
@@ -50,17 +55,15 @@ use crab_pipeline::{
     select_request_pipeline, validate_pipeline_override,
 };
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, ReasoningBackend, StreamAccumulator, prepare_generic_request,
+    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_generic_request,
     prepare_light_request, prepare_mimo_request, prepare_upstream_request, rewrite_response_body,
-    rewrite_sse_chunk, sanitize_client_completion,
+    sanitize_client_completion,
 };
 use crab_route::extract_affinity_key;
+use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use http::HeaderMap;
 use pingora_core::prelude::*;
-use pingora_core::protocols::l4::ext::TcpKeepalive;
-use pingora_core::upstreams::peer::ALPN;
-use pingora_core::upstreams::peer::PeerOptions;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sha2::{Digest, Sha256};
@@ -73,6 +76,15 @@ pub struct GatewayProxy {
 }
 
 impl GatewayProxy {
+    fn is_mimo_pipeline(p: RequestPipeline) -> bool {
+        matches!(
+            p,
+            RequestPipeline::MimoRelay
+                | RequestPipeline::MimoTokenPlanRelay
+                | RequestPipeline::MimoPaygRelay
+        )
+    }
+
     pub fn new(state: Arc<GatewayState>) -> Self {
         Self { state }
     }
@@ -701,6 +713,7 @@ impl ProxyHttp for GatewayProxy {
         let full_body = Bytes::from(full_body);
         ctx.content_length = full_body.len();
         ctx.original_request_body = Some(full_body.clone());
+        timeline_stamp(&mut ctx.timeline.body_read_done);
 
         let req_hash = hex::encode(hasher.finalize());
         ctx.req_hash = Some(req_hash);
@@ -721,6 +734,7 @@ impl ProxyHttp for GatewayProxy {
             None,
         );
         ctx.parsed_request_payload = Some(parsed_payload.clone());
+        timeline_stamp(&mut ctx.timeline.json_parse_done);
         let payload = parsed_payload.as_ref();
 
         let profile = self.state.runtime.default_profile();
@@ -910,6 +924,7 @@ impl ProxyHttp for GatewayProxy {
                 reject_missing =
                     missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
                 ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
+                ctx.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                 ctx.prepared_request = Some(prepared.clone());
                 ctx.new_request_body = Some(Bytes::from(
                     serde_json::to_vec(&prepared.payload).unwrap_or_default(),
@@ -1274,6 +1289,7 @@ impl ProxyHttp for GatewayProxy {
                     .await
             };
             let tiered_was_absent = tiered_exact.is_none();
+            timeline_stamp(&mut ctx.timeline.cache_lookup_done);
             if let Some((entry, tier)) = tiered_exact {
                 if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                     info!(
@@ -1402,8 +1418,13 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
 
-            // ── Prefix-aware L0 lookup (feature-gated) ───────────────
-            if tiered_was_absent && self.state.features.prefix_aware_cache {
+            // ── Prefix-aware L0 lookup ───────────────────────────────
+            // Enabled by feature flag, and default-on for MiMo relay pipelines.
+            let prefix_aware_enabled = self.state.features.prefix_aware_cache
+                || ctx
+                    .request_pipeline
+                    .is_some_and(|p| Self::is_mimo_pipeline(p));
+            if tiered_was_absent && prefix_aware_enabled {
                 if let Some(payload) = ctx.parsed_request_payload.as_ref() {
                     let prefix_key = crab_cache::generate_composite_cache_key_from_value(
                         payload,
@@ -1421,54 +1442,15 @@ impl ProxyHttp for GatewayProxy {
                             .await
                         {
                             if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
-                                info!(
+                                debug!(
                                     request_id = %ctx.request_id,
                                     prefix_hash = %prefix_hash,
-                                    "Prefix-aware L0 hit"
+                                    full_key = %cache_key,
+                                    "Prefix-aware L0 index warm-up (request continues upstream)"
                                 );
-                                let sent_ok = send_cached_response(
-                                    session,
-                                    &entry,
-                                    &ctx.model,
-                                    ctx.is_streaming,
-                                    CacheTier::L0Moka,
-                                    ctx.cached_reasoning_config.display_reasoning,
-                                )
-                                .await;
-                                if sent_ok {
-                                    ctx.cache_tier = Some(CacheTier::L0Moka);
-                                    ctx.cache_hit = Some(entry.clone());
-                                    ctx.tokens.last_input = entry.usage.prompt_tokens;
-                                    ctx.tokens.last_output = entry.usage.completion_tokens;
-                                    // Spawn stale-while-revalidate if entry is stale.
-                                    if let Some(body) = &ctx.original_request_body {
-                                        crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
-                                    }
-                                    global_metrics().record_latency(
-                                        crab_metrics::LatencyKind::CacheFetch,
-                                        ctx.request_start.elapsed(),
-                                        &ctx.model,
-                                        Some(CacheTier::L0Moka),
-                                    );
-                                    global_metrics().record_cost_saved(
-                                        &ctx.model,
-                                        ctx.consumer.as_deref(),
-                                        ctx.domain.as_deref(),
-                                        CacheTier::L0Moka,
-                                        self.state.pricing.cost_saved_usd(
-                                            &ctx.model,
-                                            entry.usage.prompt_tokens,
-                                            entry.usage.completion_tokens,
-                                        ),
-                                    );
-                                    global_metrics().record_full_response_cache_hit("L0_prefix", ctx.domain.as_deref());
-                                    global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
-                                    self.state.tiered_cache.update_prefix_index(prefix_hash, &cache_key);
-                                    return Ok(true);
-                                }
                             }
                         }
-                        // Register prefix → full key for future lookups.
+                        // Register prefix → full key for exact-cache and future prefix lookups.
                         self.state.tiered_cache.update_prefix_index(prefix_hash, &cache_key);
                     }
                 }
@@ -1698,6 +1680,9 @@ impl ProxyHttp for GatewayProxy {
         // #endregion
 
         // ── Connection pre-warm for new session fingerprints ──────────
+        // When connection_prewarm is enabled and a new session fingerprint is detected,
+        // spawn an async task that sends a lightweight request through the proxy loopback
+        // to populate Pingora's connection pool for the target backend.
         if self.state.features.connection_prewarm {
             if let Some(sfp) = ctx.session_fingerprint.as_deref() {
                 let is_new = self
@@ -1709,13 +1694,26 @@ impl ProxyHttp for GatewayProxy {
                     self.state
                         .seen_session_fingerprints
                         .insert(sfp.to_string(), ());
-                    let sfp_short = sfp.chars().take(8).collect::<String>();
-                    debug!(
-                        request_id = %ctx.request_id,
-                        sfp = %sfp_short,
-                        affinity_key = %ctx.upstream.affinity_key.as_deref().unwrap_or("none"),
-                        "New session fingerprint detected (pre-warm reserved for future use)"
-                    );
+                    if let (Some(loopback), Some(api_key)) = (
+                        self.state.proxy_loopback_addr.as_deref(),
+                        self.state.prewarm_api_key.as_deref(),
+                    ) {
+                        let affinity_key = ctx.upstream.affinity_key.clone();
+                        let loopback = loopback.to_string();
+                        let api_key = api_key.to_string();
+                        let semaphore = self.state.prewarm_semaphore.clone();
+                        let sfp_short = sfp.chars().take(8).collect::<String>();
+                        debug!(
+                            request_id = %ctx.request_id,
+                            sfp = %sfp_short,
+                            affinity_key = %affinity_key.as_deref().unwrap_or("none"),
+                            "New session fingerprint detected, spawning connection pre-warm"
+                        );
+                        tokio::spawn(async move {
+                            prewarm_via_proxy(semaphore, &loopback, &api_key, affinity_key.as_deref())
+                                .await;
+                        });
+                    }
                 }
             }
         }
@@ -1789,7 +1787,18 @@ impl ProxyHttp for GatewayProxy {
         let profile = self.active_upstream_profile(ctx);
         let router = &profile.router;
 
-        let selected = router.select(affinity_key.as_bytes()).ok_or_else(|| {
+        let preferred_backend = if self.state.features.affinity_prompt_cache_feedback {
+            ctx.upstream
+                .affinity_key
+                .as_deref()
+                .and_then(|k| self.state.affinity_backend_hints.get(k))
+        } else {
+            None
+        };
+
+        let selected = router
+            .select_with_hint(affinity_key.as_bytes(), preferred_backend.as_deref())
+            .ok_or_else(|| {
             tracing::warn!(
                 request_id = %ctx.request_id,
                 "No healthy upstream backend available, returning 503"
@@ -1806,6 +1815,10 @@ impl ProxyHttp for GatewayProxy {
 
         ctx.upstream.backend_name = Some(selected.name.to_string());
         ctx.upstream.host = Some(selected.tls_sni.to_string());
+        if ctx.upstream.start.is_none() {
+            ctx.upstream.start = Some(Instant::now());
+        }
+        timeline_stamp(&mut ctx.timeline.upstream_connect_done);
         let backend_addr = selected.addr;
         let backend_tls_sni = selected.tls_sni.to_string();
         let peer = self.create_upstream_peer(backend_addr, &backend_tls_sni, ctx);
@@ -1919,6 +1932,7 @@ impl ProxyHttp for GatewayProxy {
         }
 
         ctx.upstream_headers_prepared_at = Some(Instant::now());
+        timeline_stamp(&mut ctx.timeline.upstream_headers_sent);
 
         if ctx.new_request_body.is_some() {
             upstream_request.set_send_end_stream(false);
@@ -2186,6 +2200,7 @@ impl ProxyHttp for GatewayProxy {
                     && let Some(upstream_start) = ctx.upstream.start
                 {
                     ctx.ttft = Some(upstream_start.elapsed());
+                    timeline_stamp(&mut ctx.timeline.ttft);
                     if let Some(ttft) = ctx.ttft {
                         global_metrics().record_latency(
                             crab_metrics::LatencyKind::TTFT,
@@ -2196,57 +2211,16 @@ impl ProxyHttp for GatewayProxy {
                     }
                 }
 
-                let downstream_chunk = if let (Some(prepared), Some(accumulator)) = (
-                    ctx.prepared_request.as_ref(),
-                    ctx.stream.accumulator.as_mut(),
-                ) {
-                    let (rewritten, finalized) = rewrite_upstream_sse_bytes(
-                        &data,
-                        &mut ctx.stream.sse_remainder,
-                        prepared,
-                        accumulator,
-                        ctx.cached_reasoning_config.display_reasoning,
-                        &mut ctx.stream.display_adapter,
-                        &mut ctx.stream.pending_recovery_notice,
-                        &self.state.reasoning_store,
-                        false,
-                    );
-                    if finalized {
-                        ctx.stream.reasoning_finalized = true;
-                    }
-                    if !rewritten.is_empty() {
-                        ctx.stream.client_sse_body.extend_from_slice(&rewritten);
-                    }
-                    if rewritten.is_empty() {
-                        None
-                    } else {
-                        Some(bytes::Bytes::from(rewritten))
-                    }
-                } else {
-                    let client_bytes = if ctx.request_pipeline
-                        == Some(RequestPipeline::CursorDeepSeekV4)
-                        && !ctx.cached_reasoning_config.display_reasoning
-                    {
-                        if !ctx.stream.reasoning_bypass_warned {
-                            ctx.stream.reasoning_bypass_warned = true;
-                            warn!(
-                                request_id = %ctx.request_id,
-                                "CursorDeepSeekV4 stream without prepared_request; applying silent reasoning strip"
-                            );
-                        }
-                        apply_silent_strip_to_sse_chunk(&data)
-                    } else {
-                        data.to_vec()
-                    };
-                    ctx.stream.client_sse_body.extend_from_slice(&client_bytes);
-                    ctx.accumulated_body.extend_from_slice(&data);
-                    Some(bytes::Bytes::from(client_bytes))
-                };
+                // Initialize SSE pipeline on first streaming chunk.
+                if ctx.stream.stream_pipeline.is_none() {
+                    ctx.stream.stream_pipeline =
+                        select_sse_pipeline(ctx, self.state.reasoning_store.clone());
+                }
 
-                let parse_src = downstream_chunk.as_ref().unwrap_or(&data);
-                let events = parse_sse_chunk(parse_src);
-                for event in &events {
-                    if let Some(usage) = event.parse_usage() {
+                if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
+                    ctx.accumulated_body.extend_from_slice(&data);
+                    let result = pipeline.process_chunk(data, &mut ctx.stream.client_sse_body);
+                    if let Some(usage) = result.usage {
                         ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
                         ctx.tokens.last_input = usage.prompt_tokens;
                         ctx.tokens.last_output = usage.completion_tokens;
@@ -2258,14 +2232,24 @@ impl ProxyHttp for GatewayProxy {
                             ctx.consumer.as_deref(),
                             ctx.domain.as_deref(),
                             ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                            ctx.upstream.affinity_key.as_deref().map(|k| crab_capture::affinity_kind_from_key(k)),
+                            ctx.upstream.affinity_key.as_deref().map(|k| {
+                                crab_capture::affinity_kind_from_key(k)
+                            }),
                             &self.state.runtime,
                             &self.state.pricing,
                         );
+                        if self.state.features.affinity_prompt_cache_feedback {
+                            accumulate_affinity_prompt_cache_usage(
+                                ctx,
+                                usage.prompt_cache_hit_tokens,
+                                usage.prompt_cache_miss_tokens,
+                            );
+                        }
                     }
+                    *body = result.client_bytes;
+                } else {
+                    *body = Some(data);
                 }
-
-                *body = downstream_chunk;
             } else {
                 *body = Some(data);
             }
@@ -2285,6 +2269,7 @@ impl ProxyHttp for GatewayProxy {
             if let Some(upstream_start) = ctx.upstream.start {
                 let latency = upstream_start.elapsed();
                 ctx.upstream.latency_ms = Some(latency.as_secs_f64() * 1000.0);
+                timeline_stamp(&mut ctx.timeline.upstream_body_done);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -2293,23 +2278,6 @@ impl ProxyHttp for GatewayProxy {
                 );
                 if let Some(kid) = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()) {
                     global_metrics().record_upstream_key_latency(kid, latency);
-                }
-            }
-
-            // Non-streaming: reasoning is stored inside rewrite_response_body via
-            // record_response_reasoning. The accumulator is not populated for
-            // non-streaming responses, so skip the redundant store call.
-            if ctx.is_streaming
-                && let (Some(prepared), Some(accumulator)) =
-                    (&ctx.prepared_request, &mut ctx.stream.accumulator)
-            {
-                for (scope, prior_messages) in &prepared.record_response_contexts {
-                    accumulator.store_reasoning(
-                        &self.state.reasoning_store,
-                        scope,
-                        &prepared.cache_namespace,
-                        prior_messages,
-                    );
                 }
             }
 
@@ -2366,10 +2334,19 @@ impl ProxyHttp for GatewayProxy {
                         ctx.consumer.as_deref(),
                         ctx.domain.as_deref(),
                         ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                        ctx.upstream.affinity_key.as_deref().map(|k| crab_capture::affinity_kind_from_key(k)),
+                        ctx.upstream.affinity_key.as_deref().map(|k| {
+                            crab_capture::affinity_kind_from_key(k)
+                        }),
                         &self.state.runtime,
                         &self.state.pricing,
                     );
+                    if self.state.features.affinity_prompt_cache_feedback {
+                        accumulate_affinity_prompt_cache_usage(
+                            ctx,
+                            usage_data.prompt_cache_hit_tokens,
+                            usage_data.prompt_cache_miss_tokens,
+                        );
+                    }
                 }
 
                 if let Some(cache_key) = &ctx.cache_key {
@@ -2433,27 +2410,13 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if end_of_stream && ctx.is_streaming {
-            if let (Some(prepared), Some(accumulator)) = (
-                ctx.prepared_request.as_ref(),
-                ctx.stream.accumulator.as_mut(),
-            ) {
-                let (rewritten, finalized) = rewrite_upstream_sse_bytes(
-                    b"",
-                    &mut ctx.stream.sse_remainder,
-                    prepared,
-                    accumulator,
-                    ctx.cached_reasoning_config.display_reasoning,
-                    &mut ctx.stream.display_adapter,
-                    &mut ctx.stream.pending_recovery_notice,
-                    &self.state.reasoning_store,
-                    true,
-                );
-                if finalized {
+            if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
+                let flush = pipeline.flush_remainder(&mut ctx.stream.client_sse_body);
+                if pipeline.reasoning_finalized() {
                     ctx.stream.reasoning_finalized = true;
                 }
-                if !rewritten.is_empty() {
-                    ctx.stream.client_sse_body.extend_from_slice(&rewritten);
-                    *body = Some(bytes::Bytes::from(rewritten));
+                if let Some(bytes) = flush.client_bytes {
+                    *body = Some(bytes);
                 }
             }
 
@@ -2464,6 +2427,7 @@ impl ProxyHttp for GatewayProxy {
             if let Some(upstream_start) = ctx.upstream.start {
                 let latency = upstream_start.elapsed();
                 ctx.upstream.latency_ms = Some(latency.as_secs_f64() * 1000.0);
+                timeline_stamp(&mut ctx.timeline.upstream_body_done);
                 global_metrics().record_latency(
                     crab_metrics::LatencyKind::Upstream,
                     latency,
@@ -2475,9 +2439,14 @@ impl ProxyHttp for GatewayProxy {
                 }
             }
 
-            if let (Some(cache_key), Some(accumulator)) = (&ctx.cache_key, &ctx.stream.accumulator)
-            {
-                let messages = accumulator.messages();
+            let stream_messages = ctx
+                .stream
+                .stream_pipeline
+                .as_ref()
+                .map(|p| p.messages())
+                .unwrap_or_default();
+            if let Some(cache_key) = &ctx.cache_key {
+                let messages = stream_messages;
                 if !messages.is_empty() {
                     let reasoning_cfg = &ctx.cached_reasoning_config;
                     let mut response_value = serde_json::json!({
@@ -2626,6 +2595,11 @@ impl ProxyHttp for GatewayProxy {
     ) {
         let duration = ctx.request_start.elapsed();
         let latency_ms = duration.as_millis() as u64;
+        timeline_stamp(&mut ctx.timeline.logging_done);
+        if self.state.features.affinity_prompt_cache_feedback {
+            finalize_affinity_backend_hint(&self.state.affinity_backend_hints, ctx);
+        }
+        observe_request_timeline(ctx);
 
         if let Some(e) = error {
             warn!(
@@ -2710,9 +2684,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.request_composition.clone(),
                         max_payload,
                     );
-                    if let Some(prepared) = &ctx.prepared_request {
-                        entry.retired_prefix_messages = Some(prepared.retired_prefix_messages);
-                    }
+                    entry.retired_prefix_messages = ctx.retired_prefix_messages;
                     entry.reasoning_strategy =
                         if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
                             Some(
@@ -2809,9 +2781,7 @@ impl ProxyHttp for GatewayProxy {
                         ctx.project_id.as_deref(),
                         ctx.request_pipeline.as_ref().map(|p| p.as_str()),
                         ctx.is_streaming,
-                        ctx.prepared_request
-                            .as_ref()
-                            .map(|p| p.retired_prefix_messages),
+                        ctx.retired_prefix_messages,
                         Some(reasoning_strategy),
                         ctx.original_request_body.as_deref(),
                         ctx.upstream_body_for_capture
@@ -2845,7 +2815,11 @@ impl ProxyHttp for GatewayProxy {
         }
 
         if ctx.is_streaming && !ctx.stream.reasoning_finalized {
-            let stored = flush_streaming_reasoning(ctx, &self.state.reasoning_store);
+            let stored = if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
+                pipeline.store_partial_reasoning(&self.state.reasoning_store)
+            } else {
+                flush_streaming_reasoning(ctx, &self.state.reasoning_store)
+            };
             if stored > 0 {
                 debug!(
                     request_id = %ctx.request_id,
@@ -2916,195 +2890,6 @@ fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> Option<Stri
     };
 
     Some(truncated)
-}
-
-fn record_usage_metrics(
-    usage: &UsageData,
-    model: &str,
-    consumer: Option<&str>,
-    domain: Option<&str>,
-    upstream_key_id: Option<&str>,
-    affinity_kind: Option<&str>,
-    runtime: &crate::runtime::RuntimeConfig,
-    pricing: &crate::context::PricingConfig,
-) {
-    global_metrics().record_upstream_usage(
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        usage.prompt_cache_hit_tokens,
-        usage.prompt_cache_miss_tokens,
-        model,
-        consumer,
-        domain,
-    );
-
-    if let Some(kid) = upstream_key_id {
-        global_metrics().record_upstream_key_usage(
-            kid,
-            model,
-            usage.prompt_tokens,
-            usage.completion_tokens,
-        );
-    }
-
-    if usage.prompt_cache_hit_tokens > 0 {
-        global_metrics().record_upstream_prompt_cache(
-            "hit",
-            usage.prompt_cache_hit_tokens,
-            model,
-            consumer,
-            domain,
-        );
-        global_metrics().record_session_prompt_cache(
-            affinity_kind.unwrap_or("none"),
-            "hit",
-            usage.prompt_cache_hit_tokens,
-            model,
-        );
-    }
-    if usage.prompt_cache_miss_tokens > 0 {
-        global_metrics().record_upstream_prompt_cache(
-            "miss",
-            usage.prompt_cache_miss_tokens,
-            model,
-            consumer,
-            domain,
-        );
-        global_metrics().record_session_prompt_cache(
-            affinity_kind.unwrap_or("none"),
-            "miss",
-            usage.prompt_cache_miss_tokens,
-            model,
-        );
-    }
-
-    let total_tokens = usage.prompt_tokens.saturating_add(usage.completion_tokens);
-    let spend = pricing.cost_saved_usd(model, usage.prompt_tokens, usage.completion_tokens);
-    runtime.record_domain_usage(domain, total_tokens, spend);
-}
-
-/// Rewrite upstream SSE lines for OpenAI-compatible clients (mirror reasoning into `content`).
-fn rewrite_upstream_sse_bytes(
-    chunk: &[u8],
-    remainder: &mut Vec<u8>,
-    prepared: &crab_reasoning::PreparedRequest,
-    accumulator: &mut StreamAccumulator,
-    display_reasoning: bool,
-    display_adapter: &mut Option<CursorReasoningDisplayAdapter>,
-    pending_recovery_notice: &mut Option<String>,
-    store: &ReasoningBackend,
-    flush_remainder: bool,
-) -> (Vec<u8>, bool) {
-    remainder.extend_from_slice(chunk);
-    let mut out = Vec::new();
-    let mut finalized = false;
-
-    while let Some(pos) = remainder.iter().position(|&b| b == b'\n') {
-        let line: Vec<u8> = remainder.drain(..=pos).collect();
-        if line.iter().all(|&b| b == b'\n' || b == b'\r') {
-            out.extend_from_slice(&line);
-            continue;
-        }
-        let result = rewrite_sse_chunk(
-            &line,
-            &prepared.original_model,
-            accumulator,
-            &prepared.cache_namespace,
-            &prepared.record_response_contexts,
-            display_reasoning,
-            display_adapter,
-            pending_recovery_notice.as_deref(),
-            Some(store),
-        );
-        *pending_recovery_notice = result.pending_recovery_notice;
-        if result.finalized {
-            finalized = true;
-        }
-        out.extend_from_slice(&result.rewritten_line);
-    }
-
-    if flush_remainder && !remainder.is_empty() {
-        let mut tail = std::mem::take(remainder);
-        if !tail.ends_with(b"\n") {
-            tail.push(b'\n');
-        }
-        let result = rewrite_sse_chunk(
-            &tail,
-            &prepared.original_model,
-            accumulator,
-            &prepared.cache_namespace,
-            &prepared.record_response_contexts,
-            display_reasoning,
-            display_adapter,
-            pending_recovery_notice.as_deref(),
-            Some(store),
-        );
-        *pending_recovery_notice = result.pending_recovery_notice;
-        if result.finalized {
-            finalized = true;
-        }
-        out.extend_from_slice(&result.rewritten_line);
-    }
-
-    (out, finalized)
-}
-
-fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOptions) {
-    if config.upstream_force_http1 {
-        options.set_http_version(1, 1);
-        options.alpn = ALPN::H1;
-        options.h2_ping_interval = None;
-        options.max_h2_streams = 1;
-    } else if let Some(ping_secs) = config.h2_ping_interval_secs
-        && ping_secs > 0
-    {
-        options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
-    }
-
-    if !config.upstream_tls_curves.is_empty() {
-        use std::sync::OnceLock;
-        static CACHED_CURVES: OnceLock<&'static str> = OnceLock::new();
-        let curves: &'static str = CACHED_CURVES
-            .get_or_init(|| Box::leak(config.upstream_tls_curves.clone().into_boxed_str()));
-        options.curves = Some(curves);
-    }
-
-    if let (Some(idle), Some(interval), Some(count)) = (
-        config.tcp_keepalive_idle_secs,
-        config.tcp_keepalive_interval_secs,
-        config.tcp_keepalive_count,
-    ) {
-        options.tcp_keepalive = Some(TcpKeepalive {
-            idle: Duration::from_secs(idle),
-            interval: Duration::from_secs(interval),
-            count,
-            user_timeout: Duration::from_secs(0),
-        });
-    }
-
-    if config.upstream_disable_keepalive {
-        options.idle_timeout = Some(Duration::from_secs(0));
-    } else if let Some(idle_secs) = config.idle_timeout_secs {
-        options.idle_timeout = Some(Duration::from_secs(idle_secs));
-    }
-
-    if let Some(secs) = config.upstream_connection_timeout_secs
-        && secs > 0
-    {
-        options.connection_timeout = Some(Duration::from_secs(secs));
-    }
-
-    if let Some(secs) = config.upstream_write_timeout_secs
-        && secs > 0
-    {
-        options.write_timeout = Some(Duration::from_secs(secs));
-    }
-
-    if let Some(secs) = config.upstream_request_timeout_secs
-        && secs > 0
-    {
-        options.read_timeout = Some(Duration::from_secs(secs));
-    }
 }
 
 #[cfg(test)]

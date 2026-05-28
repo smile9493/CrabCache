@@ -22,14 +22,16 @@ mod user_id_audit;
 // Extracted helper modules from proxy.rs
 mod cache_helpers;
 mod cache_response;
+mod cache_revalidate;
 mod connection_helpers;
+mod connection_prewarm;
 mod error_jsons;
 mod helper_fns;
 mod metrics_helpers;
 mod semantic_runtime;
 mod send_helpers;
+mod sse_pipeline;
 mod sse_rewrite;
-mod cache_revalidate;
 
 pub use cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,

@@ -163,6 +163,15 @@ impl<SV, C> HttpProxy<SV, C>
 where
     C: custom::Connector,
 {
+    /// Returns a reference to the upstream HTTP connector (connection pool).
+    ///
+    /// This allows proxy implementations to pre-warm connections to specific
+    /// backends by calling `connector.get_http_session(peer)` followed by
+    /// `connector.release_http_session(session, peer, idle_timeout)`.
+    pub fn connector_ref(&self) -> &Connector<C> {
+        &self.client_upstream
+    }
+
     fn new_custom(
         inner: SV,
         conf: Arc<ServerConf>,

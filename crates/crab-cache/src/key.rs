@@ -296,8 +296,7 @@ fn hash_conversation_messages(value: &Value, _config: &FingerprintConfig) -> Str
 
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-    hash
+    hex::encode(hasher.finalize())
 }
 
 /// Apply fingerprint normalization to a parsed JSON request body.

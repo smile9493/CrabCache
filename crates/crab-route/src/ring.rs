@@ -1,10 +1,10 @@
 use arc_swap::ArcSwap;
 use pingora_core::protocols::l4::socket::SocketAddr as PSocketAddr;
-use pingora_core::services::background::BackgroundService;
 use pingora_core::server::ShutdownWatch;
+use pingora_core::services::background::BackgroundService;
 use pingora_load_balancing::{
-    discovery::Static, health_check::TcpHealthCheck, selection::Consistent, Backends, Backend as PBackend,
-    LoadBalancer,
+    Backend as PBackend, Backends, LoadBalancer, discovery::Static, health_check::TcpHealthCheck,
+    selection::Consistent,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
@@ -122,7 +122,9 @@ impl LbRouter {
         // Run the initial update synchronously so the selector is built.
         // For Static discovery this completes instantly.
         futures::FutureExt::now_or_never(lb.update())
-            .expect("static discovery future was not immediately ready; this is a Pingora regression")
+            .expect(
+                "static discovery future was not immediately ready; this is a Pingora regression",
+            )
             .map_err(|e| {
                 tracing::error!(error = %e, "initial LB update failed");
                 RouteError::EmptyBackends
@@ -136,17 +138,62 @@ impl LbRouter {
     /// Returns `None` only when every backend is unhealthy (all unhealthy) or
     /// the hash ring is empty.
     pub fn select(&self, key: &[u8]) -> Option<SelectedBackend<'_>> {
+        self.select_with_hint(key, None)
+    }
+
+    /// Select a backend, preferring `preferred_name` when it is healthy (L3 prompt-cache feedback).
+    ///
+    /// Falls back to Ketama consistent hashing when the preferred backend is absent or unhealthy.
+    pub fn select_with_hint(
+        &self,
+        key: &[u8],
+        preferred_name: Option<&str>,
+    ) -> Option<SelectedBackend<'_>> {
+        if let Some(name) = preferred_name {
+            if let Some(selected) = self.select_by_name_if_ready(name) {
+                return Some(selected);
+            }
+        }
         let lb = self.lb.load();
-        lb.select(key, 5).and_then(|pb| {
+        lb.select(key, 5)
+            .and_then(|pb| self.backend_from_pingora(&pb))
+    }
+
+    fn select_by_name_if_ready(&self, name: &str) -> Option<SelectedBackend<'_>> {
+        let lb = self.lb.load();
+        let pool = lb.backends();
+        let registered = pool.get_backend();
+        for pb in registered.iter() {
             let addr = match pb.addr {
                 PSocketAddr::Inet(a) => a,
-                _ => return None,
+                _ => continue,
             };
-            self.meta.get(&addr).map(|m| SelectedBackend {
-                addr,
-                name: &m.name,
-                tls_sni: &m.tls_sni,
-            })
+            let Some(meta) = self.meta.get(&addr) else {
+                continue;
+            };
+            if meta.name != name {
+                continue;
+            }
+            if pool.ready(pb) {
+                return Some(SelectedBackend {
+                    addr,
+                    name: &meta.name,
+                    tls_sni: &meta.tls_sni,
+                });
+            }
+        }
+        None
+    }
+
+    fn backend_from_pingora(&self, pb: &PBackend) -> Option<SelectedBackend<'_>> {
+        let addr = match pb.addr {
+            PSocketAddr::Inet(a) => a,
+            _ => return None,
+        };
+        self.meta.get(&addr).map(|m| SelectedBackend {
+            addr,
+            name: &m.name,
+            tls_sni: &m.tls_sni,
         })
     }
 
@@ -249,8 +296,7 @@ impl BackgroundService for LbHealthService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let freq = {
             let lb = self.lb_swap.load();
-            lb.health_check_frequency
-                .unwrap_or(Duration::from_secs(30))
+            lb.health_check_frequency.unwrap_or(Duration::from_secs(30))
         };
 
         loop {
@@ -258,7 +304,9 @@ impl BackgroundService for LbHealthService {
             let lb = self.lb_swap.load_full();
 
             // Run one health check cycle on the current backend set.
-            lb.backends().run_health_check(lb.parallel_health_check).await;
+            lb.backends()
+                .run_health_check(lb.parallel_health_check)
+                .await;
 
             tokio::select! {
                 () = tokio::time::sleep(freq) => {}
@@ -322,10 +370,7 @@ mod tests {
         let b2 = router.select(key);
 
         assert!(b1.is_some());
-        assert_eq!(
-            b1.map(|b| b.name),
-            b2.map(|b| b.name),
-        );
+        assert_eq!(b1.map(|b| b.name), b2.map(|b| b.name),);
     }
 
     #[test]
@@ -373,5 +418,27 @@ mod tests {
         let backends = create_test_backends();
         let mut router = LbRouter::new(&backends).unwrap();
         assert!(router.rebuild(&[]).is_err());
+    }
+
+    #[test]
+    fn test_select_with_hint_uses_registered_backend_weight() {
+        let backends = vec![
+            Backend::new(
+                "weighted-a".to_string(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 8080),
+                10,
+                "a.example.com".to_string(),
+            ),
+            Backend::new(
+                "weighted-b".to_string(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 8080),
+                20,
+                "b.example.com".to_string(),
+            ),
+        ];
+        let router = LbRouter::new(&backends).unwrap();
+        let hinted = router.select_with_hint(b"affinity-key", Some("weighted-a"));
+        assert!(hinted.is_some());
+        assert_eq!(hinted.unwrap().name, "weighted-a");
     }
 }

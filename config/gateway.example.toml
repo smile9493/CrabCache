@@ -304,6 +304,10 @@ max_files = 5
 # prefix_aware_cache = false         # L0 prefix trie for shared message prefixes
 # streaming_body_forward = false     # Zero-buffer forwarding in request_body_filter
 # connection_prewarm = false         # Pre-warm TLS connections on new session fingerprints
+# affinity_prompt_cache_feedback = false  # Prefer backend with prompt_cache_hit for same affinity key
+# delta_cache = false                # Experimental differential cache (docs/DATA_PLANE_P3.md)
+# io_uring_backend = false           # Reserved: Pingora io_uring backend
+# wasm_filters = false               # Experimental WASM filters (docs/DATA_PLANE_P3.md)
 # mimo_context_compression = false   # Auto-summarize old MiMo messages
 # mimo_compression_threshold = 40    # Message count to trigger compression
 

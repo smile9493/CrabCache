@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
+    CounterVec, Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts,
+    Registry,
 };
 use std::time::Duration;
 
@@ -71,7 +72,6 @@ pub struct GatewayMetrics {
     pub prefix_break: IntCounter,
     pub prefix_block_drift: IntCounter,
     pub context_summary_appended: IntCounter,
-    pub cache_swr_refresh_total: IntCounter,
     pub state_persist_total: IntCounter,
     pub state_persist_errors_total: IntCounter,
     pub reasoning_store_rejected_bytes: IntCounter,
@@ -87,6 +87,7 @@ pub struct GatewayMetrics {
     pub upstream_key_latency: HistogramVec,
     pub backend_requests: IntCounterVec,
     pub request_body_stage_latency: HistogramVec,
+    pub request_phase_latency: HistogramVec,
     pub request_body_stage_samples: IntCounterVec,
     pub raw_capture_samples: IntCounterVec,
     pub session_prompt_cache_tokens: IntCounterVec,
@@ -96,6 +97,8 @@ pub struct GatewayMetrics {
     pub admin_log_pg_write_errors_total: IntCounter,
     pub admin_log_disk_bytes: IntGaugeVec,
     pub admin_log_pg_rows: IntGaugeVec,
+    /// Global requests-per-second estimate from pingora-limits::Rate.
+    pub global_rps: Gauge,
 }
 
 impl GatewayMetrics {
@@ -272,11 +275,6 @@ impl GatewayMetrics {
             "Context summary messages appended at tail (strategy B)",
         )?;
 
-        let cache_swr_refresh_total = IntCounter::new(
-            "gateway_cache_swr_refresh_total",
-            "Number of stale-while-revalidate cache refreshes"
-        )?;
-
         let state_persist_total = IntCounter::new(
             "gateway_state_persist_total",
             "Successful control-plane state writes to Redis",
@@ -401,6 +399,18 @@ impl GatewayMetrics {
             &["stage", "size_bucket", "pipeline"],
         )?;
 
+        let request_phase_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_request_phase_latency_seconds",
+                "End-to-end request phase latency from request start (watermark deltas)",
+            )
+            .buckets(vec![
+                0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0,
+                30.0,
+            ]),
+            &["phase", "pipeline", "model"],
+        )?;
+
         let raw_capture_samples = IntCounterVec::new(
             Opts::new(
                 "gateway_raw_capture_samples_total",
@@ -455,12 +465,14 @@ impl GatewayMetrics {
         )?;
 
         let admin_log_pg_rows = IntGaugeVec::new(
-            Opts::new(
-                "admin_log_pg_rows",
-                "Row count in PostgreSQL log tables",
-            ),
+            Opts::new("admin_log_pg_rows", "Row count in PostgreSQL log tables"),
             &["table"],
         )?;
+
+        let global_rps = Gauge::with_opts(Opts::new(
+            "gateway_global_rps",
+            "Estimated global requests per second (pingora-limits 1s double-buffered)",
+        ))?;
 
         Ok(Self {
             input_tokens,
@@ -485,7 +497,6 @@ impl GatewayMetrics {
             prefix_break,
             prefix_block_drift,
             context_summary_appended,
-            cache_swr_refresh_total,
             state_persist_total,
             state_persist_errors_total,
             reasoning_store_rejected_bytes,
@@ -501,6 +512,7 @@ impl GatewayMetrics {
             upstream_key_latency,
             backend_requests,
             request_body_stage_latency,
+            request_phase_latency,
             request_body_stage_samples,
             raw_capture_samples,
             session_prompt_cache_tokens,
@@ -510,6 +522,7 @@ impl GatewayMetrics {
             admin_log_pg_write_errors_total,
             admin_log_disk_bytes,
             admin_log_pg_rows,
+            global_rps,
         })
     }
 
@@ -536,7 +549,6 @@ impl GatewayMetrics {
         registry.register(Box::new(self.prefix_break.clone()))?;
         registry.register(Box::new(self.prefix_block_drift.clone()))?;
         registry.register(Box::new(self.context_summary_appended.clone()))?;
-        registry.register(Box::new(self.cache_swr_refresh_total.clone()))?;
         registry.register(Box::new(self.state_persist_total.clone()))?;
         registry.register(Box::new(self.state_persist_errors_total.clone()))?;
         registry.register(Box::new(self.reasoning_store_rejected_bytes.clone()))?;
@@ -552,6 +564,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_key_latency.clone()))?;
         registry.register(Box::new(self.backend_requests.clone()))?;
         registry.register(Box::new(self.request_body_stage_latency.clone()))?;
+        registry.register(Box::new(self.request_phase_latency.clone()))?;
         registry.register(Box::new(self.request_body_stage_samples.clone()))?;
         registry.register(Box::new(self.raw_capture_samples.clone()))?;
         registry.register(Box::new(self.session_prompt_cache_tokens.clone()))?;
@@ -561,6 +574,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.admin_log_pg_write_errors_total.clone()))?;
         registry.register(Box::new(self.admin_log_disk_bytes.clone()))?;
         registry.register(Box::new(self.admin_log_pg_rows.clone()))?;
+        registry.register(Box::new(self.global_rps.clone()))?;
         Ok(())
     }
 
@@ -659,12 +673,6 @@ impl GatewayMetrics {
     pub fn record_context_summary_appended(&self) {
         self.context_summary_appended.inc();
     }
-
-    pub fn record_cache_swr_refresh(&self) {
-        self.cache_swr_refresh_total.inc();
-    }
-
-
 
     pub fn set_upstream_key_inflight(&self, key_id: &str, inflight: i64) {
         self.upstream_key_inflight
@@ -938,12 +946,24 @@ impl GatewayMetrics {
             .inc();
     }
 
+    /// Record elapsed time from request start to a lifecycle watermark.
+    pub fn record_request_phase(
+        &self,
+        phase: &str,
+        duration: Duration,
+        pipeline: Option<&str>,
+        model: &str,
+    ) {
+        let pipeline = pipeline.unwrap_or("unknown");
+        self.request_phase_latency
+            .with_label_values(&[phase, pipeline, model])
+            .observe(duration.as_secs_f64());
+    }
+
     // ── Raw capture sampling metrics ──────────────────────────────────
 
     pub fn record_raw_capture_sample(&self, outcome: &str) {
-        self.raw_capture_samples
-            .with_label_values(&[outcome])
-            .inc();
+        self.raw_capture_samples.with_label_values(&[outcome]).inc();
     }
 
     // ── Session prompt cache metrics ──────────────────────────────────
@@ -979,9 +999,12 @@ impl GatewayMetrics {
     }
 
     pub fn set_admin_log_pg_rows(&self, table: &str, rows: i64) {
-        self.admin_log_pg_rows
-            .with_label_values(&[table])
-            .set(rows);
+        self.admin_log_pg_rows.with_label_values(&[table]).set(rows);
+    }
+
+    /// Record the global RPS estimate from pingora-limits::Rate.
+    pub fn record_global_rps(&self, rps: f64) {
+        self.global_rps.set(rps);
     }
 }
 

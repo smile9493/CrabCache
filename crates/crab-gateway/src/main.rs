@@ -747,7 +747,9 @@ fn main() -> Result<()> {
             },
         )));
 
-    let global_rate = Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(1)));
+    let global_rate = Arc::new(pingora_limits::rate::Rate::new(
+        std::time::Duration::from_secs(1),
+    ));
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -819,7 +821,24 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
-        global_rate: Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(1))),
+        proxy_loopback_addr: if config.features.connection_prewarm {
+            Some(config.listen_addr.clone())
+        } else {
+            None
+        },
+        prewarm_api_key: if config.features.connection_prewarm {
+            Some(config.api_key.inner().to_string())
+        } else {
+            None
+        },
+        affinity_backend_hints: moka::sync::Cache::builder()
+            .max_capacity(10_000)
+            .time_to_live(std::time::Duration::from_secs(3600))
+            .build(),
+        prewarm_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
+        global_rate: Arc::new(pingora_limits::rate::Rate::new(
+            std::time::Duration::from_secs(1),
+        )),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -876,10 +895,7 @@ fn main() -> Result<()> {
 
             // Collect all unique backends across profiles to determine
             // how many warmup requests we need.
-            let backend_count: usize = profiles
-                .values()
-                .map(|p| p.router.meta().len())
-                .sum();
+            let backend_count: usize = profiles.values().map(|p| p.router.meta().len()).sum();
 
             // Send requests through the proxy with varied affinity keys
             // to cover all Ketama ring positions.
