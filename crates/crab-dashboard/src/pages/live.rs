@@ -12,7 +12,9 @@ use crate::components::candlestick_chart::{CandlestickChart, CandlestickPoint};
 use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
-use crate::components::line_chart::{ChartSeries, TokenLineChart};
+use crate::components::line_chart::{
+    ChartSeries, TokenLineChart, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M,
+};
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
@@ -127,16 +129,17 @@ fn cache_hit_pct(data: &LiveMetricsResponse) -> f64 {
 }
 
 fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Option<f64>>) {
-    let labels: Vec<String> = r
-        .backends
+    let mut rows: Vec<_> = r.backends.iter().collect();
+    // Ascending by count so the largest category renders at the top of the horizontal chart.
+    rows.sort_by_key(|b| b.request_count);
+    let labels: Vec<String> = rows
         .iter()
         .map(|b| {
             let kind = b.affinity_kind.as_deref().unwrap_or("n/a");
             format!("{} · {}", b.backend_name, kind)
         })
         .collect();
-    let values: Vec<Option<f64>> = r
-        .backends
+    let values: Vec<Option<f64>> = rows
         .iter()
         .map(|b| Some(b.request_count as f64))
         .collect();
@@ -149,9 +152,21 @@ fn build_affinity_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Opti
         let kind = b.affinity_kind.clone().unwrap_or_else(|| "n/a".to_string());
         *map.entry(kind).or_insert(0) += b.request_count;
     }
-    let labels: Vec<String> = map.keys().cloned().collect();
-    let values: Vec<Option<f64>> = map.values().map(|v| Some(*v as f64)).collect();
+    let mut pairs: Vec<(String, u64)> = map.into_iter().collect();
+    pairs.sort_by_key(|(_, count)| *count);
+    let labels: Vec<String> = pairs.iter().map(|(k, _)| k.clone()).collect();
+    let values: Vec<Option<f64>> = pairs.iter().map(|(_, v)| Some(*v as f64)).collect();
     (labels, values)
+}
+
+fn token_cost_usd(tokens: f64, price_per_million: f64) -> f64 {
+    (tokens / 1_000_000.0) * price_per_million
+}
+
+fn sum_bucket_tokens(buckets: &[LiveMetricsBucket]) -> (f64, f64) {
+    let input: f64 = buckets.iter().map(|b| b.input_tokens as f64).sum();
+    let output: f64 = buckets.iter().map(|b| b.output_tokens as f64).sum();
+    (input, output)
 }
 
 fn max_bucket_latencies(buckets: &[LiveMetricsBucket]) -> (f64, Option<f64>, Option<f64>) {
@@ -217,7 +232,8 @@ pub fn LivePage() -> impl IntoView {
     // Keep chart detail open/close state stable across polling refreshes.
     let throughput_open = RwSignal::new(false);
     let hit_open = RwSignal::new(false);
-    let latency_open = RwSignal::new(false);
+    let latency_e2e_open = RwSignal::new(false);
+    let latency_upstream_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
@@ -657,7 +673,8 @@ pub fn LivePage() -> impl IntoView {
                             <LiveBottomRow
                                 data=data
                                 buckets=chart_buckets
-                                latency_open=latency_open
+                                latency_e2e_open=latency_e2e_open
+                                latency_upstream_open=latency_upstream_open
                                 token_open=token_open
                                 routing_profiles=routing_profiles
                                 routing_key_ids=routing_key_ids
@@ -1095,7 +1112,8 @@ fn LiveTrafficPanel(
 fn LiveBottomRow(
     data: LiveMetricsResponse,
     buckets: Vec<LiveMetricsBucket>,
-    latency_open: RwSignal<bool>,
+    latency_e2e_open: RwSignal<bool>,
+    latency_upstream_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
     routing_key_ids: RwSignal<Vec<String>>,
@@ -1107,7 +1125,7 @@ fn LiveBottomRow(
         <div class="space-y-4">
             <div class="live-detail-row">
                 <LiveRoutingSummaryPanel profiles=routing_profiles />
-                <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() open=latency_open />
+                <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() e2e_open=latency_e2e_open upstream_open=latency_upstream_open />
                 <LiveLatestPanel data=data />
             </div>
             <div class="live-detail-row-2col">
@@ -1390,7 +1408,8 @@ fn RoutingMetricRow(label: &'static str, value: String, pct: f64) -> impl IntoVi
 fn LiveLatencyPanel(
     buckets: Vec<LiveMetricsBucket>,
     summary: LiveMetricsSummary,
-    open: RwSignal<bool>,
+    e2e_open: RwSignal<bool>,
+    upstream_open: RwSignal<bool>,
 ) -> impl IntoView {
     let t = use_translations();
     let buckets = std::sync::Arc::new(buckets);
@@ -1408,27 +1427,34 @@ fn LiveLatencyPanel(
                 .collect()
         })
     };
-    let series = {
+    let e2e_series = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        let label = e2e_label.clone();
+        Signal::derive(move || {
+            let b = buckets.as_ref();
+            vec![ChartSeries {
+                label: label.clone(),
+                color: "var(--cc-accent)".to_string(),
+                values: b
+                    .iter()
+                    .map(|x| {
+                        if x.request_count > 0 {
+                            Some(x.e2e_latency_ms)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                dashed: false,
+                fill: true,
+            }]
+        })
+    };
+    let upstream_series = {
         let buckets = std::sync::Arc::clone(&buckets);
         Signal::derive(move || {
             let b = buckets.as_ref();
             vec![
-                ChartSeries {
-                    label: e2e_label.clone(),
-                    color: "var(--cc-accent)".to_string(),
-                    values: b
-                        .iter()
-                        .map(|x| {
-                            if x.request_count > 0 {
-                                Some(x.e2e_latency_ms)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    dashed: false,
-                    fill: false,
-                },
                 ChartSeries {
                     label: upstream_label.clone(),
                     color: "var(--warning)".to_string(),
@@ -1446,7 +1472,8 @@ fn LiveLatencyPanel(
             ]
         })
     };
-    let latency_title = t.live_latency_chart().to_string();
+    let e2e_title = t.live_latency_chart().to_string();
+    let upstream_title = format!("{} / {}", t.live_series_upstream(), t.live_series_ttft());
     let no_data = t.live_no_data();
     view! {
         <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
@@ -1474,14 +1501,14 @@ fn LiveLatencyPanel(
                 />
             </div>
             <ChartPreviewCard
-                title=latency_title
-                open=open
+                title=e2e_title.clone()
+                open=e2e_open
                 preview=move || {
                     view! {
                         <CanvasLineChart
                             x_labels=x_labels
-                            series=series
-                            height_px=160
+                            series=e2e_series
+                            height_px=100
                             y_unit="ms"
                             interactive=true
                             empty_message=no_data
@@ -1493,8 +1520,39 @@ fn LiveLatencyPanel(
                     view! {
                         <CanvasLineChart
                             x_labels=x_labels
-                            series=series
-                            height_px=400
+                            series=e2e_series
+                            height_px=220
+                            y_unit="ms"
+                            interactive=true
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
+            />
+            <ChartPreviewCard
+                title=upstream_title.clone()
+                subtitle=t.live_upstream_hint().to_string()
+                open=upstream_open
+                preview=move || {
+                    view! {
+                        <CanvasLineChart
+                            x_labels=x_labels
+                            series=upstream_series
+                            height_px=90
+                            y_unit="ms"
+                            interactive=true
+                            empty_message=no_data
+                        />
+                    }
+                    .into_any()
+                }
+                detail=move || {
+                    view! {
+                        <CanvasLineChart
+                            x_labels=x_labels
+                            series=upstream_series
+                            height_px=180
                             y_unit="ms"
                             interactive=true
                             empty_message=no_data
@@ -1587,6 +1645,10 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     let in_lbl_detail = in_lbl.clone();
     let out_lbl_detail = out_lbl.clone();
     let kline_open = RwSignal::new(false);
+    let (window_input_tokens, window_output_tokens) = sum_bucket_tokens(buckets.as_ref());
+    let window_input_cost = token_cost_usd(window_input_tokens, TOKEN_INPUT_PRICE_PER_M);
+    let window_output_cost = token_cost_usd(window_output_tokens, TOKEN_OUTPUT_PRICE_PER_M);
+    let window_total_cost = window_input_cost + window_output_cost;
     let token_x_labels = x_labels;
     let kline_x_labels = {
         let buckets = std::sync::Arc::clone(&buckets);
@@ -1634,6 +1696,26 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
                         .into_any()
                     }
                 />
+                <p class="text-[10px] text-theme-muted leading-snug mt-2 font-mono">
+                    {format!(
+                        "{}: {} · ~${:.4}  |  {}: {} · ~${:.4}  |  {} ~${:.4}",
+                        in_lbl,
+                        format_number(window_input_tokens as u64),
+                        window_input_cost,
+                        out_lbl,
+                        format_number(window_output_tokens as u64),
+                        window_output_cost,
+                        "Σ",
+                        window_total_cost,
+                    )}
+                </p>
+                <p class="text-[10px] text-theme-muted mt-0.5">
+                    {format!(
+                        "Est. @ ${:.2}/${:.2} per 1M tokens (gateway cache.pricing defaults)",
+                        TOKEN_INPUT_PRICE_PER_M,
+                        TOKEN_OUTPUT_PRICE_PER_M,
+                    )}
+                </p>
             </div>
             <div class="glass-card p-4">
                 <div class="flex items-center justify-between mb-3">
