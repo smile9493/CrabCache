@@ -70,8 +70,6 @@ pub fn HistogramChart(
     empty_message: &'static str,
 ) -> impl IntoView {
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
-    let hover_pending: RwSignal<Option<usize>> = RwSignal::new(None);
-    let hover_raf_scheduled = RwSignal::new(false);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
 
     let bins_sig = Signal::derive(move || auto_bins(&values.get(), bin_count));
@@ -95,19 +93,7 @@ pub fn HistogramChart(
     });
 
     let queue_hover = move |idx: Option<usize>| {
-        hover_pending.set(idx);
-        if hover_raf_scheduled.get_untracked() {
-            return;
-        }
-        hover_raf_scheduled.set(true);
-        let next = wasm_bindgen::closure::Closure::once(move || {
-            hover_raf_scheduled.set(false);
-            hover_index.set(hover_pending.get_untracked());
-        });
-        let next_js = next.into_js_value();
-        let _ = web_sys::window()
-            .unwrap()
-            .request_animation_frame(next_js.unchecked_ref());
+        hover_index.set(idx);
     };
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {

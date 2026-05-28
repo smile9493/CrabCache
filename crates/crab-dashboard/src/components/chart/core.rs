@@ -216,7 +216,10 @@ pub fn mouse_to_svg_x(ev: &web_sys::MouseEvent, svg: &web_sys::SvgsvgElement) ->
         return None;
     }
     let x = ev.client_x() as f64 - rect.left();
-    Some(((x / width) * 100.0).clamp(0.0, 100.0))
+    if x < 0.0 || x > width {
+        return None;
+    }
+    Some((x / width) * 100.0)
 }
 
 pub fn format_tooltip_value(v: f64) -> String {
