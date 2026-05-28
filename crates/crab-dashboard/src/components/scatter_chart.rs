@@ -43,20 +43,26 @@ pub fn ScatterChart(
     let mouse_pos: RwSignal<Option<(f64, f64)>> = RwSignal::new(None);
     let plot_ref: NodeRef<leptos::html::Div> = NodeRef::new();
     let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
-    let x_label_stored = StoredValue::new(x_label);
-    let y_label_stored = StoredValue::new(y_label);
+    // Avoid StoredValue: it can panic if accessed after scope disposal.
+    // Labels are immutable per component instance.
+    let x_label = std::sync::Arc::new(x_label);
+    let y_label = std::sync::Arc::new(y_label);
 
     // Draw canvas whenever data or theme changes.
-    Effect::new(move |_| {
+    Effect::new({
+        let x_label = std::sync::Arc::clone(&x_label);
+        let y_label = std::sync::Arc::clone(&y_label);
+        move |_| {
         let Some(canvas_el) = canvas_ref.get() else {
             return;
         };
         let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
         let _ = theme.get();
         let pts = points.get();
-        let x_l = x_label_stored.get_value();
-        let y_l = y_label_stored.get_value();
-        canvas_render::render_scatter(&canvas_dom, &pts, theme.get(), &x_l, &y_l, fit_line);
+        let x_l = x_label.as_ref();
+        let y_l = y_label.as_ref();
+        canvas_render::render_scatter(&canvas_dom, &pts, theme.get(), x_l, y_l, fit_line);
+        }
     });
 
     let on_mousemove = move |ev: web_sys::MouseEvent| {
@@ -157,9 +163,11 @@ pub fn ScatterChart(
     view! {
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 24)>
             {move || {
+                let x_label = std::sync::Arc::clone(&x_label);
+                let y_label = std::sync::Arc::clone(&y_label);
                 let pts = points.get();
-                let x_l = x_label_stored.get_value();
-                let y_l = y_label_stored.get_value();
+                let x_l = x_label.as_ref();
+                let y_l = y_label.as_ref();
                 let data_summary = if pts.is_empty() {
                     "Empty scatter chart.".to_string()
                 } else {
@@ -201,8 +209,8 @@ pub fn ScatterChart(
                                 let pts = points.get();
                                 idx.and_then(|i| pts.get(i)).and_then(|p| {
                                     let pos = pos?;
-                                    let x_l = x_label_stored.get_value();
-                                    let y_l = y_label_stored.get_value();
+                                    let x_l = x_label.as_ref();
+                                    let y_l = y_label.as_ref();
                                     let container_width = plot_ref.get()
                                         .map(|el| el.get_bounding_client_rect().width())
                                         .unwrap_or(400.0);

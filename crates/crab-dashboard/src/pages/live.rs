@@ -763,46 +763,54 @@ fn LiveTrafficPanel(
         t.live_upstream_na().to_string()
     };
     let window_lbl = window_label(window_secs, t).to_string();
-    let stored = StoredValue::new(buckets);
+    let buckets = std::sync::Arc::new(buckets);
     let throughput_label = t.live_chart_throughput().to_string();
     let hit_label = t.live_cache_hit_trend().to_string();
 
-    let x_labels = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
+    let x_labels = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
             .map(|b| format_bucket_time(b.timestamp_ms))
             .collect()
-    });
-    let throughput_series = Signal::derive(move || {
-        let b = stored.get_value();
-        vec![ChartSeries {
-            label: throughput_label.clone(),
-            color: "var(--cc-accent)",
-            values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
-            dashed: false,
-            fill: false,
-        }]
-    });
-    let hit_series = Signal::derive(move || {
-        let b = stored.get_value();
-        vec![ChartSeries {
-            label: hit_label.clone(),
-            color: "var(--cc-success)",
-            values: b
-                .iter()
-                .map(|x| {
-                    if x.request_count > 0 {
-                        Some(x.cache_hit_count as f64 / x.request_count as f64 * 100.0)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            dashed: false,
-            fill: false,
-        }]
-    });
+        })
+    };
+    let throughput_series = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            let b = buckets.as_ref();
+            vec![ChartSeries {
+                label: throughput_label.clone(),
+                color: "var(--cc-accent)",
+                values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
+                dashed: false,
+                fill: false,
+            }]
+        })
+    };
+    let hit_series = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            let b = buckets.as_ref();
+            vec![ChartSeries {
+                label: hit_label.clone(),
+                color: "var(--cc-success)",
+                values: b
+                    .iter()
+                    .map(|x| {
+                        if x.request_count > 0 {
+                            Some(x.cache_hit_count as f64 / x.request_count as f64 * 100.0)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                dashed: false,
+                fill: false,
+            }]
+        })
+    };
 
     let chart_subtitle = format!("{consumer} · {window_lbl}");
     let throughput_open = RwSignal::new(false);
@@ -1127,16 +1135,29 @@ fn LiveKeyDistributionPanel(
                     let (aff_labels, aff_values) = build_affinity_distribution(&resp);
                     let backend_has = series_has_points(&backend_values);
                     let aff_has = series_has_points(&aff_values);
-                    let backend_labels_sv = StoredValue::new(backend_labels);
-                    let backend_values_f64: Vec<f64> = backend_values.into_iter().flatten().collect();
-                    let backend_values_sv = StoredValue::new(backend_values_f64);
-                    let aff_labels_sv = StoredValue::new(aff_labels);
-                    let aff_values_f64: Vec<f64> = aff_values.into_iter().flatten().collect();
-                    let aff_values_sv = StoredValue::new(aff_values_f64);
-                    let backend_labels_sig = Signal::derive(move || backend_labels_sv.get_value());
-                    let backend_values_sig = Signal::derive(move || backend_values_sv.get_value());
-                    let aff_labels_sig = Signal::derive(move || aff_labels_sv.get_value());
-                    let aff_values_sig = Signal::derive(move || aff_values_sv.get_value());
+                    let backend_labels_arc = std::sync::Arc::new(backend_labels);
+                    let backend_values_arc: std::sync::Arc<Vec<f64>> =
+                        std::sync::Arc::new(backend_values.into_iter().flatten().collect());
+                    let aff_labels_arc = std::sync::Arc::new(aff_labels);
+                    let aff_values_arc: std::sync::Arc<Vec<f64>> =
+                        std::sync::Arc::new(aff_values.into_iter().flatten().collect());
+
+                    let backend_labels_sig = {
+                        let backend_labels_arc = std::sync::Arc::clone(&backend_labels_arc);
+                        Signal::derive(move || backend_labels_arc.as_ref().clone())
+                    };
+                    let backend_values_sig = {
+                        let backend_values_arc = std::sync::Arc::clone(&backend_values_arc);
+                        Signal::derive(move || backend_values_arc.as_ref().clone())
+                    };
+                    let aff_labels_sig = {
+                        let aff_labels_arc = std::sync::Arc::clone(&aff_labels_arc);
+                        Signal::derive(move || aff_labels_arc.as_ref().clone())
+                    };
+                    let aff_values_sig = {
+                        let aff_values_arc = std::sync::Arc::clone(&aff_values_arc);
+                        Signal::derive(move || aff_values_arc.as_ref().clone())
+                    };
                     view! {
                         <div class="space-y-2 flex-1 flex flex-col">
                             <div class="text-[11px] text-theme-muted font-mono">
@@ -1212,22 +1233,26 @@ fn LiveLatencyPanel(
     summary: LiveMetricsSummary,
 ) -> impl IntoView {
     let t = use_translations();
-    let stored = StoredValue::new(buckets);
-    let (max_e2e, max_upstream, max_ttft) = max_bucket_latencies(&stored.get_value());
+    let buckets = std::sync::Arc::new(buckets);
+    let (max_e2e, max_upstream, max_ttft) = max_bucket_latencies(buckets.as_ref());
     let na = t.live_upstream_na();
     let e2e_label = t.live_series_e2e().to_string();
     let upstream_label = t.live_series_upstream().to_string();
     let ttft_label = t.live_series_ttft().to_string();
-    let x_labels = Signal::derive(move || {
-        stored
-            .get_value()
-            .iter()
-            .map(|b| format_bucket_time(b.timestamp_ms))
-            .collect()
-    });
-    let series = Signal::derive(move || {
-        let b = stored.get_value();
-        vec![
+    let x_labels = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            buckets
+                .iter()
+                .map(|b| format_bucket_time(b.timestamp_ms))
+                .collect()
+        })
+    };
+    let series = {
+        let buckets = std::sync::Arc::clone(&buckets);
+        Signal::derive(move || {
+            let b = buckets.as_ref();
+            vec![
             ChartSeries {
                 label: e2e_label.clone(),
                 color: "var(--cc-accent)",
@@ -1258,8 +1283,9 @@ fn LiveLatencyPanel(
                 dashed: false,
                 fill: false,
             },
-        ]
-    });
+            ]
+        })
+    };
     let latency_open = RwSignal::new(false);
     let latency_title = t.live_latency_chart().to_string();
     let no_data = t.live_no_data();

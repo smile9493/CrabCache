@@ -72,7 +72,9 @@ pub fn LineChart(
 ) -> impl IntoView {
     let hover_index: RwSignal<Option<usize>> = RwSignal::new(None);
     let svg_ref: NodeRef<leptos::svg::Svg> = NodeRef::new();
-    let thresholds_stored = StoredValue::new(thresholds);
+    // Avoid StoredValue here: it can panic if accessed after scope disposal.
+    // Thresholds are immutable per component instance.
+    let thresholds = std::sync::Arc::new(thresholds);
 
     let chart_geom = Memo::new(move |_| {
         let labels = x_labels.get();
@@ -224,7 +226,7 @@ pub fn LineChart(
                     x_step,
                 } = geom;
                 const H: f64 = 40.0;
-                let thresholds = thresholds_stored.get_value();
+                let thresholds = thresholds.as_ref();
                 let series_names: Vec<String> = all_series.iter().map(|s| s.label.clone()).collect();
                 let data_summary = format!(
                     "Line chart with {} data points and {} series: {}. Y range: {:.0} to {:.0} {}.",

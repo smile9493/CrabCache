@@ -15,7 +15,8 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
     let chart_id = WATERFALL_CHART_ID.fetch_add(1, Ordering::Relaxed);
     let summary_id = format!("waterfall-chart-summary-{}", chart_id);
     let theme = use_theme_signal();
-    let stored = StoredValue::new(stages.clone());
+    // Avoid StoredValue: it can panic if accessed after scope disposal.
+    let stages = std::sync::Arc::new(stages);
     let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
 
     let stage_descriptions: Vec<String> = stages
@@ -28,20 +29,23 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
         stage_descriptions.join(", ")
     );
 
-    Effect::new(move |_| {
+    Effect::new({
+        let stages = std::sync::Arc::clone(&stages);
+        move |_| {
         let Some(canvas_el) = canvas_ref.get() else {
             return;
         };
         let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
         let _ = theme.get();
-        canvas_render::render_waterfall(&canvas_dom, &stored.get_value(), theme.get());
+        canvas_render::render_waterfall(&canvas_dom, stages.as_ref(), theme.get());
+        }
     });
 
     view! {
         <div class="waterfall-chart">
             <div id={summary_id.clone()} class="sr-only">{data_summary}</div>
             {move || {
-                if stored.get_value().is_empty() {
+                if stages.is_empty() {
                     view! {
                         <div class="text-center py-6 text-theme-muted text-sm">"No stage data"</div>
                     }.into_any()

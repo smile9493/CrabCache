@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::components::donut_chart::{DonutChart, DonutSegment};
@@ -49,6 +51,7 @@ pub fn CachePage() -> impl IntoView {
 fn ConfigTab() -> impl IntoView {
     let t = use_translations();
     let feedback: RwSignal<String> = RwSignal::new(String::new());
+    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 
     // Cache config (sliders from Routing)
     let cache_config: RwSignal<Option<Result<CacheConfig, String>>> = RwSignal::new(None);
@@ -57,33 +60,67 @@ fn ConfigTab() -> impl IntoView {
     // Fingerprint / stream cache from CacheOps
     let ops: RwSignal<Option<Result<CacheOpsView, String>>> = RwSignal::new(None);
 
-    leptos::task::spawn_local(async move {
-        match api::fetch_cache_config().await {
-            Ok(c) => cache_config.set(Some(Ok(c))),
-            Err(e) => cache_config.set(Some(Err(e))),
-        }
-    });
-    leptos::task::spawn_local(async move {
-        match api::fetch_semantic_config().await {
-            Ok(c) => semantic_config.set(Some(Ok(c))),
-            Err(e) => semantic_config.set(Some(Err(e))),
-        }
-    });
-    leptos::task::spawn_local(async move {
-        match api::fetch_cache_ops().await {
-            Ok(v) => ops.set(Some(Ok(v))),
-            Err(e) => ops.set(Some(Err(e))),
-        }
-    });
-
-    let reload_ops = move || {
+    {
+        let alive = Arc::clone(&alive);
         leptos::task::spawn_local(async move {
-            match api::fetch_cache_ops().await {
+            let result = api::fetch_cache_config().await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            match result {
+                Ok(c) => cache_config.set(Some(Ok(c))),
+                Err(e) => cache_config.set(Some(Err(e))),
+            }
+        });
+    }
+    {
+        let alive = Arc::clone(&alive);
+        leptos::task::spawn_local(async move {
+            let result = api::fetch_semantic_config().await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            match result {
+                Ok(c) => semantic_config.set(Some(Ok(c))),
+                Err(e) => semantic_config.set(Some(Err(e))),
+            }
+        });
+    }
+    {
+        let alive = Arc::clone(&alive);
+        leptos::task::spawn_local(async move {
+            let result = api::fetch_cache_ops().await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            match result {
                 Ok(v) => ops.set(Some(Ok(v))),
                 Err(e) => ops.set(Some(Err(e))),
             }
         });
+    }
+
+    let reload_ops: Arc<dyn Fn() + Send + Sync> = {
+        let alive = Arc::clone(&alive);
+        Arc::new(move || {
+            let alive = Arc::clone(&alive);
+            leptos::task::spawn_local(async move {
+                let result = api::fetch_cache_ops().await;
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
+                match result {
+                    Ok(v) => ops.set(Some(Ok(v))),
+                    Err(e) => ops.set(Some(Err(e))),
+                }
+            });
+        })
     };
+
+    on_cleanup({
+        let alive = Arc::clone(&alive);
+        move || alive.store(false, Ordering::Relaxed)
+    });
 
     view! {
         <div class="space-y-6">
@@ -110,7 +147,9 @@ fn ConfigTab() -> impl IntoView {
             </div>
 
             // Fingerprint + Stream cache (from CacheOps)
-            {move || match ops.get() {
+            {move || {
+                let reload_ops = Arc::clone(&reload_ops);
+                match ops.get() {
                 None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">{e}</div>
@@ -170,11 +209,12 @@ fn ConfigTab() -> impl IntoView {
                                         on:change=move |ev| {
                                             let enabled = event_target_checked(&ev);
                                             stream_enabled.set(enabled);
+                                            let reload_ops = Arc::clone(&reload_ops);
                                             leptos::task::spawn_local(async move {
                                                 match api::update_stream_cache(&StreamCacheToggle { enabled }).await {
                                                     Ok(_) => {
                                                         feedback.set(t.routing_saved().to_string());
-                                                        reload_ops();
+                                                        (reload_ops)();
                                                     }
                                                     Err(e) => { feedback.set(e); }
                                                 }
@@ -186,6 +226,7 @@ fn ConfigTab() -> impl IntoView {
                             </div>
                         </div>
                     }.into_any()
+                }
                 }
             }}
         </div>
@@ -764,13 +805,20 @@ fn OpsTab() -> impl IntoView {
 #[component]
 fn TraceTab() -> impl IntoView {
     let t = use_translations();
+    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     let analysis: RwSignal<Option<Result<TraceAnalysis, String>>> = RwSignal::new(None);
     let cached_etag = RwSignal::new(String::new());
 
+    let alive_for_loader = Arc::clone(&alive);
     let load_analysis = move || {
         let etag = cached_etag.get_untracked();
+        let alive = Arc::clone(&alive_for_loader);
         leptos::task::spawn_local(async move {
-            match api::fetch_trace_analysis_etag(24, &etag).await {
+            let result = api::fetch_trace_analysis_etag(24, &etag).await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            match result {
                 Ok(result) => {
                     cached_etag.set(result.etag);
                     if let Some(a) = result.analysis {
@@ -784,6 +832,11 @@ fn TraceTab() -> impl IntoView {
     };
 
     load_analysis();
+
+    on_cleanup({
+        let alive = Arc::clone(&alive);
+        move || alive.store(false, Ordering::Relaxed)
+    });
 
     view! {
         <div class="space-y-6">
@@ -916,19 +969,25 @@ fn TraceTab() -> impl IntoView {
 
                             // Zipf log-log distribution chart
                             {if !data.zipf_log_points.is_empty() {
-                                let zipf_stored = StoredValue::new(data.zipf_log_points.clone());
+                                // Avoid StoredValue: it can panic if accessed after scope disposal.
+                                let zipf_points = std::sync::Arc::new(data.zipf_log_points.clone());
                                 let slope = data.zipf_regression_slope;
                                 let intercept = data.zipf_regression_intercept;
-                                let scatter_points = Signal::derive(move || {
-                                    zipf_stored.get_value().iter().enumerate().map(|(i, p)| {
-                                        ScatterPoint {
-                                            x: p.log_rank,
-                                            y: p.log_freq,
-                                            color: "var(--accent-primary)",
-                                            label: format!("#{}", i + 1),
-                                        }
-                                    }).collect()
-                                });
+                                let scatter_points = {
+                                    let zipf_points = std::sync::Arc::clone(&zipf_points);
+                                    Signal::derive(move || {
+                                        zipf_points
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(i, p)| ScatterPoint {
+                                                x: p.log_rank,
+                                                y: p.log_freq,
+                                                color: "var(--accent-primary)",
+                                                label: format!("#{}", i + 1),
+                                            })
+                                            .collect()
+                                    })
+                                };
                                 view! {
                                     <div class="dash-card p-4 space-y-3">
                                         <h3 class="text-sm font-semibold text-theme">{t.trace_zipf_chart()}</h3>

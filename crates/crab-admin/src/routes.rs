@@ -22,12 +22,27 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[derive(Debug, serde::Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+async fn api_not_found(Path(path): Path<String>) -> impl IntoResponse {
+    // Backward-compatible helper (kept for compatibility; prefer `OriginalUri` fallback).
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse {
+            error: format!("not_found: /api/admin/{path}"),
+        }),
+    )
+}
+
 /// Middleware that checks for a valid admin API key in the `X-Admin-Key` header.
 async fn admin_auth(
     State(state): State<Arc<AppState>>,
     req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, Response> {
     let expected_key = state.admin_key.read().clone();
     let provided_key = req
         .headers()
@@ -37,7 +52,13 @@ async fn admin_auth(
 
     if !constant_time_eq_str(provided_key, &expected_key) {
         tracing::warn!("Admin API authentication failed");
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "unauthorized".to_string(),
+            }),
+        )
+            .into_response());
     }
 
     Ok(next.run(req).await)
@@ -86,7 +107,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/admin/overview/trace", get(get_overview_trace))
         .route("/api/admin/domains", get(list_domains))
-        .route("/api/admin/domains/{domain}", get(get_domain_detail))
+        .route("/api/admin/domains/:domain", get(get_domain_detail))
         .route(
             "/api/admin/domains/policies",
             get(get_domain_policies).put(put_domain_policies),
@@ -99,11 +120,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/pg/health", get(get_pg_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
-        .route("/api/admin/keys/{id}", delete(revoke_key).patch(patch_key))
-        .route("/api/admin/keys/{id}/concurrency", get(get_key_concurrency))
-        .route("/api/admin/keys/{id}/routing", get(get_key_routing))
+        .route("/api/admin/keys/:id", delete(revoke_key).patch(patch_key))
+        .route("/api/admin/keys/:id/concurrency", get(get_key_concurrency))
+        .route("/api/admin/keys/:id/routing", get(get_key_routing))
         .route(
-            "/api/admin/sessions/{fingerprint}",
+            "/api/admin/sessions/:fingerprint",
             get(get_session_timeline),
         )
         .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
@@ -144,7 +165,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_upstream_keys_pool).put(put_upstream_keys_pool),
         )
         .route(
-            "/api/admin/upstream/keys/{id}",
+            "/api/admin/upstream/keys/:id",
             patch(patch_upstream_key_pool),
         )
         .route(
@@ -152,27 +173,27 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(crate::upstream_profiles::list_profiles_json),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}",
+            "/api/admin/upstream/profiles/:id",
             axum::routing::put(put_upstream_profile).delete(delete_upstream_profile),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}/keys",
+            "/api/admin/upstream/profiles/:id/keys",
             get(get_upstream_profile_keys).put(put_upstream_profile_keys),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}/keys/{key_id}",
+            "/api/admin/upstream/profiles/:id/keys/:key_id",
             patch(patch_upstream_profile_key),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}/keys/{key_id}/test",
+            "/api/admin/upstream/profiles/:id/keys/:key_id/test",
             post(post_upstream_profile_key_test),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}/test",
+            "/api/admin/upstream/profiles/:id/test",
             post(post_upstream_profile_test),
         )
         .route(
-            "/api/admin/upstream/profiles/{id}/routing",
+            "/api/admin/upstream/profiles/:id/routing",
             get(get_upstream_profile_routing),
         )
         .route("/api/admin/models", get(get_models).post(sync_models))
@@ -185,7 +206,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_cursor_models).put(put_cursor_models),
         )
         .route("/api/admin/logs", get(get_logs))
-        .route("/api/admin/logs/{id}", get(get_log_detail))
+        .route("/api/admin/logs/:id", get(get_log_detail))
         // ── Log Management ──
         .route("/api/admin/logs/usage", get(get_log_disk_usage))
         .route("/api/admin/logs/clear", post(post_clear_logs))
@@ -222,7 +243,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(crate::raw_capture::get_capture_stats),
         )
         .route(
-            "/api/admin/capture/{request_id}",
+            "/api/admin/capture/:request_id",
             get(crate::raw_capture::get_capture_detail),
         )
         // ── Audit Log ──
@@ -233,7 +254,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/infra/timeseries", get(get_infra_timeseries))
         .route("/api/admin/infra/speed-test", post(post_infra_speed_test))
         .route(
-            "/api/admin/infra/speed-test/{job_id}",
+            "/api/admin/infra/speed-test/:job_id",
             get(get_infra_speed_test_job),
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
@@ -1857,6 +1878,7 @@ async fn update_cache_config(
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect(),
+            stale_while_revalidate_ttl_secs: 0,
         }
     };
 

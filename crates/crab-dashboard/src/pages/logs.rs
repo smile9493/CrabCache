@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::components::chart::waterfall_stages_from_log;
@@ -106,6 +108,7 @@ impl LogsFilterForm {
 #[component]
 pub fn LogsPage() -> impl IntoView {
     let t = use_translations();
+    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     let logs: RwSignal<Option<Result<Vec<RequestLog>, String>>> = RwSignal::new(None);
     let selected_id: RwSignal<Option<String>> = RwSignal::new(None);
     let selected_summary: RwSignal<Option<RequestLog>> = RwSignal::new(None);
@@ -123,30 +126,54 @@ pub fn LogsPage() -> impl IntoView {
     let page_generation = RwSignal::new(0u64);
     let show_advanced = RwSignal::new(false);
 
-    let load_detail = move |id: String| {
+    let load_detail: Arc<dyn Fn(String) + Send + Sync> = {
+        let alive = Arc::clone(&alive);
+        Arc::new(move |id: String| {
+        if !alive.load(Ordering::Relaxed) {
+            return;
+        }
         detail_loading.set(true);
         detail.set(None);
+        let alive = Arc::clone(&alive);
         leptos::task::spawn_local(async move {
             let result = api::fetch_log_detail(&id).await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             detail.set(Some(result));
             detail_loading.set(false);
         });
+        })
     };
 
-    let select_log = move |log: RequestLog| {
-        let id = log.id.clone();
-        selected_id.set(Some(id.clone()));
-        selected_summary.set(Some(log));
-        load_detail(id);
+    let select_log: Arc<dyn Fn(RequestLog) + Send + Sync> = {
+        let load_detail = Arc::clone(&load_detail);
+        Arc::new(move |log: RequestLog| {
+            let id = log.id.clone();
+            selected_id.set(Some(id.clone()));
+            selected_summary.set(Some(log));
+            (load_detail)(id);
+        })
     };
 
-    let fetch_page = move |cursor: Option<String>, reset_selection: bool| {
+    let fetch_page: Arc<dyn Fn(Option<String>, bool) + Send + Sync> = {
+        let alive = Arc::clone(&alive);
+        let load_detail = Arc::clone(&load_detail);
+        Arc::new(move |cursor: Option<String>, reset_selection: bool| {
+        if !alive.load(Ordering::Relaxed) {
+            return;
+        }
         page_generation.update(|g| *g += 1);
         let request_id = page_generation.get();
         let query = active_filter.get().to_query(100, cursor);
+        let alive = Arc::clone(&alive);
+        let load_detail = Arc::clone(&load_detail);
         leptos::task::spawn_local(async move {
             match api::fetch_logs(&query).await {
                 Ok(resp) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     if page_generation.get_untracked() != request_id {
                         return;
                     }
@@ -159,7 +186,7 @@ pub fn LogsPage() -> impl IntoView {
                             let id = first.id.clone();
                             selected_id.set(Some(id.clone()));
                             selected_summary.set(Some(first));
-                            load_detail(id);
+                            (load_detail)(id);
                         } else {
                             selected_id.set(None);
                             selected_summary.set(None);
@@ -168,80 +195,112 @@ pub fn LogsPage() -> impl IntoView {
                     }
                 }
                 Err(e) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     if page_generation.get_untracked() == request_id {
                         logs.set(Some(Err(e)));
                     }
                 }
             }
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             loading_more.set(false);
         });
+        })
     };
 
-    let reload_first_page = move || {
-        next_cursor.set(None);
-        prev_cursors.set(Vec::new());
-        page_cursor.set(None);
-        has_next.set(false);
-        has_prev.set(false);
-        selected_id.set(None);
-        selected_summary.set(None);
-        detail.set(None);
-        fetch_page(None, true);
+    let reload_first_page: Arc<dyn Fn() + Send + Sync> = {
+        let fetch_page = Arc::clone(&fetch_page);
+        Arc::new(move || {
+            next_cursor.set(None);
+            prev_cursors.set(Vec::new());
+            page_cursor.set(None);
+            has_next.set(false);
+            has_prev.set(false);
+            selected_id.set(None);
+            selected_summary.set(None);
+            detail.set(None);
+            (fetch_page)(None, true);
+        })
     };
 
-    let apply_filters = move || {
-        active_filter.set(filter_draft.get());
-        reload_first_page();
-    };
-
-    let clear_filters = move || {
-        filter_draft.set(LogsFilterForm::default());
-        active_filter.set(LogsFilterForm::default());
-        reload_first_page();
-    };
-
-    let filter_by_hash = move |hash: String| {
-        let mut form = filter_draft.get();
-        form.request_hash = hash;
-        filter_draft.set(form.clone());
-        active_filter.set(form);
-        reload_first_page();
-    };
-
-    reload_first_page();
-
-    let load_next = move || {
-        if loading_more.get() {
-            return;
+    let apply_filters = {
+        let reload_first_page = Arc::clone(&reload_first_page);
+        move || {
+            active_filter.set(filter_draft.get());
+            (reload_first_page)();
         }
-        let current_cursor = next_cursor.get();
-        if current_cursor.is_none() {
-            return;
-        }
-        loading_more.set(true);
-        let cursor_for_fetch = current_cursor.clone();
-        let prev_page = page_cursor.get();
-        prev_cursors.update(|cursors| cursors.push(prev_page));
-        page_cursor.set(cursor_for_fetch.clone());
-        has_prev.set(true);
-        fetch_page(cursor_for_fetch, false);
     };
 
-    let load_prev = move || {
-        if loading_more.get() {
-            return;
+    let clear_filters = {
+        let reload_first_page = Arc::clone(&reload_first_page);
+        move || {
+            filter_draft.set(LogsFilterForm::default());
+            active_filter.set(LogsFilterForm::default());
+            (reload_first_page)();
         }
-        let mut cursors = prev_cursors.get();
-        let prev = cursors.pop();
-        if prev.is_none() {
-            return;
+    };
+
+    let filter_by_hash: Arc<dyn Fn(String) + Send + Sync> = {
+        let reload_first_page = Arc::clone(&reload_first_page);
+        Arc::new(move |hash: String| {
+            let mut form = filter_draft.get();
+            form.request_hash = hash;
+            filter_draft.set(form.clone());
+            active_filter.set(form);
+            (reload_first_page)();
+        })
+    };
+
+    (reload_first_page)();
+
+    on_cleanup({
+        let alive = Arc::clone(&alive);
+        move || {
+            alive.store(false, Ordering::Relaxed);
         }
-        prev_cursors.set(cursors);
-        loading_more.set(true);
-        let cursor_for_fetch = prev.flatten();
-        page_cursor.set(cursor_for_fetch.clone());
-        has_prev.set(!prev_cursors.get().is_empty());
-        fetch_page(cursor_for_fetch, false);
+    });
+
+    let load_next: Arc<dyn Fn() + Send + Sync> = {
+        let fetch_page = Arc::clone(&fetch_page);
+        Arc::new(move || {
+            if loading_more.get() {
+                return;
+            }
+            let current_cursor = next_cursor.get();
+            if current_cursor.is_none() {
+                return;
+            }
+            loading_more.set(true);
+            let cursor_for_fetch = current_cursor.clone();
+            let prev_page = page_cursor.get();
+            prev_cursors.update(|cursors| cursors.push(prev_page));
+            page_cursor.set(cursor_for_fetch.clone());
+            has_prev.set(true);
+            (fetch_page)(cursor_for_fetch, false);
+        })
+    };
+
+    let load_prev: Arc<dyn Fn() + Send + Sync> = {
+        let fetch_page = Arc::clone(&fetch_page);
+        Arc::new(move || {
+            if loading_more.get() {
+                return;
+            }
+            let mut cursors = prev_cursors.get();
+            let prev = cursors.pop();
+            if prev.is_none() {
+                return;
+            }
+            prev_cursors.set(cursors);
+            loading_more.set(true);
+            let cursor_for_fetch = prev.flatten();
+            page_cursor.set(cursor_for_fetch.clone());
+            has_prev.set(!prev_cursors.get().is_empty());
+            (fetch_page)(cursor_for_fetch, false);
+        })
     };
 
     let page_info = Signal::derive(move || {
@@ -379,8 +438,12 @@ pub fn LogsPage() -> impl IntoView {
                 if let Some(Ok(ref log_list)) = logs.get() {
                     let latencies: Vec<f64> = log_list.iter().map(|l| l.latency_ms as f64).filter(|v| v.is_finite() && *v > 0.0).collect();
                     if !latencies.is_empty() {
-                        let stored = StoredValue::new(latencies);
-                        let latency_sig = Signal::derive(move || stored.get_value());
+                        // Avoid StoredValue: it can panic if accessed after scope disposal.
+                        let latencies = std::sync::Arc::new(latencies);
+                        let latency_sig = {
+                            let latencies = std::sync::Arc::clone(&latencies);
+                            Signal::derive(move || latencies.as_ref().clone())
+                        };
                         view! {
                             <div class="glass-card p-4 space-y-3">
                                 <h3 class="text-sm font-semibold text-theme">{t.logs_latency_distribution()}</h3>
@@ -401,7 +464,10 @@ pub fn LogsPage() -> impl IntoView {
                 }
             }}
 
-            {move || match logs.get() {
+            {move || {
+                let select_log = Arc::clone(&select_log);
+                let filter_by_hash = Arc::clone(&filter_by_hash);
+                match logs.get() {
                 None => view! { <Spinner /> }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">
@@ -454,7 +520,10 @@ pub fn LogsPage() -> impl IntoView {
                                                                 "logs-row"
                                                             }
                                                         }
-                                                        on:click=move |_| select_log(log_for_click.clone())
+                                                        on:click={
+                                                            let select_log = Arc::clone(&select_log);
+                                                            move |_| (select_log)(log_for_click.clone())
+                                                        }
                                                     >
                                                         <td class="text-xs font-mono text-theme-secondary">
                                                             {log.timestamp.clone()}
@@ -489,14 +558,20 @@ pub fn LogsPage() -> impl IntoView {
                                         <span class="text-xs text-theme-muted">{page_str}</span>
                                         <div class="flex items-center gap-2">
                                             <button
-                                                on:click=move |_| load_prev()
+                                                on:click={
+                                                    let load_prev = Arc::clone(&load_prev);
+                                                    move |_| (load_prev)()
+                                                }
                                                 disabled=!has_prev_val || loading
                                                 class="btn btn-secondary text-sm"
                                             >
                                                 "←"
                                             </button>
                                             <button
-                                                on:click=move |_| load_next()
+                                                on:click={
+                                                    let load_next = Arc::clone(&load_next);
+                                                    move |_| (load_next)()
+                                                }
                                                 disabled=!has_next_val || loading
                                                 class="btn btn-secondary text-sm"
                                             >
@@ -518,7 +593,10 @@ pub fn LogsPage() -> impl IntoView {
                                                     summary=summary
                                                     detail=detail
                                                     loading=detail_loading
-                                                    on_filter_hash=Callback::new(filter_by_hash)
+                                                    on_filter_hash={
+                                                        let f = Arc::clone(&filter_by_hash);
+                                                        Callback::new(move |hash: String| (f)(hash))
+                                                    }
                                                 />
                                             }.into_any()
                                         } else {
@@ -533,6 +611,7 @@ pub fn LogsPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
+                }
                 }
             }}
         </div>

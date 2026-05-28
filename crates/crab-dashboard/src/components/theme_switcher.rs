@@ -1,5 +1,7 @@
 use crate::theme::{Theme, use_theme_signal};
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen::JsCast;
 
 #[component]
@@ -7,6 +9,7 @@ pub fn ThemeSwitcher() -> impl IntoView {
     let theme = use_theme_signal();
     let is_open = signal(false);
     let dropdown_ref = NodeRef::<leptos::html::Div>::new();
+    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 
     let toggle = move |_| {
         is_open.1.set(!is_open.0.get());
@@ -20,10 +23,14 @@ pub fn ThemeSwitcher() -> impl IntoView {
         is_open.1.set(false);
     };
 
-    let click_outside = {
+    let click_outside: Arc<dyn Fn(web_sys::MouseEvent) + Send + Sync> = {
         let is_open = is_open;
         let dropdown_ref = dropdown_ref;
-        move |ev: web_sys::MouseEvent| {
+        let alive = Arc::clone(&alive);
+        Arc::new(move |ev: web_sys::MouseEvent| {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
             if !is_open.0.get() { return; }
             if let Some(node) = dropdown_ref.get() {
                 let target = ev.target();
@@ -33,34 +40,50 @@ pub fn ThemeSwitcher() -> impl IntoView {
                     }
                 }
             }
-        }
+        })
     };
 
-    let keydown_handler = move |ev: web_sys::KeyboardEvent| {
+    let keydown_handler: Arc<dyn Fn(web_sys::KeyboardEvent) + Send + Sync> = {
+        let alive = Arc::clone(&alive);
+        Arc::new(move |ev: web_sys::KeyboardEvent| {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
         if ev.key() == "Escape" && is_open.0.get() {
             is_open.1.set(false);
         }
+        })
     };
 
-    Effect::new(move || {
+    Effect::new(move |_| {
         let Some(window) = web_sys::window() else { return };
         let Some(document) = window.document() else { return };
 
+        let click_outside = Arc::clone(&click_outside);
         let click_closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(click_outside) as Box<dyn Fn(web_sys::MouseEvent)>);
+            wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
+                (click_outside)(ev);
+            }) as Box<dyn Fn(web_sys::MouseEvent)>);
         let _ = document.add_event_listener_with_callback(
             "mousedown",
             click_closure.as_ref().unchecked_ref(),
         );
         click_closure.forget();
 
+        let keydown_handler = Arc::clone(&keydown_handler);
         let key_closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(keydown_handler) as Box<dyn Fn(web_sys::KeyboardEvent)>);
+            wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::KeyboardEvent| {
+                (keydown_handler)(ev);
+            }) as Box<dyn Fn(web_sys::KeyboardEvent)>);
         let _ = document.add_event_listener_with_callback(
             "keydown",
             key_closure.as_ref().unchecked_ref(),
         );
         key_closure.forget();
+    });
+
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
     });
 
     view! {
