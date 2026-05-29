@@ -602,6 +602,9 @@ fn OverviewContent(
             .map(|c| c.suggestions)
     });
 
+    // Memo for trace summary.
+    let trace_memo = Memo::new(move |_| trace_summary.get());
+
     // Derive the upstream CTA signal — boolean-only, very cheap.
     let show_cta = Memo::new(move |_| {
         let core_opt = overview_core.get();
@@ -610,15 +613,6 @@ fn OverviewContent(
             _ => return false,
         };
         core.health.upstream_key_count == 0 && core.ops.upstream_key_count == 0
-    });
-
-    // Trace from its own signal.
-    let trace = Memo::new(move |_| {
-        trace_summary.get().unwrap_or(TraceSummary {
-            hours: 24,
-            total_requests: 0,
-            cache_hit_ratio: 0.0,
-        })
     });
 
     view! {
@@ -632,32 +626,18 @@ fn OverviewContent(
                 </div>
             })}
 
-            {move || {
-                let h = health_memo.get();
-                let m = metrics_memo.get();
-                let o = ops_memo.get();
-                let pref = prefix_memo.get();
-                let sem = semantic_memo.get();
-                let sugg = suggestions_memo.get().unwrap_or_default();
-                let tr = trace.get();
-                match (h, m, o, pref, sem) {
-                    (Some(h), Some(m), Some(o), Some(pref), Some(sem)) => view! {
-                        <super::overview_cards::OverviewCardGrid
-                            health=h
-                            metrics=m
-                            ops=o
-                            prefix=pref
-                            semantic=sem
-                            trace=tr
-                            suggestions=sugg
-                            ts_points=ts_points
-                            ts_window=ts_window
-                            selected_domain=selected_domain
-                        />
-                    }.into_any(),
-                    _ => ().into_any(),
-                }
-            }}
+            <super::overview_cards::OverviewCardGrid
+                health_memo=health_memo
+                metrics_memo=metrics_memo
+                ops_memo=ops_memo
+                prefix_memo=prefix_memo
+                semantic_memo=semantic_memo
+                trace_memo=trace_memo
+                suggestions_memo=suggestions_memo
+                ts_points=ts_points
+                ts_window=ts_window
+                selected_domain=selected_domain
+            />
 
             <ObservabilityFooter />
         </div>

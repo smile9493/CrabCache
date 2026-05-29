@@ -2961,11 +2961,22 @@ async fn get_live_consumers(
 
 // ── P1: Per-key concurrency ─────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+struct KeyWindowQuery {
+    #[serde(default = "default_key_window")]
+    window_secs: u32,
+}
+
+fn default_key_window() -> u32 {
+    300
+}
+
 async fn get_key_concurrency(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyConcurrencyResponse>, StatusCode> {
-    let window_secs: u32 = 300;
+    let window_secs = query.window_secs;
     let entries =
         crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
@@ -3046,8 +3057,9 @@ fn compute_peak_concurrency(entries: &[KeyConcurrencyEntry]) -> u32 {
 async fn get_key_routing(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyRoutingResponse>, StatusCode> {
-    let window_secs: u32 = 300;
+    let window_secs = query.window_secs;
     let entries =
         crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
