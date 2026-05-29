@@ -87,6 +87,13 @@ fn pipeline_from_override(
             }
         }
         PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
+        PipelineOverride::CodexRelay => {
+            if provider == UpstreamProvider::Codex {
+                Some(RequestPipeline::CodexRelay)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
     }
 }
 
@@ -118,6 +125,7 @@ fn auto_pipeline_with_reason(
             }
             PipelineOverride::MimoTokenPlanRelay
             | PipelineOverride::MimoPaygRelay
+            | PipelineOverride::CodexRelay
             | PipelineOverride::Auto => {}
         }
     }
@@ -148,6 +156,7 @@ fn auto_pipeline_with_reason(
         RequestPipeline::MimoTokenPlanRelay
         | RequestPipeline::MimoPaygRelay => PipelineSelectionReason::MimoProvider,
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
+        RequestPipeline::CodexRelay => PipelineSelectionReason::CodexProvider,
     };
     (pipeline, reason)
 }
@@ -171,7 +180,8 @@ fn auto_pipeline_legacy(
             }
         }
         UpstreamProvider::Mimo => RequestPipeline::MimoTokenPlanRelay,
-        UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Codex | UpstreamProvider::Other => {
+        UpstreamProvider::Codex => RequestPipeline::CodexRelay,
+        UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Other => {
             RequestPipeline::GenericRelay
         }
     }
@@ -195,6 +205,9 @@ pub fn validate_pipeline_override(
             Some(
                 "mimo_token_plan_relay / mimo_payg_relay require a mimo upstream profile",
             )
+        }
+        PipelineOverride::CodexRelay if provider != UpstreamProvider::Codex => {
+            Some("codex_relay requires a codex upstream profile")
         }
         _ => None,
     }
