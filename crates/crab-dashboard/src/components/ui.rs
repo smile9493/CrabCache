@@ -5,10 +5,13 @@ pub fn MetricCard(
     title: &'static str,
     value: Signal<String>,
     subtitle: &'static str,
-    #[prop(default = false)]
-    static_card: bool,
+    #[prop(default = false)] static_card: bool,
 ) -> impl IntoView {
-    let class = if static_card { "metric-card metric-card--static" } else { "metric-card" };
+    let class = if static_card {
+        "metric-card metric-card--static"
+    } else {
+        "metric-card"
+    };
     view! {
         <div class=class>
             <div class="metric-card-label">{title}</div>
@@ -95,8 +98,7 @@ pub fn SectionHeader(title: &'static str, description: &'static str) -> impl Int
 #[component]
 pub fn EmptyState(
     message: &'static str,
-    #[prop(optional)]
-    hint: Option<&'static str>,
+    #[prop(optional)] hint: Option<&'static str>,
 ) -> impl IntoView {
     view! {
         <div class="empty-state">

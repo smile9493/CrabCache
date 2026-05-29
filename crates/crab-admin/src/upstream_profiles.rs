@@ -1,7 +1,7 @@
 //! Admin API proxy for gateway upstream profiles.
 
-use crate::state::{AppState, UpstreamPoolSecret};
 use crate::persist::PersistedUpstreamPoolSecret;
+use crate::state::{AppState, UpstreamPoolSecret};
 use crate::types::upstream_test_from_control;
 use crate::types::{
     PatchUpstreamKeyRequest, PutUpstreamProfileAdminRequest, UpstreamKeyInput,

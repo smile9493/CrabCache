@@ -20,10 +20,7 @@ pub enum IconName {
 }
 
 #[component]
-pub fn Icon(
-    name: IconName,
-    #[prop(default = "icon")] class: &'static str,
-) -> impl IntoView {
+pub fn Icon(name: IconName, #[prop(default = "icon")] class: &'static str) -> impl IntoView {
     // Lucide-style: 24x24, stroke-only.
     let cls = class;
     let body = match name {
@@ -154,4 +151,3 @@ pub fn Icon(
         </svg>
     }
 }
-

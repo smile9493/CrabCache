@@ -1,5 +1,5 @@
-use crate::trace_log::{self, TraceLogEntry};
 use crate::state::AppState;
+use crate::trace_log::{self, TraceLogEntry};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};

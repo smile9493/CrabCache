@@ -38,15 +38,8 @@ pub fn spawn(state: Arc<AppState>) {
     info!(interval_secs, "Domain usage sync started");
 }
 
-async fn sync_once(
-    state: &Arc<AppState>,
-    prev_uptime: &mut Option<u64>,
-) -> Result<(), String> {
-    let pg = state
-        .pg_store
-        .read()
-        .clone()
-        .ok_or("PG not available")?;
+async fn sync_once(state: &Arc<AppState>, prev_uptime: &mut Option<u64>) -> Result<(), String> {
+    let pg = state.pg_store.read().clone().ok_or("PG not available")?;
 
     // 1. Fetch current domain usage from Gateway.
     let resp = state

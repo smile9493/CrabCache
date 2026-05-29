@@ -301,7 +301,9 @@ fn upsert_profile_is_immediately_readable() {
 
     runtime.upsert_profile(mimo_profile).expect("upsert");
 
-    let loaded = runtime.profile("mimo").expect("profile should exist right after upsert");
+    let loaded = runtime
+        .profile("mimo")
+        .expect("profile should exist right after upsert");
     assert_eq!(loaded.base_url, "https://api.xiaomimimo.com");
     assert_eq!(loaded.fallback_model, "xiaomi/mimo-v2.5-pro");
 }

@@ -1,10 +1,10 @@
 use crab_admin_types::{
     ClearLogsRequest, ClearLogsResponse, ClearTarget, LogDiskUsage, RetentionPolicy,
 };
-use std::io::{BufReader, BufWriter, Write};
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -147,17 +147,41 @@ pub fn clear_logs(request: &ClearLogsRequest) -> Result<ClearLogsResponse, Strin
 
     match request.target {
         ClearTarget::TraceRotated => {
-            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
+            delete_rotated_files(
+                &trace_base,
+                cutoff,
+                &mut deleted_files,
+                &mut freed_bytes,
+                false,
+            );
         }
         ClearTarget::DebugRotated => {
-            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
+            delete_rotated_files(
+                &debug_base,
+                cutoff,
+                &mut deleted_files,
+                &mut freed_bytes,
+                false,
+            );
         }
         ClearTarget::Capture => {
             delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
         }
         ClearTarget::All => {
-            delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
-            delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, false);
+            delete_rotated_files(
+                &trace_base,
+                cutoff,
+                &mut deleted_files,
+                &mut freed_bytes,
+                false,
+            );
+            delete_rotated_files(
+                &debug_base,
+                cutoff,
+                &mut deleted_files,
+                &mut freed_bytes,
+                false,
+            );
             delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
         }
     }
@@ -177,17 +201,20 @@ pub fn clear_logs(request: &ClearLogsRequest) -> Result<ClearLogsResponse, Strin
 
 /// Truncate active JSONL files (trace and/or debug) to zero bytes.
 /// Returns paths of truncated files and bytes freed.
-pub fn truncate_active_logs(
-    trace: bool,
-    debug: bool,
-) -> Vec<(String, u64)> {
+pub fn truncate_active_logs(trace: bool, debug: bool) -> Vec<(String, u64)> {
     let mut truncated = Vec::new();
 
     if trace {
         let path = trace_log_base_path();
         if let Ok(meta) = fs::metadata(&path) {
             let size = meta.len();
-            if size > 0 && fs::OpenOptions::new().write(true).truncate(true).open(&path).is_ok() {
+            if size > 0
+                && fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+                    .is_ok()
+            {
                 info!(path = %path, size, "Truncated active trace log");
                 truncated.push((path, size));
             }
@@ -198,7 +225,13 @@ pub fn truncate_active_logs(
         let path = debug_trace_log_path();
         if let Ok(meta) = fs::metadata(&path) {
             let size = meta.len();
-            if size > 0 && fs::OpenOptions::new().write(true).truncate(true).open(&path).is_ok() {
+            if size > 0
+                && fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+                    .is_ok()
+            {
                 info!(path = %path, size, "Truncated active debug trace log");
                 truncated.push((path, size));
             }
@@ -245,15 +278,20 @@ fn cleanup_compressed_files(
 ) {
     let path = Path::new(base_path);
     let Some(parent) = path.parent() else { return };
-    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else { return };
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
 
-    let Ok(entries) = fs::read_dir(parent) else { return };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
 
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         // Match: {file_name}.{timestamp}.gz
-        if !(name_str.starts_with(file_name) && name_str.ends_with(".gz") && name_str != file_name) {
+        if !(name_str.starts_with(file_name) && name_str.ends_with(".gz") && name_str != file_name)
+        {
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
@@ -410,16 +448,39 @@ pub fn enforce_retention(policy: &RetentionPolicy) -> Result<ClearLogsResponse, 
         let cutoff = SystemTime::now() - Duration::from_secs(policy.max_age_hours as u64 * 3600);
         let cutoff = Some(cutoff);
 
-        delete_rotated_files(&trace_base, cutoff, &mut deleted_files, &mut freed_bytes, compress);
-        delete_rotated_files(&debug_base, cutoff, &mut deleted_files, &mut freed_bytes, compress);
+        delete_rotated_files(
+            &trace_base,
+            cutoff,
+            &mut deleted_files,
+            &mut freed_bytes,
+            compress,
+        );
+        delete_rotated_files(
+            &debug_base,
+            cutoff,
+            &mut deleted_files,
+            &mut freed_bytes,
+            compress,
+        );
         delete_capture_files(&capture, cutoff, &mut deleted_files, &mut freed_bytes);
     }
 
     // 1b. Compressed file cleanup (if compressing)
     if compress && policy.compressed_retention_days > 0 {
-        let cutoff = SystemTime::now() - Duration::from_secs(policy.compressed_retention_days * 86400);
-        cleanup_compressed_files(&trace_base, Some(cutoff), &mut deleted_files, &mut freed_bytes);
-        cleanup_compressed_files(&debug_base, Some(cutoff), &mut deleted_files, &mut freed_bytes);
+        let cutoff =
+            SystemTime::now() - Duration::from_secs(policy.compressed_retention_days * 86400);
+        cleanup_compressed_files(
+            &trace_base,
+            Some(cutoff),
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
+        cleanup_compressed_files(
+            &debug_base,
+            Some(cutoff),
+            &mut deleted_files,
+            &mut freed_bytes,
+        );
     }
 
     // 2. File-count-based cleanup for trace files

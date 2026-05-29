@@ -143,9 +143,7 @@ impl TieredCache {
             l1_pool,
             ttl_config: arc_swap,
             ttl_config_rwlock: ttl_config,
-            prefix_index: SyncCache::builder()
-                .max_capacity(50_000)
-                .build(),
+            prefix_index: SyncCache::builder().max_capacity(50_000).build(),
         })
     }
 
@@ -572,8 +570,7 @@ mod tests {
     #[test]
     fn test_prefix_index_lru_eviction() {
         use moka::sync::Cache as SyncCache;
-        let index: SyncCache<String, String> =
-            SyncCache::builder().max_capacity(3).build();
+        let index: SyncCache<String, String> = SyncCache::builder().max_capacity(3).build();
 
         index.insert("a".to_string(), "1".to_string());
         index.insert("b".to_string(), "2".to_string());

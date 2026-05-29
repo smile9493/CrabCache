@@ -215,10 +215,7 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
-    pub async fn put_domain_usage(
-        &self,
-        req: &PutDomainUsageRequest,
-    ) -> Result<(), ControlError> {
+    pub async fn put_domain_usage(&self, req: &PutDomainUsageRequest) -> Result<(), ControlError> {
         let resp = self
             .authed(reqwest::Method::PUT, "/v1/domains/usage")
             .json(req)

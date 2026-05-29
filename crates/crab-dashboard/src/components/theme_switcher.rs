@@ -31,10 +31,13 @@ pub fn ThemeSwitcher() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            if !is_open.0.get() { return; }
+            if !is_open.0.get() {
+                return;
+            }
             if let Some(node) = dropdown_ref.get() {
                 let target = ev.target();
-                if let Some(target_el) = target.and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                if let Some(target_el) = target.and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                {
                     if !node.contains(Some(&target_el)) {
                         is_open.1.set(false);
                     }
@@ -49,36 +52,38 @@ pub fn ThemeSwitcher() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-        if ev.key() == "Escape" && is_open.0.get() {
-            is_open.1.set(false);
-        }
+            if ev.key() == "Escape" && is_open.0.get() {
+                is_open.1.set(false);
+            }
         })
     };
 
     Effect::new(move |_| {
-        let Some(window) = web_sys::window() else { return };
-        let Some(document) = window.document() else { return };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Some(document) = window.document() else {
+            return;
+        };
 
         let click_outside = Arc::clone(&click_outside);
         let click_closure =
             wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
                 (click_outside)(ev);
-            }) as Box<dyn Fn(web_sys::MouseEvent)>);
-        let _ = document.add_event_listener_with_callback(
-            "mousedown",
-            click_closure.as_ref().unchecked_ref(),
-        );
+            })
+                as Box<dyn Fn(web_sys::MouseEvent)>);
+        let _ = document
+            .add_event_listener_with_callback("mousedown", click_closure.as_ref().unchecked_ref());
         click_closure.forget();
 
         let keydown_handler = Arc::clone(&keydown_handler);
         let key_closure =
             wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::KeyboardEvent| {
                 (keydown_handler)(ev);
-            }) as Box<dyn Fn(web_sys::KeyboardEvent)>);
-        let _ = document.add_event_listener_with_callback(
-            "keydown",
-            key_closure.as_ref().unchecked_ref(),
-        );
+            })
+                as Box<dyn Fn(web_sys::KeyboardEvent)>);
+        let _ = document
+            .add_event_listener_with_callback("keydown", key_closure.as_ref().unchecked_ref());
         key_closure.forget();
     });
 

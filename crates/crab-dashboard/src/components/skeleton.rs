@@ -160,7 +160,10 @@ pub fn SkeletonTable(
     #[prop(default = 5)] rows: usize,
     #[prop(default = 4)] cols: usize,
 ) -> impl IntoView {
-    let grid_style = format!("display: grid; grid-template-columns: repeat({}, 1fr); gap: 1rem; padding: 0.625rem 1rem;", cols);
+    let grid_style = format!(
+        "display: grid; grid-template-columns: repeat({}, 1fr); gap: 1rem; padding: 0.625rem 1rem;",
+        cols
+    );
     view! {
         <div class="glass-card skeleton-card-inner" style="overflow: hidden; padding: 0">
             <div style=format!("{} border-bottom: 1px solid var(--cc-border-light); background: var(--cc-bg-elevated)", grid_style)>

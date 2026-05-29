@@ -185,19 +185,16 @@ pub async fn put_upstream_profile(
         bad_request(&e)
     })?;
 
-    state
-        .runtime
-        .upsert_profile(profile)
-        .map_err(|e| {
-            tracing::warn!(
-                profile_id = %id,
-                provider = %req.provider.trim().to_lowercase(),
-                base_url = %req.base_url.trim(),
-                error = %e,
-                "Failed to upsert upstream profile"
-            );
-            bad_request(&e)
-        })?;
+    state.runtime.upsert_profile(profile).map_err(|e| {
+        tracing::warn!(
+            profile_id = %id,
+            provider = %req.provider.trim().to_lowercase(),
+            base_url = %req.base_url.trim(),
+            error = %e,
+            "Failed to upsert upstream profile"
+        );
+        bad_request(&e)
+    })?;
 
     tracing::info!(
         profile_id = %id,
@@ -603,23 +600,21 @@ pub async fn get_profile_routing(
     let backend_views: Vec<ProfileRoutingBackendView> = router
         .meta()
         .iter()
-        .map(|(addr, m)| {
-            ProfileRoutingBackendView {
-                name: m.name.clone(),
-                addr: addr.to_string(),
-                weight: 1,
-                tls_sni: if m.tls_sni.is_empty() {
-                    None
-                } else {
-                    Some(m.tls_sni.clone())
-                },
-                healthy: true,
-                last_check_ms: 0,
-                latency_ms: 0,
-                circuit_state: "closed".to_string(),
-                consecutive_failures: 0,
-                half_open_successes: 0,
-            }
+        .map(|(addr, m)| ProfileRoutingBackendView {
+            name: m.name.clone(),
+            addr: addr.to_string(),
+            weight: 1,
+            tls_sni: if m.tls_sni.is_empty() {
+                None
+            } else {
+                Some(m.tls_sni.clone())
+            },
+            healthy: true,
+            last_check_ms: 0,
+            latency_ms: 0,
+            circuit_state: "closed".to_string(),
+            consecutive_failures: 0,
+            half_open_successes: 0,
         })
         .collect();
     let pool = profile.resolve_upstream_pool();

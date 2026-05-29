@@ -42,10 +42,8 @@ pub async fn static_cache_headers(req: Request<Body>, next: Next) -> Response<Bo
             .insert(header::CACHE_CONTROL, header_value);
         res.headers_mut()
             .insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
-        res.headers_mut().insert(
-            header::EXPIRES,
-            header::HeaderValue::from_static("0"),
-        );
+        res.headers_mut()
+            .insert(header::EXPIRES, header::HeaderValue::from_static("0"));
     }
 
     // ServeDir SPA fallback returns index.html for missing hashed assets; treat as 404.

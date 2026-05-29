@@ -8,10 +8,10 @@ mod metrics_history;
 mod metrics_store;
 mod network;
 mod openresty;
-mod pg_sync;
 mod overview;
 mod persist;
 mod pg;
+mod pg_sync;
 mod raw_capture;
 mod routes;
 mod sse;
@@ -26,8 +26,8 @@ mod update;
 mod upstream;
 mod upstream_profiles;
 
-use axum::{Json, Router, middleware, response::IntoResponse};
 use axum::http::{Request, StatusCode};
+use axum::{Json, Router, middleware, response::IntoResponse};
 use state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -427,7 +427,10 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     // `Router` is an infallible service; `.oneshot` returns `Result<Response, Infallible>`.
                     Ok::<_, std::convert::Infallible>(
-                        dashboard_static.oneshot(req).await.unwrap_or_else(|e| match e {}),
+                        dashboard_static
+                            .oneshot(req)
+                            .await
+                            .unwrap_or_else(|e| match e {}),
                     )
                 }
             }

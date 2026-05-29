@@ -72,7 +72,6 @@ impl RuntimeConfig {
         legacy_client_tokens: HashSet<String>,
         auto_project_id_from_client_key: bool,
     ) -> Arc<Self> {
-
         Arc::new(Self {
             keys: DashMap::new(),
             ttl,

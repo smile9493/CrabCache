@@ -23,12 +23,25 @@ impl Theme {
     pub const COUNT: usize = 6;
 
     pub fn all() -> [Theme; Self::COUNT] {
-        [Theme::Dark, Theme::Light, Theme::Midnight, Theme::Ocean, Theme::Sand, Theme::System]
+        [
+            Theme::Dark,
+            Theme::Light,
+            Theme::Midnight,
+            Theme::Ocean,
+            Theme::Sand,
+            Theme::System,
+        ]
     }
 
     /// All concrete (non-System) themes.
     pub fn concrete() -> [Theme; 5] {
-        [Theme::Dark, Theme::Light, Theme::Midnight, Theme::Ocean, Theme::Sand]
+        [
+            Theme::Dark,
+            Theme::Light,
+            Theme::Midnight,
+            Theme::Ocean,
+            Theme::Sand,
+        ]
     }
 
     pub fn label(&self) -> &'static str {
@@ -91,7 +104,13 @@ impl Theme {
         web_sys::window()
             .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok())
             .flatten()
-            .map(|mql| if mql.matches() { Theme::Dark } else { Theme::Light })
+            .map(|mql| {
+                if mql.matches() {
+                    Theme::Dark
+                } else {
+                    Theme::Light
+                }
+            })
             .unwrap_or(Theme::Dark)
     }
 
@@ -165,8 +184,16 @@ pub fn provide_theme() -> RwSignal<Theme> {
 
 /// Spawn a media query listener that re-triggers when OS dark/light changes.
 pub fn spawn_system_listener(theme: RwSignal<Theme>) {
-    let Some(window) = web_sys::window() else { return };
-    let Some(mql) = window.match_media("(prefers-color-scheme: dark)").ok().flatten() else { return };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(mql) = window
+        .match_media("(prefers-color-scheme: dark)")
+        .ok()
+        .flatten()
+    else {
+        return;
+    };
 
     let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
         if theme.get() == Theme::System {

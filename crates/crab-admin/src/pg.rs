@@ -1435,11 +1435,13 @@ impl PgStore {
         sql.push_str(&format!(" LIMIT ${idx}"));
         params.push(Box::new((limit + 1) as i64));
 
-        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-            params.iter().map(|p| {
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+            .iter()
+            .map(|p| {
                 let r: &(dyn tokio_postgres::types::ToSql + Sync) = p.as_ref();
                 r
-            }).collect();
+            })
+            .collect();
         let rows = client.query(&sql, &param_refs[..]).await?;
 
         let has_more = rows.len() > limit;
@@ -1799,10 +1801,7 @@ impl PgStore {
     }
 
     /// Load all domain usage for a given month.
-    pub async fn load_domain_usage(
-        &self,
-        month: &str,
-    ) -> Result<Vec<(String, u64, f64)>> {
+    pub async fn load_domain_usage(&self, month: &str) -> Result<Vec<(String, u64, f64)>> {
         let client = self.pool.get().await?;
         let rows = client
             .query(

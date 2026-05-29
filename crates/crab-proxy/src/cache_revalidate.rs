@@ -32,9 +32,7 @@ impl RevalidationMarker {
 ///
 /// Returns `Some(&RevalidationMarker)` if this is a revalidation subrequest
 /// with our marker in `user_ctx`, `None` otherwise.
-pub fn is_revalidation_subrequest(
-    session: &pingora_proxy::Session,
-) -> Option<&RevalidationMarker> {
+pub fn is_revalidation_subrequest(session: &pingora_proxy::Session) -> Option<&RevalidationMarker> {
     let sub_ctx = session.subrequest_ctx.as_ref()?;
     let user_ctx = sub_ctx.user_ctx()?;
     RevalidationMarker::from_user_ctx(user_ctx.as_ref())

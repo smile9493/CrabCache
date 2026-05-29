@@ -129,20 +129,20 @@ pub fn LogsPage() -> impl IntoView {
     let load_detail: Arc<dyn Fn(String) + Send + Sync> = {
         let alive = Arc::clone(&alive);
         Arc::new(move |id: String| {
-        if !alive.load(Ordering::Relaxed) {
-            return;
-        }
-        detail_loading.set(true);
-        detail.set(None);
-        let alive = Arc::clone(&alive);
-        leptos::task::spawn_local(async move {
-            let result = api::fetch_log_detail(&id).await;
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            detail.set(Some(result));
-            detail_loading.set(false);
-        });
+            detail_loading.set(true);
+            detail.set(None);
+            let alive = Arc::clone(&alive);
+            leptos::task::spawn_local(async move {
+                let result = api::fetch_log_detail(&id).await;
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
+                detail.set(Some(result));
+                detail_loading.set(false);
+            });
         })
     };
 
@@ -160,54 +160,54 @@ pub fn LogsPage() -> impl IntoView {
         let alive = Arc::clone(&alive);
         let load_detail = Arc::clone(&load_detail);
         Arc::new(move |cursor: Option<String>, reset_selection: bool| {
-        if !alive.load(Ordering::Relaxed) {
-            return;
-        }
-        page_generation.update(|g| *g += 1);
-        let request_id = page_generation.get();
-        let query = active_filter.get().to_query(100, cursor);
-        let alive = Arc::clone(&alive);
-        let load_detail = Arc::clone(&load_detail);
-        leptos::task::spawn_local(async move {
-            match api::fetch_logs(&query).await {
-                Ok(resp) => {
-                    if !alive.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if page_generation.get_untracked() != request_id {
-                        return;
-                    }
-                    logs.set(Some(Ok(resp.items.clone())));
-                    next_cursor.set(resp.next_cursor);
-                    total_in_window.set(resp.total_in_window);
-                    has_next.set(resp.has_more);
-                    if reset_selection {
-                        if let Some(first) = resp.items.into_iter().next() {
-                            let id = first.id.clone();
-                            selected_id.set(Some(id.clone()));
-                            selected_summary.set(Some(first));
-                            (load_detail)(id);
-                        } else {
-                            selected_id.set(None);
-                            selected_summary.set(None);
-                            detail.set(None);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if !alive.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if page_generation.get_untracked() == request_id {
-                        logs.set(Some(Err(e)));
-                    }
-                }
-            }
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            loading_more.set(false);
-        });
+            page_generation.update(|g| *g += 1);
+            let request_id = page_generation.get();
+            let query = active_filter.get().to_query(100, cursor);
+            let alive = Arc::clone(&alive);
+            let load_detail = Arc::clone(&load_detail);
+            leptos::task::spawn_local(async move {
+                match api::fetch_logs(&query).await {
+                    Ok(resp) => {
+                        if !alive.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if page_generation.get_untracked() != request_id {
+                            return;
+                        }
+                        logs.set(Some(Ok(resp.items.clone())));
+                        next_cursor.set(resp.next_cursor);
+                        total_in_window.set(resp.total_in_window);
+                        has_next.set(resp.has_more);
+                        if reset_selection {
+                            if let Some(first) = resp.items.into_iter().next() {
+                                let id = first.id.clone();
+                                selected_id.set(Some(id.clone()));
+                                selected_summary.set(Some(first));
+                                (load_detail)(id);
+                            } else {
+                                selected_id.set(None);
+                                selected_summary.set(None);
+                                detail.set(None);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if !alive.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if page_generation.get_untracked() == request_id {
+                            logs.set(Some(Err(e)));
+                        }
+                    }
+                }
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
+                loading_more.set(false);
+            });
         })
     };
 

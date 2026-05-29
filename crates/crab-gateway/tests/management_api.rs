@@ -62,9 +62,9 @@ async fn test_management_state() -> Option<ManagementState> {
             SemanticGateConfig::default(),
         ))),
         semantic_cache: None,
-        global_rate: Arc::new(pingora_limits::rate::Rate::new(std::time::Duration::from_secs(
-            1,
-        ))),
+        global_rate: Arc::new(pingora_limits::rate::Rate::new(
+            std::time::Duration::from_secs(1),
+        )),
     })
 }
 
@@ -1301,7 +1301,11 @@ async fn upstream_profile_upsert_concurrent_no_500_and_consistent() {
         .iter()
         .filter(|p| p["id"].as_str() == Some("mimo-concurrent"))
         .collect();
-    assert_eq!(matches.len(), 1, "concurrent upsert should converge to one profile entry");
+    assert_eq!(
+        matches.len(),
+        1,
+        "concurrent upsert should converge to one profile entry"
+    );
 }
 
 /// Upstream profiles written via Management API are visible after reload from Redis.

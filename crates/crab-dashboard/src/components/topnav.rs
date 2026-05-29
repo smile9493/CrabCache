@@ -6,8 +6,8 @@ use crate::components::brand_logo::BrandLogo;
 use crate::components::gateway_health::GatewayHealthIndicator;
 use crate::components::icons::{Icon, IconName};
 use crate::components::theme_switcher::ThemeSwitcher;
-use crate::table_density::{TableDensity, use_table_density};
 use crate::locale::{Translations, use_locale, use_translations};
+use crate::table_density::{TableDensity, use_table_density};
 
 fn init_mobile_nav() -> RwSignal<bool> {
     RwSignal::new(false)
