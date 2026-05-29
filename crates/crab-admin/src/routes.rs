@@ -217,6 +217,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(crate::oauth_codex::import_codex_credential),
         )
         .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/import/bulk",
+            post(crate::oauth_codex::import_codex_bulk),
+        )
+        .route(
             "/api/admin/oauth/codex/credentials",
             get(crate::oauth_codex::list_codex_credentials),
         )
@@ -2681,6 +2685,7 @@ async fn put_upstream_keys_pool(
                 },
                 secret,
                 enabled: k.enabled,
+                account_id: k.account_id.clone(),
             });
         }
         let inputs: Vec<UpstreamKeyInput> = merged
@@ -2841,6 +2846,7 @@ async fn update_upstream_config(
                 },
                 secret: k.secret.clone(),
                 enabled: k.enabled,
+                account_id: k.account_id.clone(),
             });
         }
         let merged_inputs: Vec<UpstreamKeyInput> = merged

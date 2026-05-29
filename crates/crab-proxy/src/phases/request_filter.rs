@@ -434,6 +434,17 @@ async fn run_post_body_phases(
                 ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload));
                 ctx.new_request_body = mimo.serialized_body.map(Bytes::from);
             }
+            RequestPipeline::CodexRelay => {
+                let model = alias_upstream_model
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(ctx.model.as_str());
+                let prepared = crate::codex::prepare_codex_request(payload, model);
+                upstream_model_log = prepared.model.clone();
+                ctx.parsed_upstream_payload = Some(Arc::new(prepared.payload.clone()));
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&prepared.payload).unwrap_or_default(),
+                ));
+            }
         }
     }
     let prepare_elapsed = prepare_start.elapsed();

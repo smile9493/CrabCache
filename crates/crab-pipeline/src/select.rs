@@ -13,6 +13,7 @@ pub fn select_request_pipeline(
 ) -> PipelineSelection {
     let (upstream_profile_id, provider, _profile_explicit) =
         resolve_upstream_profile_id(globals, profiles, ctx);
+    let provider = normalize_legacy_codex_provider(provider, &upstream_profile_id);
 
     if globals.pipeline_mode == PipelineMode::ForceCursorV4 {
         return PipelineSelection {
@@ -49,6 +50,18 @@ pub fn select_request_pipeline(
         upstream_profile_id,
         provider,
         reason,
+    }
+}
+
+/// Legacy Codex profiles may still store `provider=openai` while `id=codex`.
+fn normalize_legacy_codex_provider(
+    provider: UpstreamProvider,
+    upstream_profile_id: &str,
+) -> UpstreamProvider {
+    if provider == UpstreamProvider::Openai && upstream_profile_id.eq_ignore_ascii_case("codex") {
+        UpstreamProvider::Codex
+    } else {
+        provider
     }
 }
 
@@ -367,5 +380,23 @@ mod tests {
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
         assert_eq!(id, "mimo");
         assert_eq!(provider, UpstreamProvider::Mimo);
+    }
+
+    #[test]
+    fn legacy_codex_profile_id_selects_codex_relay() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "codex".into(),
+            provider: UpstreamProvider::Openai,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "gpt-5-codex",
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "codex");
+        assert_eq!(sel.provider, UpstreamProvider::Codex);
+        assert_eq!(sel.pipeline, RequestPipeline::CodexRelay);
+        assert_eq!(sel.reason, PipelineSelectionReason::CodexProvider);
     }
 }

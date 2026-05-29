@@ -51,6 +51,7 @@ pub struct UpstreamPoolSecret {
     pub id: String,
     pub secret: String,
     pub enabled: bool,
+    pub account_id: String,
 }
 
 pub struct AppState {
@@ -391,6 +392,7 @@ impl AppState {
                     id: format!("key-{}", i + 1),
                     secret: secret.to_string(),
                     enabled: true,
+                    account_id: String::new(),
                 });
             }
         } else if !upstream_api_key.is_empty() {
@@ -398,6 +400,7 @@ impl AppState {
                 id: "key-1".to_string(),
                 secret: upstream_api_key.clone(),
                 enabled: true,
+                account_id: String::new(),
             });
         }
 
@@ -414,6 +417,7 @@ impl AppState {
                     id: s.id.clone(),
                     secret: s.secret.clone(),
                     enabled: s.enabled,
+                    account_id: s.account_id.clone(),
                 })
                 .collect();
         }
@@ -631,6 +635,7 @@ impl AppState {
                 },
                 secret: k.secret.clone(),
                 enabled: k.enabled,
+                account_id: k.account_id.clone(),
             })
             .collect();
         *self.upstream_pool_secrets.write() = secrets;
@@ -666,6 +671,7 @@ impl AppState {
                 id: s.id.clone(),
                 secret: s.secret.clone(),
                 enabled: s.enabled,
+                account_id: s.account_id.clone(),
             })
             .collect();
         let file = persist::build_state_file(

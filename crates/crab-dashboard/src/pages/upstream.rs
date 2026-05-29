@@ -97,10 +97,16 @@ const PRESETS: &[PresetTemplate] = &[
         label_zh: "OpenAI Codex",
         label_en: "OpenAI Codex",
         provider: "codex",
-        base_url: "https://api.openai.com",
-        models: &["gpt-4o", "gpt-4o-mini", "o3-mini"],
-        default_model: "gpt-4o",
-        tls_sni: "api.openai.com",
+        base_url: "https://chatgpt.com",
+        models: &[
+            "gpt-5",
+            "gpt-5-codex",
+            "gpt-5.1-codex",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+        ],
+        default_model: "gpt-5-codex",
+        tls_sni: "chatgpt.com",
     },
 ];
 
@@ -164,6 +170,17 @@ fn models_for_provider(provider: &str) -> &'static [&'static str] {
         .unwrap_or(&[])
 }
 
+/// Synced upstream models for the active profile; falls back to static presets.
+fn effective_model_list(synced: &[String], provider: &str) -> Vec<String> {
+    if !synced.is_empty() {
+        return synced.to_vec();
+    }
+    models_for_provider(provider)
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
 const CUSTOM_MODEL_SENTINEL: &str = "__custom_model__";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -210,6 +227,8 @@ pub fn UpstreamPage() -> impl IntoView {
     let saved = RwSignal::new(false);
     let save_error = RwSignal::new(String::new());
     let sync_result: RwSignal<Option<SyncResult>> = RwSignal::new(None);
+    let profile_model_options: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
+    let profile_models_syncing = RwSignal::new(false);
 
     // Key pool state
     let key_pool: RwSignal<Option<Result<UpstreamKeysView, String>>> = RwSignal::new(None);
@@ -253,6 +272,16 @@ pub fn UpstreamPage() -> impl IntoView {
         });
     };
 
+    let load_profile_models = move |pid: String| {
+        profile_model_options.set(Vec::new());
+        leptos::task::spawn_local(async move {
+            if let Ok(resp) = api::fetch_models(Some(&pid)).await {
+                let ids: Vec<String> = resp.models.into_iter().map(|m| m.id).collect();
+                profile_model_options.set(ids);
+            }
+        });
+    };
+
     let load_profile_data = move |pid: String| {
         // Reset states
         test_result.set(None);
@@ -291,6 +320,7 @@ pub fn UpstreamPage() -> impl IntoView {
             tls_sni.set(p.tls_sni.clone());
             proxy_url.set(p.proxy_url.clone().unwrap_or_default());
         }
+        load_profile_models(pid.clone());
         load_key_pool(pid);
     };
 
@@ -310,6 +340,26 @@ pub fn UpstreamPage() -> impl IntoView {
 
     // Initial load: gateway default profile (not hardcoded id)
     load_profiles_and_select(None);
+
+    let on_sync_profile_models = move |_| {
+        let pid = active_profile.get();
+        profile_models_syncing.set(true);
+        save_error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::sync_models(&pid).await {
+                Ok(r) => {
+                    sync_result.set(Some(r));
+                    if let Ok(resp) = api::fetch_models(Some(&pid)).await {
+                        profile_model_options.set(
+                            resp.models.into_iter().map(|m| m.id).collect(),
+                        );
+                    }
+                }
+                Err(e) => save_error.set(e),
+            }
+            profile_models_syncing.set(false);
+        });
+    };
 
     // Actions
     let on_test = move |_| {
@@ -1004,10 +1054,18 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             />
                                                         </div>
                                                         <div>
-                                                            <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_model_label()}</label>
+                                                            <div class="flex items-center justify-between mb-1">
+                                                                <label class="block text-xs font-semibold text-theme-muted">{t.upstream_model_label()}</label>
+                                                                <button type="button" class="text-xs text-accent disabled:opacity-50"
+                                                                    disabled=move || profile_models_syncing.get()
+                                                                    on:click=on_sync_profile_models
+                                                                >
+                                                                    {move || if profile_models_syncing.get() { t.models_syncing() } else { t.models_sync_btn() }}
+                                                                </button>
+                                                            </div>
                                                             {move || {
-                                                                let models = models_for_provider(&provider.get());
-                                                                if models.is_empty() {
+                                                                let options = effective_model_list(&profile_model_options.get(), &provider.get());
+                                                                if options.is_empty() {
                                                                     view! { <input type="text" prop:value=move || model.get()
                                                                         on:input=move |ev| model.set(event_target_value(&ev))
                                                                         class="input font-mono text-sm" placeholder="model-name"
@@ -1017,8 +1075,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                         <select class="input font-mono text-sm"
                                                                             prop:value=move || {
                                                                                 let m = model.get();
+                                                                                let opts = effective_model_list(&profile_model_options.get(), &provider.get());
                                                                                 if m == CUSTOM_MODEL_SENTINEL { CUSTOM_MODEL_SENTINEL.to_string() }
-                                                                                else if models_for_provider(&provider.get()).contains(&m.as_str()) { m }
+                                                                                else if opts.iter().any(|o| o == &m) { m }
                                                                                 else { CUSTOM_MODEL_SENTINEL.to_string() }
                                                                             }
                                                                             on:change=move |ev| {
@@ -1026,7 +1085,11 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                 if v != CUSTOM_MODEL_SENTINEL { model.set(v); } else { model.set(String::new()); }
                                                                             }
                                                                         >
-                                                                            {models.iter().map(|m| view! { <option value=*m>{*m}</option> }).collect_view()}
+                                                                            {options.iter().map(|m| {
+                                                                                let value = m.clone();
+                                                                                let text = m.clone();
+                                                                                view! { <option value=value>{text}</option> }
+                                                                            }).collect_view()}
                                                                             <option value=CUSTOM_MODEL_SENTINEL>{t.upstream_model_custom()}</option>
                                                                         </select>
                                                                     }.into_any()
@@ -1034,13 +1097,19 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             }}
                                                             {move || {
                                                                 let m = model.get();
-                                                                let models = models_for_provider(&provider.get());
-                                                                let is_custom = m == CUSTOM_MODEL_SENTINEL || (!m.is_empty() && !models.is_empty() && !models.contains(&m.as_str()));
+                                                                let options = effective_model_list(&profile_model_options.get(), &provider.get());
+                                                                let is_custom = m == CUSTOM_MODEL_SENTINEL || (!m.is_empty() && !options.is_empty() && !options.contains(&m));
                                                                 is_custom.then(|| view! {
                                                                     <input type="text" class="input font-mono text-sm mt-2" placeholder="model-name"
                                                                         prop:value=move || { let m = model.get(); if m == CUSTOM_MODEL_SENTINEL { String::new() } else { m } }
                                                                         on:input=move |ev| model.set(event_target_value(&ev))
                                                                     />
+                                                                })
+                                                            }}
+                                                            {move || {
+                                                                let n = profile_model_options.get().len();
+                                                                (n > 0).then(|| view! {
+                                                                    <p class="text-xs text-theme-muted mt-1">{n} {t.upstream_template_models_count()}</p>
                                                                 })
                                                             }}
                                                         </div>
@@ -1348,6 +1417,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 class="input font-mono text-sm h-24 resize-y"
                                                                 placeholder="sk-...\nacct-b:sk-...\n"
                                                             ></textarea>
+                                                            <p class="text-xs text-theme-muted mt-1">
+                                                                {move || t.upstream_pool_hint()}
+                                                            </p>
                                                         </div>
                                                         <div class="flex items-center gap-3">
                                                             <button on:click=on_save_pool disabled=move || pool_saving.get() class="btn btn-primary text-xs">
@@ -1361,11 +1433,6 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             } else { view! { <span></span> }.into_any() }}
                                                         </div>
                                                     </div>
-                                                    // Codex OAuth panel (device code + PKCE)
-                                                    {move || {
-                                                        let pid = drawer_profile.get().unwrap_or_default();
-                                                        view! { <CodexOAuthPanel profile_id=pid /> }
-                                                    }}
                                                 </div>
                                             }.into_any()
                                         },

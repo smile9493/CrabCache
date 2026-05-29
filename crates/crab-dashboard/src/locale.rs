@@ -4459,6 +4459,12 @@ impl Translations {
             Locale::EnUS => "Saved",
         }
     }
+    pub fn upstream_pool_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "格式: secret 或 account_id:secret (每行一个)。留空 account_id 将自动分配独立 ID。",
+            Locale::EnUS => "Format: secret or account_id:secret (one per line). Empty account_id gets auto-assigned.",
+        }
+    }
     pub fn upstream_test_btn(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "测试连接",
@@ -5403,6 +5409,24 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "导入",
             Locale::EnUS => "Import",
+        }
+    }
+    pub fn upstream_codex_json_import_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "导入 JSON 凭证",
+            Locale::EnUS => "Import JSON Credentials",
+        }
+    }
+    pub fn upstream_codex_json_import_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "粘贴 accounts[] 导出或 codex-*.json 内容；过期 token 将自动 refresh",
+            Locale::EnUS => "Paste accounts[] export or codex-*.json; expired tokens are auto-refreshed",
+        }
+    }
+    pub fn upstream_codex_json_import_submit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "导入 JSON",
+            Locale::EnUS => "Import JSON",
         }
     }
     // ── PKCE OAuth ──

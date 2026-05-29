@@ -45,6 +45,8 @@ pub struct PersistedUpstreamPoolSecret {
     pub secret: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub account_id: String,
 }
 
 fn default_true() -> bool {
@@ -377,6 +379,7 @@ impl From<&std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecre
                                 id: s.id.clone(),
                                 secret: s.secret.clone(),
                                 enabled: s.enabled,
+                                account_id: s.account_id.clone(),
                             })
                             .collect(),
                     )
@@ -401,6 +404,7 @@ impl From<PersistedProfileSecrets>
                             id: s.id,
                             secret: s.secret,
                             enabled: s.enabled,
+                            account_id: s.account_id,
                         })
                         .collect(),
                 )
@@ -422,11 +426,13 @@ mod tests {
                     id: "key-1".to_string(),
                     secret: "sk-ds-test123456".to_string(),
                     enabled: true,
+                    account_id: String::new(),
                 },
                 PersistedUpstreamPoolSecret {
                     id: "key-2".to_string(),
                     secret: "sk-ds-test789012".to_string(),
                     enabled: false,
+                    account_id: String::new(),
                 },
             ],
             ..Default::default()

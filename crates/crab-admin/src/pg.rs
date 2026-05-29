@@ -979,6 +979,7 @@ impl PgStore {
                 id: row.get(0),
                 secret: row.get(1),
                 enabled: row.get(2),
+                account_id: String::new(),
             })
             .collect())
     }
@@ -1038,6 +1039,7 @@ impl PgStore {
                     id: row.get(1),
                     secret: row.get(2),
                     enabled: row.get(3),
+                    account_id: String::new(),
                 });
         }
         Ok(map)
@@ -2348,11 +2350,13 @@ mod tests {
                 id: "key-1".to_string(),
                 secret: "sk-ds-test123".to_string(),
                 enabled: true,
+                account_id: String::new(),
             },
             PersistedUpstreamPoolSecret {
                 id: "key-2".to_string(),
                 secret: "sk-ds-test456".to_string(),
                 enabled: false,
+                account_id: String::new(),
             },
         ];
 
@@ -2375,6 +2379,7 @@ mod tests {
             id: "pk-1".to_string(),
             secret: "sk-openai-test".to_string(),
             enabled: true,
+            account_id: String::new(),
         }];
 
         pg.replace_profile_secrets("openai", &secrets)
@@ -2459,6 +2464,7 @@ mod tests {
                 id: "ps-1".to_string(),
                 secret: "sk-ds-pool1".to_string(),
                 enabled: true,
+                account_id: String::new(),
             }],
             upstream_profile_secrets: crate::persist::PersistedProfileSecrets {
                 by_profile: [(
@@ -2467,6 +2473,7 @@ mod tests {
                         id: "oai-1".to_string(),
                         secret: "sk-oai-1".to_string(),
                         enabled: true,
+                        account_id: String::new(),
                     }],
                 )]
                 .into_iter()

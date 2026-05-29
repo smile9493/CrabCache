@@ -10,6 +10,8 @@ pub enum RequestPipeline {
     MimoTokenPlanRelay,
     MimoPaygRelay,
     GenericRelay,
+    /// Codex (ChatGPT) Responses API relay — translates Chat Completions ↔ Responses API.
+    CodexRelay,
 }
 
 impl RequestPipeline {
@@ -20,6 +22,7 @@ impl RequestPipeline {
             RequestPipeline::MimoTokenPlanRelay => "mimo_token_plan_relay",
             RequestPipeline::MimoPaygRelay => "mimo_payg_relay",
             RequestPipeline::GenericRelay => "generic_relay",
+            RequestPipeline::CodexRelay => "codex_relay",
         }
     }
 }
@@ -30,6 +33,7 @@ pub enum UpstreamProvider {
     Deepseek,
     Mimo,
     Openai,
+    Codex,
     Anthropic,
     Other,
 }
@@ -41,6 +45,7 @@ impl UpstreamProvider {
             "deepseek" => Self::Deepseek,
             "mimo" | "xiaomi" => Self::Mimo,
             "openai" => Self::Openai,
+            "codex" => Self::Codex,
             "anthropic" => Self::Anthropic,
             _ => Self::Other,
         }
@@ -51,9 +56,16 @@ impl UpstreamProvider {
             UpstreamProvider::Deepseek => "deepseek",
             UpstreamProvider::Mimo => "mimo",
             UpstreamProvider::Openai => "openai",
+            UpstreamProvider::Codex => "codex",
             UpstreamProvider::Anthropic => "anthropic",
             UpstreamProvider::Other => "other",
         }
+    }
+
+    /// Returns `true` for providers that use OAuth tokens instead of API keys
+    /// (e.g. Codex uses OpenAI OAuth tokens validated via `chatgpt-account-id`).
+    pub fn uses_oauth(self) -> bool {
+        matches!(self, Self::Codex)
     }
 }
 
@@ -67,6 +79,7 @@ pub enum PipelineOverride {
     MimoTokenPlanRelay,
     MimoPaygRelay,
     GenericRelay,
+    CodexRelay,
 }
 
 impl PipelineOverride {
@@ -78,6 +91,7 @@ impl PipelineOverride {
             "mimo_token_plan_relay" => Self::MimoTokenPlanRelay,
             "mimo_payg_relay" => Self::MimoPaygRelay,
             "generic_relay" => Self::GenericRelay,
+            "codex_relay" => Self::CodexRelay,
             _ => Self::Auto,
         }
     }
@@ -90,6 +104,7 @@ impl PipelineOverride {
             PipelineOverride::MimoTokenPlanRelay => "mimo_token_plan_relay",
             PipelineOverride::MimoPaygRelay => "mimo_payg_relay",
             PipelineOverride::GenericRelay => "generic_relay",
+            PipelineOverride::CodexRelay => "codex_relay",
         }
     }
 }
@@ -129,6 +144,7 @@ pub enum PipelineSelectionReason {
     CursorSignals,
     DeepSeekNonV4,
     MimoProvider,
+    CodexProvider,
     ModelAlias,
 }
 
@@ -143,10 +159,39 @@ impl PipelineSelectionReason {
             PipelineSelectionReason::CursorSignals => "cursor_signals",
             PipelineSelectionReason::DeepSeekNonV4 => "deepseek_non_v4",
             PipelineSelectionReason::MimoProvider => "mimo_provider",
+            PipelineSelectionReason::CodexProvider => "codex_provider",
             PipelineSelectionReason::ModelAlias => "model_alias",
         }
     }
 }
+
+/// Static Codex model catalog (aligned with new-api `relay/channel/codex/constants.go`).
+pub const CODEX_STATIC_MODELS: &[&str] = &[
+    "gpt-5",
+    "gpt-5-codex",
+    "gpt-5-codex-mini",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.4",
+    "gpt-5/compact",
+    "gpt-5-codex/compact",
+    "gpt-5-codex-mini/compact",
+    "gpt-5.1/compact",
+    "gpt-5.1-codex/compact",
+    "gpt-5.1-codex-max/compact",
+    "gpt-5.1-codex-mini/compact",
+    "gpt-5.2/compact",
+    "gpt-5.2-codex/compact",
+    "gpt-5.3-codex/compact",
+    "gpt-5.3-codex-spark/compact",
+    "gpt-5.4/compact",
+];
 
 #[derive(Debug, Clone)]
 pub struct PipelineGlobals {

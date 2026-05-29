@@ -63,6 +63,10 @@ impl UpstreamKeyGuard {
     pub fn bearer_secret(&self) -> &str {
         &self.pool.slots[self.index].secret
     }
+
+    pub fn account_id(&self) -> &str {
+        &self.pool.slots[self.index].account_id
+    }
 }
 
 /// Diagnoses why `acquire()` returned `None`.
@@ -120,8 +124,25 @@ fn ensure_unique_ids(specs: &mut [UpstreamKeySpec]) {
     }
 }
 
+/// Auto-assign a stable unique `account_id` for specs that have an empty one.
+///
+/// Uses `SHA256(secret)[..8]` → 16 hex chars, prefixed with `"auto-"`.
+/// This ensures keys without an explicit account still get an independent
+/// `account_id`, enabling `rotate_after_rate_limit` to find an alternative
+/// key from a different account when one key gets rate-limited.
+fn auto_assign_account_ids(specs: &mut [UpstreamKeySpec]) {
+    use sha2::{Digest, Sha256};
+    for spec in specs.iter_mut() {
+        if spec.account_id.trim().is_empty() {
+            let hash = hex::encode(&Sha256::digest(spec.secret.as_bytes())[..8]);
+            spec.account_id = format!("auto-{}", hash);
+        }
+    }
+}
+
 impl UpstreamKeyPool {
     pub fn new(mut specs: Vec<UpstreamKeySpec>, cooldown_secs: u64) -> Arc<Self> {
+        auto_assign_account_ids(&mut specs);
         ensure_unique_ids(&mut specs);
         let slots: Vec<UpstreamKeySlot> = specs
             .into_iter()
@@ -303,6 +324,7 @@ impl UpstreamKeyPool {
 
     /// Hot-replace the key pool, preserving inflight/cooldown for matching ids.
     pub fn hot_replace(pool: &Arc<Self>, mut specs: Vec<UpstreamKeySpec>) -> Arc<Self> {
+        auto_assign_account_ids(&mut specs);
         ensure_unique_ids(&mut specs);
         let old = pool;
         let new_slots: Vec<UpstreamKeySlot> = specs
@@ -444,6 +466,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn auto_account_id_is_unique_per_key() {
+        let pool = UpstreamKeyPool::from_secrets(
+            vec![
+                "sk-key-one-aaaaaaa".into(),
+                "sk-key-two-bbbbbb".into(),
+                "sk-key-three-ccccc".into(),
+            ],
+            60,
+        );
+        let statuses = pool.list_status();
+        assert_eq!(statuses.len(), 3);
+        let ids: Vec<String> = statuses.iter().map(|k| k.account_id.clone()).collect();
+        assert_ne!(ids[0], ids[1], "auto account_id for key-1 and key-2 must differ");
+        assert_ne!(ids[1], ids[2], "auto account_id for key-2 and key-3 must differ");
+        for (i, aid) in ids.iter().enumerate() {
+            assert!(
+                aid.starts_with("auto-"),
+                "account_id for key-{} should start with 'auto-', got: {}",
+                i + 1,
+                aid
+            );
+            assert_eq!(aid.len(), 21, "auto-xxx format should be 21 chars (auto- + 16 hex)");
+        }
+    }
+
+    #[test]
+    fn auto_account_id_is_deterministic() {
+        let pool1 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60);
+        let pool2 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60);
+        let s1 = pool1.list_status();
+        let s2 = pool2.list_status();
+        assert_eq!(s1[0].account_id, s2[0].account_id);
+    }
+
+    #[test]
+    fn explicit_account_id_is_preserved() {
+        let pool = UpstreamKeyPool::new(
+            vec![UpstreamKeySpec {
+                id: "my-key".into(),
+                secret: "sk-something".into(),
+                enabled: true,
+                account_id: "my-custom-account".into(),
+            }],
+            60,
+        );
+        let statuses = pool.list_status();
+        assert_eq!(statuses[0].account_id, "my-custom-account");
+    }
+
+    #[test]
     fn round_robin_prefers_lower_inflight() {
         let pool = UpstreamKeyPool::from_secrets(
             vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
@@ -555,7 +627,8 @@ mod tests {
     }
 
     #[test]
-    fn rotate_none_when_all_default_account() {
+    fn rotate_finds_alternative_when_auto_account_id() {
+        // from_secrets now auto-assigns unique account_ids, so rotation works.
         let pool = UpstreamKeyPool::from_secrets(
             vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
             60,
@@ -563,7 +636,10 @@ mod tests {
         let g1 = pool.acquire().unwrap();
         assert_eq!(g1.key_id(), "key-1");
         drop(g1);
-        assert!(UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-1").is_none());
+        let g2 = UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-1");
+        assert!(g2.is_some(), "expected rotation to find key-2 with different auto account_id");
+        let g2 = g2.unwrap();
+        assert_eq!(g2.key_id(), "key-2");
     }
 
     #[test]

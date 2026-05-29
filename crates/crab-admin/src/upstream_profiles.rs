@@ -101,19 +101,20 @@ pub async fn put_profile_keys(
     } else {
         UpstreamKeysPutMode::Append
     };
-    let secrets: Vec<UpstreamPoolSecret> = keys
-        .iter()
-        .filter(|k| !k.secret.is_empty())
-        .map(|k| UpstreamPoolSecret {
-            id: if k.id.is_empty() {
-                uuid::Uuid::new_v4().to_string()
-            } else {
-                k.id.clone()
-            },
-            secret: k.secret.clone(),
-            enabled: k.enabled,
-        })
-        .collect();
+        let secrets: Vec<UpstreamPoolSecret> = keys
+            .iter()
+            .filter(|k| !k.secret.is_empty())
+            .map(|k| UpstreamPoolSecret {
+                id: if k.id.is_empty() {
+                    uuid::Uuid::new_v4().to_string()
+                } else {
+                    k.id.clone()
+                },
+                secret: k.secret.clone(),
+                enabled: k.enabled,
+                account_id: k.account_id.clone(),
+            })
+            .collect();
     {
         let mut map = state.upstream_profile_secrets.write();
         map.insert(id.to_string(), secrets);
@@ -135,6 +136,7 @@ pub async fn put_profile_keys(
                 id: s.id,
                 secret: s.secret,
                 enabled: s.enabled,
+                account_id: s.account_id,
             })
             .collect();
         pg.replace_profile_secrets(id, &persisted)
@@ -189,6 +191,7 @@ pub async fn patch_profile_key(
                         enabled: if id == key_id { enabled } else { s.enabled },
                         id: s.id,
                         secret: s.secret,
+                        account_id: s.account_id,
                     }
                 })
                 .collect();
@@ -208,6 +211,7 @@ pub async fn patch_profile_key(
                                 id: p.id,
                                 secret: p.secret,
                                 enabled: p.enabled,
+                                account_id: p.account_id,
                             })
                             .collect(),
                     );
@@ -252,6 +256,86 @@ pub async fn list_profiles_json(
         .await
         .map(Json)
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))
+}
+
+/// Append or update a single API key in a profile's key pool (used by Codex OAuth import).
+pub async fn put_profile_keys_upsert(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    secret: &str,
+    account_id: &str,
+) -> Result<(), (axum::http::StatusCode, String)> {
+    let normalized_account = normalize_pool_account_id(account_id);
+
+    let view = state
+        .gateway
+        .get_upstream_profile_keys(profile_id)
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let cached_secrets = state
+        .upstream_profile_secrets
+        .read()
+        .get(profile_id)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut matched_key_id: Option<String> = None;
+    for key in &view.keys {
+        let key_account = normalize_pool_account_id(&key.account_id);
+        if key_account == normalized_account {
+            matched_key_id = Some(key.id.clone());
+            break;
+        }
+    }
+
+    if let Some(key_id) = matched_key_id {
+        let keys: Vec<UpstreamKeyInput> = view
+            .keys
+            .into_iter()
+            .map(|k| {
+                let secret_val = if k.id == key_id {
+                    secret.to_string()
+                } else {
+                    cached_secrets
+                        .iter()
+                        .find(|s| s.id == k.id)
+                        .map(|s| s.secret.clone())
+                        .unwrap_or_default()
+                };
+                UpstreamKeyInput {
+                    id: k.id,
+                    secret: secret_val,
+                    enabled: k.enabled,
+                    account_id: if k.account_id.is_empty() {
+                        "default".to_string()
+                    } else {
+                        k.account_id
+                    },
+                }
+            })
+            .collect();
+
+        if keys.iter().any(|k| k.id == key_id && k.secret.is_empty()) {
+            return put_profile_keys_append(state, profile_id, secret, account_id).await;
+        }
+
+        put_profile_keys(state, profile_id, keys, true)
+            .await
+            .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))?;
+        return Ok(());
+    }
+
+    put_profile_keys_append(state, profile_id, secret, account_id).await
+}
+
+fn normalize_pool_account_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Append a single API key to a profile's key pool (used by Codex OAuth import).
