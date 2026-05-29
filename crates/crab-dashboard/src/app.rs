@@ -59,6 +59,9 @@ pub fn App() -> impl IntoView {
     provide_locale();
     provide_theme();
     provide_table_density();
+    // Provide toast context at the app root so background callbacks can safely
+    // clone the signal handle and avoid `use_context` panics.
+    provide_toast();
     install_panic_hook();
     let admin_key = provide_admin_auth();
 
@@ -75,7 +78,6 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn AuthenticatedShell() -> impl IntoView {
-    provide_toast();
     let panic = PANIC_SIGNAL.get_or_init(|| RwSignal::new(None));
 
     view! {

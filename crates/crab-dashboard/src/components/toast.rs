@@ -31,9 +31,13 @@ pub fn provide_toast() -> RwSignal<Option<Toast>> {
     toast
 }
 
-pub fn use_toast() -> RwSignal<Option<Toast>> {
+/// Toast signal when [`provide_toast`] ran in an ancestor; `None` otherwise.
+pub fn try_use_toast() -> Option<RwSignal<Option<Toast>>> {
     use_context::<RwSignal<Option<Toast>>>()
-        .expect("Toast context not found. Call provide_toast() first.")
+}
+
+pub fn use_toast() -> RwSignal<Option<Toast>> {
+    try_use_toast().expect("Toast context not found. Call provide_toast() first.")
 }
 
 pub fn show_toast(toast: RwSignal<Option<Toast>>, kind: ToastKind, message: &str) {

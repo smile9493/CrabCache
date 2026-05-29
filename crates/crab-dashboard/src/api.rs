@@ -1050,10 +1050,49 @@ pub async fn update_retention_policy(
 
 // ── SSE Connection ──────────────────────────────────────────────────────
 
-/// Create an EventSource connection to the SSE endpoint.
-/// The admin key is passed as a query parameter since EventSource doesn't support custom headers.
-pub fn connect_sse() -> Result<web_sys::EventSource, String> {
-    let key = crate::auth::admin_key_header_value().unwrap_or_default();
-    let url = format!("{API_BASE}/events?key={}", urlencoding::encode(&key));
+#[derive(serde::Deserialize)]
+struct SseTokenResponse {
+    token: String,
+}
+
+/// Exchange `x-admin-key` for a short-lived, one-time SSE token.
+///
+/// EventSource cannot set custom headers, so the server issues a token via this
+/// authenticated endpoint and the client connects with `?token=`.
+pub async fn fetch_sse_token() -> Result<String, String> {
+    let (builder, epoch) = apply_admin_auth(Request::get(&format!("{API_BASE}/events/token")));
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+
+    let body: SseTokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid SSE token response: {}", e))?;
+
+    if body.token.trim().is_empty() {
+        return Err("empty SSE token".to_string());
+    }
+
+    Ok(body.token)
+}
+
+/// Open an SSE stream using a one-time token from [`fetch_sse_token`].
+pub fn open_sse_with_token(token: &str) -> Result<web_sys::EventSource, String> {
+    let url = format!(
+        "{API_BASE}/events?token={}",
+        urlencoding::encode(token.trim())
+    );
     web_sys::EventSource::new(&url).map_err(|e| format!("SSE connect error: {:?}", e))
+}
+
+/// Fetch a short-lived token and connect to the SSE metrics stream.
+pub async fn connect_sse() -> Result<web_sys::EventSource, String> {
+    let token = fetch_sse_token().await?;
+    open_sse_with_token(&token)
 }

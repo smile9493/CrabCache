@@ -1,5 +1,6 @@
-use crate::components::toast::{ToastKind, show_toast, use_toast};
+use crate::components::toast::{Toast, ToastKind, show_toast};
 use crate::types::OverviewCore;
+use leptos::prelude::*;
 
 /// Lightweight snapshot for anomaly detection — only the fields we compare.
 #[derive(Clone, Default)]
@@ -117,6 +118,18 @@ impl AnomalyDetector {
 
 /// Run anomaly detection on new data and fire toasts for any detected anomalies.
 pub fn detect_and_toast(core: &OverviewCore) {
+    // Backward-compatible helper: try to read toast context if an owner exists.
+    // This MUST NOT panic; in background callbacks there may be no active owner.
+    let Some(toast) = use_context::<RwSignal<Option<Toast>>>() else {
+        return;
+    };
+    detect_and_toast_with(toast, core);
+}
+
+/// Run anomaly detection and emit toasts using the provided signal.
+///
+/// This is safe to call from background callbacks because it doesn't touch context.
+pub fn detect_and_toast_with(toast: RwSignal<Option<Toast>>, core: &OverviewCore) {
     // We use a thread-local static to persist the detector across calls.
     thread_local! {
         static DETECTOR: std::cell::RefCell<AnomalyDetector> = std::cell::RefCell::new(AnomalyDetector::new());
@@ -126,7 +139,6 @@ pub fn detect_and_toast(core: &OverviewCore) {
         let mut d = d.borrow_mut();
         let anomalies = d.check(core);
         if !anomalies.is_empty() {
-            let toast = use_toast();
             for a in anomalies {
                 show_toast(toast, a.kind, &a.message);
             }
