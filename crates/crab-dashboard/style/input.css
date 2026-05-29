@@ -685,11 +685,12 @@ body {
   position: fixed;
   inset: 0;
   z-index: 50;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .chart-detail-host--hidden {
-  display: none;
+  opacity: 0;
   pointer-events: none;
+  visibility: hidden;
 }
 .chart-detail-overlay {
   position: fixed;
@@ -741,11 +742,12 @@ body {
   position: fixed;
   inset: 0;
   z-index: 50;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .card-detail-host--hidden {
-  display: none;
+  opacity: 0;
   pointer-events: none;
+  visibility: hidden;
 }
 .card-detail-overlay {
   position: fixed;
