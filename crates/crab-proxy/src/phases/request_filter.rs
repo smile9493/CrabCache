@@ -286,7 +286,16 @@ async fn run_post_body_phases(
 
     let prepare_start = Instant::now();
     if direct_mimo {
-        ctx.new_request_body = Some(full_body.clone());
+        let body = if ctx.is_streaming {
+            Bytes::from(
+                crate::phases::upstream_request::inject_stream_options_include_usage(
+                    full_body.to_vec(),
+                ),
+            )
+        } else {
+            full_body.clone()
+        };
+        ctx.new_request_body = Some(body);
         ctx.upstream_body_for_capture = Some(full_body.clone());
     } else {
         let mut parsed_payload =
@@ -848,6 +857,13 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
         ctx.upstream_profile_id.as_deref().unwrap_or("default"),
         selection.reason.as_str(),
     );
+    let (stable_kind, _stable_prefix) = stable_session_log_fields(
+        ctx.conversation_id.as_deref(),
+        ctx.prompt_cache_key.as_deref(),
+        None,
+        None,
+    );
+    ctx.stable_session_kind = Some(stable_kind.to_string());
     timeline_stamp(&mut ctx.timeline.pipeline_select_done);
     true
 }
@@ -1055,6 +1071,37 @@ async fn request_passthrough_handoff(
         }
         return Ok(true);
     }
+    // #region agent log
+    info!(
+        request_id = %ctx.request_id,
+        pipeline = ?ctx.request_pipeline,
+        upstream_profile = ctx.upstream_profile_id.as_deref().unwrap_or("default"),
+        pipeline_reason = ctx.pipeline_reason.as_deref().unwrap_or(""),
+        client_model = %ctx.model,
+        upstream_model = ctx.upstream_model.as_deref().unwrap_or(""),
+        consumer = ctx.consumer.as_deref().unwrap_or(""),
+        prefix_len = partial_body.len(),
+        is_streaming = ctx.is_streaming,
+        "MiMo passthrough handoff armed"
+    );
+    debug_agent_log(
+        "PT-HANDOFF",
+        "request_filter.rs:request_passthrough_handoff",
+        "MiMo passthrough handoff armed — prefix relay to upstream",
+        serde_json::json!({
+            "request_id": ctx.request_id,
+            "pipeline": ctx.request_pipeline,
+            "upstream_profile": ctx.upstream_profile_id,
+            "pipeline_reason": ctx.pipeline_reason,
+            "model": ctx.model,
+            "upstream_model": ctx.upstream_model,
+            "consumer": ctx.consumer,
+            "prefix_len": partial_body.len(),
+            "is_streaming": ctx.is_streaming,
+            "content_length": ctx.content_length,
+        }),
+    );
+    // #endregion
     Ok(false)
 }
 

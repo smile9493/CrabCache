@@ -173,6 +173,31 @@ pub(crate) async fn run_upstream_request_filter(
     Ok(())
 }
 
+/// Inject `stream_options.include_usage: true` into a streaming request body so the upstream
+/// API returns token usage in the final SSE chunk. Used by MiMo direct-mimo and request-passthrough
+/// paths that relay raw client bodies without going through `prepare_upstream_request`.
+pub(crate) fn inject_stream_options_include_usage(body: Vec<u8>) -> Vec<u8> {
+    let Ok(mut obj) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return body;
+    };
+    let Some(map) = obj.as_object_mut() else {
+        return body;
+    };
+    if !map.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return body;
+    }
+    let so = map
+        .entry("stream_options")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(so_map) = so.as_object_mut() {
+        so_map.insert("include_usage".into(), serde_json::Value::Bool(true));
+    }
+    match serde_json::to_vec(&obj) {
+        Ok(new_body) => new_body,
+        Err(_) => body,
+    }
+}
+
 /// Run the `request_body_filter` phase: replace upstream body with prepared payload.
 pub(crate) async fn run_request_body_filter(
     proxy: &GatewayProxy,
@@ -231,7 +256,12 @@ pub(crate) async fn run_request_body_filter(
                 *body = None;
                 return Ok(());
             }
-            let prefix = std::mem::take(&mut ctx.request_passthrough.buffer);
+            let prefix_raw = std::mem::take(&mut ctx.request_passthrough.buffer);
+            let prefix = if ctx.is_streaming {
+                Bytes::from(inject_stream_options_include_usage(prefix_raw))
+            } else {
+                Bytes::from(prefix_raw)
+            };
             ctx.request_passthrough.prefix_emitted = true;
             ctx.upstream_outbound_body_len += prefix.len();
             ctx.upstream.prepared_upstream_body_emitted = true;
@@ -245,7 +275,7 @@ pub(crate) async fn run_request_body_filter(
                 ctx.request_passthrough.finalized = true;
                 ctx.request_passthrough.active = false;
             }
-            *body = Some(Bytes::from(prefix));
+            *body = Some(prefix);
             return Ok(());
         }
         if let Some(chunk) = body.take() {
