@@ -132,16 +132,16 @@ pub fn LogsPage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            detail_loading.set(true);
-            detail.set(None);
+            detail_loading.try_set(true);
+            detail.try_set(None);
             let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
                 let result = api::fetch_log_detail(&id).await;
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }
-                detail.set(Some(result));
-                detail_loading.set(false);
+                detail.try_set(Some(result));
+                detail_loading.try_set(false);
             });
         })
     };
@@ -150,8 +150,8 @@ pub fn LogsPage() -> impl IntoView {
         let load_detail = Arc::clone(&load_detail);
         Arc::new(move |log: RequestLog| {
             let id = log.id.clone();
-            selected_id.set(Some(id.clone()));
-            selected_summary.set(Some(log));
+            selected_id.try_set(Some(id.clone()));
+            selected_summary.try_set(Some(log));
             (load_detail)(id);
         })
     };
@@ -163,9 +163,9 @@ pub fn LogsPage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            page_generation.update(|g| *g += 1);
-            let request_id = page_generation.get();
-            let query = active_filter.get().to_query(100, cursor);
+            page_generation.try_update(|g| *g += 1);
+            let request_id = page_generation.try_get().unwrap_or(0);
+            let query = active_filter.try_get().unwrap_or_default().to_query(100, cursor);
             let alive = Arc::clone(&alive);
             let load_detail = Arc::clone(&load_detail);
             leptos::task::spawn_local(async move {
@@ -174,23 +174,23 @@ pub fn LogsPage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if page_generation.get_untracked() != request_id {
+                        if page_generation.try_get_untracked() != Some(request_id) {
                             return;
                         }
-                        logs.set(Some(Ok(resp.items.clone())));
-                        next_cursor.set(resp.next_cursor);
-                        total_in_window.set(resp.total_in_window);
-                        has_next.set(resp.has_more);
+                        logs.try_set(Some(Ok(resp.items.clone())));
+                        next_cursor.try_set(resp.next_cursor);
+                        total_in_window.try_set(resp.total_in_window);
+                        has_next.try_set(resp.has_more);
                         if reset_selection {
                             if let Some(first) = resp.items.into_iter().next() {
                                 let id = first.id.clone();
-                                selected_id.set(Some(id.clone()));
-                                selected_summary.set(Some(first));
+                                selected_id.try_set(Some(id.clone()));
+                                selected_summary.try_set(Some(first));
                                 (load_detail)(id);
                             } else {
-                                selected_id.set(None);
-                                selected_summary.set(None);
-                                detail.set(None);
+                                selected_id.try_set(None);
+                                selected_summary.try_set(None);
+                                detail.try_set(None);
                             }
                         }
                     }
@@ -198,15 +198,15 @@ pub fn LogsPage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if page_generation.get_untracked() == request_id {
-                            logs.set(Some(Err(e)));
+                        if page_generation.try_get_untracked() == Some(request_id) {
+                            logs.try_set(Some(Err(e)));
                         }
                     }
                 }
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }
-                loading_more.set(false);
+                loading_more.try_set(false);
             });
         })
     };
@@ -214,14 +214,14 @@ pub fn LogsPage() -> impl IntoView {
     let reload_first_page: Arc<dyn Fn() + Send + Sync> = {
         let fetch_page = Arc::clone(&fetch_page);
         Arc::new(move || {
-            next_cursor.set(None);
-            prev_cursors.set(Vec::new());
-            page_cursor.set(None);
-            has_next.set(false);
-            has_prev.set(false);
-            selected_id.set(None);
-            selected_summary.set(None);
-            detail.set(None);
+            next_cursor.try_set(None);
+            prev_cursors.try_set(Vec::new());
+            page_cursor.try_set(None);
+            has_next.try_set(false);
+            has_prev.try_set(false);
+            selected_id.try_set(None);
+            selected_summary.try_set(None);
+            detail.try_set(None);
             (fetch_page)(None, true);
         })
     };
@@ -246,10 +246,10 @@ pub fn LogsPage() -> impl IntoView {
     let filter_by_hash: Arc<dyn Fn(String) + Send + Sync> = {
         let reload_first_page = Arc::clone(&reload_first_page);
         Arc::new(move |hash: String| {
-            let mut form = filter_draft.get();
+            let mut form = filter_draft.try_get().unwrap_or_default();
             form.request_hash = hash;
-            filter_draft.set(form.clone());
-            active_filter.set(form);
+            filter_draft.try_set(form.clone());
+            active_filter.try_set(form);
             (reload_first_page)();
         })
     };
@@ -266,19 +266,19 @@ pub fn LogsPage() -> impl IntoView {
     let load_next: Arc<dyn Fn() + Send + Sync> = {
         let fetch_page = Arc::clone(&fetch_page);
         Arc::new(move || {
-            if loading_more.get() {
+            if loading_more.try_get().unwrap_or(true) {
                 return;
             }
-            let current_cursor = next_cursor.get();
+            let current_cursor = next_cursor.try_get().unwrap_or(None);
             if current_cursor.is_none() {
                 return;
             }
-            loading_more.set(true);
+            loading_more.try_set(true);
             let cursor_for_fetch = current_cursor.clone();
-            let prev_page = page_cursor.get();
-            prev_cursors.update(|cursors| cursors.push(prev_page));
-            page_cursor.set(cursor_for_fetch.clone());
-            has_prev.set(true);
+            let prev_page = page_cursor.try_get().unwrap_or(None);
+            prev_cursors.try_update(|cursors| cursors.push(prev_page));
+            page_cursor.try_set(cursor_for_fetch.clone());
+            has_prev.try_set(true);
             (fetch_page)(cursor_for_fetch, false);
         })
     };
@@ -286,19 +286,19 @@ pub fn LogsPage() -> impl IntoView {
     let load_prev: Arc<dyn Fn() + Send + Sync> = {
         let fetch_page = Arc::clone(&fetch_page);
         Arc::new(move || {
-            if loading_more.get() {
+            if loading_more.try_get().unwrap_or(true) {
                 return;
             }
-            let mut cursors = prev_cursors.get();
+            let mut cursors = prev_cursors.try_get().unwrap_or_default();
             let prev = cursors.pop();
             if prev.is_none() {
                 return;
             }
-            prev_cursors.set(cursors);
-            loading_more.set(true);
+            prev_cursors.try_set(cursors);
+            loading_more.try_set(true);
             let cursor_for_fetch = prev.flatten();
-            page_cursor.set(cursor_for_fetch.clone());
-            has_prev.set(!prev_cursors.get().is_empty());
+            page_cursor.try_set(cursor_for_fetch.clone());
+            has_prev.try_set(!prev_cursors.try_get().unwrap_or_default().is_empty());
             (fetch_page)(cursor_for_fetch, false);
         })
     };
@@ -778,6 +778,64 @@ fn LogDetailPane(
                                             {if let Some(cluster) = d.semantic_cluster {
                                                 view! {
                                                     <DetailField label=t.logs_detail_semantic_cluster() value=format!("#{}", cluster) />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.affinity_kind {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_affinity_kind() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.backend_name {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_backend() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.session_fingerprint {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_session_fingerprint() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.client_key_id {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_client_key_id() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.pipeline {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_pipeline() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if let Some(ref v) = d.upstream_model {
+                                                let val = v.clone();
+                                                view! {
+                                                    <DetailField label=t.logs_detail_upstream_model() value=val />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if d.is_coalesced {
+                                                view! {
+                                                    <div class="detail-field">
+                                                        <div class="detail-field-label">{t.logs_detail_coalesced()}</div>
+                                                        <Badge text="coalesced".to_string() color="amber" />
+                                                    </div>
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if d.streaming_defer {
+                                                let reason = d.streaming_defer_reject_reason.clone().unwrap_or_else(|| "—".to_string());
+                                                view! {
+                                                    <DetailField label=t.logs_detail_streaming_defer() value=reason />
+                                                }.into_any()
+                                            } else { view! { <span></span> }.into_any() }}
+                                            {if d.request_passthrough {
+                                                let prefix = d.request_passthrough_prefix_len
+                                                    .map(|n| format!("{} B", n))
+                                                    .unwrap_or_else(|| "—".to_string());
+                                                view! {
+                                                    <DetailField label=t.logs_detail_passthrough() value=prefix />
                                                 }.into_any()
                                             } else { view! { <span></span> }.into_any() }}
                                         </div>

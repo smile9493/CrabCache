@@ -118,6 +118,10 @@ pub struct TraceLogEntry {
     pub stable_session_kind: Option<String>,
     #[serde(default)]
     pub upstream_outbound_bytes: Option<usize>,
+    #[serde(default)]
+    pub request_passthrough: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_passthrough_prefix_len: Option<usize>,
 }
 
 impl TraceLogEntry {
@@ -145,6 +149,15 @@ impl TraceLogEntry {
     }
 }
 
+/// Max chars for `response_preview` in list API (`CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS`).
+/// Default 200; set to `0` to disable truncation.
+fn list_preview_max_chars() -> Option<usize> {
+    std::env::var("CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or(Some(200))
+}
+
 /// Map a trace log entry to the admin API list DTO (shared by PG and JSONL paths).
 pub fn trace_entry_to_request_log(e: &TraceLogEntry) -> crab_admin_types::RequestLog {
     let consumer = e
@@ -165,13 +178,16 @@ pub fn trace_entry_to_request_log(e: &TraceLogEntry) -> crab_admin_types::Reques
         });
         serde_json::to_string_pretty(&summary).unwrap_or_default()
     });
-    let response_preview = e
-        .response_preview
-        .clone()
-        .unwrap_or_default()
-        .chars()
-        .take(200)
-        .collect();
+    let response_preview = match list_preview_max_chars() {
+        Some(max) if max > 0 => e
+            .response_preview
+            .clone()
+            .unwrap_or_default()
+            .chars()
+            .take(max)
+            .collect(),
+        _ => e.response_preview.clone().unwrap_or_default(),
+    };
     crab_admin_types::RequestLog {
         id: e.id(),
         timestamp: format_beijing_from_millis(e.timestamp_ms as i64),
@@ -191,6 +207,62 @@ pub fn trace_entry_to_request_log(e: &TraceLogEntry) -> crab_admin_types::Reques
         upstream_user_id: e.upstream_user_id.clone(),
         user_id_audit: e.user_id_audit.clone(),
         upstream_key_id: e.upstream_key_id.clone(),
+    }
+}
+
+/// Map trace entry to log detail DTO (shared by PG and JSONL paths).
+pub fn trace_entry_to_request_detail(e: &TraceLogEntry) -> crab_admin_types::RequestDetail {
+    let cache_path = if e.cache_hit {
+        e.cache_tier
+            .clone()
+            .unwrap_or_else(|| "gateway-cache".to_string())
+    } else {
+        "upstream".to_string()
+    };
+    let request_payload = e.request_messages_snapshot.clone().unwrap_or_else(|| {
+        let payload = serde_json::json!({
+            "request_hash": e.request_hash,
+            "content_length": e.content_length,
+            "semantic_cluster": e.semantic_cluster,
+            "conversation_id": e.conversation_id,
+            "model": e.model,
+            "prompt_tokens": e.prompt_tokens,
+            "latency_ms": e.latency_ms,
+            "cache_hit": e.cache_hit,
+            "cache_tier": e.cache_tier,
+        });
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    });
+    let response_body = e
+        .response_preview
+        .clone()
+        .unwrap_or_else(|| "(未启用 body 采集)".to_string());
+    crab_admin_types::RequestDetail {
+        cache_path,
+        request_payload,
+        response_body,
+        route_backend: e
+            .backend_name
+            .clone()
+            .unwrap_or_else(|| "—".to_string()),
+        upstream_latency_ms: e.upstream_latency_ms,
+        ttft_ms: e.ttft_ms,
+        input_tokens: e.input_tokens,
+        output_tokens: e.output_tokens,
+        request_hash: Some(e.request_hash.clone()),
+        semantic_cluster: Some(e.semantic_cluster),
+        upstream_key_id: e.upstream_key_id.clone(),
+        affinity_kind: e.affinity_kind.clone(),
+        backend_name: e.backend_name.clone(),
+        session_fingerprint: e.session_fingerprint.clone(),
+        is_coalesced: e.is_coalesced,
+        client_key_id: e.client_key_id.clone(),
+        pipeline: e.pipeline.clone(),
+        upstream_model: e.upstream_model.clone(),
+        streaming_defer: e.streaming_defer,
+        streaming_defer_reject_reason: e.streaming_defer_reject_reason.clone(),
+        request_passthrough: e.request_passthrough,
+        request_passthrough_prefix_len: e.request_passthrough_prefix_len,
     }
 }
 
@@ -1211,6 +1283,8 @@ mod tests {
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -1256,6 +1330,8 @@ mod tests {
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -1341,6 +1417,8 @@ mod tests {
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -1386,6 +1464,8 @@ mod tests {
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
@@ -1713,6 +1793,59 @@ mod tests {
     }
 
     #[test]
+    fn trace_entry_to_request_log_truncates_response_preview_by_default() {
+        let entry = TraceLogEntry {
+            request_hash: "abc123".into(),
+            timestamp_ms: 1,
+            content_length: 10,
+            semantic_cluster: 0,
+            conversation_id: None,
+            consumer: None,
+            model: "m".into(),
+            prompt_tokens: 5,
+            latency_ms: 42.0,
+            upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
+            ttft_ms: None,
+            cache_hit: false,
+            cache_tier: None,
+            domain: None,
+            project_id: None,
+            composition: None,
+            request_messages_snapshot: None,
+            response_preview: Some("x".repeat(300)),
+            retired_prefix_messages: None,
+            reasoning_strategy: None,
+            prompt_cache_hit_ratio: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            input_tokens: None,
+            output_tokens: None,
+            upstream_user_id: None,
+            user_id_audit: None,
+            upstream_key_id: None,
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
+        };
+        let log = trace_entry_to_request_log(&entry);
+        assert_eq!(log.response_preview.chars().count(), 200);
+    }
+
+    #[test]
     fn trace_entry_to_request_log_uses_composite_id() {
         let entry = TraceLogEntry {
             request_hash: "abc123".into(),
@@ -1758,6 +1891,8 @@ mod tests {
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         };
         let log = trace_entry_to_request_log(&entry);
         assert_eq!(log.id, "abc123-1700000000000");

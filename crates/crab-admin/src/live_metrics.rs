@@ -486,6 +486,8 @@ mod tests {
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         }
     }
 

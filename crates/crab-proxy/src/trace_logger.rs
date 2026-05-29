@@ -109,6 +109,12 @@ pub struct SanitizedLogEntry {
     /// Client API key ID (not the consumer name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_key_id: Option<String>,
+    /// Whether this request used direct MiMo passthrough (prefix sniff + chunk relay).
+    #[serde(default)]
+    pub request_passthrough: bool,
+    /// Number of prefix bytes captured at passthrough arm time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_passthrough_prefix_len: Option<usize>,
 }
 
 impl SanitizedLogEntry {
@@ -207,6 +213,8 @@ impl SanitizedLogEntry {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         }
     }
 }

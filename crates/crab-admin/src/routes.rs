@@ -2265,54 +2265,22 @@ async fn get_log_detail(
             semantic_cluster: None,
             upstream_key_id: None,
             affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
+            pipeline: None,
+            upstream_model: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         }));
     }
 
     let trace_path = crate::trace_log::trace_log_path();
     if let Some(entry) = state.find_trace_entry(&id, &trace_path).await {
-        let cache_path = if entry.cache_hit {
-            entry
-                .cache_tier
-                .clone()
-                .unwrap_or_else(|| "gateway-cache".to_string())
-        } else {
-            "upstream".to_string()
-        };
-        let request_payload = entry.request_messages_snapshot.clone().unwrap_or_else(|| {
-            let payload = serde_json::json!({
-                "request_hash": entry.request_hash,
-                "content_length": entry.content_length,
-                "semantic_cluster": entry.semantic_cluster,
-                "conversation_id": entry.conversation_id,
-                "model": entry.model,
-                "prompt_tokens": entry.prompt_tokens,
-                "latency_ms": entry.latency_ms,
-                "cache_hit": entry.cache_hit,
-                "cache_tier": entry.cache_tier,
-            });
-            serde_json::to_string_pretty(&payload).unwrap_or_default()
-        });
-        let response_body = entry
-            .response_preview
-            .clone()
-            .unwrap_or_else(|| "(未启用 body 采集)".to_string());
-        return Ok(Json(RequestDetail {
-            cache_path,
-            request_payload,
-            response_body,
-            route_backend: entry
-                .backend_name
-                .clone()
-                .unwrap_or_else(|| "—".to_string()),
-            upstream_latency_ms: entry.upstream_latency_ms,
-            ttft_ms: entry.ttft_ms,
-            input_tokens: entry.input_tokens,
-            output_tokens: entry.output_tokens,
-            request_hash: Some(entry.request_hash.clone()),
-            semantic_cluster: Some(entry.semantic_cluster),
-            upstream_key_id: entry.upstream_key_id.clone(),
-            affinity_kind: entry.affinity_kind.clone(),
-        }));
+        return Ok(Json(crate::trace_log::trace_entry_to_request_detail(&entry)));
     }
 
     Err(StatusCode::NOT_FOUND)
@@ -2360,19 +2328,23 @@ async fn post_clear_logs(
         *state.trace_analysis_cache.write() = None;
     }
 
-    // 5. Clear PG trace_logs and request_logs tables if available.
-    if matches!(req.target, ClearTarget::All) {
+    // 5. Clear PG trace_logs / request_logs when configured.
+    {
         let pg = state.pg_store.read().clone();
         if let Some(ref pg) = pg {
-            // Use u64::MAX as cutoff to delete all rows.
-            if let Ok(count) = pg.prune_trace_logs(u64::MAX).await {
-                if count > 0 {
-                    tracing::info!(deleted = count, "PG trace_logs cleared");
+            const DELETE_ALL: u64 = u64::MAX;
+            if matches!(req.target, ClearTarget::All | ClearTarget::TraceRotated) {
+                if let Ok(count) = pg.prune_trace_logs(DELETE_ALL).await {
+                    if count > 0 {
+                        tracing::info!(deleted = count, "PG trace_logs cleared");
+                    }
                 }
             }
-            if let Ok(count) = pg.prune_request_logs(u64::MAX).await {
-                if count > 0 {
-                    tracing::info!(deleted = count, "PG request_logs cleared");
+            if matches!(req.target, ClearTarget::All | ClearTarget::Capture) {
+                if let Ok(count) = pg.prune_request_logs(DELETE_ALL).await {
+                    if count > 0 {
+                        tracing::info!(deleted = count, "PG request_logs cleared");
+                    }
                 }
             }
         }

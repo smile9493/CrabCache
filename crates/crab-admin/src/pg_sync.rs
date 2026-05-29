@@ -8,9 +8,20 @@ use tracing::{info, warn};
 
 /// When gateway writes PG directly (`CRABCACHE_TRACE_PG_URL`), set to `false` on admin.
 pub fn pg_sync_enabled() -> bool {
-    std::env::var("CRABCACHE_ADMIN_TRACE_PG_SYNC")
+    let enabled = std::env::var("CRABCACHE_ADMIN_TRACE_PG_SYNC")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-        .unwrap_or(true)
+        .unwrap_or(true);
+    if enabled
+        && std::env::var("CRABCACHE_TRACE_PG_URL")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    {
+        warn!(
+            "CRABCACHE_TRACE_PG_URL is set (gateway direct PG write) while admin JSONL sync is enabled; \
+             set CRABCACHE_ADMIN_TRACE_PG_SYNC=false to avoid duplicate insert attempts"
+        );
+    }
+    enabled
 }
 
 /// Background task that periodically syncs new JSONL trace log entries to PG.

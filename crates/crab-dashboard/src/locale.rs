@@ -3422,6 +3422,60 @@ impl Translations {
             Locale::EnUS => "Semantic cluster",
         }
     }
+    pub fn logs_detail_affinity_kind(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "亲和性类型",
+            Locale::EnUS => "Affinity kind",
+        }
+    }
+    pub fn logs_detail_backend(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端节点",
+            Locale::EnUS => "Backend",
+        }
+    }
+    pub fn logs_detail_session_fingerprint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话指纹",
+            Locale::EnUS => "Session fingerprint",
+        }
+    }
+    pub fn logs_detail_client_key_id(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端 Key ID",
+            Locale::EnUS => "Client key ID",
+        }
+    }
+    pub fn logs_detail_pipeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Pipeline",
+            Locale::EnUS => "Pipeline",
+        }
+    }
+    pub fn logs_detail_upstream_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游模型",
+            Locale::EnUS => "Upstream model",
+        }
+    }
+    pub fn logs_detail_coalesced(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求合并",
+            Locale::EnUS => "Coalesced",
+        }
+    }
+    pub fn logs_detail_streaming_defer(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式延迟 (原因)",
+            Locale::EnUS => "Streaming defer (reason)",
+        }
+    }
+    pub fn logs_detail_passthrough(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "直通前缀长度",
+            Locale::EnUS => "Passthrough prefix",
+        }
+    }
     pub fn logs_select_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "选择一条请求查看详情",
@@ -4728,6 +4782,24 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "最大捕获正文文件数",
             Locale::EnUS => "Max Capture Body Files",
+        }
+    }
+    pub fn logs_manage_pg_retention_days(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "PG 日志保留 (天，0 = 禁用)",
+            Locale::EnUS => "PG log retention (days, 0 = disabled)",
+        }
+    }
+    pub fn logs_manage_compress_before_delete(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除前压缩为 .gz",
+            Locale::EnUS => "Compress to .gz before delete",
+        }
+    }
+    pub fn logs_manage_compressed_retention_days(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "压缩文件保留 (天，0 = 禁用)",
+            Locale::EnUS => "Compressed file retention (days, 0 = disabled)",
         }
     }
     pub fn logs_manage_retention_saved(self) -> &'static str {

@@ -107,7 +107,8 @@ const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_leng
                     session_store, stable_session_kind, upstream_outbound_bytes,
                     prefill_ms, pre_header_ms,
                     affinity_key, affinity_kind, backend_name,
-                    session_fingerprint, is_coalesced, client_key_id";
+                    session_fingerprint, is_coalesced, client_key_id,
+                    request_passthrough, request_passthrough_prefix_len";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
     let composition_raw: Option<String> = row.get(17);
@@ -156,6 +157,8 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         session_store: row.get(32),
         stable_session_kind: row.get(33),
         upstream_outbound_bytes: row.get::<_, Option<i32>>(34).map(|v| v as usize),
+        request_passthrough: row.get(43),
+        request_passthrough_prefix_len: row.get::<_, Option<i32>>(44).map(|v| v as usize),
     }
 }
 
@@ -469,6 +472,8 @@ impl PgStore {
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS session_fingerprint TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS is_coalesced BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_key_id TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS request_passthrough BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS request_passthrough_prefix_len INTEGER",
         ] {
             client.execute(stmt, &[]).await?;
         }
@@ -1305,11 +1310,12 @@ impl PgStore {
                      session_store, stable_session_kind, upstream_outbound_bytes,
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
-                     session_fingerprint, is_coalesced, client_key_id)
+                     session_fingerprint, is_coalesced, client_key_id,
+                     request_passthrough, request_passthrough_prefix_len)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43)
+                         $39,$40,$41,$42,$43,$44,$45)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1367,6 +1373,8 @@ impl PgStore {
                     &e.session_fingerprint,
                     &e.is_coalesced,
                     &e.client_key_id,
+                    &e.request_passthrough,
+                    &e.request_passthrough_prefix_len.map(|v| v as i32),
                 ],
             )
             .await?;

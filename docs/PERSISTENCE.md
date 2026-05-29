@@ -116,6 +116,8 @@ docker compose --profile admin up -d
 | Qdrant | 备份 `qdrant_data` 卷 |
 | Reasoning SQLite | 复制 `data/reasoning_content.sqlite3` |
 | Trace | 复制 `gateway_logs` 或 `[trace_logging].path`；若启用 PG 则备份 `trace_logs` 表 |
+| Admin state | 复制 `data/admin-state.json` |
+| 配置 | 版本化管理 `gateway.toml`、`.env`（勿提交明文密钥） |
 
 ### Trace 日志 PG 双写
 
@@ -127,9 +129,11 @@ Gateway 可通过 `CRABCACHE_TRACE_PG_URL` / `[trace_logging].pg_url` **直写**
 CRABCACHE_ADMIN_TRACE_PG_SYNC=false
 ```
 
+Admin 启动时若检测到 `CRABCACHE_TRACE_PG_URL` 且未关闭 sync，会打印 warning。
+
 Live metrics 在 JSONL 不可见时可从 PG 读取：设 `CRABCACHE_LIVE_TRACE_SOURCE=pg`（或 Admin 与 Gateway 分离且本地无 trace 文件时自动回退 PG）。
-| Admin state | 复制 `data/admin-state.json` |
-| 配置 | 版本化管理 `gateway.toml`、`.env`（勿提交明文密钥） |
+
+列表 API 的 `response_preview` 截断长度可通过 `CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS` 配置（默认 200，`0` = 不截断）。
 
 ## 恢复检查清单
 

@@ -400,6 +400,16 @@ mod tests {
             semantic_cluster: None,
             upstream_key_id: None,
             affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
+            pipeline: None,
+            upstream_model: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         // Gateway = 100 - 60 - 30 = 10
@@ -447,6 +457,16 @@ mod tests {
             semantic_cluster: None,
             upstream_key_id: None,
             affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
+            pipeline: None,
+            upstream_model: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            request_passthrough: false,
+            request_passthrough_prefix_len: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         assert_eq!(stages.len(), 1);

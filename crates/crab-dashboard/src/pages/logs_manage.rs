@@ -204,6 +204,9 @@ fn RetentionPolicyCard(
     let max_disk = RwSignal::new(policy.max_disk_mb.to_string());
     let max_trace = RwSignal::new(policy.max_trace_files.to_string());
     let max_capture = RwSignal::new(policy.max_capture_body_files.to_string());
+    let pg_retention_days = RwSignal::new(policy.pg_retention_days.to_string());
+    let compress_before_delete = RwSignal::new(policy.compress_before_delete);
+    let compressed_retention_days = RwSignal::new(policy.compressed_retention_days.to_string());
     let saving = RwSignal::new(false);
 
     let on_save = move |_| {
@@ -211,15 +214,17 @@ fn RetentionPolicyCard(
         let disk_val = max_disk.get().parse::<u32>().unwrap_or(0);
         let trace_val = max_trace.get().parse::<usize>().unwrap_or(0);
         let capture_val = max_capture.get().parse::<usize>().unwrap_or(0);
+        let pg_days = pg_retention_days.get().parse::<u64>().unwrap_or(0);
+        let compressed_days = compressed_retention_days.get().parse::<u64>().unwrap_or(0);
 
         let req = crate::types::RetentionPolicy {
             max_age_hours: age_val,
             max_disk_mb: disk_val,
             max_trace_files: trace_val,
             max_capture_body_files: capture_val,
-            pg_retention_days: policy.pg_retention_days,
-            compress_before_delete: policy.compress_before_delete,
-            compressed_retention_days: policy.compressed_retention_days,
+            pg_retention_days: pg_days,
+            compress_before_delete: compress_before_delete.get(),
+            compressed_retention_days: compressed_days,
         };
 
         saving.set(true);
@@ -293,6 +298,50 @@ fn RetentionPolicyCard(
                         }
                     />
                 </div>
+                <div class="space-y-1.5">
+                    <label class="text-xs text-theme-secondary">{t.logs_manage_pg_retention_days()}</label>
+                    <input
+                        type="number"
+                        class="form-input w-full"
+                        min="0"
+                        prop:value=move || pg_retention_days.get()
+                        on:input=move |ev| {
+                            let v = event_target_value(&ev);
+                            pg_retention_days.set(v);
+                        }
+                    />
+                </div>
+                <div class="space-y-1.5 flex items-end">
+                    <label class="flex items-center gap-2 text-xs text-theme-secondary cursor-pointer">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || compress_before_delete.get()
+                            on:change=move |ev| {
+                                compress_before_delete.set(event_target_checked(&ev));
+                            }
+                        />
+                        {t.logs_manage_compress_before_delete()}
+                    </label>
+                </div>
+                {move || if compress_before_delete.get() {
+                    view! {
+                        <div class="space-y-1.5">
+                            <label class="text-xs text-theme-secondary">{t.logs_manage_compressed_retention_days()}</label>
+                            <input
+                                type="number"
+                                class="form-input w-full"
+                                min="0"
+                                prop:value=move || compressed_retention_days.get()
+                                on:input=move |ev| {
+                                    let v = event_target_value(&ev);
+                                    compressed_retention_days.set(v);
+                                }
+                            />
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }}
             </div>
 
             <button

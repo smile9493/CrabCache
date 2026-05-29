@@ -53,6 +53,26 @@ pub struct RequestDetail {
     pub upstream_key_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub affinity_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_fingerprint: Option<String>,
+    #[serde(default)]
+    pub is_coalesced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
+    #[serde(default)]
+    pub streaming_defer: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming_defer_reject_reason: Option<String>,
+    #[serde(default)]
+    pub request_passthrough: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_passthrough_prefix_len: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

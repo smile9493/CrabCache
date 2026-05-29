@@ -88,11 +88,12 @@ impl PgTraceStore {
                      session_store, stable_session_kind, upstream_outbound_bytes,
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
-                     session_fingerprint, is_coalesced, client_key_id)
+                     session_fingerprint, is_coalesced, client_key_id,
+                     request_passthrough, request_passthrough_prefix_len)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43)
+                         $39,$40,$41,$42,$43,$44,$45)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await
@@ -151,6 +152,8 @@ impl PgTraceStore {
                     &e.session_fingerprint,
                     &e.is_coalesced,
                     &e.client_key_id,
+                    &e.request_passthrough,
+                    &e.request_passthrough_prefix_len.map(|v| v as i32),
                 ],
             )
             .await
