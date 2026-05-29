@@ -1253,10 +1253,15 @@ fn LiveRoutingSummaryPanel(
                                 {active.backends.iter().take(4).map(|b| {
                                     let pct = if b.healthy { 100.0 } else { 25.0 };
                                     let state = if b.healthy { "healthy" } else { "unhealthy" };
+                                    let latency_str = if b.latency_ms > 0 {
+                                        format!("{}ms", b.latency_ms)
+                                    } else {
+                                        "—".to_string()
+                                    };
                                     view! {
                                         <RoutingMetricRow
                                             label="Node"
-                                            value=format!("{} {} {}ms", b.name, state, b.latency_ms)
+                                            value=format!("{} {} {}", b.name, state, latency_str)
                                             pct=pct
                                         />
                                     }

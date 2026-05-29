@@ -597,24 +597,39 @@ pub async fn get_profile_routing(
 
     let router = &profile.router;
 
+    // Query Pingora's health-check status per backend.
+    let lb_guard = router.backends();
+    let pingora_backends = lb_guard.backends();
+    let registered = pingora_backends.get_backend();
+
     let backend_views: Vec<ProfileRoutingBackendView> = router
         .meta()
         .iter()
-        .map(|(addr, m)| ProfileRoutingBackendView {
-            name: m.name.clone(),
-            addr: addr.to_string(),
-            weight: 1,
-            tls_sni: if m.tls_sni.is_empty() {
-                None
-            } else {
-                Some(m.tls_sni.clone())
-            },
-            healthy: true,
-            last_check_ms: 0,
-            latency_ms: 0,
-            circuit_state: "closed".to_string(),
-            consecutive_failures: 0,
-            half_open_successes: 0,
+        .map(|(addr, m)| {
+            // Match Pingora backend by extracting the SocketAddr, consistent with LbRouter pattern.
+            let healthy = registered.iter().any(|pb| {
+                if let pingora_core::protocols::l4::socket::SocketAddr::Inet(a) = pb.addr {
+                    a == *addr && pingora_backends.ready(pb)
+                } else {
+                    false
+                }
+            });
+            ProfileRoutingBackendView {
+                name: m.name.clone(),
+                addr: addr.to_string(),
+                weight: 1,
+                tls_sni: if m.tls_sni.is_empty() {
+                    None
+                } else {
+                    Some(m.tls_sni.clone())
+                },
+                healthy,
+                last_check_ms: 0,
+                latency_ms: 0,
+                circuit_state: if healthy { "closed" } else { "open" }.to_string(),
+                consecutive_failures: 0,
+                half_open_successes: 0,
+            }
         })
         .collect();
     let pool = profile.resolve_upstream_pool();
