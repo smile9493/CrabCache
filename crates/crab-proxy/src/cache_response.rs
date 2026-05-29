@@ -546,6 +546,81 @@ data: [DONE]
     }
 
     #[test]
+    fn json_to_sse_stream_omits_reasoning_content() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "hidden"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("[DONE]"));
+        assert!(text.contains("answer"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_folds_reasoning_when_content_empty() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "thought"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
+        assert!(cached_sse_has_nonempty_content(&sse));
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(text.contains("thought"));
+    }
+
+    #[test]
+    fn json_to_sse_stream_silent_mode_omits_reasoning_text() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "thought"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+        let sse = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", false);
+        let text = String::from_utf8(sse).unwrap();
+        assert!(!text.contains("reasoning_content"));
+        assert!(!text.contains("thought"));
+    }
+
+    #[test]
+    fn cache_hit_sse_with_reasoning_content_should_regenerate() {
+        let bad_sse = b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n";
+        assert!(
+            bad_sse
+                .windows(b"reasoning_content".len())
+                .any(|w| w == b"reasoning_content")
+        );
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "ok", "reasoning_content": "hidden"},
+                "finish_reason": "stop"
+            }]
+        });
+        let regen = json_to_sse_stream(body.to_string().as_bytes(), "deepseek-v4-pro", true);
+        let text = String::from_utf8(regen).unwrap();
+        assert!(!text.contains("reasoning_content"));
+    }
+
+    #[test]
     fn display_mismatch_forces_regen_even_with_saved_sse() {
         let saved = br#"data: {"choices":[{"delta":{"content":"old fold"}}]}
 

@@ -114,3 +114,22 @@ pub fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
     });
     serde_json::to_vec(&body).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_reasoning_error_json_shape() {
+        let body = missing_reasoning_error_json(2);
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            value["error"]["code"].as_str(),
+            Some("missing_reasoning_content")
+        );
+        assert_eq!(
+            value["error"]["missing_reasoning_messages"].as_u64(),
+            Some(2)
+        );
+    }
+}

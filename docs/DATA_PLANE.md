@@ -44,7 +44,7 @@
 |----|------|-------------|
 | `SseEvent<'a>` + memchr 行切分 | ✅ | [`sse.rs`](../crates/crab-proxy/src/sse.rs) |
 | `SsePipeline` 抽象 | ✅ | [`sse_pipeline/`](../crates/crab-proxy/src/sse_pipeline/) |
-| `upstream_response_body_filter` 瘦身 | 🟡 | 流式逻辑已委托 pipeline；[`proxy.rs`](../crates/crab-proxy/src/proxy.rs) 仍 ~3k 行 |
+| `upstream_response_body_filter` 瘦身 | ✅ | 流式逻辑在 `sse_pipeline/`；外围状态机在 [`phases/response_body.rs`](../crates/crab-proxy/src/phases/response_body.rs) |
 | `sse_rewrite` SIMD remainder | ⬜ | 仍为逐字节扫描 |
 | 环形缓冲 + 异步流式写缓存 | ⬜ | EOS 后 `tokio::spawn` put，无背压环 |
 
@@ -85,7 +85,7 @@
 | WASM filters | 📋 | DATA_PLANE_P3 |
 | 多模态 body / 嵌入 | 📋 | DATA_PLANE_P3 |
 | 请求优先级队列 | ⬜ | 仅 `request_semaphore` |
-| `proxy.rs` → `phases/` 拆分 | ⬜ | 见数据面优化附录 |
+| `proxy.rs` → `phases/` 拆分 | ✅ | [`phases/`](../crates/crab-proxy/src/phases/)：`request_filter`、`cache_coalesce`、`upstream_peer`、`upstream_request`、`response_filter`、`response_body`、`logging`；[`proxy.rs`](../crates/crab-proxy/src/proxy.rs) ~566 行（helpers + 瘦 `ProxyHttp` 委托） |
 
 ---
 

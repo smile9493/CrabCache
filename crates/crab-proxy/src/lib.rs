@@ -4,6 +4,7 @@ mod context;
 mod debug_log;
 mod error;
 mod masking;
+mod phases;
 mod profile_build;
 mod proxy;
 pub mod raw_capture;

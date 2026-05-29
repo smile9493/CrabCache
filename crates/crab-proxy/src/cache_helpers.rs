@@ -196,6 +196,64 @@ mod tests {
     }
 
     #[test]
+    fn should_store_sse_body_respects_limit() {
+        assert!(should_store_sse_body(100, 4_194_304));
+        assert!(!should_store_sse_body(4_194_305, 4_194_304));
+        assert!(!should_store_sse_body(100, 0));
+        assert!(should_store_sse_body(0, 1024));
+    }
+
+    #[test]
+    fn semantic_query_single_user_message() {
+        let messages = vec![serde_json::json!({"role": "user", "content": "Hello"})];
+        assert_eq!(
+            build_semantic_query_text(&messages),
+            Some("Hello".to_string())
+        );
+    }
+
+    #[test]
+    fn semantic_query_conversation_includes_last_user() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "Be concise."}),
+            serde_json::json!({"role": "user", "content": "Hi"}),
+            serde_json::json!({"role": "assistant", "content": "Hello!"}),
+            serde_json::json!({"role": "user", "content": "Explain caching."}),
+        ];
+        assert!(
+            build_semantic_query_text(&messages)
+                .unwrap()
+                .contains("Explain caching.")
+        );
+    }
+
+    #[test]
+    fn semantic_query_empty_messages_returns_none() {
+        assert!(build_semantic_query_text(&[]).is_none());
+    }
+
+    #[test]
+    fn semantic_query_no_text_content_returns_none() {
+        let messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "image_url", "url": "http://example.com/img.png"}]
+        })];
+        assert!(build_semantic_query_text(&messages).is_none());
+    }
+
+    #[test]
+    fn semantic_query_skips_tool_role() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "Hello"}),
+            serde_json::json!({"role": "tool", "content": "tool result"}),
+        ];
+        assert_eq!(
+            build_semantic_query_text(&messages),
+            Some("Hello".to_string())
+        );
+    }
+
+    #[test]
     fn semantic_query_handles_array_content() {
         let messages = vec![serde_json::json!({
             "role": "user",

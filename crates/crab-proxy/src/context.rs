@@ -495,3 +495,20 @@ pub struct GatewayState {
     /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).
     pub global_rate: Arc<pingora_limits::rate::Rate>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_context_new_defaults() {
+        let ctx = GatewayContext::new("test-id".to_string());
+        assert_eq!(ctx.request_id, "test-id");
+        assert!(!ctx.is_streaming);
+        assert!(ctx.cache_key.is_none());
+        assert!(ctx.cache_hit.is_none());
+        assert!(ctx.cache_tier.is_none());
+        assert!(ctx.original_request_body.is_none());
+        assert!(ctx.prepared_request.is_none());
+    }
+}

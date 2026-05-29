@@ -186,5 +186,5 @@ cargo test -p crab-gateway -p crab-proxy -p crab-route -p crab-cache
 ## 已知限制
 
 - `streaming_body_forward`（流式 body 转发）未实现 — 配置预留
-- `proxy.rs` 仍约 3k 行 — 后续考虑拆分，不在 P2 范围
+- `proxy.rs` 已拆至 `phases/`（~566 行 + `phases/request_filter.rs` 等）；Phase 1–4 子模块（`routing_gate` 等）仍为可选后续
 - Raw capture 仍为同步通道 — logging 阶段阻塞 ~5-15ms，后续优化
