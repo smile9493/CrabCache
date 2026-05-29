@@ -2,7 +2,7 @@
 
 本文档将 **Trace / 网关日志 / Prometheus** 中常见现象，映射到 **数据面（proxy 热路径）**、**控制面 / Admin**、**运维配置** 三条责任轨。避免把「内测低命中率」或「MiMo 429」误判为「数据面 P2 未做完」。
 
-**相关文档**：[数据面实现状态](DATA_PLANE.md) · [数据面优化展望](../数据面优化.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md)
+**相关文档**：[运行时日志结论（压缩版）](RUNTIME_LOG_FINDINGS.md) · [数据面实现状态](DATA_PLANE.md) · [数据面优化展望](../数据面优化.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md)
 
 ---
 

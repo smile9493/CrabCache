@@ -68,6 +68,7 @@ nav:
       - Cursor Proxy 对照: DEEPSEEK_CURSOR_PROXY_PARITY.md
       - 功能吸收计划: CURSOR_DEEPSEEK_ABSORPTION_PLAN.md
   - 运维管理:
+      - 运行时日志结论: RUNTIME_LOG_FINDINGS.md
       - 运维与事故处置: OPS_RUNBOOK.md
       - 多租户隔离: MULTI_TENANT.md
       - 持久化指南: PERSISTENCE.md

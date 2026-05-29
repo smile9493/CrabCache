@@ -35,6 +35,7 @@
 | 文档 | 说明 |
 |------|------|
 | [运维与事故处置](OPS_RUNBOOK.md) | Trace/日志对照、MiMo 429 P0、数据面 vs 运维责任轨 |
+| [运行时日志结论（压缩）](RUNTIME_LOG_FINDINGS.md) | 一页纸：7 条结论 + P0/P1 改进 + Trace 字段口径 |
 | [多租户隔离](MULTI_TENANT.md) | project_id / DeepSeek user_id 租户隔离机制 |
 | [持久化指南](PERSISTENCE.md) | 各功能数据的存储位置、多实例部署与备份 |
 | [推理内容存储](REASONING_STORE.md) | ReasoningStore 与稳定会话 scope 机制 |
