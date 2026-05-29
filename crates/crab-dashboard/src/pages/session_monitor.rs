@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
+use crate::components::histogram_chart::HistogramChart;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::ChartSeries;
 use crate::components::ui::*;
@@ -26,13 +27,22 @@ fn build_timeline_buckets(tl: &SessionTimelineResponse) -> (Vec<String>, Vec<Opt
 }
 
 fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Option<f64>>) {
-    let labels: Vec<String> = r.backends.iter().map(|b| b.backend_name.clone()).collect();
-    let values: Vec<Option<f64>> = r
-        .backends
+    let mut rows: Vec<_> = r.backends.iter().collect();
+    rows.sort_by_key(|b| b.request_count);
+    let labels: Vec<String> = rows.iter().map(|b| b.backend_name.clone()).collect();
+    let values: Vec<Option<f64>> = rows
         .iter()
         .map(|b| Some(b.request_count as f64))
         .collect();
     (labels, values)
+}
+
+fn build_session_latencies(tl: &SessionTimelineResponse) -> Vec<f64> {
+    tl.events
+        .iter()
+        .map(|e| e.latency_ms)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .collect()
 }
 
 #[component]
@@ -91,6 +101,11 @@ pub fn SessionMonitorPage() -> impl IntoView {
                 Some(Err(e)) => view! { <div class="glass-card text-error text-sm">{e}</div> }.into_any(),
                 Some(Ok(tl)) => {
                     let (bucket_labels, bucket_values) = build_timeline_buckets(&tl);
+                    let latencies = std::sync::Arc::new(build_session_latencies(&tl));
+                    let latency_sig = {
+                        let latencies = std::sync::Arc::clone(&latencies);
+                        Signal::derive(move || latencies.as_ref().clone())
+                    };
                     let bucket_labels_sig = Signal::derive(move || bucket_labels.clone());
                     let bucket_series_sig = Signal::derive(move || {
                         vec![ChartSeries {
@@ -130,6 +145,16 @@ pub fn SessionMonitorPage() -> impl IntoView {
                                     height_px=180
                                     y_unit="req"
                                     empty_message="No events in current window."
+                                />
+                            </div>
+                            <div>
+                                <p class="text-xs text-theme-muted mb-2">"Request latency distribution"</p>
+                                <HistogramChart
+                                    values=latency_sig
+                                    bin_count=12
+                                    height_px=150
+                                    y_unit="req"
+                                    empty_message="No latency samples in current window."
                                 />
                             </div>
                             <div class="overflow-auto max-h-[26rem]">
@@ -177,8 +202,9 @@ pub fn SessionMonitorPage() -> impl IntoView {
                 None => ().into_any(),
                 Some(Err(e)) => view! { <div class="glass-card text-error text-sm">{e}</div> }.into_any(),
                 Some(Ok(r)) => {
-                    let backend_labels: Vec<String> = r.backends.iter().map(|b| b.backend_name.clone()).collect();
-                    let backend_values: Vec<f64> = r.backends.iter().map(|b| b.request_count as f64).collect();
+                    let (backend_labels, backend_values) = build_backend_distribution(&r);
+                    let backend_labels: Vec<String> = backend_labels;
+                    let backend_values: Vec<f64> = backend_values.into_iter().flatten().collect();
                     let backend_labels_sig = Signal::derive(move || backend_labels.clone());
                     let backend_values_sig = Signal::derive(move || backend_values.clone());
                     view! {

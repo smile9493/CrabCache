@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::clipboard;
+use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
@@ -9,6 +10,23 @@ use crate::types::{
     PatchKeyRequest,
 };
 use std::collections::{HashMap, HashSet};
+
+fn build_key_usage_top10(keys: &[ApiKey]) -> (Vec<String>, Vec<f64>) {
+    let mut rows: Vec<&ApiKey> = keys
+        .iter()
+        .filter(|k| k.tokens_used_this_month > 0)
+        .collect();
+    rows.sort_by_key(|k| k.tokens_used_this_month);
+    let top: Vec<&ApiKey> = rows.into_iter().rev().take(10).collect();
+    let mut top = top;
+    top.reverse();
+    let labels: Vec<String> = top.iter().map(|k| k.name.clone()).collect();
+    let values: Vec<f64> = top
+        .iter()
+        .map(|k| k.tokens_used_this_month as f64)
+        .collect();
+    (labels, values)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyNoticeKind {
@@ -761,8 +779,29 @@ pub fn KeysPage() -> impl IntoView {
                     } else {
                         let t = use_translations();
                         let all_ids: Vec<String> = filtered_keys.iter().map(|k| k.id.clone()).collect();
+                        let (usage_labels, usage_values) = build_key_usage_top10(&filtered_keys);
+                        let usage_labels = std::sync::Arc::new(usage_labels);
+                        let usage_values = std::sync::Arc::new(usage_values);
+                        let usage_labels_sig = {
+                            let usage_labels = std::sync::Arc::clone(&usage_labels);
+                            Signal::derive(move || usage_labels.as_ref().clone())
+                        };
+                        let usage_values_sig = {
+                            let usage_values = std::sync::Arc::clone(&usage_values);
+                            Signal::derive(move || usage_values.as_ref().clone())
+                        };
                         let select_count = move || selected_keys.get().len();
                         view! {
+                            <div class="glass-card p-4 mb-4">
+                                <h3 class="text-sm font-semibold text-theme mb-3">"Top 10 Key Token Usage"</h3>
+                                <HorizontalBarChart
+                                    labels=usage_labels_sig
+                                    values=usage_values_sig
+                                    width=520
+                                    height_px=180
+                                    empty_message="No token usage data."
+                                />
+                            </div>
                             {move || {
                                 let count = select_count();
                                 if count > 0 {

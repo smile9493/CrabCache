@@ -7,6 +7,7 @@ use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::ChartSeries;
+use crate::components::sparkline::Sparkline;
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
 use crate::components::ui::*;
@@ -1594,6 +1595,15 @@ pub fn format_number(n: u64) -> String {
 #[component]
 pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
+    let d = metrics.tier_deltas_5m;
+    let unique_requests = d.l0 + d.l1 + d.l2 + d.miss;
+    let coalesced_5m = ops.coalesced_5m;
+    let total_activity = unique_requests + coalesced_5m;
+    let efficiency_pct = if total_activity > 0 {
+        coalesced_5m as f64 / total_activity as f64 * 100.0
+    } else {
+        0.0
+    };
     view! {
         <div class="glass-card h-full">
             <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_coalescing_title()}</h3>
@@ -1603,6 +1613,22 @@ pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl
             </div>
             <div class="text-xs text-theme-muted mt-1">
                 {format!("5m · Σ {} (metrics {})", ops.coalesced_total, metrics.coalesced_total)}
+            </div>
+            <div class="mt-4 space-y-1.5">
+                <div class="flex items-center justify-between text-xs text-theme-muted">
+                    <span>"5m coalesce share"</span>
+                    <span class="font-mono tabular-nums text-accent">{format!("{:.1}%", efficiency_pct)}</span>
+                </div>
+                <div class="h-2 w-full bg-theme-tertiary rounded overflow-hidden">
+                    <div
+                        class="h-full bg-accent transition-all duration-300"
+                        style:width=format!("{:.1}%", efficiency_pct.min(100.0))
+                    ></div>
+                </div>
+                <div class="flex items-center justify-between text-[11px] text-theme-muted font-mono tabular-nums">
+                    <span>{format!("saved {:.0}", coalesced_5m)}</span>
+                    <span>{format!("unique {:.0}", unique_requests)}</span>
+                </div>
             </div>
         </div>
     }
@@ -1786,13 +1812,15 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
                                         <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::MissTokens)>
                                             "miss tokens"<span class="text-accent">{sort_icon(ConsumerSortField::MissTokens)}</span>
                                         </th>
-                                        <th class="pb-2 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::Ratio)>
+                                        <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::Ratio)>
                                             "ratio"<span class="text-accent">{sort_icon(ConsumerSortField::Ratio)}</span>
                                         </th>
+                                        <th class="pb-2">"trend"</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {buckets.into_iter().map(|b| {
+                                        let spark_values = vec![b.miss_tokens as f64, b.hit_tokens as f64];
                                         view! {
                                             <tr class="border-b border-theme/50">
                                                 <td class="py-2 pr-4 font-mono text-theme">{b.consumer}</td>
@@ -1800,6 +1828,14 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
                                                 <td class="py-2 pr-4 font-mono tabular-nums">{format_number(b.miss_tokens)}</td>
                                                 <td class="py-2 font-mono tabular-nums text-accent">
                                                     {format!("{:.1}%", b.hit_ratio * 100.0)}
+                                                </td>
+                                                <td class="py-2">
+                                                    <Sparkline
+                                                        values=spark_values
+                                                        color="var(--cc-accent)"
+                                                        width=56
+                                                        height=20
+                                                    />
                                                 </td>
                                             </tr>
                                         }
