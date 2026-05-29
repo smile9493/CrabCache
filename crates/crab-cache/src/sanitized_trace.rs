@@ -134,29 +134,28 @@ impl FittedParameters {
         cluster_counts: &std::collections::HashMap<usize, usize>,
         _total: usize,
     ) -> f64 {
-        let mut counts: Vec<usize> = cluster_counts.values().cloned().collect();
-        counts.sort_by(|a, b| b.cmp(a));
-
-        if counts.len() < 5 {
+        if cluster_counts.len() < 5 {
             return 1.2;
         }
 
-        let _n = counts.len() as f64;
-        let sum: f64 = counts.iter().map(|&c| c as f64).sum();
+        let mut freqs: Vec<usize> = cluster_counts.values().cloned().collect();
+        freqs.sort_by(|a, b| b.cmp(a));
+
+        let n = freqs.len() as f64;
+        let sum: f64 = freqs.iter().map(|&f| f as f64).sum();
         if sum == 0.0 {
             return 1.2;
         }
 
-        let top_10_percent = (counts.len() as f64 * 0.1).ceil() as usize;
-        let top_sum: f64 = counts.iter().take(top_10_percent).map(|&c| c as f64).sum();
-        let concentration = top_sum / sum;
+        let harmonic: f64 = (1..=freqs.len()).map(|i| 1.0 / i as f64).sum();
+        let log_sum: f64 = freqs
+            .iter()
+            .enumerate()
+            .map(|(i, &f)| ((i + 1) as f64).ln() * (f as f64 / sum))
+            .sum();
 
-        match concentration {
-            c if c > 0.8 => 1.8,
-            c if c > 0.6 => 1.5,
-            c if c > 0.4 => 1.2,
-            _ => 1.0,
-        }
+        let alpha = (n.ln() - harmonic * log_sum) / (n.ln() * harmonic - harmonic.powi(2));
+        alpha.clamp(0.5, 2.0)
     }
 
     /// Generate a LoadPattern from fitted parameters.
@@ -294,6 +293,27 @@ mod tests {
         let achievable = fitted.estimate_achievable_hit_rate();
         println!("Achievable hit rate: {:.1}%", achievable * 100.0);
         assert!(achievable > 0.9);
+    }
+
+    #[test]
+    fn test_zipf_alpha_mle_from_entries() {
+        let mut entries = Vec::new();
+        for i in 0..30 {
+            let repeat = 30usize / (i + 1);
+            for _ in 0..repeat.max(1) {
+                entries.push(SanitizedLogEntry::from_request(
+                    &format!("query-{i}-variant"),
+                    None,
+                    "m",
+                    10,
+                    100.0,
+                    false,
+                ));
+            }
+        }
+        let fitted = FittedParameters::from_entries(&entries);
+        assert!((0.5..=2.0).contains(&fitted.estimated_zipf_alpha));
+        assert!(fitted.estimated_zipf_alpha > 0.0);
     }
 
     #[test]

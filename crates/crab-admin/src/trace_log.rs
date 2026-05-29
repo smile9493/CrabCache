@@ -108,6 +108,16 @@ pub struct TraceLogEntry {
     /// Client API key ID (not the consumer name).
     #[serde(default)]
     pub client_key_id: Option<String>,
+    #[serde(default)]
+    pub streaming_defer: bool,
+    #[serde(default)]
+    pub streaming_defer_reject_reason: Option<String>,
+    #[serde(default)]
+    pub session_store: Option<String>,
+    #[serde(default)]
+    pub stable_session_kind: Option<String>,
+    #[serde(default)]
+    pub upstream_outbound_bytes: Option<usize>,
 }
 
 impl TraceLogEntry {
@@ -682,7 +692,7 @@ pub struct TraceLoadOpts {
     pub cursor: Option<String>, // "timestamp_ms:request_hash"
 }
 
-/// Parse a cursor string `timestamp_ms:request_hash` into `(ts, hash)`.
+/// Parse a cursor string `timestamp_ms:request_hash` into `(ts, request_hash)`.
 fn parse_cursor(cursor: &str) -> (u64, String) {
     if let Some((ts_str, hash)) = cursor.split_once(':') {
         let ts = ts_str.parse::<u64>().unwrap_or(u64::MAX);
@@ -764,10 +774,12 @@ fn entry_matches_opts(
         return false;
     }
     if cursor_ts < u64::MAX {
-        if e.timestamp_ms < cursor_ts {
+        // Keyset pagination for ORDER BY timestamp_ms DESC, request_hash DESC:
+        // skip entries already returned (newer than cursor in sort order).
+        if e.timestamp_ms > cursor_ts {
             return false;
         }
-        if e.timestamp_ms == cursor_ts && e.id().as_str() <= cursor_hash {
+        if e.timestamp_ms == cursor_ts && e.request_hash.as_str() >= cursor_hash {
             return false;
         }
     }
@@ -784,14 +796,6 @@ pub fn load_trace_with_opts(base_path: &str, opts: &TraceLoadOpts) -> Vec<TraceL
     // For MVP, only scan the first (newest) source for common queries.
     // Cursor pagination scans all.
     let scan_all = opts.cursor.is_some();
-    // Cap the entries we buffer from older sources when paginating.
-    // Since sources are sorted newest-first, once we have enough entries
-    // from newer sources, older sources cannot affect the top-N after sorting.
-    let early_stop_cap = if scan_all && opts.limit > 0 {
-        opts.limit.saturating_mul(2).max(1024)
-    } else {
-        usize::MAX
-    };
 
     let mut all = Vec::new();
     for source in &sources {
@@ -800,10 +804,6 @@ pub fn load_trace_with_opts(base_path: &str, opts: &TraceLoadOpts) -> Vec<TraceL
             if !all.is_empty() {
                 break;
             }
-        } else if all.len() >= early_stop_cap {
-            // Pagination: once we've collected enough from newer sources,
-            // remaining older sources cannot add entries that sort ahead.
-            break;
         }
 
         let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
@@ -817,8 +817,12 @@ pub fn load_trace_with_opts(base_path: &str, opts: &TraceLoadOpts) -> Vec<TraceL
         }
     }
 
-    // Sort newest-first.
-    all.sort_by_key(|e| std::cmp::Reverse(e.timestamp_ms));
+    // Sort newest-first; tie-break by request_hash DESC for stable cursor pagination.
+    all.sort_by(|a, b| {
+        b.timestamp_ms
+            .cmp(&a.timestamp_ms)
+            .then_with(|| b.request_hash.cmp(&a.request_hash))
+    });
 
     if opts.limit > 0 && all.len() > opts.limit {
         all.truncate(opts.limit);
@@ -872,28 +876,16 @@ pub async fn load_trace_with_opts_pg(
     pg: &crate::pg::PgStore,
     opts: &TraceLoadOpts,
 ) -> Vec<TraceLogEntry> {
-    // Convert cursor to from_ms bound.
-    let from_ms = if let Some(ref cursor) = opts.cursor {
-        if !cursor.is_empty() {
-            let (cursor_ts, _) = parse_cursor(cursor);
-            if cursor_ts < u64::MAX {
-                Some(cursor_ts.saturating_sub(1))
-            } else {
-                opts.from_ms
-            }
-        } else {
-            opts.from_ms
-        }
+    let fetch_limit = if opts.limit > 0 {
+        opts.limit.saturating_add(1).min(5000)
     } else {
-        opts.from_ms
+        5000
     };
 
-    // Fetch limit + 1 to detect has_more.
-    let fetch_limit = opts.limit.saturating_add(1).min(5000);
-
     match pg
-        .load_trace_logs(
-            from_ms,
+        .query_trace_logs_paginated(
+            opts.cursor.as_deref(),
+            opts.from_ms,
             opts.to_ms,
             opts.consumer.as_deref(),
             opts.model.as_deref(),
@@ -903,8 +895,7 @@ pub async fn load_trace_with_opts_pg(
         )
         .await
     {
-        Ok(mut entries) => {
-            // Apply client-side filters that PG doesn't support directly.
+        Ok((mut entries, _next_cursor)) => {
             if let (Some(lat_min), Some(lat_max)) = (opts.latency_min, opts.latency_max) {
                 entries.retain(|e| e.latency_ms >= lat_min && e.latency_ms <= lat_max);
             }
@@ -914,7 +905,9 @@ pub async fn load_trace_with_opts_pg(
                     total >= tok_min && total <= tok_max
                 });
             }
-            // PG returns DESC order already.
+            if opts.limit > 0 && entries.len() > opts.limit {
+                entries.truncate(opts.limit);
+            }
             entries
         }
         Err(e) => {
@@ -1022,6 +1015,8 @@ mod tests {
             prompt_tokens: 1,
             latency_ms: 1.0,
             upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
             ttft_ms: None,
             input_tokens: None,
             output_tokens: None,
@@ -1048,6 +1043,11 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
         };
         let new = TraceLogEntry {
             timestamp_ms: now_ms.saturating_sub(3_600_000),
@@ -1060,6 +1060,8 @@ mod tests {
             prompt_tokens: 1,
             latency_ms: 1.0,
             upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
             ttft_ms: None,
             input_tokens: None,
             output_tokens: None,
@@ -1086,6 +1088,11 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
         };
         let filtered = filter_trace_by_hours(vec![old, new], 24);
         assert_eq!(filtered.len(), 1);
@@ -1138,6 +1145,8 @@ mod tests {
                 prompt_tokens: 1,
                 latency_ms: 1.0,
                 upstream_latency_ms: None,
+                prefill_ms: None,
+                pre_header_ms: None,
                 ttft_ms: None,
                 input_tokens: None,
                 output_tokens: None,
@@ -1164,6 +1173,11 @@ mod tests {
                 session_fingerprint: None,
                 is_coalesced: false,
                 client_key_id: None,
+                streaming_defer: false,
+                streaming_defer_reject_reason: None,
+                session_store: None,
+                stable_session_kind: None,
+                upstream_outbound_bytes: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -1176,6 +1190,8 @@ mod tests {
                 prompt_tokens: 1,
                 latency_ms: 1.0,
                 upstream_latency_ms: None,
+                prefill_ms: None,
+                pre_header_ms: None,
                 ttft_ms: None,
                 input_tokens: None,
                 output_tokens: None,
@@ -1202,6 +1218,11 @@ mod tests {
                 session_fingerprint: None,
                 is_coalesced: false,
                 client_key_id: None,
+                streaming_defer: false,
+                streaming_defer_reject_reason: None,
+                session_store: None,
+                stable_session_kind: None,
+                upstream_outbound_bytes: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
@@ -1425,6 +1446,105 @@ mod tests {
             entries2.as_ptr(),
             "cache hit should return same Arc"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn make_trace_line(ts: u64, hash: &str) -> String {
+        format!(
+            r#"{{"timestamp_ms":{},"request_hash":"{}","content_length":1,"semantic_cluster":0,"model":"m","prompt_tokens":1,"latency_ms":1.0,"cache_hit":false}}"#,
+            ts, hash
+        )
+    }
+
+    #[test]
+    fn cursor_pagination_same_timestamp_different_hashes() {
+        let dir = std::env::temp_dir().join(format!("crab_cursor_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trace.jsonl");
+        let ts = 1_700_000_000_000u64;
+        let content = format!(
+            "{}\n{}\n{}\n",
+            make_trace_line(ts, "cccccccccccccccc"),
+            make_trace_line(ts, "bbbbbbbbbbbbbbbb"),
+            make_trace_line(ts, "aaaaaaaaaaaaaaaa"),
+        );
+        std::fs::write(&path, content).unwrap();
+
+        let base = path.to_string_lossy().into_owned();
+        let page1 = load_trace_with_opts(
+            &base,
+            &TraceLoadOpts {
+                limit: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].request_hash, "cccccccccccccccc");
+
+        let cursor = format!("{}:{}", page1[0].timestamp_ms, page1[0].request_hash);
+        let page2 = load_trace_with_opts(
+            &base,
+            &TraceLoadOpts {
+                limit: 1,
+                cursor: Some(cursor),
+                ..Default::default()
+            },
+        );
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].request_hash, "bbbbbbbbbbbbbbbb");
+
+        let cursor2 = format!("{}:{}", page2[0].timestamp_ms, page2[0].request_hash);
+        let page3 = load_trace_with_opts(
+            &base,
+            &TraceLoadOpts {
+                limit: 1,
+                cursor: Some(cursor2),
+                ..Default::default()
+            },
+        );
+        assert_eq!(page3.len(), 1);
+        assert_eq!(page3[0].request_hash, "aaaaaaaaaaaaaaaa");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cursor_pagination_cross_timestamp() {
+        let dir = std::env::temp_dir().join(format!("crab_cursor_xts_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trace.jsonl");
+        let content = format!(
+            "{}\n{}\n",
+            make_trace_line(100, "aaaaaaaaaaaaaaaa"),
+            make_trace_line(99, "bbbbbbbbbbbbbbbb"),
+        );
+        std::fs::write(&path, content).unwrap();
+
+        let base = path.to_string_lossy().into_owned();
+        let page1 = load_trace_with_opts(
+            &base,
+            &TraceLoadOpts {
+                limit: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].timestamp_ms, 100);
+        assert_eq!(page1[0].request_hash, "aaaaaaaaaaaaaaaa");
+
+        let cursor = format!("{}:{}", page1[0].timestamp_ms, page1[0].request_hash);
+        let page2 = load_trace_with_opts(
+            &base,
+            &TraceLoadOpts {
+                limit: 1,
+                cursor: Some(cursor),
+                ..Default::default()
+            },
+        );
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].timestamp_ms, 99);
+        assert_eq!(page2[0].request_hash, "bbbbbbbbbbbbbbbb");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

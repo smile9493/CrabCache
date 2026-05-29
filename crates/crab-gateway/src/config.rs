@@ -795,6 +795,36 @@ impl GatewayConfig {
             errors.push(msg);
         }
 
+        if let Some(ref tl) = self.trace_logging {
+            if tl.enabled {
+                if tl.max_lines < 100 {
+                    errors.push(format!(
+                        "trace_logging.max_lines ({}) is too low, minimum is 100",
+                        tl.max_lines
+                    ));
+                }
+                if tl.max_files == 0 {
+                    errors.push("trace_logging.max_files must be at least 1".to_string());
+                }
+            }
+            if let Some(ref cd) = tl.composition_debug {
+                if cd.enabled {
+                    if cd.max_lines < 100 {
+                        errors.push(format!(
+                            "trace_logging.composition_debug.max_lines ({}) is too low, minimum is 100",
+                            cd.max_lines
+                        ));
+                    }
+                    if cd.max_files == 0 {
+                        errors.push(
+                            "trace_logging.composition_debug.max_files must be at least 1"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -841,6 +871,7 @@ impl GatewayConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crab_proxy::CompositionDebugConfig;
 
     #[test]
     fn test_config_load_missing_file() {
@@ -1069,5 +1100,148 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));
+    }
+
+    fn minimal_valid_gateway_config() -> GatewayConfig {
+        GatewayConfig {
+            listen_addr: "127.0.0.1:8080".into(),
+            metrics_addr: "127.0.0.1:9090".into(),
+            api_key: SecretString::new("sk-real-key-12345678".into()),
+            upstream: UpstreamConfig {
+                deepseek_endpoints: vec!["127.0.0.1:443".into()],
+                default_weight: None,
+                base_url: None,
+                model: None,
+                tls_sni: None,
+                keys: vec![],
+                key_cooldown_secs: 60,
+                health_check_interval_secs: 30,
+                max_coalesce_inflight: None,
+                coalesce_timeout_secs: None,
+                profiles: vec![],
+                deepseek_user_concurrency: crab_proxy::DeepSeekUserConcurrencyConfig::default(),
+            },
+            gateway: GatewaySection::default(),
+            cache: CacheConfig {
+                l0_max_capacity: None,
+                l0_ttl_secs: None,
+                l1_redis_url: "redis://127.0.0.1".into(),
+                l1_pool_size: None,
+                default_ttl_secs: None,
+                model_ttl_overrides: None,
+                consumer_ttl_overrides: None,
+                stream_cache_enabled: false,
+                cache_key_namespace: None,
+                fingerprint_version: 1,
+                fingerprint_normalize_content: true,
+                pricing: None,
+                max_sse_cache_bytes: default_max_sse_cache_bytes(),
+            },
+            semantic: SemanticConfig {
+                enabled: false,
+                model_path: String::new(),
+                tokenizer_path: String::new(),
+                qdrant_url: String::new(),
+                collection_name: String::new(),
+                vector_size: None,
+                similarity_threshold: None,
+                ttl_secs: None,
+                min_query_chars: 32,
+                max_query_chars: 8192,
+                max_concurrent_embeds: 4,
+                embed_only_on_exact_miss: true,
+                model_sha256: None,
+            },
+            connection: None,
+            reasoning: None,
+            trace_logging: None,
+            raw_capture: None,
+            management: None,
+            limits: LimitsConfig::default(),
+            state: StateBackendConfig::default(),
+            features: FeaturesConfig::default(),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_trace_logging_max_lines_too_low() {
+        let mut config = minimal_valid_gateway_config();
+        config.trace_logging = Some(TraceConfig {
+            enabled: true,
+            path: "/tmp/trace.jsonl".into(),
+            max_lines: 50,
+            max_files: 1,
+            composition_debug: None,
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
+            pg_url: None,
+        });
+        let err = config.validate().unwrap_err();
+        assert!(err.iter().any(|e| e.contains("trace_logging.max_lines")));
+    }
+
+    #[test]
+    fn validate_rejects_trace_logging_max_files_zero() {
+        let mut config = minimal_valid_gateway_config();
+        config.trace_logging = Some(TraceConfig {
+            enabled: true,
+            path: "/tmp/trace.jsonl".into(),
+            max_lines: 100,
+            max_files: 0,
+            composition_debug: None,
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
+            pg_url: None,
+        });
+        let err = config.validate().unwrap_err();
+        assert!(err.iter().any(|e| e.contains("trace_logging.max_files")));
+    }
+
+    #[test]
+    fn validate_rejects_composition_debug_max_lines_too_low() {
+        let mut config = minimal_valid_gateway_config();
+        config.trace_logging = Some(TraceConfig {
+            enabled: false,
+            path: "/tmp/trace.jsonl".into(),
+            max_lines: 100,
+            max_files: 1,
+            composition_debug: Some(CompositionDebugConfig {
+                enabled: true,
+                path: "/tmp/debug.jsonl".into(),
+                max_lines: 50,
+                max_files: 1,
+            }),
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
+            pg_url: None,
+        });
+        let err = config.validate().unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| e.contains("composition_debug.max_lines")));
+    }
+
+    #[test]
+    fn validate_rejects_composition_debug_max_files_zero() {
+        let mut config = minimal_valid_gateway_config();
+        config.trace_logging = Some(TraceConfig {
+            enabled: false,
+            path: "/tmp/trace.jsonl".into(),
+            max_lines: 100,
+            max_files: 1,
+            composition_debug: Some(CompositionDebugConfig {
+                enabled: true,
+                path: "/tmp/debug.jsonl".into(),
+                max_lines: 100,
+                max_files: 0,
+            }),
+            max_payload_bytes: 0,
+            max_response_preview_bytes: 0,
+            pg_url: None,
+        });
+        let err = config.validate().unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| e.contains("composition_debug.max_files")));
     }
 }

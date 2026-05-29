@@ -192,6 +192,8 @@ mod tests {
             prompt_tokens: 0,
             latency_ms: 0.0,
             upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
             ttft_ms: None,
             input_tokens: None,
             output_tokens: None,
@@ -218,6 +220,11 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
         }
     }
 

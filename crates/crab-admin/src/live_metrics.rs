@@ -453,6 +453,8 @@ mod tests {
             prompt_tokens: (input + output) as usize,
             latency_ms: e2e,
             upstream_latency_ms: upstream,
+            prefill_ms: None,
+            pre_header_ms: None,
             ttft_ms: None,
             input_tokens: Some(input),
             output_tokens: Some(output),
@@ -479,6 +481,11 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
         }
     }
 
@@ -543,6 +550,7 @@ mod tests {
                 request_count: 1000,
                 e2e_latency_ms: 500.0,
                 upstream_latency_ms: Some(100.0),
+                pre_header_ms: None,
                 ttft_ms: Some(50.0),
                 upstream_sample_count: 1000,
                 ttft_sample_count: 1000,
@@ -558,6 +566,7 @@ mod tests {
                 request_count: 1,
                 e2e_latency_ms: 200.0,
                 upstream_latency_ms: Some(10.0),
+                pre_header_ms: None,
                 ttft_ms: Some(5.0),
                 upstream_sample_count: 1,
                 ttft_sample_count: 1,

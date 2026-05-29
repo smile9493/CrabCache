@@ -2,7 +2,7 @@ use crab_composition::{CompositionDebugEntry, RequestComposition};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::mpsc;
@@ -49,6 +49,16 @@ pub struct SanitizedLogEntry {
     pub reasoning_strategy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_hit_ratio: Option<f64>,
+    #[serde(default)]
+    pub streaming_defer: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming_defer_reject_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_store: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_session_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_outbound_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub composition: Option<RequestComposition>,
     /// Truncated + sanitized request body (UTF-8 lossy). Only populated when
@@ -140,7 +150,8 @@ impl SanitizedLogEntry {
         let request_messages_snapshot = if max_payload_bytes > 0 && !body.is_empty() {
             let raw = String::from_utf8_lossy(body);
             let raw = if raw.len() > max_payload_bytes {
-                format!("{}...<truncated>", &raw[..max_payload_bytes])
+                let safe_end = raw.floor_char_boundary(max_payload_bytes);
+                format!("{}...<truncated>", &raw[..safe_end])
             } else {
                 raw.to_string()
             };
@@ -175,6 +186,11 @@ impl SanitizedLogEntry {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
             composition,
             request_messages_snapshot,
             response_preview: None,
@@ -282,14 +298,45 @@ impl RotatingJsonlWriter {
             std::fs::create_dir_all(parent).ok();
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let line_count = Self::count_existing_lines(&path);
         Ok(Self {
             file,
             path,
             max_lines,
-            line_count: 0,
+            line_count,
             flush_counter: 0,
             max_files,
         })
+    }
+
+    /// Estimate existing line count so rotation respects `max_lines` after restart.
+    fn count_existing_lines(path: &PathBuf) -> usize {
+        std::fs::metadata(path)
+            .map(|m| {
+                let len = m.len() as usize;
+                if len == 0 {
+                    return 0;
+                }
+                let read_size = len.min(65_536);
+                let start = len.saturating_sub(read_size);
+                let Ok(mut file) = File::open(path) else {
+                    return 0;
+                };
+                if file.seek(SeekFrom::Start(start as u64)).is_err() {
+                    return 0;
+                }
+                let mut buf = vec![0u8; read_size];
+                if file.read_exact(&mut buf).is_err() {
+                    return 0;
+                }
+                let newlines = buf.iter().filter(|&&b| b == b'\n').count();
+                if read_size < len {
+                    (newlines as f64 * len as f64 / read_size as f64) as usize
+                } else {
+                    newlines
+                }
+            })
+            .unwrap_or(0)
     }
 
     fn write_entry<T: Serialize>(&mut self, entry: &T) -> std::io::Result<()> {
@@ -360,7 +407,7 @@ impl RotatingJsonlWriter {
 
         log_files.sort();
 
-        while log_files.len() >= self.max_files {
+        while log_files.len() > self.max_files {
             let oldest = log_files.remove(0);
             std::fs::remove_file(oldest)?;
         }
@@ -468,7 +515,29 @@ impl TraceLogger {
                         }
                     }
                     if let Some(ref pg_tx) = pg_sink {
-                        let _ = pg_tx.try_send(entry);
+                        match pg_tx.try_send(entry) {
+                            Ok(()) => {}
+                            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                static PG_DROP_COUNT: std::sync::atomic::AtomicU64 =
+                                    std::sync::atomic::AtomicU64::new(0);
+                                let count = PG_DROP_COUNT
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                if count.is_multiple_of(1000) {
+                                    warn!(
+                                        dropped = count,
+                                        "PG trace sink buffer full, entries dropped"
+                                    );
+                                }
+                            }
+                            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                static PG_DISCONNECTED: std::sync::atomic::AtomicBool =
+                                    std::sync::atomic::AtomicBool::new(false);
+                                if !PG_DISCONNECTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                                {
+                                    warn!("PG trace sink disconnected, entries will be lost");
+                                }
+                            }
+                        }
                     }
                 }
             })
@@ -628,5 +697,74 @@ mod tests {
         assert_eq!(entry1.request_hash, entry2.request_hash);
         assert!(entry2.request_messages_snapshot.is_some());
         assert_eq!(entry1.content_length, entry2.content_length);
+    }
+
+    #[test]
+    fn test_snapshot_utf8_safe_truncation() {
+        let body = "你好世界你好世界".as_bytes();
+        let entry = SanitizedLogEntry::from_request(
+            body, None, None, None, None, "model", 0, 0.0, false, None, None,
+            7, // truncate inside a multi-byte character
+        );
+        let snap = entry
+            .request_messages_snapshot
+            .expect("snapshot should be present");
+        assert!(
+            !snap.contains('\u{FFFD}'),
+            "truncation must not split UTF-8: {snap}"
+        );
+        assert!(snap.contains("<truncated>"));
+    }
+
+    #[test]
+    fn test_writer_respects_existing_line_count() {
+        let dir = std::env::temp_dir().join(format!("crab_rot_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trace.jsonl");
+
+        for i in 0..3 {
+            let line = format!(
+                r#"{{"timestamp_ms":{i},"request_hash":"h{i}","content_length":1,"semantic_cluster":0,"model":"m","prompt_tokens":1,"latency_ms":1.0,"cache_hit":false}}"#
+            );
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap()
+                .write_all(format!("{line}\n").as_bytes())
+                .unwrap();
+        }
+
+        let logger = TraceLogger::init(
+            TraceConfig {
+                enabled: true,
+                path: path.to_string_lossy().into_owned(),
+                max_lines: 5,
+                max_files: 3,
+                ..Default::default()
+            },
+            None,
+        );
+
+        for _ in 0..3 {
+            logger.log(SanitizedLogEntry::from_request(
+                b"body", None, None, None, None, "m", 1, 1.0, false, None, None, 0,
+            ));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let rotated = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("trace.jsonl.")
+            });
+        assert!(rotated, "expected rotation when existing lines + new writes reach max_lines");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

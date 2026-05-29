@@ -93,6 +93,72 @@ fn from_pg_bigint(v: i64) -> u64 {
     v.max(0) as u64
 }
 
+const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
+                    model, prompt_tokens, latency_ms, cache_hit,
+                    conversation_id, consumer, domain, project_id,
+                    upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+                    cache_tier, composition,
+                    request_messages_snapshot, response_preview,
+                    retired_prefix_messages, reasoning_strategy,
+                    prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+                    upstream_model, client_body_user_id, upstream_user_id,
+                    user_id_audit, upstream_key_id,
+                    streaming_defer, streaming_defer_reject_reason,
+                    session_store, stable_session_kind, upstream_outbound_bytes";
+
+fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
+    let composition_raw: Option<String> = row.get(17);
+    let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
+    TraceLogEntry {
+        request_hash: row.get(0),
+        timestamp_ms: from_pg_bigint(row.get(1)),
+        content_length: row.get::<_, i32>(2) as usize,
+        semantic_cluster: row.get::<_, i32>(3) as u32,
+        model: row.get(4),
+        prompt_tokens: row.get::<_, i32>(5) as usize,
+        latency_ms: row.get(6),
+        cache_hit: row.get(7),
+        conversation_id: row.get(8),
+        consumer: row.get(9),
+        domain: row.get(10),
+        project_id: row.get(11),
+        upstream_latency_ms: row.get(12),
+        prefill_ms: None,
+        pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
+            let e2e: f64 = row.get(6);
+            (e2e - up).max(0.0)
+        }),
+        ttft_ms: row.get(13),
+        input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
+        output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
+        cache_tier: row.get(16),
+        composition,
+        request_messages_snapshot: row.get(18),
+        response_preview: row.get(19),
+        retired_prefix_messages: row.get::<_, Option<i32>>(20).map(|v| v as usize),
+        reasoning_strategy: row.get(21),
+        prompt_cache_hit_ratio: row.get(22),
+        upstream_profile_id: row.get(23),
+        pipeline: row.get(24),
+        upstream_model: row.get(25),
+        client_body_user_id: row.get(26),
+        upstream_user_id: row.get(27),
+        user_id_audit: row.get(28),
+        upstream_key_id: row.get(29),
+        affinity_key: None,
+        affinity_kind: None,
+        backend_name: None,
+        session_fingerprint: None,
+        is_coalesced: false,
+        client_key_id: None,
+        streaming_defer: row.get(30),
+        streaming_defer_reject_reason: row.get(31),
+        session_store: row.get(32),
+        stable_session_kind: row.get(33),
+        upstream_outbound_bytes: row.get::<_, Option<i32>>(34).map(|v| v as usize),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PgStore
 // ---------------------------------------------------------------------------
@@ -301,6 +367,11 @@ impl PgStore {
                     upstream_user_id TEXT,
                     user_id_audit   TEXT,
                     upstream_key_id TEXT,
+                    streaming_defer BOOLEAN NOT NULL DEFAULT false,
+                    streaming_defer_reject_reason TEXT,
+                    session_store   TEXT,
+                    stable_session_kind TEXT,
+                    upstream_outbound_bytes INTEGER,
                     PRIMARY KEY (request_hash, timestamp_ms)
                 )",
                 &[],
@@ -340,6 +411,16 @@ impl PgStore {
                 &[],
             )
             .await?;
+
+        for stmt in [
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS streaming_defer BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS streaming_defer_reject_reason TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS session_store TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS stable_session_kind TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS upstream_outbound_bytes INTEGER",
+        ] {
+            client.execute(stmt, &[]).await?;
+        }
 
         client
             .execute(
@@ -1168,10 +1249,12 @@ impl PgStore {
                      retired_prefix_messages, reasoning_strategy,
                      prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                      upstream_model, client_body_user_id, upstream_user_id,
-                     user_id_audit, upstream_key_id)
+                     user_id_audit, upstream_key_id,
+                     streaming_defer, streaming_defer_reject_reason,
+                     session_store, stable_session_kind, upstream_outbound_bytes)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
-                         $26,$27,$28,$29,$30)
+                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1216,6 +1299,11 @@ impl PgStore {
                     &e.upstream_user_id,
                     &e.user_id_audit,
                     &e.upstream_key_id,
+                    &e.streaming_defer,
+                    &e.streaming_defer_reject_reason,
+                    &e.session_store,
+                    &e.stable_session_kind,
+                    &e.upstream_outbound_bytes.map(|v| v as i32),
                 ],
             )
             .await?;
@@ -1238,19 +1326,8 @@ impl PgStore {
         limit: usize,
     ) -> Result<Vec<TraceLogEntry>> {
         let client = self.pool.get().await?;
-        let mut sql = String::from(
-            "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
-                    model, prompt_tokens, latency_ms, cache_hit,
-                    conversation_id, consumer, domain, project_id,
-                    upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
-                    cache_tier, composition,
-                    request_messages_snapshot, response_preview,
-                    retired_prefix_messages, reasoning_strategy,
-                    prompt_cache_hit_ratio, upstream_profile_id, pipeline,
-                    upstream_model, client_body_user_id, upstream_user_id,
-                    user_id_audit, upstream_key_id
-             FROM trace_logs WHERE 1=1",
-        );
+        let mut sql = String::from(TRACE_LOGS_SELECT);
+        sql.push_str(" FROM trace_logs WHERE 1=1");
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
         let mut idx = 1;
 
@@ -1295,51 +1372,7 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let composition_raw: Option<String> = row.get(17);
-            let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
-            out.push(TraceLogEntry {
-                request_hash: row.get(0),
-                timestamp_ms: from_pg_bigint(row.get(1)),
-                content_length: row.get::<_, i32>(2) as usize,
-                semantic_cluster: row.get::<_, i32>(3) as u32,
-                model: row.get(4),
-                prompt_tokens: row.get::<_, i32>(5) as usize,
-                latency_ms: row.get(6),
-                cache_hit: row.get(7),
-                conversation_id: row.get(8),
-                consumer: row.get(9),
-                domain: row.get(10),
-                project_id: row.get(11),
-                upstream_latency_ms: row.get(12),
-                prefill_ms: None,
-                pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
-                    let e2e: f64 = row.get(6);
-                    (e2e - up).max(0.0)
-                }),
-                ttft_ms: row.get(13),
-                input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
-                output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
-                cache_tier: row.get(16),
-                composition,
-                request_messages_snapshot: row.get(18),
-                response_preview: row.get(19),
-                retired_prefix_messages: row.get::<_, Option<i32>>(20).map(|v| v as usize),
-                reasoning_strategy: row.get(21),
-                prompt_cache_hit_ratio: row.get(22),
-                upstream_profile_id: row.get(23),
-                pipeline: row.get(24),
-                upstream_model: row.get(25),
-                client_body_user_id: row.get(26),
-                upstream_user_id: row.get(27),
-                user_id_audit: row.get(28),
-                upstream_key_id: row.get(29),
-                affinity_key: None,
-                affinity_kind: None,
-                backend_name: None,
-                session_fingerprint: None,
-                is_coalesced: false,
-                client_key_id: None,
-            });
+            out.push(trace_log_entry_from_row(&row));
         }
         Ok(out)
     }
@@ -1375,19 +1408,8 @@ impl PgStore {
         };
 
         let client = self.pool.get().await?;
-        let mut sql = String::from(
-            "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
-                    model, prompt_tokens, latency_ms, cache_hit,
-                    conversation_id, consumer, domain, project_id,
-                    upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
-                    cache_tier, composition,
-                    request_messages_snapshot, response_preview,
-                    retired_prefix_messages, reasoning_strategy,
-                    prompt_cache_hit_ratio, upstream_profile_id, pipeline,
-                    upstream_model, client_body_user_id, upstream_user_id,
-                    user_id_audit, upstream_key_id
-             FROM trace_logs WHERE 1=1",
-        );
+        let mut sql = String::from(TRACE_LOGS_SELECT);
+        sql.push_str(" FROM trace_logs WHERE 1=1");
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>> = Vec::new();
         let mut idx = 1;
 
@@ -1466,53 +1488,7 @@ impl PgStore {
         let entries: Vec<TraceLogEntry> = rows
             .into_iter()
             .take(limit)
-            .map(|row| {
-                let composition_raw: Option<String> = row.get(17);
-                let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
-                TraceLogEntry {
-                    request_hash: row.get(0),
-                    timestamp_ms: from_pg_bigint(row.get(1)),
-                    content_length: row.get::<_, i32>(2) as usize,
-                    semantic_cluster: row.get::<_, i32>(3) as u32,
-                    model: row.get(4),
-                    prompt_tokens: row.get::<_, i32>(5) as usize,
-                    latency_ms: row.get(6),
-                    cache_hit: row.get(7),
-                    conversation_id: row.get(8),
-                    consumer: row.get(9),
-                    domain: row.get(10),
-                    project_id: row.get(11),
-                    upstream_latency_ms: row.get(12),
-                    prefill_ms: None,
-                    pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
-                        let e2e: f64 = row.get(6);
-                        (e2e - up).max(0.0)
-                    }),
-                    ttft_ms: row.get(13),
-                    input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
-                    output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
-                    cache_tier: row.get(16),
-                    composition,
-                    request_messages_snapshot: row.get(18),
-                    response_preview: row.get(19),
-                    retired_prefix_messages: row.get::<_, Option<i32>>(20).map(|v| v as usize),
-                    reasoning_strategy: row.get(21),
-                    prompt_cache_hit_ratio: row.get(22),
-                    upstream_profile_id: row.get(23),
-                    pipeline: row.get(24),
-                    upstream_model: row.get(25),
-                    client_body_user_id: row.get(26),
-                    upstream_user_id: row.get(27),
-                    user_id_audit: row.get(28),
-                    upstream_key_id: row.get(29),
-                    affinity_key: None,
-                    affinity_kind: None,
-                    backend_name: None,
-                    session_fingerprint: None,
-                    is_coalesced: false,
-                    client_key_id: None,
-                }
-            })
+            .map(|row| trace_log_entry_from_row(&row))
             .collect();
 
         Ok((entries, next_cursor))

@@ -3,11 +3,6 @@
 //! Extracted from `proxy.rs` `ProxyHttp::logging`.
 
 use crate::context::GatewayContext;
-use crate::trace_logger::composition_debug_tx;
-use crab_composition::{
-    CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
-    extract_tools_json,
-};
 use crate::debug_agent_log;
 use crate::helper_fns::{build_capture_request_meta, sanitize_for_trace};
 use crate::metrics_helpers::{
@@ -16,8 +11,13 @@ use crate::metrics_helpers::{
 use crate::proxy::{GatewayProxy, build_response_preview, flush_streaming_reasoning};
 use crate::sse_pipeline::SsePipeline;
 use crate::trace_logger::SanitizedLogEntry;
+use crate::trace_logger::composition_debug_tx;
 use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_capture::affinity_kind_from_key;
+use crab_composition::{
+    CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
+    extract_tools_json,
+};
 use crab_metrics::global_metrics;
 use crab_pipeline::RequestPipeline;
 use hex;
@@ -102,6 +102,7 @@ pub(crate) async fn run(
             cache_tier = ?ctx.cache_tier,
             is_streaming = ctx.is_streaming,
             streaming_defer = ctx.streaming_body.active,
+            session_store = ?ctx.session_store_outcome,
             consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
             conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
             total_tokens = ctx.tokens.total,
@@ -110,6 +111,32 @@ pub(crate) async fn run(
             pipeline = ?ctx.request_pipeline,
             "Request completed"
         );
+
+        if let Some(pipeline) = ctx.request_pipeline
+            && proxy.state.features.mimo_session_store
+            && GatewayProxy::is_mimo_pipeline(pipeline)
+            && ctx.cache_tier.is_none()
+            && ctx.upstream.http_status.is_none_or(|s| s < 400)
+            && let (Some(store), Some(redis_key), Some(base)) = (
+                proxy.state.session_store.as_ref(),
+                ctx.session_store_redis_key.clone(),
+                ctx.session_persist_base.clone(),
+            )
+        {
+            let assistant = crate::session_store::extract_assistant_content(
+                ctx.is_streaming,
+                &ctx.accumulated_body,
+                &ctx.stream.client_sse_body,
+            );
+            crate::session_store::spawn_session_persist(
+                store.clone(),
+                redis_key,
+                base,
+                assistant,
+                proxy.state.features.mimo_session_store_ttl_secs,
+                proxy.state.features.mimo_session_store_max_messages,
+            );
+        }
 
         if let Some(trace_logger) = &proxy.state.trace_logger {
             let max_payload = trace_logger.max_payload_bytes();
@@ -145,19 +172,24 @@ pub(crate) async fn run(
                 if hit + miss > 0 {
                     entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
                 }
+                entry.streaming_defer = ctx.streaming_body.active;
+                entry.streaming_defer_reject_reason = ctx.streaming_defer_reject_reason.clone();
+                entry.session_store = ctx.session_store_outcome.clone();
+                entry.stable_session_kind = ctx.stable_session_kind.clone();
+                entry.upstream_outbound_bytes = Some(ctx.upstream_outbound_body_len);
                 entry.upstream_latency_ms = ctx.upstream.latency_ms;
                 let (prefill_ms, sse_ttft_ms) = crate::helper_fns::request_timing_ms(ctx);
                 entry.prefill_ms = prefill_ms;
                 // Legacy trace field: time before upstream stream segment (≈ body read + upload + prefill).
-                entry.pre_header_ms = ctx.upstream.latency_ms.map(|up| {
-                    (latency_ms as f64 - up).max(0.0)
-                });
+                entry.pre_header_ms = ctx
+                    .upstream
+                    .latency_ms
+                    .map(|up| (latency_ms as f64 - up).max(0.0));
                 entry.ttft_ms = sse_ttft_ms;
                 if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
                     entry.input_tokens = Some(ctx.tokens.last_input);
                     entry.output_tokens = Some(ctx.tokens.last_output);
-                    entry.prompt_tokens =
-                        ctx.tokens.last_input.saturating_add(ctx.tokens.last_output) as usize;
+                    entry.prompt_tokens = ctx.tokens.last_input as usize;
                 }
                 // Populate response_preview from best available source
                 if max_resp > 0 {
@@ -211,10 +243,7 @@ pub(crate) async fn run(
     if let Some(raw_logger) = &proxy.state.raw_capture_logger {
         let req_path = session.req_header().uri.path();
         if !raw_logger.should_skip(req_path) {
-            let has_error = ctx
-                .upstream
-                .http_status
-                .is_some_and(|s| s >= 400);
+            let has_error = ctx.upstream.http_status.is_some_and(|s| s >= 400);
             let body_bytes = ctx.content_length.max(ctx.upstream_outbound_body_len);
             if raw_logger.should_sample(has_error, body_bytes)
                 == crate::raw_capture::SampleDecision::Capture
