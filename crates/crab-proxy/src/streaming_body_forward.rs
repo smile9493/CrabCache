@@ -37,6 +37,7 @@ pub fn refresh_affinity_key(
     ctx.upstream.affinity_key = Some(crab_route::extract_affinity_key(
         affinity_headers,
         client_ip,
+        ctx.conversation_id.as_deref(),
         ctx.prompt_cache_key.as_deref(),
         body_user_id,
         ctx.session_fingerprint.as_deref(),
@@ -91,7 +92,10 @@ pub struct StreamingBodyState {
 
 impl StreamingBodyState {
     pub fn append_chunk(&mut self, data: &[u8]) {
-        if self.active && self.deferred_partial_len > 0 && self.buffer.len() >= self.deferred_partial_len {
+        if self.active
+            && self.deferred_partial_len > 0
+            && self.buffer.len() >= self.deferred_partial_len
+        {
             self.append_tail_bytes += data.len();
         }
         self.buffer.extend_from_slice(data);
@@ -155,16 +159,14 @@ impl StreamingDeferCircuitBreaker {
         }
         let mut g = self.inner.lock();
         if g.half_open {
-            g.open_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+            g.open_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
             g.half_open = false;
             g.consecutive_failures = 0;
             return;
         }
         g.consecutive_failures = g.consecutive_failures.saturating_add(1);
         if g.consecutive_failures >= self.threshold {
-            g.open_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+            g.open_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
             g.consecutive_failures = 0;
         }
     }
@@ -180,7 +182,20 @@ pub fn inbound_content_length(session: &Session) -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
-/// Whether a partial buffer must not be treated as a complete JSON body yet.
+/// Whether a partial client buffer is usable for defer arm.
+///
+/// This is intentionally weaker than `defer_body_incomplete()`: on the defer path the gateway
+/// only needs enough bytes to identify `model` and select an upstream peer. The full JSON body
+/// is still validated at client EOS before anything is sent upstream.
+pub fn defer_partial_ready_for_arm(body: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    let trimmed = text.trim();
+    !trimmed.is_empty() && text.contains("\"model\"")
+}
+
+/// Whether a buffered body must not be treated as a final complete JSON body yet.
 pub fn defer_body_incomplete(body: &[u8], inbound_cl: Option<usize>) -> bool {
     if inbound_cl.is_some_and(|cl| body.len() < cl) {
         return true;
@@ -298,6 +313,19 @@ mod tests {
         let partial = br#"{"model":"mimo","messages":[]}"#;
         assert!(defer_body_incomplete(partial, Some(5000)));
         assert!(!defer_body_incomplete(partial, Some(partial.len())));
+    }
+
+    #[test]
+    fn defer_partial_ready_ignores_content_length_and_allows_model_prefix() {
+        let partial =
+            br#"{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hello"#;
+        assert!(defer_partial_ready_for_arm(partial));
+    }
+
+    #[test]
+    fn defer_partial_ready_rejects_non_utf8_or_missing_model() {
+        assert!(!defer_partial_ready_for_arm(&[0xff, 0xfe]));
+        assert!(!defer_partial_ready_for_arm(br#"{"messages":[]}"#));
     }
 
     #[test]

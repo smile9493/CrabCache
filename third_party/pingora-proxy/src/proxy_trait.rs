@@ -121,6 +121,15 @@ pub trait ProxyHttp {
         false
     }
 
+    /// When [`Self::defer_upstream_request_body`] is true, whether the current upstream body
+    /// chunk should carry END_STREAM / end-of-body (CrabCache passthrough + streaming defer).
+    fn defer_upstream_body_end_stream(&self, session: &mut Session, _ctx: &Self::CTX) -> bool
+    where
+        Self::CTX: Send + Sync,
+    {
+        session.is_body_done()
+    }
+
     /// Handle the incoming request body.
     ///
     /// This function will be called every time a piece of request body is received. The `body` is

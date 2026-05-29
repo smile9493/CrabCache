@@ -163,8 +163,8 @@ fn brotli_decode(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
 
     #[test]

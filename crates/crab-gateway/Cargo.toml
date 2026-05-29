@@ -21,6 +21,7 @@ bb8-redis.workspace = true
 crab-state.workspace = true
 crab-client-endpoint.workspace = true
 uuid.workspace = true
+bytes.workspace = true
 
 [lints]
 workspace = true

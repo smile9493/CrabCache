@@ -52,12 +52,33 @@ pub fn apply_upstream_request_content_encoding(req: &mut RequestHeader, encoding
     let _ = req.insert_header(header::CONTENT_ENCODING, encoding);
 }
 
+/// Headers for MiMo request passthrough before the full body exists.
+///
+/// - HTTP/2 (default): omit `Content-Length` and `Transfer-Encoding`; incremental upload uses
+///   DATA frame `END_STREAM` (see `set_send_end_stream(false)` + `defer_upstream_body_end_stream`).
+/// - HTTP/1.1 (`upstream_force_http1`): `Transfer-Encoding: chunked` for incremental relay.
+pub fn prepare_passthrough_upstream_headers(
+    req: &mut RequestHeader,
+    is_streaming: bool,
+    force_http1: bool,
+) {
+    let _ = req.remove_header(&header::CONTENT_LENGTH);
+    let _ = req.remove_header(&header::CONTENT_ENCODING);
+    let _ = req.remove_header(&header::EXPECT);
+    let _ = req.remove_header(&header::TRANSFER_ENCODING);
+    if force_http1 {
+        let _ = req.insert_header(header::TRANSFER_ENCODING, "chunked");
+    }
+    if req.headers.get(header::CONTENT_TYPE).is_none() {
+        let _ = req.insert_header(header::CONTENT_TYPE, "application/json");
+    }
+    smooth_upstream_client_headers(req, is_streaming);
+}
+
 /// Headers for `streaming_body_forward` before the full body exists at `upstream_request_filter`.
 ///
-/// Intentionally omits `Content-Length` (chunked transfer); MiMo accepts chunked bodies.
-/// Must not send `Content-Length: 0` (upstream would parse empty JSON). The real guard against
-/// empty upstream bodies is in `request_body_filter` (`suppress_upstream` / empty-body checks).
-/// Body is sent once at client EOS via `request_body_filter` with the prepared payload.
+/// Omits both `Content-Length` and `Transfer-Encoding`; the prepared body is emitted once at
+/// client EOS and `normalize_replaced_body_headers` sets `Content-Length` in `request_body_filter`.
 pub fn prepare_streaming_deferred_upstream_headers(req: &mut RequestHeader, is_streaming: bool) {
     let _ = req.remove_header(&header::TRANSFER_ENCODING);
     let _ = req.remove_header(&header::CONTENT_LENGTH);
@@ -146,6 +167,27 @@ mod tests {
                 .get(header::ACCEPT_ENCODING)
                 .map(|v| v.to_str().unwrap()),
             Some(UPSTREAM_ACCEPT_ENCODING)
+        );
+    }
+
+    #[test]
+    fn passthrough_headers_h2_omit_framing() {
+        let mut req = sample_req();
+        prepare_passthrough_upstream_headers(&mut req, false, false);
+        assert!(req.headers.get(header::CONTENT_LENGTH).is_none());
+        assert!(req.headers.get(header::TRANSFER_ENCODING).is_none());
+    }
+
+    #[test]
+    fn passthrough_headers_h1_use_chunked_transfer_encoding() {
+        let mut req = sample_req();
+        prepare_passthrough_upstream_headers(&mut req, false, true);
+        assert!(req.headers.get(header::CONTENT_LENGTH).is_none());
+        assert_eq!(
+            req.headers
+                .get(header::TRANSFER_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("chunked")
         );
     }
 

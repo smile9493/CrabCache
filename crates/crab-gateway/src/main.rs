@@ -8,7 +8,7 @@ use crab_metrics::global_metrics;
 use crab_proxy::{
     ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy,
     GatewayState, RawCaptureLogger, RuntimeConfig, SemanticRuntimeState, SharedSemanticRuntime,
-    UpstreamUserIdLimiter,
+    UpstreamUserIdLimiter, debug_agent_log,
 };
 use crab_reasoning::ReasoningBackend;
 use crab_route::LbRouter;
@@ -425,6 +425,22 @@ fn main() -> Result<()> {
         rt.block_on(async { TieredCache::new(l1_pool, l0_config, ttl_config.clone()).await })?,
     );
 
+    let session_store = if config.features.mimo_session_store {
+        match rt.block_on(async { crab_proxy::SessionStore::new(&config.cache.l1_redis_url).await })
+        {
+            Ok(store) => {
+                tracing::info!("MiMo session store enabled (Redis crab:session:*)");
+                Some(Arc::new(store))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "MiMo session store disabled: Redis connect failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let semantic_cache = if config.semantic.enabled {
         let pool = EmbedderPool::load(
             &config.semantic.model_path,
@@ -702,7 +718,8 @@ fn main() -> Result<()> {
         } else {
             let (version, snap) = rt.block_on(store.load_all())?;
             apply_snapshot_to_runtime(&runtime, &snap, config.upstream.key_cooldown_secs)?;
-            let profile_ids: Vec<String> = runtime.upstream_profiles.read().keys().cloned().collect();
+            let profile_ids: Vec<String> =
+                runtime.upstream_profiles.read().keys().cloned().collect();
             info!(
                 version,
                 keys = snap.keys.len(),
@@ -835,16 +852,77 @@ fn main() -> Result<()> {
         let lb_router = runtime.router.read();
         lb_router.health_service()
     };
+    // #region debug-point A:state-build-start
+    debug_agent_log(
+        "A",
+        "main.rs:gateway_state_build",
+        "[DEBUG] gateway state build start",
+        serde_json::json!({
+            "request_coalesce_max_inflight": config.upstream.max_coalesce_inflight.unwrap_or(1000),
+            "request_coalesce_timeout_secs": config.upstream.coalesce_timeout_secs.unwrap_or(60),
+            "max_request_concurrency": config.limits.max_concurrent_requests,
+            "streaming_defer_auto_disable_threshold": config.features.streaming_body_forward_auto_disable_threshold,
+            "mimo_session_store": config.features.mimo_session_store,
+        }),
+    );
+    // #endregion
+    // #region debug-point B:state-build-components
+    debug_agent_log(
+        "B",
+        "main.rs:gateway_state_build",
+        "[DEBUG] building state components before Arc<GatewayState>",
+        serde_json::json!({
+            "coalescer": "begin",
+        }),
+    );
+    // #endregion
+    let coalescer = {
+        let max_inflight = config.upstream.max_coalesce_inflight.unwrap_or(1000);
+        let timeout = config.upstream.coalesce_timeout_secs.unwrap_or(60);
+        Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
+    };
+    debug_agent_log(
+        "B",
+        "main.rs:gateway_state_build",
+        "[DEBUG] coalescer constructed",
+        serde_json::json!({ "ok": true }),
+    );
+    let prewarm_semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+    debug_agent_log(
+        "B",
+        "main.rs:gateway_state_build",
+        "[DEBUG] prewarm semaphore constructed",
+        serde_json::json!({ "permits": 4 }),
+    );
+    let startup_global_rate = Arc::new(pingora_limits::rate::Rate::new(
+        std::time::Duration::from_secs(1),
+    ));
+    debug_agent_log(
+        "B",
+        "main.rs:gateway_state_build",
+        "[DEBUG] global rate constructed",
+        serde_json::json!({ "window_secs": 1 }),
+    );
+    let streaming_defer_circuit_breaker =
+        Arc::new(crab_proxy::StreamingDeferCircuitBreaker::new(
+            config
+                .features
+                .streaming_body_forward_auto_disable_threshold,
+        ));
+    debug_agent_log(
+        "B",
+        "main.rs:gateway_state_build",
+        "[DEBUG] streaming defer circuit breaker constructed",
+        serde_json::json!({
+            "threshold": config.features.streaming_body_forward_auto_disable_threshold,
+        }),
+    );
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
         semantic_cache,
         semantic_runtime: semantic_runtime.clone(),
-        coalescer: {
-            let max_inflight = config.upstream.max_coalesce_inflight.unwrap_or(1000);
-            let timeout = config.upstream.coalesce_timeout_secs.unwrap_or(60);
-            Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
-        },
+        coalescer,
         reasoning_store,
         reasoning_config: reasoning_config_shared,
         cors_enabled: config.gateway.cors_enabled,
@@ -868,32 +946,29 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
-        prewarm_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-        global_rate: Arc::new(pingora_limits::rate::Rate::new(
-            std::time::Duration::from_secs(1),
-        )),
+        prewarm_semaphore,
+        global_rate: startup_global_rate,
         client_endpoint: client_endpoint.clone(),
-        streaming_defer_circuit_breaker: Arc::new(
-            crab_proxy::StreamingDeferCircuitBreaker::new(
-                config
-                    .features
-                    .streaming_body_forward_auto_disable_threshold,
-            ),
-        ),
+        streaming_defer_circuit_breaker,
+        session_store,
     });
+    // #region debug-point C:state-build-done
+    debug_agent_log(
+        "C",
+        "main.rs:gateway_state_build",
+        "[DEBUG] gateway state build completed",
+        serde_json::json!({ "ok": true }),
+    );
+    // #endregion
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
     {
         let rl = state.client_key_rate_limiter.clone();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("rate limiter pruner runtime");
-            rt.block_on(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-                loop {
-                    interval.tick().await;
-                    rl.prune_stale(std::time::Duration::from_secs(600));
-                }
-            });
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(300));
+                rl.prune_stale(std::time::Duration::from_secs(600));
+            }
         });
     }
 

@@ -316,6 +316,9 @@ max_files = 5
 # upstream_request_gzip_min_bytes = 4096
 # mimo_retire_prefix_messages = false  # Trim old MiMo turns before upstream (cache keys unchanged)
 # mimo_keep_recent_turns = 6
+# mimo_session_store = false           # Redis canonical messages per stable session (upstream only)
+# mimo_session_store_ttl_secs = 86400
+# mimo_session_store_max_messages = 200
 
 # ── Log Retention (Admin Dashboard) ──────────────────────────────
 # The admin dashboard runs a background cleanup task every 10 minutes

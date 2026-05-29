@@ -13,12 +13,12 @@ mod sse;
 mod stored_key;
 mod tenant;
 mod trace_logger;
-mod upstream_body;
+pub mod upstream_body;
 mod upstream_body_compress;
 mod upstream_headers;
-mod upstream_response_decompress;
 mod upstream_pool;
 mod upstream_profile;
+mod upstream_response_decompress;
 mod upstream_user_id_limiter;
 mod user_id_audit;
 
@@ -29,14 +29,15 @@ mod cache_response;
 mod cache_revalidate;
 mod connection_helpers;
 pub mod connection_prewarm;
-mod streaming_body_forward;
 mod error_jsons;
 mod helper_fns;
 mod metrics_helpers;
 mod semantic_runtime;
 mod send_helpers;
+mod session_store;
 mod sse_pipeline;
 mod sse_rewrite;
+mod streaming_body_forward;
 
 pub use cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
@@ -52,18 +53,24 @@ pub use context::{
     ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig,
     ReasoningConfig,
 };
-pub use streaming_body_forward::StreamingDeferCircuitBreaker;
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
 pub use profile_build::{
     ProfileBuildInput, build_profile_runtime, parse_profile_backends, resolve_profile_key_specs,
 };
-pub use proxy::GatewayProxy;
+pub use proxy::{
+    GatewayProxy, should_defer_upstream_request_body, should_skip_upstream_trailing_empty_eos,
+};
 pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
 pub use runtime::{DomainPolicy, DomainUsage, RuntimeConfig};
 pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
+pub use session_store::SessionStore;
 pub use sse_rewrite::flush_streaming_reasoning;
 pub use stored_key::StoredKey;
+pub use streaming_body_forward::{
+    StreamingBodyState, StreamingDeferCircuitBreaker, defer_body_incomplete,
+    defer_partial_ready_for_arm, hash_body_chunks,
+};
 pub use tenant::{
     ProjectResolveError, effective_cache_namespace, resolve_project_id, sanitize_user_id,
 };

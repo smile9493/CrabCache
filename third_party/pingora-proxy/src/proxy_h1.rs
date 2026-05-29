@@ -794,8 +794,13 @@ where
             .request_body_filter(session, &mut data, end_of_body, ctx)
             .await?;
 
+        let defer_body = self.inner.defer_upstream_request_body(session, ctx);
         // the flag to signal to upstream
-        let upstream_end_of_body = end_of_body || data.is_none();
+        let upstream_end_of_body = if defer_body {
+            self.inner.defer_upstream_body_end_stream(session, ctx)
+        } else {
+            end_of_body || data.is_none()
+        };
 
         /* It is normal to get 0 bytes because of multi-chunk or request_body_filter decides not to
          * output anything yet.
@@ -810,7 +815,9 @@ where
             && self.inner.skip_upstream_trailing_empty_eos(session, ctx)
         {
             debug!("Skip trailing empty upstream body after prepared payload");
-            return Ok(end_of_body);
+            // Defer bootstrap calls with `data=None` while the client is still uploading;
+            // do not mark downstream finished until the session body is actually done.
+            return Ok(end_of_body && session.is_body_done());
         }
 
         debug!(
@@ -825,7 +832,11 @@ where
             tx.send(HttpTask::Body(data, upstream_end_of_body));
         }
 
-        Ok(end_of_body)
+        Ok(if defer_body {
+            session.is_body_done()
+        } else {
+            end_of_body
+        })
     }
 }
 

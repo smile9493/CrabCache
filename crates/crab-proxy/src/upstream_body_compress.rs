@@ -1,7 +1,7 @@
 //! Optional gzip compression for upstream request bodies.
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::io::Write;
 
 /// Compress `body` when `enabled` and `body.len() >= min_bytes`. Returns (bytes, was_compressed).

@@ -41,10 +41,10 @@ Mount point: **do not** read the full body in `request_filter` when deferring; f
 
 ## Regression / gray gate (wuming)
 
-Keep `streaming_body_forward = false` in [`config/gateway.docker.toml`](../config/gateway.docker.toml) until all checks pass.
+[`config/gateway.docker.toml`](../config/gateway.docker.toml) enables `streaming_body_forward = true` after Phase 1 safety fixes (incomplete-body gate, suppress trailing empty EOS, circuit breaker). Re-disable immediately if metrics or logs regress.
 
 ```bash
-# After enabling streaming_body_forward = true and hot-update:
+# After hot-update:
 ssh wuming 'docker exec crabcache-gateway-1 tail -10000 /app/logs/raw_capture/index.jsonl' \
   | python3 scripts/analyze_downstream_latency.py -
 
@@ -61,4 +61,20 @@ Success targets (MiMo stream miss, ≥10 requests):
 | `gap/e2e` | ≤45% |
 | Parse / empty upstream | **0** failures |
 
-Unit tests: `crates/crab-proxy/src/streaming_body_forward.rs` (`deferred_buffer_*`).
+Tests: unit — [`streaming_body_forward.rs`](../crates/crab-proxy/src/streaming_body_forward.rs); contract — [`streaming_defer.rs`](../crates/crab-gateway/tests/streaming_defer.rs), [`request_passthrough.rs`](../crates/crab-gateway/tests/request_passthrough.rs).
+
+## MiMo direct request passthrough
+
+MiMo pipelines (`MimoRelay`, `MimoTokenPlanRelay`, `MimoPaygRelay`) use **direct passthrough** instead of streaming defer. The gateway sniffs a prefix (≥1024 B with `"model"` in JSON), selects the pipeline, acquires an upstream key, and returns from `request_filter` before the client body is complete. The armed prefix and subsequent client chunks are **relayed incrementally** in `request_body_filter` (no upstream EOS until `session.is_body_done()`).
+
+| Topic | Passthrough | Streaming defer (non-MiMo) |
+|-------|-------------|----------------------------|
+| Arm threshold | ≥1024 B prefix | ≥32 KiB prefix |
+| Body rewrite | None (client JSON as-is) | `prepare_mimo_request` at EOS |
+| Exact cache / coalesce | Skipped | At EOS |
+| Upstream headers | H2 (default): strip `Content-Length` / `TE`; DATA frames. H1: `TE: chunked` | Strip CL/TE until EOS |
+| Same-request retry | `retry_budget = 0` | Normal retry budget |
+| Trace | `request_passthrough=true`, `request_passthrough_prefix_len` | `streaming_defer=true` |
+| Metric | `gateway_request_passthrough_total` | `gateway_streaming_defer_*` |
+
+Both paths require `[features] streaming_body_forward = true`. Upstream defaults to HTTP/2 (`[connection] upstream_force_http1 = false`). Passthrough uses `prepare_passthrough_upstream_headers` (H2: no framing headers; H1 fallback: chunked).

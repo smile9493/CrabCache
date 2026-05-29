@@ -120,10 +120,14 @@ skip_paths = ["/health", "/healthz", "/ready"]
 connection_prewarm = true
 # MiMo: partial body read → upstream_peer while client uploads; finalize at EOS.
 # Phase 1 safety fixes + defer finalize early exact cache landed; enable after gray gate below.
-streaming_body_forward = false
+streaming_body_forward = true
 streaming_body_forward_auto_disable_threshold = 3
+# Transparent Redis session store (canonical messages; upstream payload only).
+mimo_session_store = true
+mimo_session_store_ttl_secs = 86400
+mimo_session_store_max_messages = 200
 # Gzip upload to upstream when body >= 4096 bytes (verify MiMo accepts Content-Encoding: gzip first).
 upstream_request_gzip = false
 upstream_request_gzip_min_bytes = 4096
-# mimo_retire_prefix_messages = false
-# mimo_keep_recent_turns = 6
+mimo_retire_prefix_messages = true
+mimo_keep_recent_turns = 6

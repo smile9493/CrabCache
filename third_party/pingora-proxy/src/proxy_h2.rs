@@ -757,21 +757,29 @@ where
             .request_body_filter(session, &mut data, end_of_body, ctx)
             .await?;
 
+        let defer_body = self.inner.defer_upstream_request_body(session, ctx);
+        let upstream_end_of_body = if defer_body {
+            self.inner.defer_upstream_body_end_stream(session, ctx)
+        } else {
+            end_of_body
+        };
+
         /* it is normal to get 0 bytes because of multi-chunk parsing or request_body_filter.
          * Although there is no harm writing empty byte to h2, unlike h1, we ignore it
          * for consistency */
-        if !end_of_body && data.as_ref().is_some_and(|d| d.is_empty()) {
+        if !upstream_end_of_body && data.as_ref().is_some_and(|d| d.is_empty()) {
             return Ok(false);
         }
 
         if let Some(data) = data {
             debug!("Write {} bytes body to h2 upstream", data.len());
-            write_body(client_body, data, end_of_body, write_timeout)
+            write_body(client_body, data, upstream_end_of_body, write_timeout)
                 .await
                 .map_err(|e| e.into_up())?;
-        } else if end_of_body && self.inner.skip_upstream_trailing_empty_eos(session, ctx) {
+        } else if upstream_end_of_body && self.inner.skip_upstream_trailing_empty_eos(session, ctx) {
             debug!("Skip trailing empty END_STREAM after prepared upstream body");
-        } else {
+            return Ok(session.is_body_done());
+        } else if upstream_end_of_body {
             debug!("Read downstream body done");
             /* send a standalone END_STREAM flag */
             write_body(client_body, Bytes::new(), true, write_timeout)
@@ -779,7 +787,11 @@ where
                 .map_err(|e| e.into_up())?;
         }
 
-        Ok(end_of_body)
+        Ok(if defer_body {
+            session.is_body_done()
+        } else {
+            end_of_body
+        })
     }
 }
 

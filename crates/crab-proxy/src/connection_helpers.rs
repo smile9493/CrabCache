@@ -10,10 +10,14 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
         options.alpn = ALPN::H1;
         options.h2_ping_interval = None;
         options.max_h2_streams = 1;
-    } else if let Some(ping_secs) = config.h2_ping_interval_secs
-        && ping_secs > 0
-    {
-        options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
+    } else {
+        // PeerOptions defaults to ALPN::H1; explicitly prefer HTTP/2 for upstream.
+        options.set_http_version(2, 1);
+        if let Some(ping_secs) = config.h2_ping_interval_secs
+            && ping_secs > 0
+        {
+            options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
+        }
     }
 
     if !config.upstream_tls_curves.is_empty() {
@@ -59,5 +63,31 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
         && secs > 0
     {
         options.read_timeout = Some(Duration::from_secs(secs));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pingora_core::upstreams::peer::PeerOptions;
+
+    #[test]
+    fn default_upstream_prefers_h2_alpn() {
+        let config = ConnectionConfig::default();
+        assert!(!config.upstream_force_http1);
+        let mut options = PeerOptions::new();
+        apply_connection_options(&config, &mut options);
+        assert_eq!(options.alpn, ALPN::H2H1);
+        assert!(options.h2_ping_interval.is_some());
+    }
+
+    #[test]
+    fn force_http1_disables_h2_ping() {
+        let mut config = ConnectionConfig::default();
+        config.upstream_force_http1 = true;
+        let mut options = PeerOptions::new();
+        apply_connection_options(&config, &mut options);
+        assert_eq!(options.alpn, ALPN::H1);
+        assert!(options.h2_ping_interval.is_none());
     }
 }

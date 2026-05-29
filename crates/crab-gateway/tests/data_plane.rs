@@ -162,7 +162,8 @@ async fn exact_key_roundtrip_l0_hit() {
         .expect("tiered cache");
 
     // Simulate the body that body_quick_parse extracts a model from.
-    let body = br#"{"model":"mimo-v2","stream":true,"messages":[{"role":"user","content":"hello"}]}"#;
+    let body =
+        br#"{"model":"mimo-v2","stream":true,"messages":[{"role":"user","content":"hello"}]}"#;
     let key = compute_cache_key(body);
     let entry = make_entry(body, "mimo-v2");
 
@@ -201,7 +202,10 @@ async fn exact_key_miss_for_different_body() {
     assert_ne!(key_a, key_b, "different bodies must produce different keys");
 
     let entry_a = make_entry(body_a, "mimo-v2");
-    cache.put(&key_a, entry_a, "mimo-v2", None).await.expect("put");
+    cache
+        .put(&key_a, entry_a, "mimo-v2", None)
+        .await
+        .expect("put");
 
     // Key B should not hit.
     let result = cache.get(&key_b, None, None).await;
@@ -237,7 +241,10 @@ async fn exact_key_roundtrip_preserves_stream_flag() {
         client_display_reasoning: false,
     };
 
-    cache.put(&key, entry.clone(), "mimo-v2", None).await.expect("put");
+    cache
+        .put(&key, entry.clone(), "mimo-v2", None)
+        .await
+        .expect("put");
 
     let (got, _) = cache.get(&key, None, None).await.expect("hit");
     assert!(got.is_stream, "stream flag should survive roundtrip");
@@ -268,7 +275,10 @@ async fn coalesce_exact_cache_probed_idempotent_get() {
     let key = compute_cache_key(body);
     let entry = make_entry(body, "mimo-v2");
 
-    cache.put(&key, entry.clone(), "mimo-v2", None).await.expect("put");
+    cache
+        .put(&key, entry.clone(), "mimo-v2", None)
+        .await
+        .expect("put");
 
     // Simulate leader probe.
     let (got1, tier1) = cache.get(&key, None, None).await.expect("leader hit");
@@ -300,12 +310,7 @@ fn mimo_retire_prefix_shrinks_upstream_body() {
         "messages": messages,
     });
     let before = serde_json::to_vec(&payload).expect("serialize");
-    let prepared = prepare_mimo_request(
-        &payload,
-        "xiaomi/mimo-v2.5-pro",
-        true,
-        6,
-    );
+    let prepared = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", true, 6);
     let after = serde_json::to_vec(&prepared.payload).expect("serialize upstream");
     assert!(prepared.retired_prefix_messages > 0);
     assert!(after.len() < before.len());
@@ -313,4 +318,31 @@ fn mimo_retire_prefix_shrinks_upstream_body() {
     let cache_key_client = compute_cache_key(&before);
     let cache_key_upstream = compute_cache_key(&after);
     assert_ne!(cache_key_client, cache_key_upstream);
+}
+
+// ---------------------------------------------------------------------------
+// MiMo session store merge (upstream messages only; cache key unchanged)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn session_store_merge_append_preserves_cache_key_material() {
+    use crab_proxy::SessionStore;
+
+    let stored = vec![
+        serde_json::json!({"role":"user","content":"a"}),
+        serde_json::json!({"role":"assistant","content":"b"}),
+    ];
+    let mut client = stored.clone();
+    client.push(serde_json::json!({"role":"user","content":"c"}));
+    let merged = SessionStore::merge_messages(&stored, &client).expect("append merge");
+    assert_eq!(merged.len(), 3);
+    let client_body =
+        serde_json::to_vec(&serde_json::json!({"model":"mimo","messages": client})).unwrap();
+    let merged_body =
+        serde_json::to_vec(&serde_json::json!({"model":"mimo","messages": merged})).unwrap();
+    // Same logical messages → same cache key (store must not replace original_request_body).
+    assert_eq!(
+        compute_cache_key(&client_body),
+        compute_cache_key(&merged_body)
+    );
 }

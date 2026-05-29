@@ -143,6 +143,10 @@ def analyze_trace_rows(rows: list[dict], *, label: str = "trace") -> None:
 
     print(f"\n=== {label}: latency ({len(stream_miss)} cache-miss with timing / {len(rows)} total) ===")
 
+    def med(rows: list[dict], key: str) -> float | None:
+        vals = [float(r[key]) for r in rows if r.get(key) is not None]
+        return st.median(vals) if vals else None
+
     prefill = LatencyStats("prefill (start->hdr)")
     upstream = LatencyStats("upstream (hdr->EOS)")
     e2e = LatencyStats("e2e (latency_ms)")
@@ -169,6 +173,86 @@ def analyze_trace_rows(rows: list[dict], *, label: str = "trace") -> None:
     for stat in (e2e, prefill, upstream, gap, ttft):
         print(stat.summary())
 
+    print("\n--- runtime signals ---")
+    defer_n = sum(1 for r in stream_miss if r.get("streaming_defer"))
+    print(f"  streaming_defer: {defer_n}/{len(stream_miss)} ({(defer_n / len(stream_miss) * 100) if stream_miss else 0:.1f}%)")
+    passthrough_n = sum(1 for r in stream_miss if r.get("request_passthrough"))
+    print(
+        f"  request_passthrough: {passthrough_n}/{len(stream_miss)} "
+        f"({(passthrough_n / len(stream_miss) * 100) if stream_miss else 0:.1f}%)"
+    )
+    session_counts = Counter(str(r.get("session_store") or "none") for r in stream_miss)
+    print(f"  session_store: {dict(session_counts)}")
+    pchr = sorted(float(r["prompt_cache_hit_ratio"]) for r in stream_miss if r.get("prompt_cache_hit_ratio") is not None)
+    if pchr:
+        print(f"  prompt_cache_hit_ratio: p50={st.median(pchr):.2f} mean={st.mean(pchr):.2f}")
+    retired = sorted(int(r.get("retired_prefix_messages") or 0) for r in stream_miss if int(r.get("retired_prefix_messages") or 0) > 0)
+    if retired:
+        print(f"  retired_prefix_messages: requests={len(retired)} p50={st.median(retired):.0f} max={max(retired)}")
+    affinity_counts = Counter(str(r.get("affinity_kind") or "unknown") for r in stream_miss)
+    print(f"  affinity_kind: {dict(affinity_counts)}")
+    stable_session_counts = Counter(str(r.get("stable_session_kind") or "unknown") for r in stream_miss)
+    print(f"  stable_session_kind: {dict(stable_session_counts)}")
+    reject_counts = Counter(
+        str(r.get("streaming_defer_reject_reason") or "none")
+        for r in stream_miss
+        if not r.get("streaming_defer")
+    )
+    if reject_counts:
+        print(f"  defer_reject_reason: {dict(reject_counts)}")
+
+    print("\n--- by defer ---")
+    for defer_flag in (True, False):
+        items = [r for r in stream_miss if bool(r.get("streaming_defer")) == defer_flag]
+        if not items:
+            continue
+        label = "defer" if defer_flag else "non_defer"
+        pf_med = med(items, "prefill_ms")
+        up_med = med(items, "upstream_latency_ms")
+        out_bytes = sorted(
+            int(r.get("upstream_outbound_bytes") or r.get("content_length") or 0) for r in items
+        )
+        out_med = st.median(out_bytes) if out_bytes else 0
+        print(
+            f"  {label}: n={len(items)} "
+            f"prefill_p50={(pf_med or 0):.0f} "
+            f"upstream_p50={(up_med or 0):.0f} "
+            f"upstream_body_p50={out_med / 1024:.0f}KB"
+        )
+
+    print("\n--- by passthrough ---")
+    for passthrough_flag in (True, False):
+        items = [r for r in stream_miss if bool(r.get("request_passthrough")) == passthrough_flag]
+        if not items:
+            continue
+        label = "passthrough" if passthrough_flag else "non_passthrough"
+        pf_med = med(items, "prefill_ms")
+        up_med = med(items, "upstream_latency_ms")
+        gap_vals = [
+            float(r["prefill_ms"]) - float(r["upstream_latency_ms"])
+            for r in items
+            if r.get("prefill_ms") is not None and r.get("upstream_latency_ms") is not None
+        ]
+        gap_med = st.median(gap_vals) if gap_vals else 0
+        out_bytes = sorted(
+            int(r.get("upstream_outbound_bytes") or r.get("content_length") or 0) for r in items
+        )
+        out_med = st.median(out_bytes) if out_bytes else 0
+        prefix_lens = sorted(
+            int(r.get("request_passthrough_prefix_len") or 0)
+            for r in items
+            if r.get("request_passthrough_prefix_len")
+        )
+        prefix_med = st.median(prefix_lens) if prefix_lens else 0
+        print(
+            f"  {label}: n={len(items)} "
+            f"prefill_p50={(pf_med or 0):.0f} "
+            f"upstream_p50={(up_med or 0):.0f} "
+            f"gap_p50={gap_med:.0f} "
+            f"upstream_body_p50={out_med / 1024:.0f}KB"
+            + (f" prefix_p50={prefix_med / 1024:.1f}KB" if passthrough_flag and prefix_lens else "")
+        )
+
     print("\n--- by pipeline (median prefill / upstream / e2e) ---")
     for pipe, items in sorted(by_pipe.items(), key=lambda x: -len(x[1])):
         pf = [float(x["prefill_ms"]) for x in items if x.get("prefill_ms") is not None]
@@ -193,6 +277,24 @@ def analyze_trace_rows(rows: list[dict], *, label: str = "trace") -> None:
             f"prefill_p50={pf_med:.0f}  upstream_p50={up_med:.0f}"
         )
 
+    print("\n--- by body size × defer ---")
+    for bucket in ("lt_200KB", "200KB_1MB", "ge_1MB"):
+        items = by_bucket.get(bucket, [])
+        if not items:
+            continue
+        for defer_flag in (True, False):
+            subset = [r for r in items if bool(r.get("streaming_defer")) == defer_flag]
+            if not subset:
+                continue
+            label = "defer" if defer_flag else "non_defer"
+            pf_med = med(subset, "prefill_ms")
+            up_med = med(subset, "upstream_latency_ms")
+            print(
+                f"  {bucket}/{label}: n={len(subset)} "
+                f"prefill_p50={(pf_med or 0):.0f} "
+                f"upstream_p50={(up_med or 0):.0f}"
+            )
+
     print("\n--- top 5 slowest prefill ---")
     ranked = sorted(
         stream_miss,
@@ -204,6 +306,7 @@ def analyze_trace_rows(rows: list[dict], *, label: str = "trace") -> None:
         print(
             f"  prefill={pf:.0f} upstream={r.get('upstream_latency_ms')} e2e={r.get('latency_ms')} "
             f"body_kb={int(r.get('content_length') or 0) // 1024} "
+            f"defer={bool(r.get('streaming_defer'))} session_store={r.get('session_store') or 'none'} "
             f"model={r.get('model')} pipeline={r.get('pipeline')} "
             f"hash={str(r.get('request_hash', ''))[:12]}"
         )
@@ -329,6 +432,13 @@ def analyze_metrics(text: str) -> None:
     for name in sorted(defer):
         short = name.replace("gateway_streaming_defer_", "")
         print(f"  {short}: {defer[name]:.0f}")
+
+    print("\n=== Prometheus: request passthrough ===")
+    passthrough = parse_prometheus_counters(text, "gateway_request_passthrough")
+    if not passthrough:
+        print("  (no gateway_request_passthrough_total — process may predate passthrough)")
+    for name in sorted(passthrough):
+        print(f"  {name}: {passthrough[name]:.0f}")
 
     print("\n=== Prometheus: phase latency (sum/count → avg ms) ===")
     sums = parse_prometheus_counters(text, "gateway_request_phase_latency_seconds_sum")

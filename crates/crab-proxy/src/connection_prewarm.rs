@@ -92,9 +92,7 @@ pub async fn prewarm_direct(
     match connector.get_http_session(&peer).await {
         Ok((session, _reused)) => {
             // Release back to pool with no idle timeout override (use pool default).
-            connector
-                .release_http_session(session, &peer, None)
-                .await;
+            connector.release_http_session(session, &peer, None).await;
             debug!(
                 addr = %peer,
                 sni = %peer.sni,

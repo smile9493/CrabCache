@@ -7,9 +7,9 @@ use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::GatewayContext;
 use crate::debug_agent_log;
 use crate::error_jsons::{
-    client_concurrency_exceeded_error_json,
-    deepseek_user_concurrency_exceeded_error_json, missing_reasoning_error_json,
-    upstream_pool_exhausted_error_details, upstream_pool_exhausted_error_json,
+    client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
+    missing_reasoning_error_json, upstream_pool_exhausted_error_details,
+    upstream_pool_exhausted_error_json,
 };
 use crate::helper_fns::{
     client_session_from_authorization, fingerprint_client_key, is_models_endpoint,
@@ -17,7 +17,10 @@ use crate::helper_fns::{
 };
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
-use crate::send_helpers::{send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok};
+use crate::send_helpers::{
+    send_cors_preflight, send_json_error, send_json_error_with_retry_after, send_json_ok,
+};
+use crate::streaming_body_forward::{body_user_from_payload, refresh_affinity_key};
 use crate::tenant::{
     ProjectResolveError, derive_project_id_from_client_key, effective_cache_namespace,
     resolve_project_id,
@@ -29,7 +32,6 @@ use crab_pipeline::{
     PipelineOverride, PipelineRequestContext, PipelineSelection, RequestPipeline, UpstreamProvider,
     select_request_pipeline, validate_pipeline_override,
 };
-use crate::streaming_body_forward::{body_user_from_payload, refresh_affinity_key};
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, StreamAccumulator, prepare_generic_request,
     prepare_light_request, prepare_mimo_request, prepare_upstream_request,
@@ -42,6 +44,18 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
+
+fn mimo_direct_passthrough(pipeline: RequestPipeline) -> bool {
+    GatewayProxy::is_mimo_pipeline(pipeline)
+}
+
+fn request_passthrough_allowed_pipeline(pipeline: RequestPipeline) -> bool {
+    mimo_direct_passthrough(pipeline)
+}
+
+fn streaming_defer_allowed_pipeline(pipeline: RequestPipeline) -> bool {
+    crate::streaming_body_forward::pipeline_eligible(pipeline) && !mimo_direct_passthrough(pipeline)
+}
 
 /// Shared path after the full client body is available (normal read or streaming finalize).
 async fn run_post_body_phases(
@@ -65,7 +79,6 @@ async fn run_post_body_phases(
     ctx.original_request_body = Some(full_body.clone());
     timeline_stamp(&mut ctx.timeline.body_read_done);
 
-
     let quick = quick_parse_request_fields(&full_body);
     let profile = proxy.state.runtime.default_profile();
     let fallback_model = profile.fallback_model.clone();
@@ -75,9 +88,7 @@ async fn run_post_body_phases(
         .unwrap_or(fallback_model);
     ctx.is_streaming = quick.stream.unwrap_or(false);
 
-    ctx.conversation_id = quick
-        .conversation_id
-        .or(conversation_id_from_header);
+    ctx.conversation_id = quick.conversation_id.or(conversation_id_from_header);
 
     ctx.prompt_cache_key = quick.prompt_cache_key;
 
@@ -98,6 +109,7 @@ async fn run_post_body_phases(
     ctx.upstream.affinity_key = Some(extract_affinity_key(
         &affinity_headers,
         &client_ip,
+        ctx.conversation_id.as_deref(),
         ctx.prompt_cache_key.as_deref(),
         ctx.project_id.as_deref(),
         ctx.session_fingerprint.as_deref(),
@@ -168,8 +180,7 @@ async fn run_post_body_phases(
                 message = %msg,
                 "Rejecting request: invalid pipeline override for upstream profile"
             );
-            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await
-            {
+            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
                 let _ = session.respond_error(400).await;
             }
             return Ok(true);
@@ -231,73 +242,7 @@ async fn run_post_body_phases(
         }
     }
 
-    let parsed_payload = match proxy.ensure_client_payload(
-        ctx,
-        &full_body,
-        Some(selection.pipeline.as_str()),
-    ) {
-        Ok(p) => p,
-        Err(parse_err) => {
-            let preview: String = full_body
-                .iter()
-                .take(32)
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            warn!(
-                request_id = %ctx.request_id,
-                model = %ctx.model,
-                body_len = full_body.len(),
-                body_prefix_hex = %preview,
-                parse_error = %parse_err,
-                streaming_defer = ctx.streaming_body.active,
-                deferred_partial_len = ctx.streaming_body.deferred_partial_len,
-                "Rejecting request: client JSON parse failed"
-            );
-            let body = serde_json::json!({
-                "error": {
-                    "message": format!("Invalid JSON in request body: {parse_err}"),
-                    "type": "invalid_request_error",
-                    "code": "invalid_json"
-                }
-            });
-            let body_str = body.to_string();
-            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await
-            {
-                let _ = session.respond_error(400).await;
-            }
-            if ctx.streaming_body.active {
-                ctx.streaming_body.suppress_upstream = true;
-                global_metrics().record_streaming_defer_parse_fail();
-                proxy.state.streaming_defer_circuit_breaker.record_failure();
-            }
-            return Ok(true);
-        }
-    };
-    let parse_elapsed = ctx
-        .timeline
-        .json_parse_done
-        .map(|t| t.duration_since(ctx.request_start))
-        .unwrap_or_default();
-    if ctx.session_fingerprint.is_none() {
-        ctx.session_fingerprint =
-            crab_capture::session_fingerprint_from_payload(parsed_payload.as_ref());
-    }
-    refresh_affinity_key(
-        ctx,
-        &affinity_headers,
-        &client_ip,
-        body_user_from_payload(parsed_payload.as_ref()),
-    );
-    let payload = parsed_payload.as_ref();
-
-    // ─── Phase 4: Preparation (reasoning preprocessing, composition extraction) ───
-    let active_profile = proxy.active_upstream_profile(ctx);
-    let upstream_base_url = active_profile.base_url.clone();
-    let profile_fallback = active_profile.fallback_model.clone();
-    let reasoning_cfg = proxy.reasoning_config();
-    ctx.cached_reasoning_config = reasoning_cfg.clone();
-
-    // Stable ReasoningStore scope (deepseek-cursor-proxy style): header id > client sk-cc > req hash.
+    // Stable session id (ReasoningStore + session store): conv > pck > sk-cc > req hash.
     let client_session = client_session_from_authorization(ctx.authorization.as_deref());
     let client_session_for_log = client_session.clone();
     let stable_session_buf = ctx
@@ -312,13 +257,23 @@ async fn run_post_body_phases(
         });
     let stable_session = stable_session_buf.as_deref();
 
+    // ─── Phase 4: Preparation (reasoning preprocessing, composition extraction) ───
+    let active_profile = proxy.active_upstream_profile(ctx);
+    let upstream_base_url = active_profile.base_url.clone();
+    let profile_fallback = active_profile.fallback_model.clone();
+    let reasoning_cfg = proxy.reasoning_config();
+    ctx.cached_reasoning_config = reasoning_cfg.clone();
+
     let (stable_session_kind, stable_session_prefix) = stable_session_log_fields(
         ctx.conversation_id.as_deref(),
         ctx.prompt_cache_key.as_deref(),
         client_session_for_log.as_deref(),
         ctx.req_hash.as_deref(),
     );
+    ctx.stable_session_kind = Some(stable_session_kind.to_string());
 
+    let direct_mimo = mimo_direct_passthrough(selection.pipeline);
+    let mut parse_elapsed = std::time::Duration::default();
     let mut reject_missing = false;
     let mut patched = 0usize;
     let mut missing = 0usize;
@@ -327,83 +282,161 @@ async fn run_post_body_phases(
     #[allow(unused_assignments)]
     let mut upstream_model_log = ctx.model.clone();
     let mut namespace_preview = String::new();
-    let effective_user_id = ctx.project_id.as_deref();
+    let effective_user_id = ctx.project_id.clone();
 
     let prepare_start = Instant::now();
-    match selection.pipeline {
-        RequestPipeline::CursorDeepSeekV4 => {
-            let prepared = prepare_upstream_request(
-                payload,
-                Some(&proxy.state.reasoning_store),
-                &upstream_base_url,
-                &profile_fallback,
-                &reasoning_cfg.thinking_mode,
-                &reasoning_cfg.reasoning_effort,
-                &reasoning_cfg.missing_reasoning_strategy,
-                reasoning_cfg.context_summary_message_threshold,
-                reasoning_cfg.prefix_validate,
-                ctx.authorization.as_deref(),
+    if direct_mimo {
+        ctx.new_request_body = Some(full_body.clone());
+        ctx.upstream_body_for_capture = Some(full_body.clone());
+    } else {
+        let mut parsed_payload =
+            match proxy.ensure_client_payload(ctx, &full_body, Some(selection.pipeline.as_str())) {
+                Ok(p) => p,
+                Err(parse_err) => {
+                    let preview: String = full_body
+                        .iter()
+                        .take(32)
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
+                    warn!(
+                        request_id = %ctx.request_id,
+                        model = %ctx.model,
+                        body_len = full_body.len(),
+                        body_prefix_hex = %preview,
+                        parse_error = %parse_err,
+                        streaming_defer = ctx.streaming_body.active,
+                        deferred_partial_len = ctx.streaming_body.deferred_partial_len,
+                        "Rejecting request: client JSON parse failed"
+                    );
+                    let body = serde_json::json!({
+                        "error": {
+                            "message": format!("Invalid JSON in request body: {parse_err}"),
+                            "type": "invalid_request_error",
+                            "code": "invalid_json"
+                        }
+                    });
+                    let body_str = body.to_string();
+                    if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes())
+                        .await
+                    {
+                        let _ = session.respond_error(400).await;
+                    }
+                    if ctx.streaming_body.active {
+                        ctx.streaming_body.suppress_upstream = true;
+                        global_metrics().record_streaming_defer_parse_fail();
+                        proxy.state.streaming_defer_circuit_breaker.record_failure();
+                    }
+                    return Ok(true);
+                }
+            };
+        parse_elapsed = ctx
+            .timeline
+            .json_parse_done
+            .map(|t| t.duration_since(ctx.request_start))
+            .unwrap_or_default();
+        if ctx.session_fingerprint.is_none() {
+            ctx.session_fingerprint =
+                crab_capture::session_fingerprint_from_payload(parsed_payload.as_ref());
+        }
+        refresh_affinity_key(
+            ctx,
+            &affinity_headers,
+            &client_ip,
+            body_user_from_payload(parsed_payload.as_ref()),
+        );
+
+        if GatewayProxy::is_mimo_pipeline(selection.pipeline)
+            && let Some(store) = &proxy.state.session_store
+        {
+            let cache_namespace = effective_cache_namespace(
+                proxy.state.cache_key_namespace.as_deref(),
+                ctx.project_id.as_deref(),
+            );
+            crate::session_store::apply_mimo_session_store(
+                store,
+                &proxy.state.features,
+                ctx,
+                &mut parsed_payload,
                 stable_session,
-                alias_upstream_model,
-                effective_user_id,
-            );
-            patched = prepared.patched_reasoning_messages;
-            missing = prepared.missing_reasoning_messages;
-            recovered = prepared.recovered_reasoning_messages;
-            retired_prefix = prepared.retired_prefix_messages;
-            upstream_model_log = prepared.upstream_model.clone();
-            namespace_preview = prepared.cache_namespace.chars().take(8).collect();
-            reject_missing =
-                missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
-            ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
-            ctx.retired_prefix_messages = Some(prepared.retired_prefix_messages);
-            ctx.prepared_request = Some(prepared.clone());
-            ctx.new_request_body = Some(Bytes::from(
-                serde_json::to_vec(&prepared.payload).unwrap_or_default(),
-            ));
-            if ctx.is_streaming {
-                ctx.stream.accumulator = Some(StreamAccumulator::new());
-                ctx.stream.display_adapter = reasoning_cfg.display_reasoning.then(|| {
-                    CursorReasoningDisplayAdapter::new(reasoning_cfg.collapsible_reasoning)
-                });
+                cache_namespace.as_deref(),
+            )
+            .await;
+        }
+
+        let payload = parsed_payload.as_ref();
+
+        match selection.pipeline {
+            RequestPipeline::CursorDeepSeekV4 => {
+                let prepared = prepare_upstream_request(
+                    payload,
+                    Some(&proxy.state.reasoning_store),
+                    &upstream_base_url,
+                    &profile_fallback,
+                    &reasoning_cfg.thinking_mode,
+                    &reasoning_cfg.reasoning_effort,
+                    &reasoning_cfg.missing_reasoning_strategy,
+                    reasoning_cfg.context_summary_message_threshold,
+                    reasoning_cfg.prefix_validate,
+                    ctx.authorization.as_deref(),
+                    stable_session,
+                    alias_upstream_model,
+                    effective_user_id.as_deref(),
+                );
+                patched = prepared.patched_reasoning_messages;
+                missing = prepared.missing_reasoning_messages;
+                recovered = prepared.recovered_reasoning_messages;
+                retired_prefix = prepared.retired_prefix_messages;
+                upstream_model_log = prepared.upstream_model.clone();
+                namespace_preview = prepared.cache_namespace.chars().take(8).collect();
+                reject_missing = missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
+                ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
+                ctx.retired_prefix_messages = Some(prepared.retired_prefix_messages);
+                ctx.prepared_request = Some(prepared.clone());
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&prepared.payload).unwrap_or_default(),
+                ));
+                if ctx.is_streaming {
+                    ctx.stream.accumulator = Some(StreamAccumulator::new());
+                    ctx.stream.display_adapter = reasoning_cfg.display_reasoning.then(|| {
+                        CursorReasoningDisplayAdapter::new(reasoning_cfg.collapsible_reasoning)
+                    });
+                }
             }
-        }
-        RequestPipeline::DeepSeekLight => {
-            let light = prepare_light_request(
-                payload,
-                &profile_fallback,
-                alias_upstream_model,
-                effective_user_id,
-            );
-            upstream_model_log = light.upstream_model.clone();
-            ctx.new_request_body = Some(Bytes::from(
-                serde_json::to_vec(&light.payload).unwrap_or_default(),
-            ));
-        }
-        RequestPipeline::GenericRelay => {
-            let generic = prepare_generic_request(payload);
-            upstream_model_log = generic.model.clone();
-            ctx.new_request_body = Some(Bytes::from(
-                serde_json::to_vec(&generic.payload).unwrap_or_default(),
-            ));
-        }
-        RequestPipeline::MimoRelay
-        | RequestPipeline::MimoTokenPlanRelay
-        | RequestPipeline::MimoPaygRelay => {
-            let features = &proxy.state.features;
-            let mimo = prepare_mimo_request(
-                payload,
-                &profile_fallback,
-                features.mimo_retire_prefix_messages,
-                features.mimo_keep_recent_turns,
-            );
-            retired_prefix = mimo.retired_prefix_messages;
-            ctx.retired_prefix_messages = Some(mimo.retired_prefix_messages);
-            upstream_model_log = mimo.model.clone();
-            ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload));
-            ctx.new_request_body = mimo
-                .serialized_body
-                .map(Bytes::from);
+            RequestPipeline::DeepSeekLight => {
+                let light = prepare_light_request(
+                    payload,
+                    &profile_fallback,
+                    alias_upstream_model,
+                    effective_user_id.as_deref(),
+                );
+                upstream_model_log = light.upstream_model.clone();
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&light.payload).unwrap_or_default(),
+                ));
+            }
+            RequestPipeline::GenericRelay => {
+                let generic = prepare_generic_request(payload);
+                upstream_model_log = generic.model.clone();
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&generic.payload).unwrap_or_default(),
+                ));
+            }
+            RequestPipeline::MimoRelay
+            | RequestPipeline::MimoTokenPlanRelay
+            | RequestPipeline::MimoPaygRelay => {
+                let features = &proxy.state.features;
+                let mimo = prepare_mimo_request(
+                    payload,
+                    &profile_fallback,
+                    features.mimo_retire_prefix_messages,
+                    features.mimo_keep_recent_turns,
+                );
+                retired_prefix = mimo.retired_prefix_messages;
+                ctx.retired_prefix_messages = Some(mimo.retired_prefix_messages);
+                upstream_model_log = mimo.model.clone();
+                ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload));
+                ctx.new_request_body = mimo.serialized_body.map(Bytes::from);
+            }
         }
     }
     let prepare_elapsed = prepare_start.elapsed();
@@ -414,7 +447,6 @@ async fn run_post_body_phases(
         Some(selection.pipeline.as_str()),
     );
     ctx.upstream_model = Some(upstream_model_log.clone());
-
     if selection.provider == UpstreamProvider::Deepseek
         && let Some(user_id) = ctx.project_id.as_deref()
         && let Some(tier) = classify_deepseek_v4_tier(&upstream_model_log)
@@ -469,8 +501,9 @@ async fn run_post_body_phases(
         .req_hash
         .as_deref()
         .map(|h| h.chars().take(8).collect::<String>());
-    let message_count = payload
-        .get("messages")
+    let payload_for_logs = ctx.parsed_request_payload.as_deref();
+    let message_count = payload_for_logs
+        .and_then(|payload| payload.get("messages"))
         .and_then(|m| m.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
@@ -482,7 +515,7 @@ async fn run_post_body_phases(
             "request_id": ctx.request_id,
             "req_hash": req_hash_short,
             "message_count": message_count,
-            "last_user_fp": last_user_message_fingerprint(payload),
+            "last_user_fp": payload_for_logs.and_then(last_user_message_fingerprint),
             "stable_session_kind": stable_session_kind,
             "stable_session_prefix": stable_session_prefix,
             "missing": missing,
@@ -542,11 +575,12 @@ async fn run_post_body_phases(
         .clone()
         .unwrap_or_else(|| full_body.clone());
     ctx.upstream_outbound_body_len = new_body.len();
-    if ctx.parsed_upstream_payload.is_none() {
+    if ctx.parsed_upstream_payload.is_none() && !direct_mimo {
         let upstream_parse_start = Instant::now();
-        ctx.parsed_upstream_payload = serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
-            .ok()
-            .map(Arc::new);
+        ctx.parsed_upstream_payload =
+            serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
+                .ok()
+                .map(Arc::new);
         global_metrics().record_request_body_stage(
             "json_parse_upstream",
             upstream_parse_start.elapsed(),
@@ -583,7 +617,7 @@ async fn run_post_body_phases(
                 "inbound_bytes": ctx.content_length,
                 "outbound_bytes": ctx.upstream_outbound_body_len,
                 "outbound_fp": outbound_fp,
-                "last_user_fp": last_user_message_fingerprint(payload),
+                "last_user_fp": payload_for_logs.and_then(last_user_message_fingerprint),
                 "recovered": recovered,
                 "retired_prefix": retired_prefix,
             }),
@@ -703,9 +737,49 @@ async fn run_post_body_phases(
     Ok(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{
+        mimo_direct_passthrough, request_passthrough_allowed_pipeline,
+        streaming_defer_allowed_pipeline,
+    };
+    use crab_pipeline::RequestPipeline;
 
-/// Early pipeline select on a partial body so `upstream_peer` can run before EOS.
-fn try_arm_streaming_defer_on_partial_body(
+    #[test]
+    fn mimo_pipelines_use_direct_passthrough() {
+        assert!(mimo_direct_passthrough(RequestPipeline::MimoRelay));
+        assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
+        assert!(mimo_direct_passthrough(RequestPipeline::MimoPaygRelay));
+        assert!(!mimo_direct_passthrough(RequestPipeline::GenericRelay));
+        assert!(!mimo_direct_passthrough(RequestPipeline::CursorDeepSeekV4));
+    }
+
+    #[test]
+    fn mimo_pipelines_do_not_arm_streaming_defer() {
+        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoRelay));
+        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoTokenPlanRelay));
+        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoPaygRelay));
+    }
+
+    #[test]
+    fn mimo_pipelines_allow_request_passthrough() {
+        assert!(request_passthrough_allowed_pipeline(
+            RequestPipeline::MimoRelay
+        ));
+        assert!(request_passthrough_allowed_pipeline(
+            RequestPipeline::MimoTokenPlanRelay
+        ));
+        assert!(request_passthrough_allowed_pipeline(
+            RequestPipeline::MimoPaygRelay
+        ));
+        assert!(!request_passthrough_allowed_pipeline(
+            RequestPipeline::GenericRelay
+        ));
+    }
+}
+
+/// Early pipeline select on a partial body so direct MiMo relay can start before EOS.
+fn try_arm_mimo_request_passthrough_on_partial_body(
     proxy: &GatewayProxy,
     session: &mut Session,
     ctx: &mut GatewayContext,
@@ -718,22 +792,17 @@ fn try_arm_streaming_defer_on_partial_body(
     domain_pipeline: &Option<String>,
     domain_upstream_profile: &Option<String>,
 ) -> bool {
-    // Safety guard: only defer when the client body is large enough to justify overlapping
-    // upstream connect. Small bodies (a few KB) are more likely to be incomplete JSON prefixes
-    // during early reads, which would lead to upstream seeing an empty/invalid body.
-    const MIN_STREAMING_DEFER_BYTES: usize = 32 * 1024;
-    if !proxy.state.streaming_defer_circuit_breaker.defer_allowed() {
+    const MIN_PASSTHROUGH_PREFIX_BYTES: usize = 1024;
+    if !crate::streaming_body_forward::feature_enabled(proxy) {
         return false;
     }
-    if !crate::streaming_body_forward::feature_enabled(proxy)
-        || !crate::streaming_body_forward::path_eligible(req_path, req_method)
-        || partial_body.len() < MIN_STREAMING_DEFER_BYTES
-        || partial_body.len() < 48
-    {
+    if !crate::streaming_body_forward::path_eligible(req_path, req_method) {
         return false;
     }
-    let inbound_cl = ctx.streaming_body.inbound_content_length;
-    if crate::streaming_body_forward::defer_body_incomplete(partial_body, inbound_cl) {
+    if session.is_body_done() || partial_body.len() < MIN_PASSTHROUGH_PREFIX_BYTES {
+        return false;
+    }
+    if !crate::streaming_body_forward::defer_partial_ready_for_arm(partial_body) {
         return false;
     }
     let quick = quick_parse_request_fields(partial_body);
@@ -767,15 +836,115 @@ fn try_arm_streaming_defer_on_partial_body(
         &proxy.state.runtime.profile_descriptors(),
         &pipe_ctx,
     );
-    if !crate::streaming_body_forward::try_arm_defer(
+    if !request_passthrough_allowed_pipeline(selection.pipeline) {
+        return false;
+    }
+    ctx.request_pipeline = Some(selection.pipeline);
+    ctx.pipeline_reason = Some(selection.reason);
+    ctx.upstream_profile_id = Some(selection.upstream_profile_id);
+    ctx.upstream_model = Some(ctx.model.clone());
+    global_metrics().record_pipeline_selected(
+        selection.pipeline.as_str(),
+        ctx.upstream_profile_id.as_deref().unwrap_or("default"),
+        selection.reason.as_str(),
+    );
+    timeline_stamp(&mut ctx.timeline.pipeline_select_done);
+    true
+}
+
+/// Early pipeline select on a partial body so `upstream_peer` can run before EOS.
+fn try_arm_streaming_defer_on_partial_body(
+    proxy: &GatewayProxy,
+    session: &mut Session,
+    ctx: &mut GatewayContext,
+    partial_body: &[u8],
+    req_path: &str,
+    req_method: &http::Method,
+    user_agent: &Option<String>,
+    key_pipeline: &Option<String>,
+    key_upstream_profile: &Option<String>,
+    domain_pipeline: &Option<String>,
+    domain_upstream_profile: &Option<String>,
+) -> bool {
+    fn reject(ctx: &mut GatewayContext, reason: &str) -> bool {
+        ctx.streaming_defer_reject_reason = Some(reason.to_string());
+        false
+    }
+
+    // Safety guard: only defer when the client body is large enough to justify overlapping
+    // upstream connect. Small bodies (a few KB) are more likely to be incomplete JSON prefixes
+    // during early reads, which would lead to upstream seeing an empty/invalid body.
+    const MIN_STREAMING_DEFER_BYTES: usize = 32 * 1024;
+    if !proxy.state.streaming_defer_circuit_breaker.defer_allowed() {
+        return reject(ctx, "circuit_open");
+    }
+    if !crate::streaming_body_forward::feature_enabled(proxy) {
+        return reject(ctx, "feature_disabled");
+    }
+    if !crate::streaming_body_forward::path_eligible(req_path, req_method) {
+        return reject(ctx, "path_ineligible");
+    }
+    if partial_body.len() < MIN_STREAMING_DEFER_BYTES {
+        return reject(ctx, "below_min_bytes");
+    }
+    if partial_body.len() < 48 {
+        return reject(ctx, "below_min_prefix");
+    }
+    if !crate::streaming_body_forward::defer_partial_ready_for_arm(partial_body) {
+        return reject(ctx, "body_incomplete");
+    }
+    let quick = quick_parse_request_fields(partial_body);
+    let Some(model) = quick.model.filter(|m| !m.is_empty()) else {
+        return reject(ctx, "model_missing");
+    };
+    ctx.model = model;
+    ctx.is_streaming = quick.stream.unwrap_or(false);
+    if !ctx.is_streaming {
+        return reject(ctx, "non_streaming_request");
+    }
+    ctx.conversation_id = quick
+        .conversation_id
+        .clone()
+        .or_else(|| ctx.conversation_id.clone());
+    ctx.prompt_cache_key = quick.prompt_cache_key.or(ctx.prompt_cache_key.clone());
+
+    let pipeline_globals = proxy.state.runtime.pipeline_globals();
+    let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
+    let pipe_ctx = PipelineRequestContext {
+        model: &ctx.model,
+        payload: None,
+        key_pipeline: key_pipeline.as_deref().map(PipelineOverride::from_str),
+        key_upstream_profile: key_upstream_profile.as_deref(),
+        domain_pipeline: domain_pipeline.as_deref().map(PipelineOverride::from_str),
+        domain_upstream_profile: domain_upstream_profile.as_deref(),
+        conversation_id_header: ctx.conversation_id.as_deref(),
+        user_agent: user_agent.as_deref(),
+        alias_upstream_model: model_alias_entry.map(|e| e.upstream.as_str()),
+        model_alias_pipeline: model_alias_entry.map(|e| e.pipeline),
+    };
+    let selection = select_request_pipeline(
+        &pipeline_globals,
+        &proxy.state.runtime.profile_descriptors(),
+        &pipe_ctx,
+    );
+    if mimo_direct_passthrough(selection.pipeline) {
+        return reject(ctx, "direct_passthrough_pipeline");
+    }
+    if !streaming_defer_allowed_pipeline(selection.pipeline)
+        || !crate::streaming_body_forward::try_arm_defer(
         proxy,
         req_path,
         req_method,
         selection.pipeline,
         session,
     ) {
-        return false;
+        return if !streaming_defer_allowed_pipeline(selection.pipeline) {
+            reject(ctx, "pipeline_ineligible")
+        } else {
+            reject(ctx, "defer_gate_blocked")
+        };
     }
+    ctx.streaming_defer_reject_reason = None;
     ctx.request_pipeline = Some(selection.pipeline);
     ctx.pipeline_reason = Some(selection.reason);
     ctx.upstream_profile_id = Some(selection.upstream_profile_id);
@@ -804,6 +973,24 @@ async fn streaming_deferred_handoff(
     ctx.streaming_body.buffer = partial_body;
     // Prepared body is injected at client EOS; use a dedicated flag (not retry_buffer_truncated).
     ctx.streaming_body.streaming_defer_emit_at_eos = true;
+    // #region debug-point A:defer-arm
+    debug_agent_log(
+        "A",
+        "request_filter.rs:streaming_deferred_handoff",
+        "[DEBUG] streaming defer armed",
+        serde_json::json!({
+            "request_id": ctx.request_id,
+            "partial_len": ctx.streaming_body.buffer.len(),
+            "inbound_content_length": ctx.streaming_body.inbound_content_length,
+            "is_streaming": ctx.is_streaming,
+            "pipeline": ctx.request_pipeline.map(|p| format!("{p:?}")),
+            "send_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
+            "session_is_body_done_at_arm": session.is_body_done(),
+            "retry_buffer_truncated_at_arm": session.retry_buffer_truncated(),
+            "retry_buffer_len_at_arm": session.get_retry_buffer().map(|b| b.len()),
+        }),
+    );
+    // #endregion
     if !proxy.try_acquire_upstream_key(ctx) {
         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
         let failure = pool.diagnose_acquire_failure();
@@ -821,6 +1008,53 @@ async fn streaming_deferred_handoff(
         return Ok(true);
     }
     global_metrics().record_streaming_defer_total();
+    Ok(false)
+}
+
+/// Direct MiMo body relay: only the sniffed prefix is buffered locally, later chunks pass through.
+async fn request_passthrough_handoff(
+    proxy: &GatewayProxy,
+    session: &mut Session,
+    ctx: &mut GatewayContext,
+    partial_body: Vec<u8>,
+) -> Result<bool> {
+    if partial_body.is_empty() {
+        let _ = session.respond_error(400).await;
+        return Ok(true);
+    }
+    ctx.request_passthrough.active = true;
+    ctx.request_passthrough.armed_prefix_len = partial_body.len();
+    ctx.request_passthrough.buffer = partial_body;
+    ctx.request_passthrough.prefix_emitted = false;
+    ctx.request_passthrough.finalized = false;
+    ctx.upstream.retry_budget = 0;
+    global_metrics().record_request_passthrough_total();
+    ctx.content_length = ctx
+        .streaming_body
+        .inbound_content_length
+        .unwrap_or(ctx.request_passthrough.buffer.len());
+    ctx.upstream_outbound_body_len = 0;
+    // Raw capture / exact-cache are intentionally disabled on this path; bodies are not buffered.
+    ctx.original_request_body = None;
+    ctx.parsed_request_payload = None;
+    ctx.upstream_body_for_capture = None;
+    ctx.parsed_upstream_payload = None;
+    if !proxy.try_acquire_upstream_key(ctx) {
+        let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
+        let failure = pool.diagnose_acquire_failure();
+        let (body, _code, retry_after) = upstream_pool_exhausted_error_details(failure);
+        if !send_json_error_with_retry_after(
+            session,
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            &body,
+            retry_after,
+        )
+        .await
+        {
+            let _ = session.respond_error(503).await;
+        }
+        return Ok(true);
+    }
     Ok(false)
 }
 
@@ -871,12 +1105,7 @@ async fn try_defer_finalize_early_exact_cache(
     ctx.cache_key = Some(early_key.clone());
     let reasoning_cfg = proxy.reasoning_config();
     proxy
-        .try_early_exact_cache(
-            session,
-            ctx,
-            &early_key,
-            reasoning_cfg.display_reasoning,
-        )
+        .try_early_exact_cache(session, ctx, &early_key, reasoning_cfg.display_reasoning)
         .await
 }
 
@@ -901,6 +1130,21 @@ pub(crate) async fn finalize_streaming_body(
             assembled_len = full_body.len(),
             "streaming defer body assembly"
         );
+        // #region debug-point B:finalize-assembled
+        debug_agent_log(
+            "B",
+            "request_filter.rs:finalize_streaming_body",
+            "[DEBUG] streaming defer finalized body",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "deferred_partial_len": deferred_partial_len,
+                "append_tail_bytes": append_tail_bytes,
+                "assembled_len": full_body.len(),
+                "inbound_content_length": ctx.streaming_body.inbound_content_length,
+                "emit_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
+            }),
+        );
+        // #endregion
         if full_body.len() < deferred_partial_len {
             warn!(
                 request_id = %ctx.request_id,
@@ -1271,8 +1515,7 @@ pub(crate) async fn run(
                 }
             });
             let body_str = body.to_string();
-            if !send_json_error(session, http::StatusCode::FORBIDDEN, body_str.as_bytes()).await
-            {
+            if !send_json_error(session, http::StatusCode::FORBIDDEN, body_str.as_bytes()).await {
                 let _ = session.respond_error(403).await;
             }
             return Ok(true);
@@ -1286,9 +1529,7 @@ pub(crate) async fn run(
                 }
             });
             let body_str = body.to_string();
-            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes())
-                .await
-            {
+            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
                 let _ = session.respond_error(400).await;
             }
             return Ok(true);
@@ -1377,6 +1618,23 @@ pub(crate) async fn run(
                 full_body.extend_from_slice(&data);
             }
             None => break,
+        }
+        if !ctx.request_passthrough.active
+            && try_arm_mimo_request_passthrough_on_partial_body(
+                proxy,
+                session,
+                ctx,
+                &full_body,
+                &req_path,
+                &req_method,
+                &user_agent,
+                &key_pipeline,
+                &key_upstream_profile,
+                &domain_pipeline,
+                &domain_upstream_profile,
+            )
+        {
+            return request_passthrough_handoff(proxy, session, ctx, full_body).await;
         }
         if !ctx.streaming_body.active
             && !session.is_body_done()

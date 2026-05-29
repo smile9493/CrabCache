@@ -106,6 +106,11 @@ pub struct GatewayMetrics {
     pub streaming_defer_parse_fail_total: IntCounter,
     pub streaming_defer_empty_body_total: IntCounter,
     pub streaming_defer_suppress_total: IntCounter,
+    pub session_store_hit_total: IntCounter,
+    pub session_store_miss_total: IntCounter,
+    pub session_store_prefix_break_total: IntCounter,
+    pub session_store_upstream_bytes_saved: IntCounter,
+    pub request_passthrough_total: IntCounter,
 }
 
 impl GatewayMetrics {
@@ -511,6 +516,27 @@ impl GatewayMetrics {
             "Streaming defer upstream chunk suppressions",
         )?;
 
+        let session_store_hit_total = IntCounter::new(
+            "gateway_session_store_hit_total",
+            "MiMo session store Redis hits (append-only merge)",
+        )?;
+        let session_store_miss_total = IntCounter::new(
+            "gateway_session_store_miss_total",
+            "MiMo session store Redis misses",
+        )?;
+        let session_store_prefix_break_total = IntCounter::new(
+            "gateway_session_store_prefix_break_total",
+            "MiMo session store prefix break fallbacks",
+        )?;
+        let session_store_upstream_bytes_saved = IntCounter::new(
+            "gateway_session_store_upstream_bytes_saved_total",
+            "Estimated upstream message bytes saved by session store merge",
+        )?;
+        let request_passthrough_total = IntCounter::new(
+            "gateway_request_passthrough_total",
+            "MiMo direct request passthrough handoffs (prefix sniff + chunk relay)",
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -567,6 +593,11 @@ impl GatewayMetrics {
             streaming_defer_parse_fail_total,
             streaming_defer_empty_body_total,
             streaming_defer_suppress_total,
+            session_store_hit_total,
+            session_store_miss_total,
+            session_store_prefix_break_total,
+            session_store_upstream_bytes_saved,
+            request_passthrough_total,
         })
     }
 
@@ -626,6 +657,11 @@ impl GatewayMetrics {
         registry.register(Box::new(self.streaming_defer_parse_fail_total.clone()))?;
         registry.register(Box::new(self.streaming_defer_empty_body_total.clone()))?;
         registry.register(Box::new(self.streaming_defer_suppress_total.clone()))?;
+        registry.register(Box::new(self.session_store_hit_total.clone()))?;
+        registry.register(Box::new(self.session_store_miss_total.clone()))?;
+        registry.register(Box::new(self.session_store_prefix_break_total.clone()))?;
+        registry.register(Box::new(self.session_store_upstream_bytes_saved.clone()))?;
+        registry.register(Box::new(self.request_passthrough_total.clone()))?;
         Ok(())
     }
 
@@ -651,6 +687,26 @@ impl GatewayMetrics {
 
     pub fn record_streaming_defer_suppress(&self) {
         self.streaming_defer_suppress_total.inc();
+    }
+
+    pub fn record_session_store_hit(&self) {
+        self.session_store_hit_total.inc();
+    }
+
+    pub fn record_session_store_miss(&self) {
+        self.session_store_miss_total.inc();
+    }
+
+    pub fn record_session_store_prefix_break(&self) {
+        self.session_store_prefix_break_total.inc();
+    }
+
+    pub fn record_session_store_upstream_bytes_saved(&self, bytes: u64) {
+        self.session_store_upstream_bytes_saved.inc_by(bytes);
+    }
+
+    pub fn record_request_passthrough_total(&self) {
+        self.request_passthrough_total.inc();
     }
 
     pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {

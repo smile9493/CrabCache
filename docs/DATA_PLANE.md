@@ -99,6 +99,7 @@
 | `connection_prewarm` | off | 共享 `Connector` 直预热；需 fork 注入，见 PATCH.md |
 | `affinity_prompt_cache_feedback` | off | 请求末根据 `prompt_cache_*` 更新 Ketama hint |
 | `streaming_body_forward` | off | MiMo partial read + EOS finalize（[STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)） |
+| `mimo_session_store` | off | MiMo Redis canonical messages（缩小 upstream，不改 cache key） |
 | `delta_cache` / `wasm_filters` / `io_uring_backend` | off | P3，见 DATA_PLANE_P3 |
 
 ---
@@ -157,8 +158,9 @@
 
 1. **启用 L2 语义缓存**（配置 `[semantic]`，见 `gateway.example.toml`）  
 2. **MiMo 近似缓存键**（§1.3 折中，⬜）— 利于 Coalescing，缓解高峰上游压力  
-3. **`streaming_body_forward`**（P3）— 大 body 内存与读 body 延迟  
-4. 差分缓存 / io_uring / WASM — 长期或大促，**非**当前 429 主药  
+3. **`streaming_body_forward`**（✅ P0）— MiMo partial read + upstream connect 并行；配合 OpenResty `proxy_request_buffering off`  
+4. **`mimo_session_store`**（✅ P1）— Redis 驻留 canonical messages，仅缩小 upstream payload  
+5. 差分缓存 / io_uring / WASM — 长期或大促，**非**当前 429 主药  
 
 ### 命中率目标口径
 

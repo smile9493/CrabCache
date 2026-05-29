@@ -9,15 +9,16 @@ use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_body_compress::maybe_gzip_request_body;
 use crate::upstream_headers::{
     apply_upstream_request_content_encoding, normalize_replaced_body_headers,
-    prepare_streaming_deferred_upstream_headers, smooth_upstream_client_headers,
+    prepare_passthrough_upstream_headers, prepare_streaming_deferred_upstream_headers,
+    smooth_upstream_client_headers,
     upstream_header_names,
 };
 use bytes::Bytes;
-use pingora_http::RequestHeader;
+use crab_metrics::global_metrics;
 use pingora_core::prelude::*;
+use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use std::time::Instant;
-use crab_metrics::global_metrics;
 use tracing::{debug, warn};
 
 use crate::context::GatewayContext;
@@ -30,12 +31,35 @@ pub(crate) async fn run_upstream_request_filter(
     upstream_request: &mut RequestHeader,
     ctx: &mut GatewayContext,
 ) -> Result<()> {
+    let conn_config = proxy.state.runtime.conn_config.read().clone();
     let host = ctx.upstream.host.as_deref().unwrap_or("api.deepseek.com");
     let _ = upstream_request.insert_header("host", host);
     let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
-    if ctx.streaming_body.active && ctx.new_request_body.is_none() {
+    if ctx.request_passthrough.active {
+        prepare_passthrough_upstream_headers(
+            upstream_request,
+            ctx.is_streaming,
+            conn_config.upstream_force_http1,
+        );
+        upstream_request.set_send_end_stream(false);
+    } else if ctx.streaming_body.active && ctx.new_request_body.is_none() {
         prepare_streaming_deferred_upstream_headers(upstream_request, ctx.is_streaming);
         upstream_request.set_send_end_stream(false);
+        // #region debug-point C:defer-headers
+        debug_agent_log(
+            "C",
+            "upstream_request.rs:run_upstream_request_filter",
+            "[DEBUG] prepared streaming defer upstream headers",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "send_end_stream": upstream_request.send_end_stream(),
+                "content_length": upstream_request.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()),
+                "transfer_encoding": upstream_request.headers.get(http::header::TRANSFER_ENCODING).and_then(|v| v.to_str().ok()),
+                "content_type": upstream_request.headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+                "streaming_defer_emit_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
+            }),
+        );
+        // #endregion
     } else if ctx.new_request_body.is_some() {
         let features = &proxy.state.features;
         let raw = ctx.new_request_body.as_ref().unwrap();
@@ -121,10 +145,12 @@ pub(crate) async fn run_upstream_request_filter(
     );
     // #endregion
 
-    let conn_config = proxy.state.runtime.conn_config.read().clone();
     if conn_config.upstream_disable_keepalive {
         ctx.upstream.connection_close = true;
-        let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
+        // HTTP/2 forbids Connection; pool busting uses idle_timeout=0 in PeerOptions instead.
+        if conn_config.upstream_force_http1 {
+            let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
+        }
     }
 
     ctx.upstream_headers_prepared_at = Some(Instant::now());
@@ -155,6 +181,25 @@ pub(crate) async fn run_request_body_filter(
     end_of_stream: bool,
     ctx: &mut GatewayContext,
 ) -> Result<()> {
+    // #region debug-point E:request-body-filter-entry
+    if ctx.streaming_body.active {
+        debug_agent_log(
+            "E",
+            "upstream_request.rs:run_request_body_filter",
+            "[DEBUG] streaming defer request_body_filter entry",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "body_len": body.as_ref().map(|b| b.len()),
+                "end_of_stream": end_of_stream,
+                "streaming_active": ctx.streaming_body.active,
+                "streaming_finalized": ctx.streaming_body.finalized,
+                "streaming_suppress_upstream": ctx.streaming_body.suppress_upstream,
+                "session_is_body_done": session.is_body_done(),
+                "retry_buffer_truncated": session.retry_buffer_truncated(),
+            }),
+        );
+    }
+    // #endregion
     if ctx.streaming_body.active && !ctx.streaming_body.finalized {
         if let Some(chunk) = body.take() {
             ctx.streaming_body.append_chunk(&chunk);
@@ -174,6 +219,57 @@ pub(crate) async fn run_request_body_filter(
             *body = None;
             return Ok(());
         }
+    }
+
+    if ctx.request_passthrough.active && !ctx.request_passthrough.finalized {
+        let client_done = session.is_body_done();
+        if !ctx.request_passthrough.prefix_emitted {
+            if let Some(chunk) = body.take() {
+                ctx.request_passthrough.buffer.extend_from_slice(&chunk);
+            }
+            if ctx.request_passthrough.buffer.is_empty() {
+                *body = None;
+                return Ok(());
+            }
+            let prefix = std::mem::take(&mut ctx.request_passthrough.buffer);
+            ctx.request_passthrough.prefix_emitted = true;
+            ctx.upstream_outbound_body_len += prefix.len();
+            ctx.upstream.prepared_upstream_body_emitted = true;
+            if client_done {
+                timeline_stamp(&mut ctx.timeline.body_read_done);
+                timeline_stamp(&mut ctx.timeline.upstream_body_sent);
+                ctx.content_length = ctx
+                    .streaming_body
+                    .inbound_content_length
+                    .unwrap_or(ctx.upstream_outbound_body_len);
+                ctx.request_passthrough.finalized = true;
+                ctx.request_passthrough.active = false;
+            }
+            *body = Some(Bytes::from(prefix));
+            return Ok(());
+        }
+        if let Some(chunk) = body.take() {
+            ctx.upstream_outbound_body_len += chunk.len();
+            if client_done {
+                timeline_stamp(&mut ctx.timeline.body_read_done);
+                timeline_stamp(&mut ctx.timeline.upstream_body_sent);
+                ctx.content_length = ctx
+                    .streaming_body
+                    .inbound_content_length
+                    .unwrap_or(ctx.upstream_outbound_body_len);
+                ctx.request_passthrough.finalized = true;
+                ctx.request_passthrough.active = false;
+            }
+            *body = Some(chunk);
+            return Ok(());
+        }
+        if client_done {
+            timeline_stamp(&mut ctx.timeline.body_read_done);
+            ctx.request_passthrough.finalized = true;
+            ctx.request_passthrough.active = false;
+        }
+        *body = None;
+        return Ok(());
     }
 
     if ctx.streaming_body.suppress_upstream {
@@ -232,14 +328,27 @@ pub(crate) async fn run_request_body_filter(
                 "Setting upstream request body"
             );
         }
-        let force_emit = ctx.upstream.retry_buffer_truncated
-            || ctx.streaming_body.streaming_defer_emit_at_eos;
-        ctx.new_request_body = apply_prepared_upstream_body(
-            new_body,
-            body,
-            end_of_stream,
-            force_emit,
+        let force_emit =
+            ctx.upstream.retry_buffer_truncated || ctx.streaming_body.streaming_defer_emit_at_eos;
+        ctx.new_request_body =
+            apply_prepared_upstream_body(new_body, body, end_of_stream, force_emit);
+        // #region debug-point D:prepared-body-emit
+        debug_agent_log(
+            "D",
+            "upstream_request.rs:run_request_body_filter",
+            "[DEBUG] prepared upstream body emission decision",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "end_of_stream": end_of_stream,
+                "force_emit": force_emit,
+                "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
+                "streaming_defer_emit_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
+                "prepared_body_now": body.as_ref().map(|b| b.len()),
+                "prepared_body_rest": ctx.new_request_body.as_ref().map(|b| b.len()),
+                "prepared_body_emitted": ctx.upstream.prepared_upstream_body_emitted,
+            }),
         );
+        // #endregion
         if emit_now && body.as_ref().is_some_and(|b| !b.is_empty()) {
             ctx.upstream.prepared_upstream_body_emitted = true;
         } else if emit_now && ctx.streaming_body.active {

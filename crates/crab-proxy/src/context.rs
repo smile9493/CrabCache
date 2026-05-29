@@ -33,7 +33,7 @@ pub struct ConnectionConfig {
     /// Max seconds waiting for upstream response bytes (0 = no limit).
     #[serde(default = "default_upstream_request_timeout_secs")]
     pub upstream_request_timeout_secs: Option<u64>,
-    /// Force HTTP/1.1 ALPN to upstream (recommended for DeepSeek; avoids H2 edge cases).
+    /// Force HTTP/1.1 ALPN to upstream. Default `false` negotiates HTTP/2 (MiMo passthrough uses H2 DATA frames).
     #[serde(default = "default_upstream_force_http1")]
     pub upstream_force_http1: bool,
     /// Max seconds per write when sending large request bodies upstream.
@@ -286,7 +286,8 @@ impl Default for UpstreamState {
             prepared_upstream_body_emitted: false,
             error_body_logged: false,
             first_body_chunk_logged: false,
-            response_decompress: crate::upstream_response_decompress::UpstreamDecompressState::default(),
+            response_decompress:
+                crate::upstream_response_decompress::UpstreamDecompressState::default(),
         }
     }
 }
@@ -307,6 +308,21 @@ pub struct StreamState {
     pub reasoning_bypass_warned: bool,
     /// Pipeline-specific SSE processing handler (created once per streaming request).
     pub(crate) stream_pipeline: Option<crate::sse_pipeline::StreamPipeline>,
+}
+
+/// Early-connect passthrough: overlap upstream TCP/TLS while the client body uploads.
+///
+/// Armed prefix from `request_filter`; tail chunks relay incrementally in `request_body_filter`.
+#[derive(Default)]
+pub struct RequestPassthroughState {
+    pub active: bool,
+    /// Prefix sniffed in `request_filter` (drained on first upstream emit).
+    pub buffer: Vec<u8>,
+    pub finalized: bool,
+    /// Prefix length at arm time (trace only).
+    pub armed_prefix_len: usize,
+    /// First upstream body chunk (armed prefix) has been forwarded.
+    pub prefix_emitted: bool,
 }
 
 pub struct GatewayContext {
@@ -373,6 +389,10 @@ pub struct GatewayContext {
     /// Session fingerprint derived from the first user message (SHA-256 prefix).
     /// Computed once in `request_filter` and shared by trace logger + raw capture.
     pub session_fingerprint: Option<String>,
+    /// Stable session source for reasoning/session-store diagnostics.
+    pub stable_session_kind: Option<String>,
+    /// Why `streaming_body_forward` was not armed on this request.
+    pub streaming_defer_reject_reason: Option<String>,
     /// Accumulated upstream prompt-cache hit tokens (affinity hint finalized in `logging`).
     pub affinity_prompt_cache_hits: u64,
     /// Accumulated upstream prompt-cache miss tokens (affinity hint finalized in `logging`).
@@ -385,6 +405,14 @@ pub struct GatewayContext {
     pub timeline: RequestTimeline,
     /// MiMo streaming body forward (partial read in `request_filter`, finalize at EOS).
     pub streaming_body: crate::streaming_body_forward::StreamingBodyState,
+    /// Request-body passthrough for direct MiMo relay (prefix sniff + chunk relay).
+    pub request_passthrough: RequestPassthroughState,
+    /// Session store merge outcome: `hit` | `miss` | `break`.
+    pub session_store_outcome: Option<String>,
+    pub session_store_redis_key: Option<String>,
+    /// Canonical messages to persist after successful upstream response.
+    pub session_persist_base: Option<Vec<serde_json::Value>>,
+    pub session_upstream_messages_len: Option<usize>,
 }
 
 impl GatewayContext {
@@ -434,12 +462,19 @@ impl GatewayContext {
             response_body_preview: Vec::new(),
             cached_reasoning_config: ReasoningConfig::default(),
             session_fingerprint: None,
+            stable_session_kind: None,
+            streaming_defer_reject_reason: None,
             affinity_prompt_cache_hits: 0,
             affinity_prompt_cache_misses: 0,
             affinity_pure_miss_streak: 0,
             exact_cache_probed: false,
             timeline: RequestTimeline::default(),
             streaming_body: crate::streaming_body_forward::StreamingBodyState::default(),
+            request_passthrough: RequestPassthroughState::default(),
+            session_store_outcome: None,
+            session_store_redis_key: None,
+            session_persist_base: None,
+            session_upstream_messages_len: None,
         }
     }
 }
@@ -489,10 +524,25 @@ pub struct FeaturesConfig {
     /// User/assistant turn pairs to keep when `mimo_retire_prefix_messages` is on.
     #[serde(default = "default_mimo_keep_recent_turns")]
     pub mimo_keep_recent_turns: usize,
+    /// Redis-backed canonical MiMo messages per stable session (upstream only).
+    #[serde(default)]
+    pub mimo_session_store: bool,
+    #[serde(default = "default_mimo_session_store_ttl_secs")]
+    pub mimo_session_store_ttl_secs: u64,
+    #[serde(default = "default_mimo_session_store_max_messages")]
+    pub mimo_session_store_max_messages: usize,
 }
 
 fn default_mimo_keep_recent_turns() -> usize {
     6
+}
+
+fn default_mimo_session_store_ttl_secs() -> u64 {
+    86_400
+}
+
+fn default_mimo_session_store_max_messages() -> usize {
+    200
 }
 
 fn default_upstream_request_gzip_min_bytes() -> usize {
@@ -545,6 +595,8 @@ pub struct GatewayState {
     /// Auto-disable `streaming_body_forward` after repeated defer-path failures.
     pub streaming_defer_circuit_breaker:
         Arc<crate::streaming_body_forward::StreamingDeferCircuitBreaker>,
+    /// MiMo transparent session store (Redis `crab:session:*`).
+    pub session_store: Option<Arc<crate::session_store::SessionStore>>,
 }
 
 #[cfg(test)]

@@ -143,9 +143,7 @@ pub(crate) async fn run(
                     ctx.tokens.last_output = entry.usage.completion_tokens;
                     // Spawn stale-while-revalidate if entry is stale.
                     if let Some(body) = &ctx.original_request_body {
-                        crate::cache_revalidate::maybe_spawn_swr(
-                            session, &cache_key, &entry, body,
-                        );
+                        crate::cache_revalidate::maybe_spawn_swr(session, &cache_key, &entry, body);
                     }
                     global_metrics().record_latency(
                         crab_metrics::LatencyKind::CacheFetch,
@@ -165,10 +163,8 @@ pub(crate) async fn run(
                         tier,
                         cost,
                     );
-                    global_metrics().record_full_response_cache_hit(
-                        tier.as_str(),
-                        ctx.domain.as_deref(),
-                    );
+                    global_metrics()
+                        .record_full_response_cache_hit(tier.as_str(), ctx.domain.as_deref());
                     global_metrics().record_request_saved_by_cache(ctx.domain.as_deref());
                     return Ok(CachePhaseOutcome::Return(true));
                 }
@@ -232,11 +228,8 @@ pub(crate) async fn run(
                 // Extract prefix (everything before the last ':' = messages hash).
                 if let Some(prefix_end) = prefix_key.rfind(':') {
                     let prefix_hash = &prefix_key[..prefix_end];
-                    if let Some(entry) = proxy
-                        .state
-                        .tiered_cache
-                        .prefix_l0_lookup(prefix_hash)
-                        .await
+                    if let Some(entry) =
+                        proxy.state.tiered_cache.prefix_l0_lookup(prefix_hash).await
                     {
                         if cache_entry_matches_stream_mode(&entry, ctx.is_streaming) {
                             global_metrics().record_prefix_index_warmup();

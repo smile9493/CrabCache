@@ -162,6 +162,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "async-compression"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,6 +1129,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-admin-types",
+ "crab-auth",
  "crab-capture",
  "crab-client-endpoint",
  "crab-composition",
@@ -1186,6 +1197,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -1294,6 +1306,7 @@ dependencies = [
  "axum 0.8.9",
  "bb8",
  "bb8-redis",
+ "bytes",
  "chrono",
  "crab-cache",
  "crab-client-endpoint",
@@ -1355,6 +1368,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bb8",
+ "bb8-redis",
  "brotli 7.0.0",
  "bytes",
  "chrono",
@@ -1381,6 +1396,7 @@ dependencies = [
  "pingora-http",
  "pingora-limits",
  "pingora-proxy",
+ "redis",
  "regex",
  "serde",
  "serde_json",
@@ -7160,6 +7176,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wiremock"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
+dependencies = [
+ "assert-json-diff",
+ "base64 0.22.1",
+ "deadpool",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -17,8 +17,8 @@ use crate::metrics_helpers::{
 };
 use crate::proxy::GatewayProxy;
 use crate::sse::UsageData;
-use crate::upstream_response_decompress::decompress_upstream_chunk;
 use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
+use crate::upstream_response_decompress::decompress_upstream_chunk;
 use crab_metrics::{CacheTier, LatencyKind, global_metrics};
 use crab_reasoning::{rewrite_response_body, sanitize_client_completion};
 use pingora_core::prelude::*;
@@ -306,8 +306,7 @@ pub(crate) fn run(
 
                 if let Some(semantic_cache) = &proxy.state.semantic_cache
                     && let Some(original_body) = &ctx.original_request_body
-                    && let Ok(payload) =
-                        serde_json::from_slice::<serde_json::Value>(original_body)
+                    && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body)
                     && let Some(messages) = payload.get("messages").and_then(|m| m.as_array())
                     && let Some(query_text) = build_semantic_query_text(messages)
                 {
@@ -480,8 +479,7 @@ pub(crate) fn run(
                     reasoning_cfg.display_reasoning,
                 ) && let Some(semantic_cache) = &proxy.state.semantic_cache
                     && let Some(original_body) = &ctx.original_request_body
-                    && let Ok(payload) =
-                        serde_json::from_slice::<serde_json::Value>(original_body)
+                    && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(original_body)
                     && let Some(messages) = payload.get("messages").and_then(|m| m.as_array())
                     && let Some(query_text) = build_semantic_query_text(messages)
                 {

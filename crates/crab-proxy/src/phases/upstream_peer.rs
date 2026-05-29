@@ -68,6 +68,7 @@ pub(crate) async fn run(
         extract_affinity_key(
             &affinity_headers_fallback,
             &client_ip,
+            ctx.conversation_id.as_deref(),
             body_pck,
             ctx.project_id.as_deref(),
             ctx.session_fingerprint.as_deref(),

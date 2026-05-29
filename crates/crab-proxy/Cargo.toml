@@ -44,3 +44,6 @@ indexmap = { workspace = true }
 regex.workspace = true
 flate2 = "1"
 brotli = "7"
+bb8.workspace = true
+bb8-redis.workspace = true
+redis.workspace = true

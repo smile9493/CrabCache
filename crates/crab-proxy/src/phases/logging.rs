@@ -141,21 +141,27 @@ pub(crate) async fn run(
         if let Some(trace_logger) = &proxy.state.trace_logger {
             let max_payload = trace_logger.max_payload_bytes();
             let max_resp = trace_logger.max_response_preview_bytes();
-            if let Some(body) = &ctx.original_request_body {
+            let passthrough_trace = ctx.request_passthrough.armed_prefix_len > 0;
+            if ctx.original_request_body.is_some() || passthrough_trace {
+                let body_bytes = ctx.original_request_body.as_deref().unwrap_or(&[]);
                 let mut entry = SanitizedLogEntry::from_request(
-                    body,
+                    body_bytes,
                     ctx.conversation_id.clone(),
                     ctx.consumer.clone(),
                     ctx.domain.clone(),
                     ctx.project_id.clone(),
                     &ctx.model,
+                    // prompt_tokens = last upstream input_tokens when usage available, else request total
                     ctx.tokens.total as usize,
                     duration.as_secs_f64() * 1000.0,
                     ctx.cache_tier.is_some(),
                     ctx.cache_tier.map(|t| t.as_str().to_string()),
                     ctx.request_composition.clone(),
-                    max_payload,
+                    if passthrough_trace { 0 } else { max_payload },
                 );
+                if passthrough_trace {
+                    entry.content_length = ctx.content_length;
+                }
                 entry.retired_prefix_messages = ctx.retired_prefix_messages;
                 entry.reasoning_strategy =
                     if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
@@ -220,6 +226,12 @@ pub(crate) async fn run(
                     .map(|k| affinity_kind_from_key(k).to_string());
                 entry.backend_name = ctx.upstream.backend_name.clone();
                 entry.is_coalesced = ctx.is_coalesced_follower;
+                entry.request_passthrough = passthrough_trace;
+                entry.request_passthrough_prefix_len = if passthrough_trace {
+                    Some(ctx.request_passthrough.armed_prefix_len)
+                } else {
+                    None
+                };
                 entry.client_key_id = ctx
                     .upstream
                     .key_guard

@@ -72,9 +72,10 @@ pub fn stable_session_log_fields(
 /// `prefill_ms`: request start → upstream response headers (MiMo prefill SLO).
 /// `sse_ttft_ms`: response headers → first upstream body chunk.
 pub fn request_timing_ms(ctx: &GatewayContext) -> (Option<f64>, Option<f64>) {
-    let prefill_ms = ctx.upstream.headers_at.map(|h| {
-        h.duration_since(ctx.request_start).as_secs_f64() * 1000.0
-    });
+    let prefill_ms = ctx
+        .upstream
+        .headers_at
+        .map(|h| h.duration_since(ctx.request_start).as_secs_f64() * 1000.0);
     let sse_ttft_ms = ctx.ttft.map(|d| d.as_secs_f64() * 1000.0);
     (prefill_ms, sse_ttft_ms)
 }
@@ -101,6 +102,7 @@ pub fn build_capture_request_meta(
         extract_affinity_key(
             &headers,
             &client_ip,
+            ctx.conversation_id.as_deref(),
             ctx.prompt_cache_key.as_deref(),
             ctx.project_id.as_deref(),
             ctx.session_fingerprint.as_deref(),

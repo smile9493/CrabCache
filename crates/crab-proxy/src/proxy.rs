@@ -1,14 +1,12 @@
 const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
 
 use crate::cache_helpers::{
-    build_semantic_query_text,
-    cache_entry_matches_stream_mode,
-    tiered_exact_lookup,
+    build_semantic_query_text, cache_entry_matches_stream_mode, tiered_exact_lookup,
 };
 use crate::cache_response::send_cached_response;
+use crate::connection_helpers::apply_connection_options;
 use crate::context::{GatewayContext, GatewayState, ReasoningConfig};
 use crate::debug_agent_log;
-use crate::connection_helpers::apply_connection_options;
 use crate::metrics_helpers::timeline_stamp;
 use crate::runtime::RuntimeConfig;
 use crab_metrics::{CacheTier, global_metrics};
@@ -76,7 +74,10 @@ impl GatewayProxy {
         }
     }
 
-    pub(crate) fn domain_policy_fields(&self, domain: Option<&str>) -> (Option<String>, Option<String>) {
+    pub(crate) fn domain_policy_fields(
+        &self,
+        domain: Option<&str>,
+    ) -> (Option<String>, Option<String>) {
         let label = RuntimeConfig::effective_domain_label(domain);
         self.state
             .runtime
@@ -353,7 +354,9 @@ impl GatewayProxy {
             ctx.tokens.last_input = entry.usage.prompt_tokens;
             ctx.tokens.last_output = entry.usage.completion_tokens;
             // Spawn stale-while-revalidate if entry is stale.
-            if let (Some(body), Some(cache_key)) = (&ctx.original_request_body, ctx.cache_key.as_deref()) {
+            if let (Some(body), Some(cache_key)) =
+                (&ctx.original_request_body, ctx.cache_key.as_deref())
+            {
                 crate::cache_revalidate::maybe_spawn_swr(session, cache_key, &entry, body);
             }
             global_metrics().record_cache_hit(
@@ -407,12 +410,15 @@ impl ProxyHttp for GatewayProxy {
     }
 
     fn defer_upstream_request_body(&self, _session: &Session, ctx: &Self::CTX) -> bool {
-        ctx.streaming_body.streaming_defer_emit_at_eos
-            || (ctx.streaming_body.active && !ctx.streaming_body.finalized)
+        should_defer_upstream_request_body(ctx)
     }
 
     fn skip_upstream_trailing_empty_eos(&self, _session: &Session, ctx: &Self::CTX) -> bool {
         should_skip_upstream_trailing_empty_eos(ctx)
+    }
+
+    fn defer_upstream_body_end_stream(&self, session: &mut Session, ctx: &Self::CTX) -> bool {
+        should_upstream_body_end_stream(session, ctx)
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
@@ -435,7 +441,13 @@ impl ProxyHttp for GatewayProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        crate::phases::upstream_request::run_upstream_request_filter(self, session, upstream_request, ctx).await
+        crate::phases::upstream_request::run_upstream_request_filter(
+            self,
+            session,
+            upstream_request,
+            ctx,
+        )
+        .await
     }
 
     async fn request_body_filter(
@@ -445,7 +457,14 @@ impl ProxyHttp for GatewayProxy {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        crate::phases::upstream_request::run_request_body_filter(self, session, body, end_of_stream, ctx).await
+        crate::phases::upstream_request::run_request_body_filter(
+            self,
+            session,
+            body,
+            end_of_stream,
+            ctx,
+        )
+        .await
     }
 
     #[tracing::instrument(skip_all, fields(request_id = %ctx.request_id))]
@@ -540,9 +559,35 @@ pub(crate) fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> 
     Some(truncated)
 }
 
+/// Whether Pingora should defer upstream body I/O until `request_body_filter` supplies bytes.
+///
+/// Covers streaming defer and MiMo direct passthrough (prefix sniff + chunk relay). Without
+/// this, H1/H2 may skip the initial body pipe or send an empty END_STREAM before the armed
+/// prefix is forwarded — upstream sees invalid/empty JSON (`400 Param Incorrect`).
+pub fn should_defer_upstream_request_body(ctx: &GatewayContext) -> bool {
+    (ctx.request_passthrough.active && !ctx.request_passthrough.finalized)
+        || ctx.streaming_body.streaming_defer_emit_at_eos
+        || (ctx.streaming_body.active && !ctx.streaming_body.finalized)
+}
+
+/// Whether the current defer-path upstream chunk should end the request body.
+pub fn should_upstream_body_end_stream(session: &mut Session, ctx: &GatewayContext) -> bool {
+    if ctx.request_passthrough.active && !ctx.request_passthrough.finalized {
+        return false;
+    }
+    if ctx.streaming_body.active && !ctx.streaming_body.finalized {
+        return false;
+    }
+    session.is_body_done()
+}
+
 /// Skip Pingora's trailing empty upstream EOS after defer cache hit / suppress (see PATCH.md).
+/// Also skip the defer-bootstrap empty pipe while passthrough is still buffering (otherwise
+/// upstream sees headers + 0-byte body → MiMo `400 Invalid JSON`).
 pub fn should_skip_upstream_trailing_empty_eos(ctx: &GatewayContext) -> bool {
-    ctx.upstream.prepared_upstream_body_emitted || ctx.streaming_body.suppress_upstream
+    ctx.upstream.prepared_upstream_body_emitted
+        || ctx.streaming_body.suppress_upstream
+        || (ctx.request_passthrough.active && !ctx.request_passthrough.finalized)
 }
 
 #[cfg(test)]
@@ -579,6 +624,25 @@ mod tests {
     }
 
     #[test]
+    fn passthrough_blocks_upstream_end_stream_until_finalized() {
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.request_passthrough.active = true;
+        assert!(ctx.request_passthrough.active && !ctx.request_passthrough.finalized);
+        ctx.request_passthrough.finalized = true;
+        ctx.request_passthrough.active = false;
+        assert!(!ctx.request_passthrough.active || ctx.request_passthrough.finalized);
+    }
+
+    #[test]
+    fn skip_trailing_empty_eos_while_passthrough_buffering() {
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.request_passthrough.active = true;
+        assert!(should_skip_upstream_trailing_empty_eos(&ctx));
+        ctx.request_passthrough.finalized = true;
+        assert!(!should_skip_upstream_trailing_empty_eos(&ctx));
+    }
+
+    #[test]
     fn skip_trailing_empty_eos_when_suppress_upstream() {
         let mut ctx = GatewayContext::new("req".into());
         assert!(!should_skip_upstream_trailing_empty_eos(&ctx));
@@ -587,5 +651,28 @@ mod tests {
         ctx.streaming_body.suppress_upstream = false;
         ctx.upstream.prepared_upstream_body_emitted = true;
         assert!(should_skip_upstream_trailing_empty_eos(&ctx));
+    }
+
+    #[test]
+    fn defer_upstream_body_for_passthrough_and_streaming_defer() {
+        let mut ctx = GatewayContext::new("req".into());
+        assert!(!should_defer_upstream_request_body(&ctx));
+
+        ctx.request_passthrough.active = true;
+        assert!(should_defer_upstream_request_body(&ctx));
+        ctx.request_passthrough.finalized = true;
+        assert!(!should_defer_upstream_request_body(&ctx));
+        ctx.request_passthrough.active = false;
+        ctx.request_passthrough.finalized = false;
+
+        ctx.streaming_body.streaming_defer_emit_at_eos = true;
+        assert!(should_defer_upstream_request_body(&ctx));
+        ctx.streaming_body.streaming_defer_emit_at_eos = false;
+
+        ctx.streaming_body.active = true;
+        ctx.streaming_body.finalized = false;
+        assert!(should_defer_upstream_request_body(&ctx));
+        ctx.streaming_body.finalized = true;
+        assert!(!should_defer_upstream_request_body(&ctx));
     }
 }

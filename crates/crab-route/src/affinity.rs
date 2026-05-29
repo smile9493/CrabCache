@@ -6,12 +6,13 @@ use tracing::trace;
 ///
 /// The key is resolved by priority (first match wins):
 /// 1. `x-conversation-id` header → `conv:{id}`
-/// 2. `x-prompt-cache-key` header → `pck:{key}`
-/// 3. `body_prompt_cache_key` param → `pck:{key}`
-/// 4. `body_user_id` param → `user:{id}`
-/// 5. `x-user-id` header → `user:{id}`
-/// 6. `session_fingerprint` param → `sfp:{fp}`
-/// 7. SHA-256 truncated client IP → `ip:{hash}`
+/// 2. body `conversation_id` → `conv:{id}`
+/// 3. `x-prompt-cache-key` header → `pck:{key}`
+/// 4. `body_prompt_cache_key` param → `pck:{key}`
+/// 5. `body_user_id` param → `user:{id}`
+/// 6. `x-user-id` header → `user:{id}`
+/// 7. `session_fingerprint` param → `sfp:{fp}`
+/// 8. SHA-256 truncated client IP → `ip:{hash}`
 ///
 /// **Header dependency:** This function reads exactly three headers from `headers`:
 /// `x-conversation-id`, `x-prompt-cache-key`, and `x-user-id`.
@@ -20,15 +21,23 @@ use tracing::trace;
 pub fn extract_affinity_key(
     headers: &HeaderMap,
     client_ip: &str,
+    body_conversation_id: Option<&str>,
     body_prompt_cache_key: Option<&str>,
     body_user_id: Option<&str>,
     session_fingerprint: Option<&str>,
 ) -> String {
     if let Some(conv_id) = headers.get("x-conversation-id")
         && let Ok(conv_id_str) = conv_id.to_str()
+        && !conv_id_str.is_empty()
     {
         let key = format!("conv:{conv_id_str}");
         trace!(key = %key, "Using conversation ID as affinity key");
+        return key;
+    }
+
+    if let Some(conv_id) = body_conversation_id.filter(|s| !s.is_empty()) {
+        let key = format!("conv:{conv_id}");
+        trace!(key = %key, "Using body conversation_id as affinity key");
         return key;
     }
 
@@ -89,7 +98,7 @@ mod tests {
         headers.insert("x-conversation-id", HeaderValue::from_static("conv-123"));
         headers.insert("x-user-id", HeaderValue::from_static("user-456"));
 
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None, None);
         assert!(key.starts_with("conv:"));
         assert!(key.contains("conv-123"));
     }
@@ -98,21 +107,35 @@ mod tests {
     fn test_prompt_cache_key_header() {
         let mut headers = HeaderMap::new();
         headers.insert("x-prompt-cache-key", HeaderValue::from_static("agent-1"));
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None, None);
         assert_eq!(key, "pck:agent-1");
+    }
+
+    #[test]
+    fn test_body_conversation_id_affinity() {
+        let headers = HeaderMap::new();
+        let key = extract_affinity_key(
+            &headers,
+            "192.168.1.1",
+            Some("conv-body-1"),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(key, "conv:conv-body-1");
     }
 
     #[test]
     fn test_prompt_cache_key_body() {
         let headers = HeaderMap::new();
-        let key = extract_affinity_key(&headers, "192.168.1.1", Some("body-key"), None, None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, Some("body-key"), None, None);
         assert_eq!(key, "pck:body-key");
     }
 
     #[test]
     fn test_body_user_id_affinity() {
         let headers = HeaderMap::new();
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, Some("proj-a"), None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, Some("proj-a"), None);
         assert_eq!(key, "user:proj-a");
     }
 
@@ -121,7 +144,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-user-id", HeaderValue::from_static("user-456"));
 
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None, None);
         assert!(key.starts_with("user:"));
         assert!(key.contains("user-456"));
     }
@@ -129,7 +152,14 @@ mod tests {
     #[test]
     fn test_session_fingerprint_affinity() {
         let headers = HeaderMap::new();
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, Some("abc123def456"));
+        let key = extract_affinity_key(
+            &headers,
+            "192.168.1.1",
+            None,
+            None,
+            None,
+            Some("abc123def456"),
+        );
         assert_eq!(key, "sfp:abc123def456");
     }
 
@@ -138,14 +168,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-user-id", HeaderValue::from_static("user-456"));
 
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, Some("abc123"));
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None, Some("abc123"));
         assert!(key.starts_with("user:"));
     }
 
     #[test]
     fn test_ip_fallback() {
         let headers = HeaderMap::new();
-        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None);
+        let key = extract_affinity_key(&headers, "192.168.1.1", None, None, None, None);
         assert!(key.starts_with("ip:"));
     }
 
@@ -154,8 +184,8 @@ mod tests {
         let headers1 = HeaderMap::new();
         let headers2 = HeaderMap::new();
 
-        let key1 = extract_affinity_key(&headers1, "192.168.1.1", None, None, None);
-        let key2 = extract_affinity_key(&headers2, "192.168.1.1", None, None, None);
+        let key1 = extract_affinity_key(&headers1, "192.168.1.1", None, None, None, None);
+        let key2 = extract_affinity_key(&headers2, "192.168.1.1", None, None, None, None);
 
         assert_eq!(key1, key2);
     }
@@ -165,8 +195,8 @@ mod tests {
         let headers1 = HeaderMap::new();
         let headers2 = HeaderMap::new();
 
-        let key1 = extract_affinity_key(&headers1, "192.168.1.1", None, None, None);
-        let key2 = extract_affinity_key(&headers2, "192.168.1.2", None, None, None);
+        let key1 = extract_affinity_key(&headers1, "192.168.1.1", None, None, None, None);
+        let key2 = extract_affinity_key(&headers2, "192.168.1.2", None, None, None, None);
 
         assert_ne!(key1, key2);
     }
