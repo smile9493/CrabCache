@@ -4,11 +4,11 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
+use super::line_chart::{ChartSeries, format_tooltip_value, mouse_to_svg_x, y_range};
 use crate::components::chart::interaction::{
     bucket_center_pct, bucket_tooltip_rows, bucket_width_pct, column_max_value,
     tooltip_position_style, value_top_pct,
 };
-use super::line_chart::{ChartSeries, format_tooltip_value, mouse_to_svg_x, y_range};
 
 static BAR_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -223,7 +223,7 @@ pub fn BarChart(
                                     let norm = ((v - ymin) / span).clamp(0.0, 1.0);
                                     let bar_h = norm * h;
                                     let y = h - bar_h;
-                                    let color = s.color;
+                                    let color = s.color.clone();
                                     Some(view! {
                                         <rect
                                             x=x y=y

@@ -2,10 +2,10 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
+use super::line_chart::{format_tooltip_value, mouse_to_svg_x};
 use crate::components::chart::interaction::{
     bucket_center_pct, bucket_width_pct, tooltip_position_style, value_top_pct,
 };
-use super::line_chart::{format_tooltip_value, mouse_to_svg_x};
 
 static HISTOGRAM_ID: AtomicUsize = AtomicUsize::new(0);
 

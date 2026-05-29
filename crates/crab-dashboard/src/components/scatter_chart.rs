@@ -4,9 +4,9 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
+use crate::components::chart::canvas_render;
 pub use crate::components::chart::core::ScatterPoint;
 use crate::components::chart::core::scatter_range;
-use crate::components::chart::canvas_render;
 use crate::theme::use_theme_signal;
 
 static SCATTER_CHART_ID: AtomicUsize = AtomicUsize::new(0);
@@ -53,15 +53,15 @@ pub fn ScatterChart(
         let x_label = std::sync::Arc::clone(&x_label);
         let y_label = std::sync::Arc::clone(&y_label);
         move |_| {
-        let Some(canvas_el) = canvas_ref.get() else {
-            return;
-        };
-        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
-        let _ = theme.get();
-        let pts = points.get();
-        let x_l = x_label.as_ref();
-        let y_l = y_label.as_ref();
-        canvas_render::render_scatter(&canvas_dom, &pts, theme.get(), x_l, y_l, fit_line);
+            let Some(canvas_el) = canvas_ref.get() else {
+                return;
+            };
+            let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+            let _ = theme.get();
+            let pts = points.get();
+            let x_l = x_label.as_ref();
+            let y_l = y_label.as_ref();
+            canvas_render::render_scatter(&canvas_dom, &pts, theme.get(), x_l, y_l, fit_line);
         }
     });
 

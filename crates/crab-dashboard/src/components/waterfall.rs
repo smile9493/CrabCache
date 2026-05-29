@@ -4,8 +4,8 @@ use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::JsCast;
 
-pub use crate::components::chart::core::WaterfallStage;
 use crate::components::chart::canvas_render;
+pub use crate::components::chart::core::WaterfallStage;
 use crate::theme::use_theme_signal;
 
 static WATERFALL_CHART_ID: AtomicUsize = AtomicUsize::new(0);
@@ -32,12 +32,12 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
     Effect::new({
         let stages = std::sync::Arc::clone(&stages);
         move |_| {
-        let Some(canvas_el) = canvas_ref.get() else {
-            return;
-        };
-        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
-        let _ = theme.get();
-        canvas_render::render_waterfall(&canvas_dom, stages.as_ref(), theme.get());
+            let Some(canvas_el) = canvas_ref.get() else {
+                return;
+            };
+            let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+            let _ = theme.get();
+            canvas_render::render_waterfall(&canvas_dom, stages.as_ref(), theme.get());
         }
     });
 

@@ -42,7 +42,11 @@ pub fn DonutChart(
     let segment_descriptions: Vec<String> = segments
         .iter()
         .map(|s| {
-            let pct = if total > 0.0 { s.value / total * 100.0 } else { 0.0 };
+            let pct = if total > 0.0 {
+                s.value / total * 100.0
+            } else {
+                0.0
+            };
             format!("{}: {:.1}%", s.label, pct)
         })
         .collect();

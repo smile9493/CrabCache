@@ -24,17 +24,29 @@ pub fn format_precise_value(v: f64) -> String {
 pub fn bucket_tooltip_rows(
     series: &[ChartSeries],
     idx: usize,
-) -> Vec<(String, String, &'static str, f64)> {
+) -> Vec<(String, String, String, f64)> {
+    bucket_tooltip_rows_with_pricing(series, idx, &[])
+}
+
+/// Like [`bucket_tooltip_rows`], but appends an estimated USD cost when `price_per_million[i]` is set.
+pub fn bucket_tooltip_rows_with_pricing(
+    series: &[ChartSeries],
+    idx: usize,
+    price_per_million: &[Option<f64>],
+) -> Vec<(String, String, String, f64)> {
     series
         .iter()
-        .filter_map(|s| {
+        .enumerate()
+        .filter_map(|(si, s)| {
             let v = s.values.get(idx).and_then(|opt| *opt)?;
-            Some((
-                s.label.clone(),
-                format_precise_value(v),
-                s.color,
-                v,
-            ))
+            let formatted = match price_per_million.get(si).and_then(|p| *p) {
+                Some(price) if price > 0.0 => {
+                    let cost = (v / 1_000_000.0) * price;
+                    format!("{} · ${:.4}", format_precise_value(v), cost)
+                }
+                _ => format_precise_value(v),
+            };
+            Some((s.label.clone(), formatted, s.color.clone(), v))
         })
         .collect()
 }
@@ -116,17 +128,17 @@ pub fn series_tooltip_at(
     labels: &[String],
     series: &[ChartSeries],
     idx: Option<usize>,
-) -> Option<(String, Vec<(String, String, &'static str)>)> {
+) -> Option<(String, Vec<(String, String, String)>)> {
     let idx = idx?;
     if idx >= labels.len() {
         return None;
     }
     let label = labels[idx].clone();
-    let values: Vec<(String, String, &'static str)> = series
+    let values: Vec<(String, String, String)> = series
         .iter()
         .filter_map(|s| {
             let v = s.values.get(idx).and_then(|opt| *opt)?;
-            Some((s.label.clone(), format_tooltip_value(v), s.color))
+            Some((s.label.clone(), format_tooltip_value(v), s.color.clone()))
         })
         .collect();
     if values.is_empty() {

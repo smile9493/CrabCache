@@ -120,7 +120,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> RGBColor {
 }
 
 /// Map dashboard CSS variable strings used in `ChartSeries::color` to themed RGB.
-pub fn resolve_series_color(css: &'static str, palette: &ChartPalette) -> RGBColor {
+pub fn resolve_series_color(css: &str, palette: &ChartPalette) -> RGBColor {
     match css {
         "var(--accent-primary)" | "var(--cc-accent)" | "var(--accent)" => palette.accent,
         "var(--info)" | "var(--cc-info)" | "var(--blue)" => palette.info,

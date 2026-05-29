@@ -697,6 +697,24 @@ impl Translations {
             Locale::EnUS => "Cache hit",
         }
     }
+    pub fn live_group_by_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部",
+            Locale::EnUS => "All",
+        }
+    }
+    pub fn live_group_by_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按模型",
+            Locale::EnUS => "By model",
+        }
+    }
+    pub fn live_group_by_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按缓存",
+            Locale::EnUS => "By cache",
+        }
+    }
     pub fn live_routing_loading(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "正在加载负载均衡状态…",
@@ -3327,7 +3345,9 @@ impl Translations {
     pub fn logs_detail_latency_waterfall_note(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "展示请求各阶段耗时：网关处理 → 上游响应 → 首字",
-            Locale::EnUS => "Shows per-stage latency: Gateway processing → Upstream response → First token",
+            Locale::EnUS => {
+                "Shows per-stage latency: Gateway processing → Upstream response → First token"
+            }
         }
     }
     pub fn logs_detail_tokens(self) -> &'static str {

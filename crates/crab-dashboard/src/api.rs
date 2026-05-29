@@ -380,6 +380,17 @@ pub async fn fetch_live_metrics(
     consumer: &str,
     window_secs: u32,
 ) -> Result<crate::types::LiveMetricsResponse, String> {
+    fetch_live_metrics_v2(consumer, window_secs, &[], "", "").await
+}
+
+/// v2 fetch with group_by, key_id, and session_fingerprint support.
+pub async fn fetch_live_metrics_v2(
+    consumer: &str,
+    window_secs: u32,
+    group_by: &[&str],
+    key_id: &str,
+    session_fingerprint: &str,
+) -> Result<crate::types::LiveMetricsResponse, String> {
     let bucket_secs = if window_secs <= 3600 {
         5
     } else if window_secs <= 12 * 3600 {
@@ -393,13 +404,25 @@ pub async fn fetch_live_metrics(
     } else {
         3600
     };
-    let url = format!(
+    let mut url = format!(
         "{}/live-metrics?consumer={}&window_secs={}&bucket_secs={}",
         API_BASE,
         percent_encode_query(consumer),
         window_secs,
         bucket_secs
     );
+    for gb in group_by {
+        url.push_str("&group_by=");
+        url.push_str(&percent_encode_query(gb));
+    }
+    if !key_id.is_empty() {
+        url.push_str("&key_id=");
+        url.push_str(&percent_encode_query(key_id));
+    }
+    if !session_fingerprint.is_empty() {
+        url.push_str("&session_fingerprint=");
+        url.push_str(&percent_encode_query(session_fingerprint));
+    }
     fetch_json(&url).await
 }
 

@@ -1,15 +1,66 @@
 use crate::trace_log::TraceLogEntry;
-use crate::types::{LiveMetricsBucket, LiveMetricsResponse, LiveRequestPoint};
+use crate::types::{
+    LiveMetricsBucket, LiveMetricsResponse, LiveMetricsSeries, LiveRequestPoint, Ohlc,
+};
 use std::collections::HashMap;
 
 const MAX_WINDOW_SECS: u32 = 30 * 24 * 3600; // 30 days
 const MAX_BUCKET_SECS: u32 = 3600; // 1 hour buckets for long windows
 const MIN_BUCKET_SECS: u32 = 5;
+/// Maximum number of series returned by group-by to avoid unbounded growth.
+const MAX_SERIES: usize = 20;
 
 pub fn clamp_live_params(window_secs: u32, bucket_secs: u32) -> (u32, u32) {
     let window = window_secs.clamp(60, MAX_WINDOW_SECS);
     let bucket = bucket_secs.clamp(MIN_BUCKET_SECS, MAX_BUCKET_SECS.min(window));
     (window, bucket)
+}
+
+/// Build a composite grouping key from the chosen dimensions.
+fn group_key_for_entry(entry: &TraceLogEntry, group_by: &[String]) -> Option<String> {
+    if group_by.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(group_by.len());
+    for dim in group_by {
+        match dim.as_str() {
+            "model" => parts.push(format!("model={}", entry.model)),
+            "key_id" => {
+                let kid = entry
+                    .upstream_key_id
+                    .as_deref()
+                    .or(entry.client_key_id.as_deref())
+                    .unwrap_or("unknown");
+                parts.push(format!("key_id={kid}"));
+            }
+            "cache_hit" | "cache_status" => {
+                parts.push(format!(
+                    "cache={}",
+                    if entry.cache_hit { "HIT" } else { "MISS" }
+                ));
+            }
+            "backend_name" => {
+                let bn = entry.backend_name.as_deref().unwrap_or("unknown");
+                parts.push(format!("backend={bn}"));
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("|"))
+    }
+}
+
+/// Human-readable label for a group key (first dimension value).
+fn label_for_group_key(group_key: &str) -> String {
+    group_key
+        .split('|')
+        .next()
+        .and_then(|part| part.split_once('='))
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_else(|| group_key.to_string())
 }
 
 pub fn aggregate_live_metrics(
@@ -21,6 +72,7 @@ pub fn aggregate_live_metrics(
     bucket_secs: u32,
     trace_available: bool,
     available_consumers: Vec<String>,
+    group_by: &[String],
 ) -> LiveMetricsResponse {
     let (window_secs, bucket_secs) = clamp_live_params(window_secs, bucket_secs);
     let bucket_ms = u64::from(bucket_secs) * 1000;
@@ -33,6 +85,7 @@ pub fn aggregate_live_metrics(
     let end_bucket = now_ms / bucket_ms;
 
     let mut acc: HashMap<u64, BucketAcc> = HashMap::new();
+    let mut series_acc: HashMap<String, HashMap<u64, BucketAcc>> = HashMap::new();
     let mut latest: Option<&TraceLogEntry> = None;
 
     for entry in entries {
@@ -56,24 +109,22 @@ pub fn aggregate_live_metrics(
         }
 
         let bucket_id = entry.timestamp_ms / bucket_ms;
+
+        // Global aggregation (always).
         let slot = acc.entry(bucket_id).or_insert_with(|| BucketAcc {
             timestamp_ms: bucket_id * bucket_ms,
             ..Default::default()
         });
-        slot.request_count += 1;
-        slot.e2e_sum += entry.latency_ms;
-        slot.input_tokens += entry.resolved_input_tokens();
-        slot.output_tokens += entry.resolved_output_tokens();
-        if let Some(up) = entry.upstream_latency_ms {
-            slot.upstream_sum += up;
-            slot.upstream_count += 1;
-        }
-        if let Some(ttft) = entry.ttft_ms {
-            slot.ttft_sum += ttft;
-            slot.ttft_count += 1;
-        }
-        if entry.cache_hit {
-            slot.cache_hit_count += 1;
+        accumulate_entry(slot, entry);
+
+        // Series aggregation (only when group_by is active).
+        if let Some(gk) = group_key_for_entry(entry, group_by) {
+            let series_map = series_acc.entry(gk).or_insert_with(HashMap::new);
+            let s_slot = series_map.entry(bucket_id).or_insert_with(|| BucketAcc {
+                timestamp_ms: bucket_id * bucket_ms,
+                ..Default::default()
+            });
+            accumulate_entry(s_slot, entry);
         }
     }
 
@@ -83,22 +134,48 @@ pub fn aggregate_live_metrics(
         if let Some(slot) = acc.remove(&bucket_id) {
             buckets.push(slot.into_bucket());
         } else {
-            buckets.push(LiveMetricsBucket {
-                timestamp_ms,
-                request_count: 0,
-                e2e_latency_ms: 0.0,
-                upstream_latency_ms: None,
-                ttft_ms: None,
-                upstream_sample_count: 0,
-                ttft_sample_count: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_hit_count: 0,
-            });
+            buckets.push(empty_bucket(timestamp_ms));
         }
     }
 
     let summary = summarize_window(&buckets);
+
+    // Build series (sorted by request_count descending, capped at MAX_SERIES).
+    let mut series: Vec<LiveMetricsSeries> = Vec::new();
+    if !series_acc.is_empty() {
+        let _first_dim = group_by.first().cloned().unwrap_or_default();
+        let mut series_vec: Vec<(String, HashMap<u64, BucketAcc>)> =
+            series_acc.into_iter().collect();
+        series_vec.sort_by(|a, b| {
+            let count_a: u32 = a.1.values().map(|s| s.request_count).sum();
+            let count_b: u32 = b.1.values().map(|s| s.request_count).sum();
+            count_b.cmp(&count_a)
+        });
+        series_vec.truncate(MAX_SERIES);
+        for (idx, (gk, mut series_map)) in series_vec.into_iter().enumerate() {
+            let mut s_buckets = Vec::new();
+            for bucket_id in start_bucket..=end_bucket {
+                let timestamp_ms = bucket_id * bucket_ms;
+                if let Some(slot) = series_map.remove(&bucket_id) {
+                    s_buckets.push(slot.into_bucket());
+                } else {
+                    s_buckets.push(empty_bucket(timestamp_ms));
+                }
+            }
+            let s_summary = summarize_window(&s_buckets);
+            let color_hint = crate::types::SERIES_COLORS
+                .get(idx % crate::types::SERIES_COLORS.len())
+                .unwrap_or(&"")
+                .to_string();
+            series.push(LiveMetricsSeries {
+                label: label_for_group_key(&gk),
+                group_key: gk,
+                color_hint,
+                buckets: s_buckets,
+                summary: s_summary,
+            });
+        }
+    }
 
     LiveMetricsResponse {
         consumer: consumer.to_string(),
@@ -109,6 +186,36 @@ pub fn aggregate_live_metrics(
         available_consumers,
         latest: latest.map(live_point_from_entry),
         summary,
+        series,
+    }
+}
+
+fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
+    slot.request_count += 1;
+    slot.e2e_sum += entry.latency_ms;
+    let inp = entry.resolved_input_tokens();
+    let out = entry.resolved_output_tokens();
+    slot.input_tokens += inp;
+    slot.output_tokens += out;
+
+    // OHLC tracking for input tokens.
+    if inp > 0 {
+        slot.input_token_entries.push((entry.timestamp_ms, inp));
+    }
+    if out > 0 {
+        slot.output_token_entries.push((entry.timestamp_ms, out));
+    }
+
+    if let Some(up) = entry.upstream_latency_ms {
+        slot.upstream_sum += up;
+        slot.upstream_count += 1;
+    }
+    if let Some(ttft) = entry.ttft_ms {
+        slot.ttft_sum += ttft;
+        slot.ttft_count += 1;
+    }
+    if entry.cache_hit {
+        slot.cache_hit_count += 1;
     }
 }
 
@@ -155,6 +262,9 @@ struct BucketAcc {
     input_tokens: u64,
     output_tokens: u64,
     cache_hit_count: u32,
+    /// Raw (timestamp_ms, value) pairs for OHLC computation.
+    input_token_entries: Vec<(u64, u64)>,
+    output_token_entries: Vec<(u64, u64)>,
 }
 
 impl BucketAcc {
@@ -183,7 +293,45 @@ impl BucketAcc {
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cache_hit_count: self.cache_hit_count,
+            input_tokens_ohlc: compute_ohlc(&self.input_token_entries),
+            output_tokens_ohlc: compute_ohlc(&self.output_token_entries),
+            max_inflight: None,
         }
+    }
+}
+
+fn compute_ohlc(entries: &[(u64, u64)]) -> Option<Ohlc> {
+    if entries.is_empty() {
+        return None;
+    }
+    // entries are already in chronological order within a bucket.
+    let open = entries[0].1;
+    let close = entries[entries.len() - 1].1;
+    let high = entries.iter().map(|(_, v)| *v).max().unwrap_or(0);
+    let low = entries.iter().map(|(_, v)| *v).min().unwrap_or(0);
+    Some(Ohlc {
+        open,
+        high,
+        low,
+        close,
+    })
+}
+
+fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
+    LiveMetricsBucket {
+        timestamp_ms,
+        request_count: 0,
+        e2e_latency_ms: 0.0,
+        upstream_latency_ms: None,
+        ttft_ms: None,
+        upstream_sample_count: 0,
+        ttft_sample_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_hit_count: 0,
+        input_tokens_ohlc: None,
+        output_tokens_ohlc: None,
+        max_inflight: None,
     }
 }
 
@@ -332,6 +480,7 @@ mod tests {
             5,
             true,
             vec!["client-a".into(), "client-b".into()],
+            &[],
         );
         assert!(resp.trace_available);
         let with_reqs = resp
@@ -344,6 +493,7 @@ mod tests {
         assert_eq!(resp.summary.input_tokens, 30);
         assert_eq!(resp.summary.output_tokens, 15);
         assert!(resp.summary.avg_e2e_latency_ms > 0.0);
+        assert!(resp.series.is_empty(), "no series when group_by is empty");
         let active: Vec<_> = resp
             .buckets
             .iter()
@@ -355,28 +505,14 @@ mod tests {
 
     #[test]
     fn empty_bucket_has_no_upstream_or_ttft() {
-        let b = LiveMetricsBucket {
-            timestamp_ms: 0,
-            request_count: 0,
-            e2e_latency_ms: 0.0,
-            upstream_latency_ms: None,
-            ttft_ms: None,
-            upstream_sample_count: 0,
-            ttft_sample_count: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_hit_count: 0,
-        };
+        let b = empty_bucket(0);
         assert!(b.upstream_latency_ms.is_none());
         assert!(b.ttft_ms.is_none());
+        assert!(b.input_tokens_ohlc.is_none());
     }
 
     #[test]
     fn weighted_summary_uneven_buckets() {
-        // Two buckets with very different request counts.
-        // Bucket A: high upstream (100ms) with 1000 requests.
-        // Bucket B: low upstream (10ms) with 1 request.
-        // The weighted avg should be ~99.9ms, not 55ms (unweighted average).
         let buckets = vec![
             LiveMetricsBucket {
                 timestamp_ms: 1000,
@@ -389,6 +525,9 @@ mod tests {
                 input_tokens: 10000,
                 output_tokens: 5000,
                 cache_hit_count: 200,
+                input_tokens_ohlc: None,
+                output_tokens_ohlc: None,
+                max_inflight: None,
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -401,18 +540,18 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 5,
                 cache_hit_count: 0,
+                input_tokens_ohlc: None,
+                output_tokens_ohlc: None,
+                max_inflight: None,
             },
         ];
         let s = summarize_window(&buckets);
-        // E2E: (500*1000 + 200*1) / 1001 ≈ 499.7
         assert!((s.avg_e2e_latency_ms - 499.7).abs() < 0.1);
-        // Upstream: (100*1000 + 10*1) / 1001 ≈ 99.9 (NOT (100+10)/2 = 55)
         assert!(
             (s.avg_upstream_latency_ms - 99.9).abs() < 0.1,
             "upstream={}",
             s.avg_upstream_latency_ms
         );
-        // TTFT: (50*1000 + 5*1) / 1001 ≈ 49.95
         assert!(
             (s.avg_ttft_ms - 49.95).abs() < 0.1,
             "ttft={}",
@@ -421,5 +560,62 @@ mod tests {
         assert_eq!(s.request_count, 1001);
         assert_eq!(s.input_tokens, 10010);
         assert_eq!(s.output_tokens, 5005);
+    }
+
+    #[test]
+    fn ohlc_computation() {
+        let entries = vec![(100, 10), (200, 30), (300, 5), (400, 20)];
+        let ohlc = compute_ohlc(&entries).unwrap();
+        assert_eq!(ohlc.open, 10);
+        assert_eq!(ohlc.high, 30);
+        assert_eq!(ohlc.low, 5);
+        assert_eq!(ohlc.close, 20);
+    }
+
+    #[test]
+    fn ohlc_empty_returns_none() {
+        assert!(compute_ohlc(&[]).is_none());
+    }
+
+    #[test]
+    fn group_by_model_produces_series() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let bucket_ms = 5_000;
+        let t0 = (now_ms / bucket_ms) * bucket_ms;
+
+        let mut e1 = entry(t0 + 1000, "client-a", 100.0, Some(80.0), 10, 5);
+        e1.model = "deepseek-chat".into();
+        let mut e2 = entry(t0 + 2000, "client-a", 200.0, Some(90.0), 20, 10);
+        e2.model = "gpt-4o".into();
+        let mut e3 = entry(t0 + 3000, "client-a", 150.0, Some(85.0), 15, 8);
+        e3.model = "deepseek-chat".into();
+
+        let entries = vec![e1, e2, e3];
+        let resp = aggregate_live_metrics(
+            &entries,
+            "client-a",
+            "",
+            "",
+            300,
+            5,
+            true,
+            vec!["client-a".into()],
+            &["model".into()],
+        );
+
+        assert_eq!(resp.series.len(), 2, "should have 2 series by model");
+        assert_eq!(resp.summary.request_count, 3);
+        // deepseek-chat has 2 requests, gpt-4o has 1.
+        let ds = resp
+            .series
+            .iter()
+            .find(|s| s.label == "deepseek-chat")
+            .unwrap();
+        assert_eq!(ds.summary.request_count, 2);
+        let gpt = resp.series.iter().find(|s| s.label == "gpt-4o").unwrap();
+        assert_eq!(gpt.summary.request_count, 1);
     }
 }

@@ -63,12 +63,7 @@ pub fn render_line_chart(
         .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .x_label_formatter(&|x| {
-            labels
-                .get(*x as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
+        .x_label_formatter(&|x| labels.get(*x as usize).cloned().unwrap_or_default())
         .x_labels(6.min(n))
         .y_labels(5)
         .draw()
@@ -83,7 +78,7 @@ pub fn render_line_chart(
     }
 
     for s in series {
-        let color = resolve_series_color(s.color, &palette);
+        let color = resolve_series_color(&s.color, &palette);
         let points: Vec<(f64, f64)> = s
             .values
             .iter()
@@ -160,12 +155,7 @@ pub fn render_stacked_bar_chart(
         .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .x_label_formatter(&|x| {
-            labels
-                .get(*x as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
+        .x_label_formatter(&|x| labels.get(*x as usize).cloned().unwrap_or_default())
         .x_labels(6.min(n))
         .y_labels(5)
         .draw()
@@ -181,15 +171,12 @@ pub fn render_stacked_bar_chart(
             if !(v > 0.0 && v.is_finite()) {
                 continue;
             }
-            let color = resolve_series_color(s.color, &palette).mix(0.88).filled();
+            let color = resolve_series_color(&s.color, &palette).mix(0.88).filled();
             let x0 = i as f64 - bar_w / 2.0;
             let x1 = i as f64 + bar_w / 2.0;
             let y0 = cum;
             let y1 = cum + v;
-            let _ = chart.draw_series(std::iter::once(Rectangle::new(
-                [(x0, y0), (x1, y1)],
-                color,
-            )));
+            let _ = chart.draw_series(std::iter::once(Rectangle::new([(x0, y0), (x1, y1)], color)));
             cum = y1;
         }
     }
@@ -200,11 +187,7 @@ pub fn render_stacked_bar_chart(
     Some(buf)
 }
 
-pub fn render_bar_chart(
-    labels: &[String],
-    series: &[ChartSeries],
-    theme: Theme,
-) -> Option<String> {
+pub fn render_bar_chart(labels: &[String], series: &[ChartSeries], theme: Theme) -> Option<String> {
     if labels.is_empty() || series.is_empty() {
         return None;
     }
@@ -242,19 +225,14 @@ pub fn render_bar_chart(
         .light_line_style(palette.grid.mix(0.12))
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .x_label_formatter(&|x| {
-            labels
-                .get(*x as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
+        .x_label_formatter(&|x| labels.get(*x as usize).cloned().unwrap_or_default())
         .x_labels(6.min(n))
         .y_labels(5)
         .draw()
         .ok()?;
 
     for (j, s) in series.iter().enumerate() {
-        let color = resolve_series_color(s.color, &palette).mix(0.88).filled();
+        let color = resolve_series_color(&s.color, &palette).mix(0.88).filled();
         let offset = -0.4 + j as f64 * group_w + (group_w - bar_w) / 2.0;
         let rects: Vec<Rectangle<(f64, f64)>> = s
             .values
@@ -401,7 +379,7 @@ pub fn render_donut(segments: &[DonutSegment], theme: Theme, size: u32) -> Optio
     let sizes: Vec<f64> = segments.iter().map(|s| s.value).collect();
     let colors: Vec<RGBColor> = segments
         .iter()
-        .map(|s| resolve_series_color(s.color, &palette))
+        .map(|s| resolve_series_color(&s.color, &palette))
         .collect();
     let labels: Vec<&str> = segments.iter().map(|s| s.label.as_str()).collect();
 
@@ -509,7 +487,10 @@ pub fn render_scatter(
         let color = palette.warning.mix(0.7);
         let line_style = color.stroke_width(2);
         let _ = chart.draw_series(std::iter::once(PathElement::new(
-            vec![(xmin, slope * xmin + intercept), (xmax, slope * xmax + intercept)],
+            vec![
+                (xmin, slope * xmin + intercept),
+                (xmax, slope * xmax + intercept),
+            ],
             line_style,
         )));
     }
@@ -577,7 +558,9 @@ pub fn render_waterfall(stages: &[WaterfallStage], theme: Theme) -> Option<Strin
         .map(|(i, stage)| {
             let y0 = i as f64 + (1.0 - bar_h) / 2.0;
             let y1 = y0 + bar_h;
-            let color = waterfall_bar_color(stage.duration_ms, &palette).mix(0.88).filled();
+            let color = waterfall_bar_color(stage.duration_ms, &palette)
+                .mix(0.88)
+                .filled();
             Rectangle::new([(0.0, y0), (stage.duration_ms.max(0.5), y1)], color)
         })
         .collect();
@@ -631,12 +614,7 @@ pub fn render_horizontal_bar_chart(
         .max_light_lines(3)
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .y_label_formatter(&|y| {
-            labels
-                .get(*y as usize)
-                .cloned()
-                .unwrap_or_default()
-        })
+        .y_label_formatter(&|y| labels.get(*y as usize).cloned().unwrap_or_default())
         .y_labels(n)
         .draw()
         .ok()?;
