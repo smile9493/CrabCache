@@ -399,6 +399,7 @@ mod tests {
             request_hash: None,
             semantic_cluster: None,
             upstream_key_id: None,
+            affinity_kind: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         // Gateway = 100 - 60 - 30 = 10
@@ -445,6 +446,7 @@ mod tests {
             request_hash: None,
             semantic_cluster: None,
             upstream_key_id: None,
+            affinity_kind: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         assert_eq!(stages.len(), 1);

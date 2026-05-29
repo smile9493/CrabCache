@@ -605,7 +605,9 @@ async fn get_network_info(State(state): State<Arc<AppState>>) -> Json<NetworkInf
                 error = %e,
                 "Gateway client-endpoint API unavailable; using local FRP/OpenResty discovery"
             );
-            Json(NetworkInfo::build(crate::network::NetworkInfoConfig::from_env()))
+            Json(NetworkInfo::build(
+                crate::network::NetworkInfoConfig::from_env(),
+            ))
         }
     }
 }
@@ -2190,48 +2192,7 @@ async fn get_logs(
     let items: Vec<RequestLog> = entries
         .into_iter()
         .take(limit)
-        .map(|e| {
-            let datetime = crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64);
-            let consumer = e
-                .consumer
-                .clone()
-                .filter(|s| !s.is_empty())
-                .or_else(|| e.conversation_id.clone().filter(|s| !s.is_empty()))
-                .unwrap_or_else(|| "—".to_string());
-            let request_payload = e.request_messages_snapshot.clone().unwrap_or_else(|| {
-                let summary = serde_json::json!({
-                    "request_hash": e.request_hash,
-                    "content_length": e.content_length,
-                    "semantic_cluster": e.semantic_cluster,
-                    "input_tokens": e.resolved_input_tokens(),
-                    "output_tokens": e.resolved_output_tokens(),
-                    "cache_hit": e.cache_hit,
-                    "cache_tier": e.cache_tier,
-                });
-                serde_json::to_string_pretty(&summary).unwrap_or_default()
-            });
-            let response_preview = e.response_preview.clone().unwrap_or_else(String::new);
-            RequestLog {
-                id: e.id(),
-                timestamp: datetime,
-                model: e.model.clone(),
-                consumer,
-                latency_ms: e.latency_ms.round() as u64,
-                total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
-                cache_status: e.cache_status_label(),
-                request_payload,
-                response_preview,
-                input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
-                output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
-                ttft_ms: e.ttft_ms,
-                content_length: Some(e.content_length),
-                request_hash: Some(e.request_hash.clone()),
-                project_id: e.project_id.clone(),
-                upstream_user_id: e.upstream_user_id.clone(),
-                user_id_audit: e.user_id_audit.clone(),
-                upstream_key_id: e.upstream_key_id.clone(),
-            }
-        })
+        .map(|e| crate::trace_log::trace_entry_to_request_log(&e))
         .collect();
 
     Json(crate::types::LogsPageResponse {
@@ -2257,6 +2218,10 @@ async fn try_query_pg_logs(
             query.model.as_deref(),
             query.cache_tier.as_deref(),
             query.request_hash.as_deref(),
+            query.latency_min,
+            query.latency_max,
+            query.token_min,
+            query.token_max,
             limit + 1,
         )
         .await
@@ -2270,35 +2235,7 @@ async fn try_query_pg_logs(
     let items: Vec<RequestLog> = rows
         .into_iter()
         .take(limit)
-        .map(|e| {
-            let input = e.input_tokens.unwrap_or(0);
-            let output = e.output_tokens.unwrap_or(0);
-            RequestLog {
-                id: e.request_hash.clone(),
-                timestamp: crate::trace_log::format_beijing_from_millis(e.timestamp_ms as i64),
-                model: e.model.clone(),
-                consumer: e.consumer.clone().unwrap_or_else(|| "—".to_string()),
-                latency_ms: e.latency_ms as u64,
-                total_tokens: input + output,
-                cache_status: e.cache_tier.clone().unwrap_or_default(),
-                request_payload: e.request_messages_snapshot.clone().unwrap_or_default(),
-                response_preview: e
-                    .response_preview
-                    .unwrap_or_default()
-                    .chars()
-                    .take(200)
-                    .collect(),
-                input_tokens: Some(input),
-                output_tokens: Some(output),
-                ttft_ms: e.ttft_ms,
-                content_length: Some(e.content_length),
-                request_hash: Some(e.request_hash),
-                project_id: e.project_id,
-                upstream_user_id: None,
-                user_id_audit: None,
-                upstream_key_id: None,
-            }
-        })
+        .map(|e| crate::trace_log::trace_entry_to_request_log(&e))
         .collect();
 
     Some(crate::types::LogsPageResponse {
@@ -2327,11 +2264,12 @@ async fn get_log_detail(
             request_hash: None,
             semantic_cluster: None,
             upstream_key_id: None,
+            affinity_kind: None,
         }));
     }
 
     let trace_path = crate::trace_log::trace_log_path();
-    if let Some(entry) = crate::trace_log::find_trace_entry(&trace_path, &id) {
+    if let Some(entry) = state.find_trace_entry(&id, &trace_path).await {
         let cache_path = if entry.cache_hit {
             entry
                 .cache_tier
@@ -2362,7 +2300,10 @@ async fn get_log_detail(
             cache_path,
             request_payload,
             response_body,
-            route_backend: "—".to_string(),
+            route_backend: entry
+                .backend_name
+                .clone()
+                .unwrap_or_else(|| "—".to_string()),
             upstream_latency_ms: entry.upstream_latency_ms,
             ttft_ms: entry.ttft_ms,
             input_tokens: entry.input_tokens,
@@ -2370,6 +2311,7 @@ async fn get_log_detail(
             request_hash: Some(entry.request_hash.clone()),
             semantic_cluster: Some(entry.semantic_cluster),
             upstream_key_id: entry.upstream_key_id.clone(),
+            affinity_kind: entry.affinity_kind.clone(),
         }));
     }
 
@@ -3001,22 +2943,12 @@ async fn get_live_consumers(
     Query(query): Query<ConsumersQuery>,
 ) -> Json<serde_json::Value> {
     let path = crate::trace_log::trace_log_path();
-    let trace_available = crate::trace_log::trace_log_available(&path);
+    let pg = state.pg_store.read().clone();
     let window_secs = query.window_secs.clamp(60, 30 * 24 * 3600);
-    let path_for_blocking = path.clone();
-    let state_for_blocking = Arc::clone(&state);
 
-    // Prime the cache with the given window (blocking).
-    tokio::task::spawn_blocking(move || {
-        crate::trace_log::load_live_trace_entries_cached(
-            &state_for_blocking.live_trace_cache,
-            &path_for_blocking,
-            window_secs,
-            crate::trace_log::LIVE_TRACE_TAIL_BYTES,
-        )
-    })
-    .await
-    .ok();
+    let _ = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+
+    let trace_available = crate::trace_log::trace_source_available(&path, pg.as_ref());
 
     let consumer_names = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
     Json(serde_json::json!({
@@ -3031,22 +2963,9 @@ async fn get_key_concurrency(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
 ) -> Result<Json<KeyConcurrencyResponse>, StatusCode> {
-    let path = crate::trace_log::trace_log_path();
     let window_secs: u32 = 300;
-    let entries = tokio::task::spawn_blocking({
-        let state_clone = Arc::clone(&state);
-        let p = path.clone();
-        move || {
-            crate::trace_log::load_live_trace_entries_cached(
-                &state_clone.live_trace_cache,
-                &p,
-                window_secs,
-                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
-            )
-        }
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries =
+        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let filtered: Vec<KeyConcurrencyEntry> = entries
         .iter()
@@ -3125,22 +3044,9 @@ async fn get_key_routing(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
 ) -> Result<Json<KeyRoutingResponse>, StatusCode> {
-    let path = crate::trace_log::trace_log_path();
     let window_secs: u32 = 300;
-    let entries = tokio::task::spawn_blocking({
-        let state_clone = Arc::clone(&state);
-        let p = path.clone();
-        move || {
-            crate::trace_log::load_live_trace_entries_cached(
-                &state_clone.live_trace_cache,
-                &p,
-                window_secs,
-                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
-            )
-        }
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries =
+        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let key_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3239,22 +3145,9 @@ async fn get_session_timeline(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(fingerprint): axum::extract::Path<String>,
 ) -> Result<Json<SessionTimelineResponse>, StatusCode> {
-    let path = crate::trace_log::trace_log_path();
     let window_secs: u32 = 900;
-    let entries = tokio::task::spawn_blocking({
-        let state_clone = Arc::clone(&state);
-        let p = path.clone();
-        move || {
-            crate::trace_log::load_live_trace_entries_cached(
-                &state_clone.live_trace_cache,
-                &p,
-                window_secs,
-                crate::trace_log::LIVE_TRACE_TAIL_BYTES,
-            )
-        }
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries =
+        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let mut session_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3312,7 +3205,7 @@ async fn get_live_metrics(
     }
 
     let path = crate::trace_log::trace_log_path();
-    let trace_available = crate::trace_log::trace_log_available(&path);
+    let pg = state.pg_store.read().clone();
     let (window_secs, bucket_secs) =
         crate::live_metrics::clamp_live_params(query.window_secs, query.bucket_secs);
 
@@ -3320,18 +3213,9 @@ async fn get_live_metrics(
     let key_id = query.key_id.clone();
     let session_fingerprint = query.session_fingerprint.clone();
     let group_by = query.group_by.clone();
-    let path_for_blocking = path.clone();
-    let state_for_blocking = Arc::clone(&state);
-    let entries = tokio::task::spawn_blocking(move || {
-        crate::trace_log::load_live_trace_entries_cached(
-            &state_for_blocking.live_trace_cache,
-            &path_for_blocking,
-            window_secs,
-            crate::trace_log::LIVE_TRACE_TAIL_BYTES,
-        )
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries =
+        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let trace_available = crate::trace_log::trace_source_available(&path, pg.as_ref());
     // Use the cache's consumer HashSet instead of scanning the full entries list.
     let available_consumers = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
     let resp = crate::live_metrics::aggregate_live_metrics(
@@ -3384,7 +3268,7 @@ async fn get_trace_analysis(
     }
 
     let trace_path = crate::trace_log::trace_log_path();
-    let entries = crate::trace_log::load_trace_entries_async(&trace_path, query.hours).await;
+    let entries = state.load_trace_entries(&trace_path, query.hours).await;
 
     if entries.is_empty() {
         return Ok(Json(empty_trace_analysis()).into_response());

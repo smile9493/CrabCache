@@ -145,6 +145,55 @@ impl TraceLogEntry {
     }
 }
 
+/// Map a trace log entry to the admin API list DTO (shared by PG and JSONL paths).
+pub fn trace_entry_to_request_log(e: &TraceLogEntry) -> crab_admin_types::RequestLog {
+    let consumer = e
+        .consumer
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| e.conversation_id.clone().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "—".to_string());
+    let request_payload = e.request_messages_snapshot.clone().unwrap_or_else(|| {
+        let summary = serde_json::json!({
+            "request_hash": e.request_hash,
+            "content_length": e.content_length,
+            "semantic_cluster": e.semantic_cluster,
+            "input_tokens": e.resolved_input_tokens(),
+            "output_tokens": e.resolved_output_tokens(),
+            "cache_hit": e.cache_hit,
+            "cache_tier": e.cache_tier,
+        });
+        serde_json::to_string_pretty(&summary).unwrap_or_default()
+    });
+    let response_preview = e
+        .response_preview
+        .clone()
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect();
+    crab_admin_types::RequestLog {
+        id: e.id(),
+        timestamp: format_beijing_from_millis(e.timestamp_ms as i64),
+        model: e.model.clone(),
+        consumer,
+        latency_ms: e.latency_ms.round() as u64,
+        total_tokens: e.resolved_input_tokens() + e.resolved_output_tokens(),
+        cache_status: e.cache_status_label(),
+        request_payload,
+        response_preview,
+        input_tokens: e.input_tokens.or(Some(e.resolved_input_tokens())),
+        output_tokens: e.output_tokens.or(Some(e.resolved_output_tokens())),
+        ttft_ms: e.ttft_ms,
+        content_length: Some(e.content_length),
+        request_hash: Some(e.request_hash.clone()),
+        project_id: e.project_id.clone(),
+        upstream_user_id: e.upstream_user_id.clone(),
+        user_id_audit: e.user_id_audit.clone(),
+        upstream_key_id: e.upstream_key_id.clone(),
+    }
+}
+
 pub fn trace_log_path() -> String {
     std::env::var("CRABCACHE_TRACE_LOG_PATH")
         .unwrap_or_else(|_| "/app/logs/trace.jsonl".to_string())
@@ -547,6 +596,135 @@ pub fn load_live_trace_entries_cached(
     }
 }
 
+/// True when live metrics should read from PG instead of JSONL tail.
+pub fn live_trace_prefers_pg(path: &str, pg: Option<&crate::pg::PgStore>) -> bool {
+    pg.is_some()
+        && (std::env::var("CRABCACHE_LIVE_TRACE_SOURCE")
+            .map(|v| v.eq_ignore_ascii_case("pg"))
+            .unwrap_or(false)
+            || !trace_log_available(path))
+}
+
+/// Whether trace data can be served (JSONL on disk or PG configured for fallback).
+pub fn trace_source_available(path: &str, pg: Option<&crate::pg::PgStore>) -> bool {
+    trace_log_available(path) || live_trace_prefers_pg(path, pg)
+}
+
+/// Parse `{request_hash}-{timestamp_ms}` detail/list IDs. Returns `(hash, ts)`.
+pub fn parse_trace_entry_id(id: &str) -> Option<(String, u64)> {
+    let (hash, ts_str) = id.rsplit_once('-')?;
+    let ts = ts_str.parse().ok()?;
+    Some((hash.to_string(), ts))
+}
+
+fn rebuild_live_cache(
+    cache: &RwLock<LiveTraceCache>,
+    window_secs: u32,
+    entries: Vec<TraceLogEntry>,
+) -> Arc<Vec<TraceLogEntry>> {
+    let now_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let cutoff = now_ms.saturating_sub(u64::from(window_secs) * 1000);
+    let mut filtered: Vec<TraceLogEntry> = entries
+        .into_iter()
+        .filter(|e| e.timestamp_ms >= cutoff)
+        .collect();
+    filtered.sort_by_key(|e| e.timestamp_ms);
+
+    let consumers: HashSet<String> = filtered
+        .iter()
+        .filter_map(|e| e.consumer.as_ref().filter(|s| !s.is_empty()).cloned())
+        .collect();
+    let key_ids: HashSet<String> = filtered
+        .iter()
+        .filter_map(|e| {
+            e.upstream_key_id
+                .as_ref()
+                .or(e.client_key_id.as_ref())
+                .filter(|s| !s.is_empty())
+                .cloned()
+        })
+        .collect();
+    let session_fingerprints: HashSet<String> = filtered
+        .iter()
+        .filter_map(|e| {
+            e.session_fingerprint
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .cloned()
+        })
+        .collect();
+    let arc = Arc::new(filtered);
+    *cache.write() = LiveTraceCache {
+        parsed_at: Some(Instant::now()),
+        file_len: 0,
+        file_mtime: None,
+        #[cfg(unix)]
+        file_inode: None,
+        window_secs,
+        partial_line: Vec::new(),
+        entries: arc.as_ref().clone(),
+        consumers,
+        key_ids,
+        session_fingerprints,
+        cached_arc: Arc::clone(&arc),
+    };
+    arc
+}
+
+async fn load_live_trace_entries_from_pg(
+    cache: &RwLock<LiveTraceCache>,
+    pg: &crate::pg::PgStore,
+    window_secs: u32,
+) -> Arc<Vec<TraceLogEntry>> {
+    {
+        let guard = cache.read();
+        if guard.parsed_at.is_some_and(|t| t.elapsed() < live_trace_cache_ttl())
+            && guard.window_secs == window_secs
+        {
+            return Arc::clone(&guard.cached_arc);
+        }
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let from_ms = now_ms.saturating_sub(u64::from(window_secs) * 1000);
+    let entries = pg
+        .load_trace_logs(Some(from_ms), None, None, None, None, None, 50_000)
+        .await
+        .unwrap_or_default();
+    rebuild_live_cache(cache, window_secs, entries)
+}
+
+/// Live trace entries: JSONL incremental tail, or PG window query when configured.
+pub async fn load_live_trace_entries_auto(
+    state: &std::sync::Arc<crate::state::AppState>,
+    window_secs: u32,
+) -> Arc<Vec<TraceLogEntry>> {
+    let path = trace_log_path();
+    let pg = state.pg_store.read().clone();
+    if live_trace_prefers_pg(&path, pg.as_ref()) {
+        if let Some(ref pg) = pg {
+            return load_live_trace_entries_from_pg(&state.live_trace_cache, pg, window_secs).await;
+        }
+    }
+    let state_clone = std::sync::Arc::clone(state);
+    let path = path.clone();
+    tokio::task::spawn_blocking(move || {
+        load_live_trace_entries_cached(
+            &state_clone.live_trace_cache,
+            &path,
+            window_secs,
+            LIVE_TRACE_TAIL_BYTES,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| Arc::new(Vec::new()))
+}
+
 /// Fast consumer list from the live trace cache (avoids sorting).
 pub fn live_distinct_consumers(cache: &RwLock<LiveTraceCache>) -> Vec<String> {
     let guard = cache.read();
@@ -704,10 +882,7 @@ fn parse_cursor(cursor: &str) -> (u64, String) {
 
 /// Load trace entries from multiple source files, respecting options.
 ///
-/// The current implementation:
-/// 1. Lists all sources via `list_trace_sources`.
-/// 2. Reads the newest one (active) with `load_trace_bytes`.
-/// 3. (Future) could walk older sources for cursor pagination.
+/// Scans all sources from `list_trace_sources` (active + rotated archives).
 fn entry_matches_opts(
     e: &TraceLogEntry,
     opts: &TraceLoadOpts,
@@ -793,19 +968,9 @@ pub fn load_trace_with_opts(base_path: &str, opts: &TraceLoadOpts) -> Vec<TraceL
     };
 
     let sources = list_trace_sources(base_path);
-    // For MVP, only scan the first (newest) source for common queries.
-    // Cursor pagination scans all.
-    let scan_all = opts.cursor.is_some();
 
     let mut all = Vec::new();
     for source in &sources {
-        if !scan_all {
-            // Common short-queries: only read newest source.
-            if !all.is_empty() {
-                break;
-            }
-        }
-
         let raw = load_trace_bytes(&source.path, MAX_TRACE_READ_BYTES);
         let entries = parse_trace_lines(&raw.0, raw.1);
 
@@ -891,20 +1056,15 @@ pub async fn load_trace_with_opts_pg(
             opts.model.as_deref(),
             opts.cache_tier.as_deref(),
             opts.request_hash.as_deref(),
+            opts.latency_min,
+            opts.latency_max,
+            opts.token_min,
+            opts.token_max,
             fetch_limit,
         )
         .await
     {
         Ok((mut entries, _next_cursor)) => {
-            if let (Some(lat_min), Some(lat_max)) = (opts.latency_min, opts.latency_max) {
-                entries.retain(|e| e.latency_ms >= lat_min && e.latency_ms <= lat_max);
-            }
-            if let (Some(tok_min), Some(tok_max)) = (opts.token_min, opts.token_max) {
-                entries.retain(|e| {
-                    let total = e.resolved_input_tokens() + e.resolved_output_tokens();
-                    total >= tok_min && total <= tok_max
-                });
-            }
             if opts.limit > 0 && entries.len() > opts.limit {
                 entries.truncate(opts.limit);
             }
@@ -917,11 +1077,14 @@ pub async fn load_trace_with_opts_pg(
     }
 }
 
-/// Find a single trace entry from PG by composite key.
+/// Find a single trace entry from PG by composite key or legacy bare hash.
 pub async fn find_trace_entry_pg(pg: &crate::pg::PgStore, id: &str) -> Option<TraceLogEntry> {
-    let (hash, ts_str) = id.split_once('-')?;
-    let ts: u64 = ts_str.parse().ok()?;
-    pg.find_trace_log(hash, ts).await.ok().flatten()
+    if let Some((hash, ts)) = parse_trace_entry_id(id) {
+        if let Ok(Some(entry)) = pg.find_trace_log(&hash, ts).await {
+            return Some(entry);
+        }
+    }
+    pg.find_trace_log_by_hash(id).await.ok().flatten()
 }
 
 /// Load trace entries from PG for a time window (hours).
@@ -1546,6 +1709,123 @@ mod tests {
         assert_eq!(page2[0].timestamp_ms, 99);
         assert_eq!(page2[0].request_hash, "bbbbbbbbbbbbbbbb");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trace_entry_to_request_log_uses_composite_id() {
+        let entry = TraceLogEntry {
+            request_hash: "abc123".into(),
+            timestamp_ms: 1_700_000_000_000,
+            content_length: 10,
+            semantic_cluster: 0,
+            conversation_id: None,
+            consumer: None,
+            model: "m".into(),
+            prompt_tokens: 5,
+            latency_ms: 42.0,
+            upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
+            ttft_ms: None,
+            cache_hit: true,
+            cache_tier: Some("l0".into()),
+            domain: None,
+            project_id: None,
+            composition: None,
+            request_messages_snapshot: None,
+            response_preview: None,
+            retired_prefix_messages: None,
+            reasoning_strategy: None,
+            prompt_cache_hit_ratio: None,
+            upstream_profile_id: None,
+            pipeline: None,
+            upstream_model: None,
+            client_body_user_id: None,
+            input_tokens: Some(5),
+            output_tokens: Some(2),
+            upstream_user_id: Some("u1".into()),
+            user_id_audit: Some("injected".into()),
+            upstream_key_id: Some("key-1".into()),
+            affinity_key: None,
+            affinity_kind: None,
+            backend_name: None,
+            session_fingerprint: None,
+            is_coalesced: false,
+            client_key_id: None,
+            streaming_defer: false,
+            streaming_defer_reject_reason: None,
+            session_store: None,
+            stable_session_kind: None,
+            upstream_outbound_bytes: None,
+        };
+        let log = trace_entry_to_request_log(&entry);
+        assert_eq!(log.id, "abc123-1700000000000");
+        assert_eq!(log.cache_status, "L0");
+        assert_eq!(log.upstream_user_id.as_deref(), Some("u1"));
+    }
+
+    #[test]
+    fn load_trace_without_cursor_scans_archive() {
+        let dir = std::env::temp_dir().join(format!("crab_archive_scan_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let base = dir.join("trace.jsonl");
+        let archive = dir.join("trace.jsonl.1700000000");
+
+        let old_line = serde_json::json!({
+            "request_hash": "oldhasholdhasholdhasholdhasholdhashold",
+            "timestamp_ms": 100,
+            "content_length": 1,
+            "semantic_cluster": 0,
+            "model": "m",
+            "prompt_tokens": 1,
+            "latency_ms": 1.0,
+            "cache_hit": false,
+        });
+        let new_line = serde_json::json!({
+            "request_hash": "newhashnewhashnewhashnewhashnewhashnew",
+            "timestamp_ms": 200,
+            "content_length": 1,
+            "semantic_cluster": 0,
+            "model": "m",
+            "prompt_tokens": 1,
+            "latency_ms": 1.0,
+            "cache_hit": false,
+        });
+        std::fs::write(&archive, format!("{old_line}\n")).unwrap();
+        std::fs::write(&base, format!("{new_line}\n")).unwrap();
+
+        let entries = load_trace_with_opts(
+            base.to_str().unwrap(),
+            &TraceLoadOpts {
+                limit: 10,
+                ..Default::default()
+            },
+        );
+        let hashes: Vec<_> = entries.iter().map(|e| e.request_hash.as_str()).collect();
+        assert!(hashes.contains(&"oldhasholdhasholdhasholdhasholdhashold"));
+        assert!(hashes.contains(&"newhashnewhashnewhashnewhashnewhashnew"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_trace_entry_id_splits_hash_and_timestamp() {
+        assert_eq!(
+            parse_trace_entry_id("deadbeef-1700000000000"),
+            Some(("deadbeef".to_string(), 1_700_000_000_000))
+        );
+        assert_eq!(parse_trace_entry_id("nohyphen"), None);
+    }
+
+    #[test]
+    fn trace_source_available_without_jsonl_or_pg() {
+        let dir = std::env::temp_dir().join(format!("crab_no_trace_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let missing = dir.join("missing.jsonl");
+        assert!(!trace_log_available(missing.to_str().unwrap()));
+        assert!(!live_trace_prefers_pg(missing.to_str().unwrap(), None));
+        assert!(!trace_source_available(missing.to_str().unwrap(), None));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -115,7 +115,19 @@ docker compose --profile admin up -d
 | Redis | RDB/AOF、`redis-cli --rdb`；含 `cache:*`、`crab:state:*`、`crab:reasoning:*` |
 | Qdrant | 备份 `qdrant_data` 卷 |
 | Reasoning SQLite | 复制 `data/reasoning_content.sqlite3` |
-| Trace | 复制 `gateway_logs` 或 `[trace_logging].path` |
+| Trace | 复制 `gateway_logs` 或 `[trace_logging].path`；若启用 PG 则备份 `trace_logs` 表 |
+
+### Trace 日志 PG 双写
+
+Gateway 可通过 `CRABCACHE_TRACE_PG_URL` / `[trace_logging].pg_url` **直写** PostgreSQL `trace_logs`。Admin 默认另启 **JSONL→PG 同步**（`pg_sync`，每 10s）。两者均使用 `ON CONFLICT DO NOTHING`，功能上幂等，但会产生重复 insert 尝试。
+
+当 Gateway 已直写 PG 时，建议在 Admin 侧设置：
+
+```bash
+CRABCACHE_ADMIN_TRACE_PG_SYNC=false
+```
+
+Live metrics 在 JSONL 不可见时可从 PG 读取：设 `CRABCACHE_LIVE_TRACE_SOURCE=pg`（或 Admin 与 Gateway 分离且本地无 trace 文件时自动回退 PG）。
 | Admin state | 复制 `data/admin-state.json` |
 | 配置 | 版本化管理 `gateway.toml`、`.env`（勿提交明文密钥） |
 

@@ -104,7 +104,10 @@ const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_leng
                     upstream_model, client_body_user_id, upstream_user_id,
                     user_id_audit, upstream_key_id,
                     streaming_defer, streaming_defer_reject_reason,
-                    session_store, stable_session_kind, upstream_outbound_bytes";
+                    session_store, stable_session_kind, upstream_outbound_bytes,
+                    prefill_ms, pre_header_ms,
+                    affinity_key, affinity_kind, backend_name,
+                    session_fingerprint, is_coalesced, client_key_id";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
     let composition_raw: Option<String> = row.get(17);
@@ -123,11 +126,8 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         domain: row.get(10),
         project_id: row.get(11),
         upstream_latency_ms: row.get(12),
-        prefill_ms: None,
-        pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
-            let e2e: f64 = row.get(6);
-            (e2e - up).max(0.0)
-        }),
+        prefill_ms: row.get(35),
+        pre_header_ms: row.get(36),
         ttft_ms: row.get(13),
         input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
         output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
@@ -145,17 +145,52 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         upstream_user_id: row.get(27),
         user_id_audit: row.get(28),
         upstream_key_id: row.get(29),
-        affinity_key: None,
-        affinity_kind: None,
-        backend_name: None,
-        session_fingerprint: None,
-        is_coalesced: false,
-        client_key_id: None,
+        affinity_key: row.get(37),
+        affinity_kind: row.get(38),
+        backend_name: row.get(39),
+        session_fingerprint: row.get(40),
+        is_coalesced: row.get(41),
+        client_key_id: row.get(42),
         streaming_defer: row.get(30),
         streaming_defer_reject_reason: row.get(31),
         session_store: row.get(32),
         stable_session_kind: row.get(33),
         upstream_outbound_bytes: row.get::<_, Option<i32>>(34).map(|v| v as usize),
+    }
+}
+
+fn append_trace_numeric_filters(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>>,
+    idx: &mut usize,
+    latency_min: Option<f64>,
+    latency_max: Option<f64>,
+    token_min: Option<u64>,
+    token_max: Option<u64>,
+) {
+    if let Some(v) = latency_min {
+        sql.push_str(&format!(" AND latency_ms >= ${idx}"));
+        params.push(Box::new(v));
+        *idx += 1;
+    }
+    if let Some(v) = latency_max {
+        sql.push_str(&format!(" AND latency_ms <= ${idx}"));
+        params.push(Box::new(v));
+        *idx += 1;
+    }
+    if let Some(v) = token_min {
+        sql.push_str(&format!(
+            " AND (COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) >= ${idx}"
+        ));
+        params.push(Box::new(to_pg_bigint(v)));
+        *idx += 1;
+    }
+    if let Some(v) = token_max {
+        sql.push_str(&format!(
+            " AND (COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) <= ${idx}"
+        ));
+        params.push(Box::new(to_pg_bigint(v)));
+        *idx += 1;
     }
 }
 
@@ -372,6 +407,14 @@ impl PgStore {
                     session_store   TEXT,
                     stable_session_kind TEXT,
                     upstream_outbound_bytes INTEGER,
+                    prefill_ms      DOUBLE PRECISION,
+                    pre_header_ms   DOUBLE PRECISION,
+                    affinity_key    TEXT,
+                    affinity_kind   TEXT,
+                    backend_name    TEXT,
+                    session_fingerprint TEXT,
+                    is_coalesced    BOOLEAN NOT NULL DEFAULT false,
+                    client_key_id   TEXT,
                     PRIMARY KEY (request_hash, timestamp_ms)
                 )",
                 &[],
@@ -418,6 +461,14 @@ impl PgStore {
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS session_store TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS stable_session_kind TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS upstream_outbound_bytes INTEGER",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS prefill_ms DOUBLE PRECISION",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS pre_header_ms DOUBLE PRECISION",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS affinity_key TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS affinity_kind TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS backend_name TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS session_fingerprint TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS is_coalesced BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_key_id TEXT",
         ] {
             client.execute(stmt, &[]).await?;
         }
@@ -1251,10 +1302,14 @@ impl PgStore {
                      upstream_model, client_body_user_id, upstream_user_id,
                      user_id_audit, upstream_key_id,
                      streaming_defer, streaming_defer_reject_reason,
-                     session_store, stable_session_kind, upstream_outbound_bytes)
+                     session_store, stable_session_kind, upstream_outbound_bytes,
+                     prefill_ms, pre_header_ms,
+                     affinity_key, affinity_kind, backend_name,
+                     session_fingerprint, is_coalesced, client_key_id)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
-                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+                         $39,$40,$41,$42,$43)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1304,6 +1359,14 @@ impl PgStore {
                     &e.session_store,
                     &e.stable_session_kind,
                     &e.upstream_outbound_bytes.map(|v| v as i32),
+                    &e.prefill_ms,
+                    &e.pre_header_ms,
+                    &e.affinity_key,
+                    &e.affinity_kind,
+                    &e.backend_name,
+                    &e.session_fingerprint,
+                    &e.is_coalesced,
+                    &e.client_key_id,
                 ],
             )
             .await?;
@@ -1328,7 +1391,7 @@ impl PgStore {
         let client = self.pool.get().await?;
         let mut sql = String::from(TRACE_LOGS_SELECT);
         sql.push_str(" FROM trace_logs WHERE 1=1");
-        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>> = Vec::new();
         let mut idx = 1;
 
         if let Some(from) = from_ms {
@@ -1366,8 +1429,10 @@ impl PgStore {
         sql.push_str(&format!(" LIMIT ${idx}"));
         params.push(Box::new(limit as i64));
 
-        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-            params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+            .iter()
+            .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+            .collect();
         let rows = client.query(&sql, &param_refs[..]).await?;
 
         let mut out = Vec::with_capacity(rows.len());
@@ -1388,6 +1453,10 @@ impl PgStore {
         model: Option<&str>,
         cache_tier: Option<&str>,
         request_hash: Option<&str>,
+        latency_min: Option<f64>,
+        latency_max: Option<f64>,
+        token_min: Option<u64>,
+        token_max: Option<u64>,
         limit: usize,
     ) -> Result<(Vec<TraceLogEntry>, Option<String>)> {
         // Parse cursor: "timestamp_ms:request_hash"
@@ -1457,6 +1526,16 @@ impl PgStore {
             idx += 1;
         }
 
+        append_trace_numeric_filters(
+            &mut sql,
+            &mut params,
+            &mut idx,
+            latency_min,
+            latency_max,
+            token_min,
+            token_max,
+        );
+
         sql.push_str(" ORDER BY timestamp_ms DESC, request_hash DESC");
         // Fetch limit+1 to detect has_more.
         sql.push_str(&format!(" LIMIT ${idx}"));
@@ -1464,10 +1543,7 @@ impl PgStore {
 
         let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
             .iter()
-            .map(|p| {
-                let r: &(dyn tokio_postgres::types::ToSql + Sync) = p.as_ref();
-                r
-            })
+            .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
         let rows = client.query(&sql, &param_refs[..]).await?;
 
@@ -1512,6 +1588,17 @@ impl PgStore {
             )
             .await?;
         Ok(results.pop())
+    }
+
+    /// Find the most recent trace log entry for a bare request_hash (legacy list IDs).
+    pub async fn find_trace_log_by_hash(&self, request_hash: &str) -> Result<Option<TraceLogEntry>> {
+        let client = self.pool.get().await?;
+        let sql = format!(
+            "{TRACE_LOGS_SELECT} FROM trace_logs WHERE request_hash = $1 \
+             ORDER BY timestamp_ms DESC LIMIT 1"
+        );
+        let rows = client.query(&sql, &[&request_hash]).await?;
+        Ok(rows.first().map(trace_log_entry_from_row))
     }
 
     /// Delete trace logs older than the given timestamp.
@@ -1688,7 +1775,7 @@ impl PgStore {
                     request_payload, response_body
              FROM request_logs WHERE 1=1",
         );
-        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::new();
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>> = Vec::new();
         let mut idx = 1;
 
         if let Some(from) = from_ms {
@@ -1716,8 +1803,10 @@ impl PgStore {
         sql.push_str(&format!(" LIMIT ${idx}"));
         params.push(Box::new(limit as i64));
 
-        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-            params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+            .iter()
+            .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+            .collect();
         let rows = client.query(&sql, &param_refs[..]).await?;
 
         let mut out = Vec::with_capacity(rows.len());
@@ -2059,6 +2148,32 @@ mod tests {
         let redacted = redact_url(url);
         assert!(redacted.contains("****"));
         assert!(!redacted.contains("secret"));
+    }
+
+    #[test]
+    fn append_trace_numeric_filters_builds_latency_and_token_clauses() {
+        let mut sql = String::from("SELECT 1 WHERE true");
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Send + Sync>> = Vec::new();
+        let mut idx = 1;
+        append_trace_numeric_filters(
+            &mut sql,
+            &mut params,
+            &mut idx,
+            Some(10.0),
+            Some(100.0),
+            Some(50),
+            Some(500),
+        );
+        assert!(sql.contains("latency_ms >= $1"));
+        assert!(sql.contains("latency_ms <= $2"));
+        assert!(sql.contains(
+            "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) >= $3"
+        ));
+        assert!(sql.contains(
+            "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) <= $4"
+        ));
+        assert_eq!(params.len(), 4);
+        assert_eq!(idx, 5);
     }
 
     #[test]

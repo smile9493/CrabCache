@@ -23,7 +23,7 @@ pub use key::{
     generate_namespaced_cache_key_with_fingerprint_from_value,
 };
 pub use sanitized_trace::{
-    FittedParameters, SanitizedLogEntry, load_sanitized_log, save_sanitized_log,
+    FittedParameters, SimulatedTraceEntry, load_sanitized_log, save_sanitized_log,
 };
 pub use tiered::{CacheError, InvalidateScanOptions, TieredCache};
 pub use trace_analyzer::{

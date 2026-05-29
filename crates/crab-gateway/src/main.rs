@@ -85,10 +85,14 @@ impl PgTraceStore {
                      upstream_model, client_body_user_id, upstream_user_id,
                      user_id_audit, upstream_key_id,
                      streaming_defer, streaming_defer_reject_reason,
-                     session_store, stable_session_kind, upstream_outbound_bytes)
+                     session_store, stable_session_kind, upstream_outbound_bytes,
+                     prefill_ms, pre_header_ms,
+                     affinity_key, affinity_kind, backend_name,
+                     session_fingerprint, is_coalesced, client_key_id)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
-                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+                         $39,$40,$41,$42,$43)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await
@@ -139,6 +143,14 @@ impl PgTraceStore {
                     &e.session_store,
                     &e.stable_session_kind,
                     &e.upstream_outbound_bytes.map(|v| v as i32),
+                    &e.prefill_ms,
+                    &e.pre_header_ms,
+                    &e.affinity_key,
+                    &e.affinity_kind,
+                    &e.backend_name,
+                    &e.session_fingerprint,
+                    &e.is_coalesced,
+                    &e.client_key_id,
                 ],
             )
             .await
@@ -146,6 +158,7 @@ impl PgTraceStore {
         }
 
         tx.commit().await.context("pg commit insert_trace_logs")?;
+        global_metrics().inc_admin_log_write("trace");
         Ok(())
     }
 }
@@ -541,6 +554,7 @@ fn main() -> Result<()> {
                                                     "PG trace final flush failed: {}",
                                                     e
                                                 );
+                                                global_metrics().inc_admin_log_pg_write_error();
                                             }
                                         }
                                         return;
@@ -554,6 +568,7 @@ fn main() -> Result<()> {
                                 }
                                 if let Err(e) = store.insert_batch(&buf).await {
                                     tracing::warn!("PG trace batch insert failed: {}", e);
+                                    global_metrics().inc_admin_log_pg_write_error();
                                 }
                                 buf.clear();
                             }

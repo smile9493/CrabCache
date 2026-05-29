@@ -790,7 +790,7 @@ async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary
     }
 
     let path = trace_log::trace_log_path();
-    let entries = trace_log::load_trace_entries_async(&path, hours).await;
+    let entries = state.load_trace_entries(&path, hours).await;
     let summary = trace_summary::compute_trace_summary(&entries, hours);
     *state.trace_summary_cache.write() = Some((Instant::now(), summary.clone()));
     summary

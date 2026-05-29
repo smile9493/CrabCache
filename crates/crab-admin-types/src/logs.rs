@@ -51,6 +51,8 @@ pub struct RequestDetail {
     pub semantic_cluster: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affinity_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

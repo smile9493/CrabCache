@@ -145,7 +145,9 @@ async fn main() -> anyhow::Result<()> {
             tracing::warn!("CRABCACHE_ADMIN_KEY is unset; using 'admin' (debug mode only).");
             "admin".to_string()
         } else {
-            eprintln!("FATAL: CRABCACHE_ADMIN_KEY is not set. Refusing to start with default 'admin' key.");
+            eprintln!(
+                "FATAL: CRABCACHE_ADMIN_KEY is not set. Refusing to start with default 'admin' key."
+            );
             std::process::exit(1);
         }
     });
@@ -361,11 +363,12 @@ async fn main() -> anyhow::Result<()> {
         info!("Log retention enforcement task started");
     }
 
-    // Spawn PG log sync task (runs every 10 seconds).
+    // Spawn PG log sync task (runs every 10 seconds when enabled).
     {
         let bg = Arc::clone(&state);
-        crate::pg_sync::spawn_pg_sync(bg);
-        info!("PG log sync task started");
+        if crate::pg_sync::spawn_pg_sync(bg) {
+            info!("PG log sync task started");
+        }
     }
 
     match state.gateway.list_keys().await {

@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 /// Sanitized log entry for privacy-preserving trace collection.
 /// No raw request content is stored, only statistical features.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SanitizedLogEntry {
+pub struct SimulatedTraceEntry {
     pub timestamp_ms: u64,
     pub request_hash: String,
     pub content_length: usize,
@@ -16,7 +16,7 @@ pub struct SanitizedLogEntry {
     pub cache_hit: bool,
 }
 
-impl SanitizedLogEntry {
+impl SimulatedTraceEntry {
     /// Create a sanitized log entry from raw request data.
     /// Only stores hash and statistical features, never raw content.
     pub fn from_request(
@@ -78,7 +78,7 @@ pub struct FittedParameters {
 
 impl FittedParameters {
     /// Fit parameters from sanitized log entries.
-    pub fn from_entries(entries: &[SanitizedLogEntry]) -> Self {
+    pub fn from_entries(entries: &[SimulatedTraceEntry]) -> Self {
         use std::collections::{HashMap, HashSet};
 
         let total_requests = entries.len();
@@ -215,7 +215,7 @@ impl FittedParameters {
 }
 
 /// Save sanitized log entries to file.
-pub fn save_sanitized_log(entries: &[SanitizedLogEntry], path: &str) -> anyhow::Result<()> {
+pub fn save_sanitized_log(entries: &[SimulatedTraceEntry], path: &str) -> anyhow::Result<()> {
     let mut content = String::new();
     for entry in entries {
         content.push_str(&serde_json::to_string(entry)?);
@@ -226,9 +226,9 @@ pub fn save_sanitized_log(entries: &[SanitizedLogEntry], path: &str) -> anyhow::
 }
 
 /// Load sanitized log entries from file.
-pub fn load_sanitized_log(path: &str) -> anyhow::Result<Vec<SanitizedLogEntry>> {
+pub fn load_sanitized_log(path: &str) -> anyhow::Result<Vec<SimulatedTraceEntry>> {
     let content = std::fs::read_to_string(path)?;
-    let entries: Vec<SanitizedLogEntry> = content
+    let entries: Vec<SimulatedTraceEntry> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(serde_json::from_str)
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_sanitized_log_entry() {
-        let entry = SanitizedLogEntry::from_request(
+        let entry = SimulatedTraceEntry::from_request(
             "What is Rust?",
             Some("conv-123".to_string()),
             "deepseek-v4",
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_fitted_parameters() {
         let entries = vec![
-            SanitizedLogEntry::from_request(
+            SimulatedTraceEntry::from_request(
                 "Query A",
                 Some("c1".to_string()),
                 "m",
@@ -268,9 +268,9 @@ mod tests {
                 100.0,
                 false,
             ),
-            SanitizedLogEntry::from_request("Query A", Some("c1".to_string()), "m", 10, 5.0, true),
-            SanitizedLogEntry::from_request("Query B", None, "m", 10, 100.0, false),
-            SanitizedLogEntry::from_request("Query C", None, "m", 10, 100.0, false),
+            SimulatedTraceEntry::from_request("Query A", Some("c1".to_string()), "m", 10, 5.0, true),
+            SimulatedTraceEntry::from_request("Query B", None, "m", 10, 100.0, false),
+            SimulatedTraceEntry::from_request("Query C", None, "m", 10, 100.0, false),
         ];
 
         let fitted = FittedParameters::from_entries(&entries);
@@ -301,7 +301,7 @@ mod tests {
         for i in 0..30 {
             let repeat = 30usize / (i + 1);
             for _ in 0..repeat.max(1) {
-                entries.push(SanitizedLogEntry::from_request(
+                entries.push(SimulatedTraceEntry::from_request(
                     &format!("query-{i}-variant"),
                     None,
                     "m",
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_save_load_sanitized_log() {
-        let entries = vec![SanitizedLogEntry::from_request(
+        let entries = vec![SimulatedTraceEntry::from_request(
             "Test", None, "m", 5, 100.0, false,
         )];
 
