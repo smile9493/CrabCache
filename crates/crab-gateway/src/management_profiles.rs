@@ -99,6 +99,7 @@ fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<Upstrea
         tls_sni: profile.tls_sni.clone(),
         key_pool_count: pool.len(),
         keys_available: pool.available_count(),
+        proxy_url: profile.proxy_url.clone(),
     })
 }
 
@@ -164,6 +165,7 @@ pub async fn put_upstream_profile(
         endpoints: req.endpoints.clone(),
         tls_sni: req.tls_sni.clone(),
         default_weight: req.default_weight.max(1),
+        proxy_url: req.proxy_url.clone(),
     };
 
     // Resolve key specs with fallback to existing/default/legacy pools instead of passing empty.

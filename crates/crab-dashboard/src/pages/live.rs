@@ -21,7 +21,6 @@ use crate::components::session_drilldown_panel::SessionDrilldownPanel;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
-use crate::pages::overview::format_number;
 use crate::types::{
     KeyConcurrencyResponse, KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse,
     LiveMetricsSeries, LiveMetricsSummary, ProfileRoutingView, SERIES_COLORS,
@@ -130,6 +129,16 @@ fn cache_hit_pct(data: &LiveMetricsResponse) -> f64 {
     }
 }
 
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        format!("{}", n)
+    }
+}
+
 fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Option<f64>>) {
     let mut rows: Vec<_> = r.backends.iter().collect();
     // Ascending by count so the largest category renders at the top of the horizontal chart.
@@ -162,12 +171,6 @@ fn token_cost_usd(tokens: f64, price_per_million: f64) -> f64 {
     (tokens / 1_000_000.0) * price_per_million
 }
 
-fn sum_bucket_tokens(buckets: &[LiveMetricsBucket]) -> (f64, f64) {
-    let input: f64 = buckets.iter().map(|b| b.input_tokens as f64).sum();
-    let output: f64 = buckets.iter().map(|b| b.output_tokens as f64).sum();
-    (input, output)
-}
-
 fn max_bucket_latencies(buckets: &[LiveMetricsBucket]) -> (f64, Option<f64>, Option<f64>) {
     let mut max_e2e = 0.0_f64;
     let mut max_upstream: Option<f64> = None;
@@ -189,6 +192,10 @@ fn max_bucket_latencies(buckets: &[LiveMetricsBucket]) -> (f64, Option<f64>, Opt
 fn format_latency_opt(v: Option<f64>, na: &str) -> String {
     v.map(|x| format!("{x:.0} ms"))
         .unwrap_or_else(|| na.to_string())
+}
+
+fn series_has_points(values: &[Option<f64>]) -> bool {
+    values.iter().any(|v| matches!(v, Some(x) if *x > 0.0))
 }
 
 #[derive(Clone, Copy)]
@@ -230,11 +237,11 @@ pub fn LivePage() -> impl IntoView {
     let latency_e2e_open = RwSignal::new(false);
     let latency_upstream_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
-    let session_drilldown_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
         RwSignal::new(None);
+    let selected_routing_profile = RwSignal::new(String::new());
     let routing_key_ids: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
     let selected_routing_key: RwSignal<Option<String>> = RwSignal::new(None);
     let routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>> =
@@ -242,6 +249,7 @@ pub fn LivePage() -> impl IntoView {
     let routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>> =
         RwSignal::new(None);
     let alive = Arc::new(AtomicBool::new(true));
+    let session_panel_open = RwSignal::new(false);
 
     Effect::new(move |_| {
         let consumer = selected_consumer.get();
@@ -259,7 +267,7 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            if let Ok(val) = api::fetch_live_consumers(window_secs.get_untracked()).await {
+            if let Ok(val) = api::fetch_live_consumers(window_secs.try_get_untracked().unwrap_or(12 * 3600)).await {
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }
@@ -276,10 +284,10 @@ pub fn LivePage() -> impl IntoView {
                     if selected_consumer.try_get_untracked().flatten().is_none()
                         && let Some(first) = names.first()
                     {
-                        let _ = selected_consumer.try_set(Some(first.clone()));
+                        selected_consumer.try_set(Some(first.clone()));
                     }
-                    let _ = consumers.try_set(names);
-                    let _ = consumers_loaded.try_set(true);
+                    consumers.try_set(names);
+                    consumers_loaded.try_set(true);
                     return;
                 }
             }
@@ -297,16 +305,14 @@ pub fn LivePage() -> impl IntoView {
                         if selected_consumer.try_get_untracked().flatten().is_none()
                             && let Some(first) = names.first()
                         {
-                            let _ = selected_consumer.try_set(Some(first.clone()));
+                            selected_consumer.try_set(Some(first.clone()));
                         }
-                        let _ = consumers.try_set(names);
+                        consumers.try_set(names);
                     }
                 }
-                Err(e) => {
-                    let _ = consumers_error.try_set(Some(e));
-                }
+                Err(e) => { consumers_error.try_set(Some(e)); }
             }
-            let _ = consumers_loaded.try_set(true);
+            consumers_loaded.try_set(true);
         });
     };
 
@@ -337,7 +343,7 @@ pub fn LivePage() -> impl IntoView {
                     .take()
                 {
                     live_data.try_set(Some(data));
-                    let _ = last_update.try_set(now_hms_string());
+                    last_update.try_set(now_hms_string());
                 }
                 *live_dirty.lock().expect("live_dirty lock poisoned") = false;
             }
@@ -374,14 +380,14 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            let Some(consumer) = selected_consumer.get() else {
-                live_data.set(None);
+            let Some(consumer) = selected_consumer.try_get().flatten() else {
+                live_data.try_set(None);
                 return;
             };
-            load_generation.update(|g| *g += 1);
-            let request_id = load_generation.get();
-            let window = window_secs.get();
-            let gb = group_by.get().as_slice().to_vec();
+            load_generation.try_update(|g| *g += 1);
+            let request_id = load_generation.try_get().unwrap_or(0);
+            let window = window_secs.try_get().unwrap_or(12 * 3600);
+            let gb = group_by.try_get().unwrap_or(LiveGroupBy::None).as_slice().to_vec();
             let buf = Arc::clone(&live_buffer_for_loader);
             let dirty = Arc::clone(&live_dirty_for_loader);
             let alive = Arc::clone(&alive);
@@ -392,15 +398,15 @@ pub fn LivePage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if load_generation.try_get_untracked() != Some(request_id) {
+                        if load_generation.try_get() != Some(request_id) {
                             return;
                         }
                         if !data.available_consumers.is_empty() {
-                            let _ = consumers.try_set(data.available_consumers.clone());
+                            consumers.try_set(data.available_consumers.clone());
                             if selected_consumer.try_get_untracked().flatten().is_none()
                                 && let Some(first) = data.available_consumers.first()
                             {
-                                let _ = selected_consumer.try_set(Some(first.clone()));
+                                selected_consumer.try_set(Some(first.clone()));
                             }
                         }
                         buf.lock()
@@ -412,8 +418,8 @@ pub fn LivePage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if load_generation.try_get_untracked() == Some(request_id) {
-                            let _ = live_data.try_set(Some(Err(e)));
+                        if load_generation.try_get() == Some(request_id) {
+                            live_data.try_set(Some(Err(e)));
                         }
                     }
                 }
@@ -433,11 +439,7 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            let profiles = api::fetch_routing_profiles().await;
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            let _ = routing_profiles_for_routing.try_set(Some(profiles));
+            routing_profiles_for_routing.try_set(Some(api::fetch_routing_profiles().await));
             match api::fetch_keys().await {
                 Ok(keys) => {
                     if !alive.load(Ordering::Relaxed) {
@@ -445,8 +447,8 @@ pub fn LivePage() -> impl IntoView {
                     }
                     let ids: Vec<String> = keys
                         .into_iter()
-                        .map(|k| k.id)
-                        .filter(|id| !id.is_empty())
+                        .map(|k| k.name)
+                        .filter(|name| !name.is_empty())
                         .collect();
                     if !ids.is_empty() {
                         let chosen = selected_routing_key_for_routing
@@ -454,30 +456,27 @@ pub fn LivePage() -> impl IntoView {
                             .flatten()
                             .filter(|id| ids.iter().any(|x| x == id))
                             .unwrap_or_else(|| ids[0].clone());
-                        let _ = selected_routing_key_for_routing.try_set(Some(chosen.clone()));
-                        let _ = routing_key_ids_for_routing.try_set(ids);
+                        selected_routing_key_for_routing.try_set(Some(chosen.clone()));
+                        routing_key_ids_for_routing.try_set(ids);
                         let routing = api::fetch_key_routing(&chosen).await;
                         let concurrency = api::fetch_key_concurrency(&chosen).await;
-                        if !alive.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        let _ = routing_key_data_for_routing.try_set(Some(routing));
-                        let _ = routing_key_concurrency_for_routing.try_set(Some(concurrency));
+                        routing_key_data_for_routing.try_set(Some(routing));
+                        routing_key_concurrency_for_routing.try_set(Some(concurrency));
                     } else {
-                        let _ = routing_key_ids_for_routing.try_set(Vec::new());
-                        let _ = selected_routing_key_for_routing.try_set(None);
-                        let _ = routing_key_data_for_routing.try_set(None);
-                        let _ = routing_key_concurrency_for_routing.try_set(None);
+                        routing_key_ids_for_routing.try_set(Vec::new());
+                        selected_routing_key_for_routing.try_set(None);
+                        routing_key_data_for_routing.try_set(None);
+                        routing_key_concurrency_for_routing.try_set(None);
                     }
                 }
                 Err(e) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    let _ = routing_key_ids_for_routing.try_set(Vec::new());
-                    let _ = selected_routing_key_for_routing.try_set(None);
-                    let _ = routing_key_data_for_routing.try_set(Some(Err(e)));
-                    let _ = routing_key_concurrency_for_routing.try_set(None);
+                    routing_key_ids_for_routing.try_set(Vec::new());
+                    selected_routing_key_for_routing.try_set(None);
+                    routing_key_data_for_routing.try_set(Some(Err(e)));
+                    routing_key_concurrency_for_routing.try_set(None);
                 }
             }
         });
@@ -513,8 +512,8 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            let _ = routing_key_data.try_set(Some(routing));
-            let _ = routing_key_concurrency.try_set(Some(concurrency));
+            routing_key_data.try_set(Some(routing));
+            routing_key_concurrency.try_set(Some(concurrency));
         });
     });
 
@@ -523,12 +522,12 @@ pub fn LivePage() -> impl IntoView {
         let ll = load_live_fn.clone();
         async move {
             loop {
-                let interval = poll_interval_ms(window_secs.get_untracked());
+                let interval = poll_interval_ms(window_secs.try_get_untracked().unwrap_or(12 * 3600));
                 TimeoutFuture::new(interval).await;
                 if !alive_poll.load(Ordering::Relaxed) {
                     break;
                 }
-                if auto_refresh.try_get_untracked() == Some(true)
+                if auto_refresh.try_get() == Some(true)
                     && selected_consumer.try_get_untracked().flatten().is_some()
                     && page_visible()
                 {
@@ -542,6 +541,10 @@ pub fn LivePage() -> impl IntoView {
     {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
+        struct SendSyncFn(js_sys::Function);
+        unsafe impl Send for SendSyncFn {}
+        unsafe impl Sync for SendSyncFn {}
+
         let ll = load_live_fn.clone();
         let alive_vis = Arc::clone(&alive);
         let vis_cb = Closure::wrap(Box::new(move || {
@@ -549,17 +552,23 @@ pub fn LivePage() -> impl IntoView {
                 return;
             }
             if !web_sys::window().unwrap().document().unwrap().hidden()
-                && auto_refresh.get_untracked()
-                && selected_consumer.get_untracked().is_some()
+                && auto_refresh.try_get_untracked() == Some(true)
+                && selected_consumer.try_get_untracked().flatten().is_some()
             {
                 ll.borrow_mut()();
             }
         }) as Box<dyn FnMut()>);
+        let vis_cb_fn: js_sys::Function = vis_cb.into_js_value().unchecked_into();
+        let vis_cb_fn_for_cleanup = SendSyncFn(vis_cb_fn.clone());
         web_sys::window()
             .unwrap()
-            .add_event_listener_with_callback("visibilitychange", vis_cb.as_ref().unchecked_ref())
+            .add_event_listener_with_callback("visibilitychange", vis_cb_fn.as_ref())
             .ok();
-        vis_cb.forget();
+        on_cleanup(move || {
+            if let Some(window) = web_sys::window() {
+                let _ = window.remove_event_listener_with_callback("visibilitychange", vis_cb_fn_for_cleanup.0.as_ref());
+            }
+        });
     }
 
     let alive_cleanup = Arc::clone(&alive);
@@ -575,24 +584,27 @@ pub fn LivePage() -> impl IntoView {
                 description=move || t.live_desc()
             >
                 <button
-                    class="btn btn-secondary text-xs inline-flex items-center gap-1.5"
-                    on:click=move |_| session_drilldown_open.set(true)
+                    type="button"
+                    class="btn btn-secondary text-xs"
+                    on:click=move |_| session_panel_open.set(true)
                 >
-                    <Icon name=IconName::Radar class="icon icon-sm" />
-                    {move || t.session_drilldown_title()}
+                    <span class="inline-flex items-center gap-1.5">
+                        <Icon name=IconName::Radar class="w-3.5 h-3.5" />
+                        {move || t.session_drilldown_title()}
+                    </span>
                 </button>
                 <button on:click=move |_| {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    let Some(consumer) = selected_consumer.get() else {
-                        live_data.set(None);
+                    let Some(consumer) = selected_consumer.try_get().flatten() else {
+                        live_data.try_set(None);
                         return;
                     };
-                    load_generation.update(|g| *g += 1);
-                    let request_id = load_generation.get();
-                    let window = window_secs.get();
-                    let gb = group_by.get().as_slice().to_vec();
+                    load_generation.try_update(|g| *g += 1);
+                    let request_id = load_generation.try_get().unwrap_or(0);
+                    let window = window_secs.try_get().unwrap_or(12 * 3600);
+                    let gb = group_by.try_get().unwrap_or(LiveGroupBy::None).as_slice().to_vec();
                     let buf = Arc::clone(&live_buffer);
                     let dirty = Arc::clone(&live_dirty);
                     let consumers = consumers;
@@ -601,17 +613,15 @@ pub fn LivePage() -> impl IntoView {
                         let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
                         match api::fetch_live_metrics_v2(&consumer, window, &gb_refs, "", "").await {
                             Ok(data) => {
-                                if !alive.load(Ordering::Relaxed)
-                                    || load_generation.try_get_untracked() != Some(request_id)
-                                {
+                                if !alive.load(Ordering::Relaxed) || load_generation.try_get() != Some(request_id) {
                                     return;
                                 }
                                 if !data.available_consumers.is_empty() {
-                                    let _ = consumers.try_set(data.available_consumers.clone());
+                                    consumers.try_set(data.available_consumers.clone());
                                     if selected_consumer.try_get_untracked().flatten().is_none()
                                         && let Some(first) = data.available_consumers.first()
                                     {
-                                        let _ = selected_consumer.try_set(Some(first.clone()));
+                                        selected_consumer.try_set(Some(first.clone()));
                                     }
                                 }
                                 buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
@@ -621,8 +631,8 @@ pub fn LivePage() -> impl IntoView {
                                 if !alive.load(Ordering::Relaxed) {
                                     return;
                                 }
-                                if load_generation.try_get_untracked() == Some(request_id) {
-                                    let _ = live_data.try_set(Some(Err(e)));
+                                if load_generation.try_get() == Some(request_id) {
+                                    live_data.try_set(Some(Err(e)));
                                 }
                             }
                         }
@@ -692,6 +702,7 @@ pub fn LivePage() -> impl IntoView {
                                 latency_upstream_open=latency_upstream_open
                                 token_open=token_open
                                 routing_profiles=routing_profiles
+                                selected_routing_profile=selected_routing_profile
                                 routing_key_ids=routing_key_ids
                                 selected_routing_key=selected_routing_key
                                 routing_key_data=routing_key_data
@@ -701,7 +712,8 @@ pub fn LivePage() -> impl IntoView {
                     }
                 }
             }}
-            <SessionDrilldownPanel open=session_drilldown_open />
+
+            <SessionDrilldownPanel open=session_panel_open />
         </div>
     }
 }
@@ -767,7 +779,7 @@ fn LiveTopConfigRow(
             </div>
 
             <div class="live-config-card">
-                <div class="live-config-card-title">{"分线维度"}</div>
+                <div class="live-config-card-title">{t.live_config_group_by()}</div>
                 <div class="live-window-pills">
                     {move || {
                         let items: [(LiveGroupBy, &str, &str); 3] = [
@@ -847,83 +859,6 @@ fn color_for_index(i: usize, hint: &str) -> String {
     }
 }
 
-/// Build throughput ChartSeries from response. When `series` is non-empty
-/// (group_by active), each series becomes a line; otherwise single aggregated line.
-fn throughput_series_from_response(
-    data: &LiveMetricsResponse,
-    fallback_label: &str,
-) -> Vec<ChartSeries> {
-    if !data.series.is_empty() {
-        let mut sorted: Vec<&LiveMetricsSeries> = data.series.iter().collect();
-        sorted.sort_by(|a, b| b.summary.request_count.cmp(&a.summary.request_count));
-        sorted
-            .iter()
-            .enumerate()
-            .map(|(i, s)| ChartSeries {
-                label: s.label.clone(),
-                color: color_for_index(i, &s.color_hint),
-                values: s
-                    .buckets
-                    .iter()
-                    .map(|b| {
-                        if b.request_count > 0 {
-                            Some(b.request_count as f64)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                dashed: false,
-                fill: false,
-            })
-            .collect()
-    } else {
-        vec![ChartSeries {
-            label: fallback_label.to_string(),
-            color: color_for_index(0, ""),
-            values: data
-                .buckets
-                .iter()
-                .map(|b| {
-                    if b.request_count > 0 {
-                        Some(b.request_count as f64)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            dashed: false,
-            fill: false,
-        }]
-    }
-}
-
-/// Build hit-rate ChartSeries from response. Always uses global `buckets`
-/// (cache_hit_count / request_count * 100) regardless of group_by,
-/// because per-group hit rate is meaningless (HIT series would always be 100%).
-fn hit_rate_series_from_response(
-    data: &LiveMetricsResponse,
-    fallback_label: &str,
-) -> Vec<ChartSeries> {
-    vec![ChartSeries {
-        label: fallback_label.to_string(),
-        color: color_for_index(0, ""),
-        values: data
-            .buckets
-            .iter()
-            .map(|b| {
-                if b.request_count > 0 {
-                    Some(b.cache_hit_count as f64 / b.request_count as f64 * 100.0)
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        dashed: false,
-        fill: false,
-    }]
-}
-
 #[component]
 fn LiveTrafficPanel(
     data: LiveMetricsResponse,
@@ -935,12 +870,12 @@ fn LiveTrafficPanel(
 ) -> impl IntoView {
     let t = use_translations();
     let s = data.summary.clone();
+    let hit_pct = cache_hit_pct(&data);
     let qps = if window_secs > 0 {
         s.request_count as f64 / f64::from(window_secs)
     } else {
         0.0
     };
-    let hit_pct = cache_hit_pct(&data);
     let window_lbl = window_label(window_secs, t).to_string();
     let buckets = std::sync::Arc::new(buckets);
     let throughput_label = t.live_chart_throughput().to_string();
@@ -1004,22 +939,22 @@ fn LiveTrafficPanel(
         let buckets = std::sync::Arc::clone(&buckets);
         Signal::derive(move || {
             let b = buckets.as_ref();
-            vec![
-                ChartSeries {
-                    label: "total".to_string(),
-                    color: "var(--cc-border-light)".to_string(),
-                    values: b.iter().map(|x| Some(x.request_count as f64)).collect(),
-                    dashed: false,
-                    fill: true,
-                },
-                ChartSeries {
-                    label: "hits".to_string(),
-                    color: "var(--cc-success)".to_string(),
-                    values: b.iter().map(|x| Some(x.cache_hit_count as f64)).collect(),
-                    dashed: false,
-                    fill: true,
-                },
-            ]
+            vec![ChartSeries {
+                label: t.live_hit_pct_label().to_string(),
+                color: "var(--cc-success)".to_string(),
+                values: b
+                    .iter()
+                    .map(|x| {
+                        if x.request_count > 0 {
+                            Some(x.cache_hit_count as f64 / x.request_count as f64 * 100.0)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                dashed: false,
+                fill: true,
+            }]
         })
     };
 
@@ -1042,7 +977,44 @@ fn LiveTrafficPanel(
                 </span>
             </div>
             <div class="p-4">
-                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_11.5rem] gap-4">
+                <div class="live-stat-bar">
+                    <LiveStatTile
+                        label=t.live_qps()
+                        value=format!("{:.2}", qps)
+                        variant=LiveTileVariant::Accent
+                    />
+                    <LiveStatTile
+                        label=t.live_requests()
+                        value=format_number(s.request_count as u64)
+                        variant=LiveTileVariant::Teal
+                    />
+                    <LiveStatTile
+                        label=t.live_cache_hit_pct()
+                        value=format!("{hit_pct:.1}%")
+                        variant=LiveTileVariant::Green
+                    />
+                    <LiveStatTile
+                        label=t.live_avg_e2e()
+                        value=format!("{:.0}ms", s.avg_e2e_latency_ms)
+                        variant=LiveTileVariant::Orange
+                    />
+                    <LiveStatTile
+                        label=t.live_avg_ttft()
+                        value=format!("{:.0}ms", s.avg_ttft_ms)
+                        variant=LiveTileVariant::Muted
+                    />
+                    <LiveStatTile
+                        label=t.live_tokens_input()
+                        value=format_number(s.input_tokens)
+                        variant=LiveTileVariant::Warn
+                    />
+                    <LiveStatTile
+                        label=t.live_tokens_output()
+                        value=format_number(s.output_tokens)
+                        variant=LiveTileVariant::Teal
+                    />
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
                     <ChartPreviewCard
                         title=throughput_title.clone()
                         subtitle=chart_subtitle.clone()
@@ -1052,7 +1024,7 @@ fn LiveTrafficPanel(
                                 <CanvasLineChart
                                     x_labels=x_labels
                                     series=throughput_series
-                                    height_px=140
+                                    height_px=160
                                     y_unit="req"
                                     empty_message=no_data
                                 />
@@ -1081,11 +1053,13 @@ fn LiveTrafficPanel(
                                 <CanvasLineChart
                                     x_labels=x_labels
                                     series=hit_series
-                                    height_px=140
-                                    y_unit="req"
+                                    height_px=160
+                                    y_unit="%"
+                                    y_min=Some(0.0)
+                                    y_max=Some(100.0)
                                     thresholds=vec![ThresholdLine {
                                         value: 95.0,
-                                        label: "95% target".into(),
+                                        label: t.live_target_95().into(),
                                         color: "var(--cc-success)",
                                     }]
                                     empty_message=no_data
@@ -1099,10 +1073,12 @@ fn LiveTrafficPanel(
                                     x_labels=x_labels
                                     series=hit_series
                                     height_px=380
-                                    y_unit="req"
+                                    y_unit="%"
+                                    y_min=Some(0.0)
+                                    y_max=Some(100.0)
                                     thresholds=vec![ThresholdLine {
                                         value: 95.0,
-                                        label: "95% target".into(),
+                                        label: t.live_target_95().into(),
                                         color: "var(--cc-success)",
                                     }]
                                     empty_message=no_data
@@ -1111,23 +1087,6 @@ fn LiveTrafficPanel(
                             .into_any()
                         }
                     />
-                    <div class="grid grid-cols-3 gap-2">
-                        <LiveStatTile
-                            label=t.live_qps()
-                            value=format!("{:.2}", qps)
-                            variant=LiveTileVariant::Accent
-                        />
-                        <LiveStatTile
-                            label=t.live_requests()
-                            value=s.request_count.to_string()
-                            variant=LiveTileVariant::Teal
-                        />
-                        <LiveStatTile
-                            label=t.live_cache_hit_pct()
-                            value=format!("{hit_pct:.1}%")
-                            variant=LiveTileVariant::Green
-                        />
-                    </div>
                 </div>
             </div>
         </div>
@@ -1142,6 +1101,7 @@ fn LiveBottomRow(
     latency_upstream_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
+    selected_routing_profile: RwSignal<String>,
     routing_key_ids: RwSignal<Vec<String>>,
     selected_routing_key: RwSignal<Option<String>>,
     routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
@@ -1149,22 +1109,23 @@ fn LiveBottomRow(
 ) -> impl IntoView {
     view! {
         <div class="space-y-4">
-            <div class="live-detail-row-2col">
-                <LiveRoutingSummaryPanel profiles=routing_profiles />
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() e2e_open=latency_e2e_open upstream_open=latency_upstream_open />
+                <LiveTokenPanel buckets=buckets.clone() summary=data.summary.clone() open=token_open />
             </div>
-            <div class="live-detail-row-2col">
-                <LiveKeyDistributionPanel
-                    routing_key_ids=routing_key_ids
-                    selected_routing_key=selected_routing_key
-                    routing_key_data=routing_key_data
-                />
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <LiveRoutingSummaryPanel profiles=routing_profiles selected_profile=selected_routing_profile />
                 <LiveKeyActivityPanel
                     routing_key_data=routing_key_data
                     routing_key_concurrency=routing_key_concurrency
                 />
+                <LiveLatestPanel data=data.clone() />
             </div>
-            <LiveTokenPanel buckets=buckets.clone() open=token_open />
+            <LiveKeyDistributionPanel
+                routing_key_ids=routing_key_ids
+                selected_routing_key=selected_routing_key
+                routing_key_data=routing_key_data
+            />
             <LiveHeatmapTable buckets=buckets />
         </div>
     }
@@ -1173,9 +1134,9 @@ fn LiveBottomRow(
 #[component]
 fn LiveRoutingSummaryPanel(
     profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
+    selected_profile: RwSignal<String>,
 ) -> impl IntoView {
     let t = use_translations();
-    let selected_profile = RwSignal::new(String::new());
     view! {
         <div class="glass-card p-4 live-detail-card flex flex-col">
             <h3 class="text-sm font-semibold text-theme mb-3">{t.live_routing_title()}</h3>
@@ -1188,7 +1149,7 @@ fn LiveRoutingSummaryPanel(
                 }.into_any(),
                 Some(Ok(items)) => {
                     if items.is_empty() {
-                        return view! { <p class="text-xs text-theme-muted">"No routing profiles."</p> }.into_any();
+                        return view! { <p class="text-xs text-theme-muted">{t.live_no_routing_profiles()}</p> }.into_any();
                     }
                     if selected_profile.get().is_empty() {
                         selected_profile.set(items[0].profile_id.clone());
@@ -1249,26 +1210,26 @@ fn LiveRoutingSummaryPanel(
                                 }).collect_view()}
                             </div>
                             <RoutingMetricRow
-                                label="Backends"
+                                label=t.live_routing_backends()
                                 value=format!("{}/{}", backend_healthy, backend_total)
                                 pct=backend_pct
                             />
                             <RoutingMetricRow
-                                label="Upstream keys"
+                                label=t.live_routing_upstream_keys()
                                 value=format!("{}/{}", active.key_pool.available, active.key_pool.total)
                                 pct=key_pct
                             />
                             <RoutingMetricRow
-                                label="Circuit"
+                                label=t.live_routing_circuit()
                                 value=if circuit_open == 0 {
-                                    "closed".to_string()
+                                    t.live_circuit_closed().to_string()
                                 } else {
-                                    format!("{} open", circuit_open)
+                                    format!("{} {}", circuit_open, t.live_circuit_open_label())
                                 }
                                 pct=circuit_pct
                             />
-                            <div class="space-y-1.5 pt-2 border-t border-theme flex-1 overflow-y-auto max-h-40">
-                                {active.backends.iter().map(|b| {
+                            <div class="space-y-1.5 pt-2 border-t border-theme flex-1">
+                                {active.backends.iter().take(4).map(|b| {
                                     let pct = if b.healthy { 100.0 } else { 25.0 };
                                     let state = if b.healthy { "healthy" } else { "unhealthy" };
                                     let latency_str = if b.latency_ms > 0 {
@@ -1278,7 +1239,7 @@ fn LiveRoutingSummaryPanel(
                                     };
                                     view! {
                                         <RoutingMetricRow
-                                            label="Node"
+                                            label=t.live_routing_node()
                                             value=format!("{} {} {}", b.name, state, latency_str)
                                             pct=pct
                                         />
@@ -1291,7 +1252,7 @@ fn LiveRoutingSummaryPanel(
                                 } else {
                                     "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-[color-mix(in_srgb,var(--cc-warning)_25%,transparent)] text-[var(--cc-warning)]"
                                 }>
-                                    {if status_ok { "OK" } else { "DEGRADED" }}
+                                    {if status_ok { t.live_status_ok() } else { t.live_status_degraded() }}
                                 </span>
                             </div>
                         </div>
@@ -1311,7 +1272,7 @@ fn LiveKeyDistributionPanel(
     let t = use_translations();
     view! {
         <div class="glass-card p-4 live-detail-card flex flex-col space-y-2">
-            <h3 class="text-sm font-semibold text-theme">"Key / Affinity"</h3>
+            <h3 class="text-sm font-semibold text-theme">{t.live_key_affinity_title()}</h3>
             <select
                 class="input text-xs font-mono"
                 prop:value=move || selected_routing_key.get().unwrap_or_default()
@@ -1324,7 +1285,7 @@ fn LiveKeyDistributionPanel(
                     }
                 }
             >
-                <option value="">"Select key_id"</option>
+                <option value="">{t.live_select_key()}</option>
                 {move || routing_key_ids.get().into_iter().map(|id| {
                     let id_val = id.clone();
                     view! { <option value=id_val.clone()>{id_val.clone()}</option> }
@@ -1332,32 +1293,16 @@ fn LiveKeyDistributionPanel(
             </select>
             {move || match routing_key_data.get() {
                 None => view! {
-                    <div class="space-y-2 flex-1 flex flex-col">
-                        <div class="text-[11px] text-theme-muted font-mono h-4"></div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
-                            <div class="border border-theme rounded-md p-2 flex flex-col">
-                                <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
-                                <div class="live-chart-compact flex-1 flex items-center justify-center">
-                                    <p class="text-[11px] text-theme-muted">"Loading…"</p>
-                                </div>
-                            </div>
-                            <div class="border border-theme rounded-md p-2 flex flex-col">
-                                <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
-                                <div class="live-chart-compact flex-1 flex items-center justify-center">
-                                    <p class="text-[11px] text-theme-muted">"Loading…"</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <p class="text-[11px] text-theme-muted live-chart-compact">{t.live_key_routing_loading()}</p>
                 }.into_any(),
                 Some(Err(e)) => view! {
-                    <div class="space-y-2 flex-1 flex flex-col">
-                        <div class="text-[11px] text-error">{e}</div>
-                    </div>
+                    <p class="text-[11px] text-error live-chart-compact">{e}</p>
                 }.into_any(),
                 Some(Ok(resp)) => {
                     let (backend_labels, backend_values) = build_backend_distribution(&resp);
                     let (aff_labels, aff_values) = build_affinity_distribution(&resp);
+                    let backend_has = series_has_points(&backend_values);
+                    let aff_has = series_has_points(&aff_values);
                     let backend_labels_arc = std::sync::Arc::new(backend_labels);
                     let backend_values_arc: std::sync::Arc<Vec<f64>> =
                         std::sync::Arc::new(backend_values.into_iter().flatten().collect());
@@ -1388,28 +1333,44 @@ fn LiveKeyDistributionPanel(
                             </div>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
                                 <div class="border border-theme rounded-md p-2 flex flex-col">
-                                    <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
-                                    <div class="live-chart-compact flex-1">
-                                        <HorizontalBarChart
-                                            labels=backend_labels_sig
-                                            values=backend_values_sig
-                                            width=280
-                                            height_px=72
-                                            empty_message=t.live_no_data()
-                                        />
-                                    </div>
+                                    <div class="text-[11px] text-theme-muted mb-1">{t.live_backend_label()}</div>
+                                    {if backend_has {
+                                        view! {
+                                            <HorizontalBarChart
+                                                labels=backend_labels_sig
+                                                values=backend_values_sig
+                                                width=280
+                                                height_px=72
+                                                empty_message=t.live_no_data()
+                                            />
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
+                                                {t.live_no_data()}
+                                            </p>
+                                        }.into_any()
+                                    }}
                                 </div>
                                 <div class="border border-theme rounded-md p-2 flex flex-col">
-                                    <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
-                                    <div class="live-chart-compact flex-1">
-                                        <HorizontalBarChart
-                                            labels=aff_labels_sig
-                                            values=aff_values_sig
-                                            width=280
-                                            height_px=72
-                                            empty_message=t.live_no_data()
-                                        />
-                                    </div>
+                                    <div class="text-[11px] text-theme-muted mb-1">{t.live_key_affinity_title()}</div>
+                                    {if aff_has {
+                                        view! {
+                                            <HorizontalBarChart
+                                                labels=aff_labels_sig
+                                                values=aff_values_sig
+                                                width=280
+                                                height_px=72
+                                                empty_message=t.live_no_data()
+                                            />
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
+                                                {t.live_no_data()}
+                                            </p>
+                                        }.into_any()
+                                    }}
                                 </div>
                             </div>
                         </div>
@@ -1515,7 +1476,7 @@ fn LiveLatencyPanel(
                     variant=LiveTileVariant::Accent
                 />
                 <LiveStatTile
-                    label="Max E2E"
+                    label=t.live_max_e2e()
                     value=format!("{max_e2e:.0} ms")
                     variant=LiveTileVariant::Orange
                 />
@@ -1525,7 +1486,7 @@ fn LiveLatencyPanel(
                     variant=LiveTileVariant::Teal
                 />
                 <LiveStatTile
-                    label="Max TTFT"
+                    label=t.live_max_ttft()
                     value=format_latency_opt(max_ttft, na)
                     variant=LiveTileVariant::Warn
                 />
@@ -1543,7 +1504,7 @@ fn LiveLatencyPanel(
                             interactive=true
                             thresholds=vec![ThresholdLine {
                                 value: 500.0,
-                                label: "SLO 500ms".into(),
+                                label: t.live_slo_500ms().into(),
                                 color: "var(--cc-error)",
                             }]
                             empty_message=no_data
@@ -1561,7 +1522,7 @@ fn LiveLatencyPanel(
                             interactive=true
                             thresholds=vec![ThresholdLine {
                                 value: 500.0,
-                                label: "SLO 500ms".into(),
+                                label: t.live_slo_500ms().into(),
                                 color: "var(--cc-error)",
                             }]
                             empty_message=no_data
@@ -1611,7 +1572,7 @@ fn LiveLatencyPanel(
 }
 
 #[component]
-fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl IntoView {
+fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, summary: LiveMetricsSummary, open: RwSignal<bool>) -> impl IntoView {
     let t = use_translations();
     let buckets = std::sync::Arc::new(buckets);
     let x_labels = {
@@ -1643,13 +1604,15 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     };
     let token_title = t.live_token_chart().to_string();
     let no_data = t.live_no_data();
+    let token_no_data = t.live_token_no_data();
     let in_lbl = t.live_tokens_input().to_string();
     let out_lbl = t.live_tokens_output().to_string();
     let in_lbl_preview = in_lbl.clone();
     let out_lbl_preview = out_lbl.clone();
     let in_lbl_detail = in_lbl.clone();
     let out_lbl_detail = out_lbl.clone();
-    let (window_input_tokens, window_output_tokens) = sum_bucket_tokens(buckets.as_ref());
+    let all_tokens_zero = buckets.iter().all(|b| b.input_tokens == 0 && b.output_tokens == 0);
+    let (window_input_tokens, window_output_tokens) = (summary.input_tokens as f64, summary.output_tokens as f64);
     let window_input_cost = token_cost_usd(window_input_tokens, TOKEN_INPUT_PRICE_PER_M);
     let window_output_cost = token_cost_usd(window_output_tokens, TOKEN_OUTPUT_PRICE_PER_M);
     let window_total_cost = window_input_cost + window_output_cost;
@@ -1657,60 +1620,79 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, open: RwSignal<bool>) -> impl
     view! {
         <div class="space-y-4">
             <div class="glass-card p-4">
-                <ChartPreviewCard
-                    title=token_title
-                    open=open
-                    preview=move || {
-                        view! {
-                            <TokenLineChart
-                                x_labels=token_x_labels
-                                input_values=input_values
-                                output_values=output_values
-                                input_label=in_lbl_preview.clone()
-                                output_label=out_lbl_preview.clone()
-                                height_px=140
-                                interactive=true
-                                empty_message=no_data
-                            />
-                        }
-                        .into_any()
-                    }
-                    detail=move || {
-                        view! {
-                            <TokenLineChart
-                                x_labels=token_x_labels
-                                input_values=input_values
-                                output_values=output_values
-                                input_label=in_lbl_detail.clone()
-                                output_label=out_lbl_detail.clone()
-                                height_px=380
-                                interactive=true
-                                empty_message=no_data
-                            />
-                        }
-                        .into_any()
-                    }
-                />
-                <p class="text-[10px] text-theme-muted leading-snug mt-2 font-mono">
-                    {format!(
-                        "{}: {} · ~${:.4}  |  {}: {} · ~${:.4}  |  {} ~${:.4}",
-                        in_lbl,
-                        format_number(window_input_tokens as u64),
-                        window_input_cost,
-                        out_lbl,
-                        format_number(window_output_tokens as u64),
-                        window_output_cost,
-                        "Σ",
-                        window_total_cost,
-                    )}
-                </p>
-                <p class="text-[10px] text-theme-muted mt-0.5">
-                    {format!(
-                        "Est. @ ${:.2}/${:.2} per 1M tokens (gateway cache.pricing defaults)",
-                        TOKEN_INPUT_PRICE_PER_M,
-                        TOKEN_OUTPUT_PRICE_PER_M,
-                    )}
-                </p>
+                {if all_tokens_zero {
+                    view! {
+                        <div>
+                            <h3 class="text-sm font-semibold text-theme mb-2">{token_title}</h3>
+                            <p class="text-xs text-theme-muted py-6 text-center">{token_no_data}</p>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! {
+                        <ChartPreviewCard
+                            title=token_title
+                            open=open
+                            preview=move || {
+                                view! {
+                                    <TokenLineChart
+                                        x_labels=token_x_labels
+                                        input_values=input_values
+                                        output_values=output_values
+                                        input_label=in_lbl_preview.clone()
+                                        output_label=out_lbl_preview.clone()
+                                        height_px=140
+                                        interactive=true
+                                        empty_message=no_data
+                                    />
+                                }
+                                .into_any()
+                            }
+                            detail=move || {
+                                view! {
+                                    <TokenLineChart
+                                        x_labels=token_x_labels
+                                        input_values=input_values
+                                        output_values=output_values
+                                        input_label=in_lbl_detail.clone()
+                                        output_label=out_lbl_detail.clone()
+                                        height_px=380
+                                        interactive=true
+                                        empty_message=no_data
+                                    />
+                                }
+                                .into_any()
+                            }
+                        />
+                    }.into_any()
+                }}
+                {if !all_tokens_zero {
+                    view! {
+                        <div>
+                            <p class="text-[10px] text-theme-muted leading-snug mt-2 font-mono">
+                                {format!(
+                                    "{}: {} · ~${:.4}  |  {}: {} · ~${:.4}  |  {} ~${:.4}",
+                                    in_lbl,
+                                    format_number(window_input_tokens as u64),
+                                    window_input_cost,
+                                    out_lbl,
+                                    format_number(window_output_tokens as u64),
+                                    window_output_cost,
+                                    "Σ",
+                                    window_total_cost,
+                                )}
+                            </p>
+                            <p class="text-[10px] text-theme-muted mt-0.5">
+                                {format!(
+                                    "Est. @ ${:.2}/${:.2} per 1M tokens (gateway cache.pricing defaults)",
+                                    TOKEN_INPUT_PRICE_PER_M,
+                                    TOKEN_OUTPUT_PRICE_PER_M,
+                                )}
+                            </p>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
             </div>
         </div>
     }
@@ -1736,6 +1718,7 @@ fn heatmap_bg(ratio: f64, invert: bool) -> &'static str {
 
 #[component]
 fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
+    let t = use_translations();
     if buckets.is_empty() {
         return ().into_any();
     }
@@ -1775,20 +1758,20 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         .max(1) as f64;
     view! {
         <div class="glass-card p-4 space-y-2">
-            <h3 class="text-sm font-semibold text-theme">"Bucket Heatmap"</h3>
+            <h3 class="text-sm font-semibold text-theme">{t.live_heatmap_title()}</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-[11px] font-mono border-collapse">
                     <thead>
                         <tr class="text-theme-muted border-b border-theme">
-                            <th class="text-left py-1 pr-3">"Time"</th>
-                            <th class="text-right py-1 px-2">"Req"</th>
-                            <th class="text-left py-1 px-2">"Model"</th>
-                            <th class="text-left py-1 px-2">"Up Key"</th>
-                            <th class="text-left py-1 px-2">"Down Key"</th>
-                            <th class="text-right py-1 px-2">"E2E (ms)"</th>
-                            <th class="text-right py-1 px-2">"Hit%"</th>
-                            <th class="text-right py-1 px-2">"In Tok"</th>
-                            <th class="text-right py-1 px-2">"Out Tok"</th>
+                            <th class="text-left py-1 pr-3">{t.live_heatmap_time()}</th>
+                            <th class="text-right py-1 px-2">{t.live_heatmap_req()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_model()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_upstream_key()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_downstream_key()}</th>
+                            <th class="text-right py-1 px-2">{t.live_heatmap_e2e()}</th>
+                            <th class="text-right py-1 px-2">{t.live_heatmap_hit()}</th>
+                            <th class="text-right py-1 px-2">{t.live_heatmap_in_tok()}</th>
+                            <th class="text-right py-1 px-2">{t.live_heatmap_out_tok()}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1811,13 +1794,13 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     <td class="text-right py-1 px-2" style=format!("background:{req_bg}")>
                                         {b.request_count}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[100px]" title=b.top_model.clone()>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[100px]" title=&b.top_model>
                                         {if b.top_model.is_empty() { "—".to_string() } else { b.top_model.clone() }}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=b.top_upstream_key.clone()>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=&b.top_upstream_key>
                                         {if b.top_upstream_key.is_empty() { "—".to_string() } else { b.top_upstream_key.clone() }}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=b.top_downstream_key.clone()>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=&b.top_downstream_key>
                                         {if b.top_downstream_key.is_empty() { "—".to_string() } else { b.top_downstream_key.clone() }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
@@ -1843,6 +1826,70 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
 }
 
 #[component]
+fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
+    let t = use_translations();
+    let s = data.summary;
+    view! {
+        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
+            <h3 class="text-sm font-semibold text-theme">{t.live_latest_request()}</h3>
+            {match data.latest {
+                None => view! {
+                    <p class="text-xs text-theme-muted">{t.live_no_data()}</p>
+                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
+                        <LiveStatTile
+                            label=t.live_tokens_input()
+                            value=format_number(s.input_tokens)
+                            variant=LiveTileVariant::Muted
+                        />
+                        <LiveStatTile
+                            label=t.live_tokens_output()
+                            value=format_number(s.output_tokens)
+                            variant=LiveTileVariant::Muted
+                        />
+                    </div>
+                }.into_any(),
+                Some(latest) => view! {
+                    <dl class="space-y-2 text-xs">
+                        <div class="flex justify-between gap-2">
+                            <dt class="text-theme-muted">{t.live_latest_model()}</dt>
+                            <dd class="font-mono text-theme truncate">{latest.model}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                            <dt class="text-theme-muted">{t.live_latest_cache()}</dt>
+                            <dd class="font-mono text-theme">{latest.cache_status}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                            <dt class="text-theme-muted">{t.live_series_e2e()}</dt>
+                            <dd class="font-mono text-theme">{format!("{:.0} ms", latest.e2e_latency_ms)}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                            <dt class="text-theme-muted">{t.live_series_ttft()}</dt>
+                            <dd class="font-mono text-theme">
+                                {latest.ttft_ms
+                                    .map(|v| format!("{v:.0} ms"))
+                                    .unwrap_or_else(|| t.live_upstream_na().to_string())}
+                            </dd>
+                        </div>
+                    </dl>
+                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
+                        <LiveStatTile
+                            label=t.live_tokens_input()
+                            value=format_number(latest.input_tokens)
+                            variant=LiveTileVariant::Accent
+                        />
+                        <LiveStatTile
+                            label=t.live_tokens_output()
+                            value=format_number(latest.output_tokens)
+                            variant=LiveTileVariant::Teal
+                        />
+                    </div>
+                }.into_any(),
+            }}
+        </div>
+    }
+}
+
+#[component]
 fn LiveKeyActivityPanel(
     routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
     routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>>,
@@ -1850,38 +1897,38 @@ fn LiveKeyActivityPanel(
     let t = use_translations();
     view! {
         <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
-            <h3 class="text-sm font-semibold text-theme">"Key activity (5m)"</h3>
+            <h3 class="text-sm font-semibold text-theme">{t.live_key_activity_title()}</h3>
             {move || match (routing_key_concurrency.get(), routing_key_data.get()) {
                 (None, None) => view! {
-                    <p class="text-xs text-theme-muted">"Select a key in load balancing card."</p>
+                    <p class="text-xs text-theme-muted">{t.live_select_key_hint()}</p>
                 }.into_any(),
                 (concurrency, routing) => {
                     let mut tiles: Vec<(&'static str, String, LiveTileVariant)> = Vec::new();
                     if let Some(Ok(c)) = &concurrency {
                         tiles.push((
-                            "Active now",
+                            t.live_active_now(),
                             c.active_now.to_string(),
                             LiveTileVariant::Accent,
                         ));
                         tiles.push((
-                            "Peak concurrent",
+                            t.live_peak_concurrent(),
                             c.concurrent_peak.to_string(),
                             LiveTileVariant::Orange,
                         ));
                         tiles.push((
-                            "Window requests",
+                            t.live_window_requests(),
                             c.total_requests.to_string(),
                             LiveTileVariant::Teal,
                         ));
                     }
                     if let Some(Ok(r)) = &routing {
                         tiles.push((
-                            "Prefix breaks",
+                            t.live_prefix_breaks(),
                             r.prefix_break_count.to_string(),
                             LiveTileVariant::Warn,
                         ));
                         tiles.push((
-                            "Migrations",
+                            t.live_migrations_count(),
                             r.migrations.len().to_string(),
                             LiveTileVariant::Muted,
                         ));
@@ -1899,7 +1946,7 @@ fn LiveKeyActivityPanel(
                             view! {
                                 <div class="border-t border-theme pt-2 space-y-1">
                                     <div class="text-[11px] font-medium text-theme-muted uppercase tracking-wide">
-                                        "Recent requests"
+                                        {t.live_recent_requests()}
                                     </div>
                                     {if recent.is_empty() {
                                         view! { <p class="text-[11px] text-theme-muted">{t.live_no_data()}</p> }.into_any()
@@ -1930,13 +1977,13 @@ fn LiveKeyActivityPanel(
                         }}
                         {if let Some(Ok(r)) = routing {
                             if r.migrations.is_empty() {
-                                view! { <p class="text-[11px] text-theme-muted">"No affinity migrations in window."</p> }.into_any()
+                                view! { <p class="text-[11px] text-theme-muted">{t.live_no_migrations_hint()}</p> }.into_any()
                             } else {
-                                view! {
-                                    <div class="border-t border-theme pt-2 space-y-1">
-                                        <div class="text-[11px] font-medium text-[var(--cc-warning)] uppercase tracking-wide">
-                                            "Affinity migrations"
-                                        </div>
+                            view! {
+                                <div class="border-t border-theme pt-2 space-y-1">
+                                    <div class="text-[11px] font-medium text-[var(--cc-warning)] uppercase tracking-wide">
+                                        {t.live_affinity_migrations()}
+                                    </div>
                                         {r.migrations.iter().rev().take(3).map(|m| {
                                             view! {
                                                 <div class="text-[11px] font-mono text-[var(--cc-warning)] py-0.5">

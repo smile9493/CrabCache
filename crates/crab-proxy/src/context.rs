@@ -329,6 +329,10 @@ pub struct RequestPassthroughState {
     pub captured_client_chunks: Vec<Bytes>,
     /// Upstream response body chunks captured via `Bytes::clone()` for Raw Capture (zero-copy).
     pub captured_upstream_chunks: Vec<Bytes>,
+    /// Incremental SHA-256 over the full client body (trace / req_hash without buffering).
+    pub(crate) body_hasher: Option<sha2::Sha256>,
+    /// Inbound `Content-Length` when present (passthrough content-length tracking).
+    pub inbound_content_length: Option<usize>,
 }
 
 pub struct GatewayContext {
@@ -397,9 +401,6 @@ pub struct GatewayContext {
     pub session_fingerprint: Option<String>,
     /// Stable session source for reasoning/session-store diagnostics.
     pub stable_session_kind: Option<String>,
-    /// Why `streaming_body_forward` was not armed on this request.
-    pub streaming_defer_reject_reason: Option<String>,
-    /// Accumulated upstream prompt-cache hit tokens (affinity hint finalized in `logging`).
     pub affinity_prompt_cache_hits: u64,
     /// Accumulated upstream prompt-cache miss tokens (affinity hint finalized in `logging`).
     pub affinity_prompt_cache_misses: u64,
@@ -409,9 +410,6 @@ pub struct GatewayContext {
     pub exact_cache_probed: bool,
     /// Lifecycle watermarks for `gateway_request_phase_latency_seconds`.
     pub timeline: RequestTimeline,
-    /// MiMo streaming body forward (partial read in `request_filter`, finalize at EOS).
-    pub streaming_body: crate::streaming_body_forward::StreamingBodyState,
-    /// Request-body passthrough for direct MiMo relay (prefix sniff + chunk relay).
     pub request_passthrough: RequestPassthroughState,
     /// Session store merge outcome: `hit` | `miss` | `break`.
     pub session_store_outcome: Option<String>,
@@ -469,13 +467,11 @@ impl GatewayContext {
             cached_reasoning_config: ReasoningConfig::default(),
             session_fingerprint: None,
             stable_session_kind: None,
-            streaming_defer_reject_reason: None,
             affinity_prompt_cache_hits: 0,
             affinity_prompt_cache_misses: 0,
             affinity_pure_miss_streak: 0,
             exact_cache_probed: false,
             timeline: RequestTimeline::default(),
-            streaming_body: crate::streaming_body_forward::StreamingBodyState::default(),
             request_passthrough: RequestPassthroughState::default(),
             session_store_outcome: None,
             session_store_redis_key: None,
@@ -494,9 +490,6 @@ pub struct FeaturesConfig {
     /// Enable zero-buffer streaming body forwarding in `request_body_filter`.
     #[serde(default)]
     pub streaming_body_forward: bool,
-    /// Consecutive parse/empty-body failures on defer path before auto-disabling defer (`0` = off).
-    #[serde(default = "default_streaming_defer_auto_disable_threshold")]
-    pub streaming_body_forward_auto_disable_threshold: u32,
     /// Pre-warm upstream connections on new session fingerprints.
     #[serde(default)]
     pub connection_prewarm: bool,
@@ -559,10 +552,6 @@ fn default_compression_threshold() -> usize {
     40
 }
 
-fn default_streaming_defer_auto_disable_threshold() -> u32 {
-    3
-}
-
 pub struct GatewayState {
     pub runtime: Arc<RuntimeConfig>,
     pub tiered_cache: Arc<TieredCache>,
@@ -598,9 +587,6 @@ pub struct GatewayState {
     pub global_rate: Arc<pingora_limits::rate::Rate>,
     /// Client Base URL discovery (FRP / OpenResty / observed request headers).
     pub client_endpoint: Arc<parking_lot::RwLock<ClientEndpointSnapshot>>,
-    /// Auto-disable `streaming_body_forward` after repeated defer-path failures.
-    pub streaming_defer_circuit_breaker:
-        Arc<crate::streaming_body_forward::StreamingDeferCircuitBreaker>,
     /// MiMo transparent session store (Redis `crab:session:*`).
     pub session_store: Option<Arc<crate::session_store::SessionStore>>,
 }

@@ -12,8 +12,7 @@ const CALLBACK_PATH: &str = "/callback";
 const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access";
 
 fn get_client_id() -> String {
-    std::env::var("CRABCACHE_OAUTH_XAI_CLIENT_ID")
-        .unwrap_or_else(|_| "xai-placeholder".to_string())
+    std::env::var("CRABCACHE_OAUTH_XAI_CLIENT_ID").unwrap_or_else(|_| "xai-placeholder".to_string())
 }
 
 pub struct XaiAuthenticator;
@@ -60,8 +59,8 @@ async fn fetch_oidc_config() -> Result<OidcConfig, AuthError> {
         ("authorization_endpoint", &config.authorization_endpoint),
         ("token_endpoint", &config.token_endpoint),
     ] {
-        let parsed =
-            url::Url::parse(endpoint).map_err(|e| AuthError::OAuth(format!("invalid {name}: {e}")))?;
+        let parsed = url::Url::parse(endpoint)
+            .map_err(|e| AuthError::OAuth(format!("invalid {name}: {e}")))?;
 
         if parsed.scheme() != "https" {
             return Err(AuthError::OAuth(format!("{name} must use HTTPS")));
@@ -188,9 +187,18 @@ impl Authenticator for XaiAuthenticator {
         let id = email.clone().unwrap_or_else(|| "default".to_string());
 
         let mut metadata = HashMap::new();
-        metadata.insert("base_url".to_owned(), serde_json::Value::String("https://api.x.ai".to_owned()));
-        metadata.insert("token_endpoint".to_owned(), serde_json::Value::String(oidc_config.token_endpoint));
-        metadata.insert("auth_kind".to_owned(), serde_json::Value::String("oauth".to_owned()));
+        metadata.insert(
+            "base_url".to_owned(),
+            serde_json::Value::String("https://api.x.ai".to_owned()),
+        );
+        metadata.insert(
+            "token_endpoint".to_owned(),
+            serde_json::Value::String(oidc_config.token_endpoint),
+        );
+        metadata.insert(
+            "auth_kind".to_owned(),
+            serde_json::Value::String("oauth".to_owned()),
+        );
 
         Ok(TokenRecord {
             id,

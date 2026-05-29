@@ -54,10 +54,10 @@ fn GeneralTab() -> impl IntoView {
 
     let load_version = move || {
         leptos::task::spawn_local(async move {
-            version.set(None);
+            version.try_set(None);
             match api::fetch_system_version().await {
-                Ok(v) => version.set(Some(Ok(v))),
-                Err(e) => version.set(Some(Err(e))),
+                Ok(v) => { version.try_set(Some(Ok(v))); },
+                Err(e) => { version.try_set(Some(Err(e))); },
             }
         });
     };
@@ -67,10 +67,10 @@ fn GeneralTab() -> impl IntoView {
         update_check.set(None);
         leptos::task::spawn_local(async move {
             match api::check_for_updates().await {
-                Ok(r) => update_check.set(Some(Ok(r))),
-                Err(e) => update_check.set(Some(Err(e))),
+                Ok(r) => { update_check.try_set(Some(Ok(r))); },
+                Err(e) => { update_check.try_set(Some(Err(e))); },
             }
-            checking.set(false);
+            checking.try_set(false);
         });
     };
 
@@ -80,10 +80,10 @@ fn GeneralTab() -> impl IntoView {
         update_result.set(None);
         leptos::task::spawn_local(async move {
             match api::trigger_system_update().await {
-                Ok(r) => update_result.set(Some(Ok(r))),
-                Err(e) => update_result.set(Some(Err(e))),
+                Ok(r) => { update_result.try_set(Some(Ok(r))); },
+                Err(e) => { update_result.try_set(Some(Err(e))); },
             }
-            updating.set(false);
+            updating.try_set(false);
         });
     };
 
@@ -113,26 +113,26 @@ fn GeneralTab() -> impl IntoView {
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
                     if success {
-                        key_message.set(Some(t.system_key_changed().to_string()));
-                        key_error.set(false);
-                        new_key.set(String::new());
-                        confirm_key.set(String::new());
-                        current_key.set(String::new());
+                        key_message.try_set(Some(t.system_key_changed().to_string()));
+                        key_error.try_set(false);
+                        new_key.try_set(String::new());
+                        confirm_key.try_set(String::new());
+                        current_key.try_set(String::new());
                         let _ = complete_login(&new_clone);
-                        admin_key_signal.set(new_clone);
+                        admin_key_signal.try_set(new_clone);
                     } else {
                         let err = val
                             .get("error")
                             .and_then(|v| v.as_str())
                             .unwrap_or(t.system_key_change_failed())
                             .to_string();
-                        key_message.set(Some(err));
-                        key_error.set(true);
+                        key_message.try_set(Some(err));
+                        key_error.try_set(true);
                     }
                 }
                 Err(e) => {
-                    key_message.set(Some(e));
-                    key_error.set(true);
+                    key_message.try_set(Some(e));
+                    key_error.try_set(true);
                 }
             }
         });

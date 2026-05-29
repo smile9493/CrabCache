@@ -290,7 +290,7 @@ pub fn CompositionPage() -> impl IntoView {
         spawn_local({
             let state = state;
             async move {
-                state.update(|s| {
+                state.try_update(|s| {
                     s.loading = true;
                     s.error = None;
                 });
@@ -301,7 +301,7 @@ pub fn CompositionPage() -> impl IntoView {
                     fetch_composition_trends(),
                 );
 
-                state.update(|s| {
+                state.try_update(|s| {
                     s.loading = false;
                     match summary_res {
                         Ok(resp) => s.summary = Some(resp.summary),
@@ -329,7 +329,7 @@ pub fn CompositionPage() -> impl IntoView {
         spawn_local({
             let debug_state = debug_state;
             async move {
-                debug_state.update(|s| {
+                debug_state.try_update(|s| {
                     s.loading = true;
                     s.error = None;
                 });
@@ -346,14 +346,14 @@ pub fn CompositionPage() -> impl IntoView {
                 .await
                 {
                     Ok(resp) => {
-                        debug_state.update(|s| {
+                        debug_state.try_update(|s| {
                             s.loading = false;
                             s.entries = resp.entries;
                             s.total = resp.total;
                         });
                     }
                     Err(e) => {
-                        debug_state.update(|s| {
+                        debug_state.try_update(|s| {
                             s.loading = false;
                             s.error = Some(e);
                         });
@@ -399,12 +399,12 @@ pub fn CompositionPage() -> impl IntoView {
                             let h = hours.get();
                             let state = state;
                             spawn_local(async move {
-                                state.update(|s| { s.loading = true; s.error = None; });
+                                state.try_update(|s| { s.loading = true; s.error = None; });
                                 let (sr, tr) = futures::join!(
                                     fetch_composition_summary(h, None, None),
                                     fetch_composition_trends(),
                                 );
-                                state.update(|s| {
+                                state.try_update(|s| {
                                     s.loading = false;
                                     match sr {
                                         Ok(resp) => s.summary = Some(resp.summary),

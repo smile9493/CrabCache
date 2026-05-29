@@ -72,6 +72,7 @@ impl Selector for SessionAffinitySelector {
         if !success && status_code == Some(429) {
             self.cache.write().invalidate_auth(&auth.record.id);
         }
-        self.fallback.mark_result(auth_idx, auth, success, status_code);
+        self.fallback
+            .mark_result(auth_idx, auth, success, status_code);
     }
 }

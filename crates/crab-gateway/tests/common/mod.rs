@@ -31,6 +31,7 @@ pub fn test_runtime() -> Arc<RuntimeConfig> {
             tls_sni: "api.deepseek.com".to_string(),
             router: crab_route::LbRouter::new(&backends).unwrap(),
             upstream_pool: pool_handle.clone(),
+            proxy_url: None,
         }),
     );
     RuntimeConfig::new(

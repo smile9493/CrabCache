@@ -153,3 +153,65 @@ pub fn sanitize_for_trace(value: Option<&str>) -> Option<String> {
         }
     })
 }
+
+/// Feed passthrough relay bytes into the incremental body hasher.
+pub fn passthrough_hash_update(ctx: &mut GatewayContext, data: &[u8]) {
+    if data.is_empty() {
+        return;
+    }
+    use sha2::Digest;
+    let hasher = ctx
+        .request_passthrough
+        .body_hasher
+        .get_or_insert_with(Sha256::new);
+    hasher.update(data);
+}
+
+/// Finalize passthrough body hash into `ctx.req_hash`.
+pub fn passthrough_hash_finalize(ctx: &mut GatewayContext) {
+    use sha2::Digest;
+    if let Some(hasher) = ctx.request_passthrough.body_hasher.take() {
+        ctx.req_hash = Some(hex::encode(hasher.finalize()));
+    }
+}
+
+/// Trace-safe prefix (16 hex chars) of a full request hash.
+pub fn trace_request_hash_prefix(full_hash: &str) -> String {
+    if full_hash.len() >= 16 {
+        full_hash[..16].to_string()
+    } else {
+        full_hash.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::GatewayContext;
+
+    #[test]
+    fn passthrough_incremental_hash_matches_full_body() {
+        let prefix = b"{\"model\":\"mimo\"";
+        let suffix = b",\"messages\":[]}";
+        let full: Vec<u8> = [prefix.as_slice(), suffix.as_slice()].concat();
+        let mut expected = Sha256::new();
+        expected.update(&full);
+        let expected_hex = hex::encode(expected.finalize());
+
+        let mut ctx = GatewayContext::new("test".to_string());
+        ctx.request_passthrough.body_hasher = Some(Sha256::new());
+        passthrough_hash_update(&mut ctx, prefix);
+        passthrough_hash_update(&mut ctx, suffix);
+        passthrough_hash_finalize(&mut ctx);
+
+        assert_eq!(ctx.req_hash.as_deref(), Some(expected_hex.as_str()));
+        assert_ne!(
+            ctx.req_hash.as_deref(),
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+        assert_eq!(
+            trace_request_hash_prefix(&expected_hex),
+            expected_hex[..16]
+        );
+    }
+}

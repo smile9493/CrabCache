@@ -1227,7 +1227,9 @@ pub fn percentile_from_buckets(
                 continue;
             };
             if let Ok(v) = value_part.parse::<f64>() {
-                total_count = v;
+                if v.is_finite() {
+                    total_count = v;
+                }
             }
             continue;
         }
@@ -1268,7 +1270,9 @@ pub fn percentile_from_buckets(
 
         let value_part = line[close + 1..].trim();
         if let Ok(v) = value_part.parse::<f64>() {
-            buckets.push((le, v));
+            if v.is_finite() {
+                buckets.push((le, v));
+            }
         }
     }
 
@@ -1281,9 +1285,12 @@ pub fn percentile_from_buckets(
 
     let target = total_count * percentile;
     let mut prev_count = 0.0_f64;
+    let mut last_finite_le = 0.0_f64;
     for &(le, count) in &buckets {
         if count >= target {
-            // Interpolate within this bucket.
+            if le.is_infinite() {
+                return last_finite_le * 1000.0;
+            }
             let prev_le = buckets
                 .iter()
                 .filter(|(l, _)| *l < le)
@@ -1297,7 +1304,11 @@ pub fn percentile_from_buckets(
             } else {
                 0.0
             };
-            return (prev_le + bucket_range * fraction) * 1000.0; // seconds → ms
+            let result = (prev_le + bucket_range * fraction) * 1000.0;
+            return if result.is_finite() { result } else { prev_le * 1000.0 };
+        }
+        if le.is_finite() {
+            last_finite_le = le;
         }
         prev_count = count;
     }
@@ -1320,13 +1331,17 @@ fn sum_prometheus_sample(body: &str, metric: &str, required: &[(&str, &str)]) ->
                 }
                 let value_part = line[close + 1..].trim();
                 if let Ok(v) = value_part.parse::<f64>() {
-                    total += v;
+                    if v.is_finite() {
+                        total += v;
+                    }
                 }
             }
         } else if required.is_empty() {
             let value_part = line[metric.len()..].trim();
             if let Ok(v) = value_part.parse::<f64>() {
-                total += v;
+                if v.is_finite() {
+                    total += v;
+                }
             }
         }
     }

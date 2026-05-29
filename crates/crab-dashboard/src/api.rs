@@ -844,14 +844,6 @@ pub async fn update_pipeline_runtime(
     put_json(&format!("{}/runtime/pipeline", API_BASE), req).await
 }
 
-pub async fn fetch_cursor_models() -> Result<CursorModelsConfig, String> {
-    fetch_json(&format!("{}/cursor/models", API_BASE)).await
-}
-
-pub async fn update_cursor_models(req: &CursorModelsConfig) -> Result<CursorModelsConfig, String> {
-    put_json(&format!("{}/cursor/models", API_BASE), req).await
-}
-
 pub async fn update_routing_backends(req: &PutBackendsRequest) -> Result<RoutingStatus, String> {
     put_json(&format!("{}/routing/backends", API_BASE), req).await
 }
@@ -1118,4 +1110,147 @@ pub fn open_sse_with_token(token: &str) -> Result<web_sys::EventSource, String> 
 pub async fn connect_sse() -> Result<web_sys::EventSource, String> {
     let token = fetch_sse_token().await?;
     open_sse_with_token(&token)
+}
+
+// ── Codex OAuth Device Login ──
+
+use crab_admin_types::oauth::{
+    CodexCredentialListResponse, CodexDeviceStartResponse, CodexDeviceStatusResponse,
+    CodexImportRequest, CodexImportResponse,
+};
+
+pub async fn start_codex_device_login(
+    profile_id: &str,
+) -> Result<CodexDeviceStartResponse, String> {
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{}/oauth/codex/device/start",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        &serde_json::json!({}),
+    )
+    .await
+}
+
+pub async fn poll_codex_device_login(
+    profile_id: &str,
+    session_id: &str,
+) -> Result<CodexDeviceStatusResponse, String> {
+    fetch_json(&format!(
+        "{}/upstream/profiles/{}/oauth/codex/device/{}",
+        API_BASE,
+        urlencoding::encode(profile_id),
+        urlencoding::encode(session_id)
+    ))
+    .await
+}
+
+pub async fn cancel_codex_device_login(
+    profile_id: &str,
+    session_id: &str,
+) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/upstream/profiles/{}/oauth/codex/device/{}",
+        API_BASE,
+        urlencoding::encode(profile_id),
+        urlencoding::encode(session_id)
+    );
+    let (builder, epoch) = apply_admin_auth(Request::delete(&url));
+    let resp = builder.send().await.map_err(|e| format!("Network error: {e}"))?;
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+    resp.json()
+        .await
+        .map_err(|e| format!("Invalid cancel response: {e}"))
+}
+
+pub async fn list_codex_credentials() -> Result<CodexCredentialListResponse, String> {
+    fetch_json(&format!("{}/oauth/codex/credentials", API_BASE)).await
+}
+
+pub async fn import_codex_credential(
+    profile_id: &str,
+    credential_id: &str,
+) -> Result<CodexImportResponse, String> {
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{}/oauth/codex/import",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        &CodexImportRequest {
+            credential_id: credential_id.to_string(),
+        },
+    )
+    .await
+}
+
+// ── PKCE OAuth API ───────────────────────────────────────────────────────────
+
+pub async fn start_codex_pkce_login(
+    profile_id: &str,
+) -> Result<CodexPkceStartResponse, String> {
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{}/oauth/codex/pkce/start",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        &serde_json::json!({}),
+    )
+    .await
+}
+
+pub async fn poll_codex_pkce_login(
+    profile_id: &str,
+    session_id: &str,
+) -> Result<CodexPkceExchangeResponse, String> {
+    fetch_json(&format!(
+        "{}/upstream/profiles/{}/oauth/codex/pkce/{}",
+        API_BASE,
+        urlencoding::encode(profile_id),
+        urlencoding::encode(session_id)
+    ))
+    .await
+}
+
+pub async fn exchange_codex_pkce(
+    profile_id: &str,
+    session_id: &str,
+    callback_url: &str,
+) -> Result<CodexPkceExchangeResponse, String> {
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{}/oauth/codex/pkce/{}/exchange",
+            API_BASE,
+            urlencoding::encode(profile_id),
+            urlencoding::encode(session_id)
+        ),
+        &CodexPkceExchangeRequest {
+            callback_url: callback_url.to_string(),
+        },
+    )
+    .await
+}
+
+pub async fn cancel_codex_pkce_login(
+    profile_id: &str,
+    session_id: &str,
+) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/upstream/profiles/{}/oauth/codex/pkce/{}",
+        API_BASE,
+        urlencoding::encode(profile_id),
+        urlencoding::encode(session_id)
+    );
+    let (builder, epoch) = apply_admin_auth(Request::delete(&url));
+    let resp = builder.send().await.map_err(|e| format!("Network error: {e}"))?;
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+    resp.json()
+        .await
+        .map_err(|e| format!("Invalid cancel response: {e}"))
 }

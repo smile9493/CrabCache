@@ -28,8 +28,8 @@ pub fn LogsManagePage() -> impl IntoView {
         let usage = usage;
         leptos::task::spawn_local(async move {
             match api::fetch_log_disk_usage().await {
-                Ok(v) => usage.set(Some(Ok(v))),
-                Err(e) => usage.set(Some(Err(e))),
+                Ok(v) => { usage.try_set(Some(Ok(v))); },
+                Err(e) => { usage.try_set(Some(Err(e))); },
             }
         });
     }
@@ -37,8 +37,8 @@ pub fn LogsManagePage() -> impl IntoView {
         let retention = retention;
         leptos::task::spawn_local(async move {
             match api::fetch_retention_policy().await {
-                Ok(v) => retention.set(Some(Ok(v))),
-                Err(e) => retention.set(Some(Err(e))),
+                Ok(v) => { retention.try_set(Some(Ok(v))); },
+                Err(e) => { retention.try_set(Some(Err(e))); },
             }
         });
     }
@@ -231,10 +231,10 @@ fn RetentionPolicyCard(
         let feedback = feedback;
         leptos::task::spawn_local(async move {
             match api::update_retention_policy(&req).await {
-                Ok(_) => feedback.set(t.logs_manage_retention_saved().to_string()),
-                Err(e) => feedback.set(e),
+                Ok(_) => { feedback.try_set(t.logs_manage_retention_saved().to_string()); },
+                Err(e) => { feedback.try_set(e); },
             }
-            saving.set(false);
+            saving.try_set(false);
         });
     };
 
@@ -383,23 +383,23 @@ fn ManualClearCard(
                         .logs_manage_cleared_fmt()
                         .replacen("{}", &resp.deleted_files.len().to_string(), 1)
                         .replacen("{}", &format_bytes(resp.freed_bytes), 1);
-                    feedback.set(msg.clone());
-                    last_result.set(Some(msg));
+                    feedback.try_set(msg.clone());
+                    last_result.try_set(Some(msg));
                     // Reload disk usage
                     leptos::task::spawn_local(async move {
                         match api::fetch_log_disk_usage().await {
-                            Ok(v) => usage.set(Some(Ok(v))),
-                            Err(e) => usage.set(Some(Err(e))),
+                            Ok(v) => { usage.try_set(Some(Ok(v))); },
+                            Err(e) => { usage.try_set(Some(Err(e))); },
                         }
                     });
                 }
                 Err(e) => {
-                    feedback.set(e.clone());
+                    feedback.try_set(e.clone());
                     let err_msg = t.logs_manage_error_fmt().replacen("{}", &e, 1);
-                    last_result.set(Some(err_msg));
+                    last_result.try_set(Some(err_msg));
                 }
             }
-            clearing.set(false);
+            clearing.try_set(false);
         });
     };
 

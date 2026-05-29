@@ -111,7 +111,7 @@ pub fn CapturePage() -> impl IntoView {
             let session = f.session_opt().map(|s| s.to_string());
             let backend = f.backend_opt().map(|s| s.to_string());
             leptos::task::spawn_local(async move {
-                list_data.set(None);
+                list_data.try_set(None);
                 let result = api::fetch_capture_list(
                     24,
                     Some(200),
@@ -122,16 +122,16 @@ pub fn CapturePage() -> impl IntoView {
                     backend.as_deref(),
                 )
                 .await;
-                list_data.set(Some(result));
+                list_data.try_set(Some(result));
             });
         }
     };
 
     let load_stats = move || {
         leptos::task::spawn_local(async move {
-            stats_data.set(None);
+            stats_data.try_set(None);
             let result = api::fetch_capture_stats(24).await;
-            stats_data.set(Some(result));
+            stats_data.try_set(Some(result));
         });
     };
 
@@ -140,8 +140,8 @@ pub fn CapturePage() -> impl IntoView {
         detail_data.set(None);
         leptos::task::spawn_local(async move {
             let result = api::fetch_capture_detail(&id).await;
-            detail_data.set(Some(result));
-            detail_loading.set(false);
+            detail_data.try_set(Some(result));
+            detail_loading.try_set(false);
         });
     };
 

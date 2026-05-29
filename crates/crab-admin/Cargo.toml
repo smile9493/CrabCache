@@ -39,6 +39,7 @@ crab-admin-types.workspace = true
 crab-control.workspace = true
 crab-composition.workspace = true
 crab-metrics.workspace = true
+crab-auth.workspace = true
 rusqlite.workspace = true
 crab-capture.workspace = true
 crab-proxy.workspace = true

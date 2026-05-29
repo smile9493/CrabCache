@@ -11,6 +11,11 @@ pub struct LineDrawRequest {
     pub thresholds: Vec<ThresholdLine>,
     pub width_px: u32,
     pub height_px: u32,
+    /// Optional explicit Y axis range. When set, the renderer uses these instead
+    /// of computing min/max from the data, keeping the rendered axis consistent
+    /// with tooltip coordinate calculations.
+    pub y_min: Option<f64>,
+    pub y_max: Option<f64>,
 }
 
 /// Backend-neutral bar chart draw request.

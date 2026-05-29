@@ -132,10 +132,9 @@ pub fn generate_cache_key_with_fingerprint_from_value(
     value: &Value,
     config: &FingerprintConfig,
 ) -> Result<String> {
-    Ok(fingerprint_hash_normalized_value(&prepare_value_for_fingerprint(
-        value.clone(),
-        config,
-    )))
+    Ok(fingerprint_hash_normalized_value(
+        &prepare_value_for_fingerprint(value.clone(), config),
+    ))
 }
 
 pub fn generate_cache_key_with_fingerprint(
@@ -857,10 +856,8 @@ mod tests {
         });
         let bytes = serde_json::to_vec(&body).unwrap();
         let config = FingerprintConfig::default_v1();
-        let from_bytes =
-            generate_cache_key_with_fingerprint(&bytes, &config).unwrap();
-        let from_value =
-            generate_cache_key_with_fingerprint_from_value(&body, &config).unwrap();
+        let from_bytes = generate_cache_key_with_fingerprint(&bytes, &config).unwrap();
+        let from_value = generate_cache_key_with_fingerprint_from_value(&body, &config).unwrap();
         assert_eq!(from_bytes, from_value);
     }
 

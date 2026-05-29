@@ -83,11 +83,10 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
 
     let alive = Arc::new(AtomicBool::new(true));
 
-    let pid_for_start = profile_id.clone();
-    let alive_for_start = Arc::clone(&alive);
-    let on_start_device = Callback::new(move |_: ()| {
-        let pid = pid_for_start.clone();
-        let alive = Arc::clone(&alive_for_start);
+    let pid_start = profile_id.clone();
+    let on_start_device = move |_| {
+        let pid = pid_start.clone();
+        let alive = Arc::clone(&alive);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -108,9 +107,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    });
+    };
 
-    let on_copy_code = Callback::new(move |_: ()| {
+    let on_copy_code = move |_| {
         if let Some(code) = user_code.get() {
             crate::clipboard::copy_text(&code);
             copied.set(true);
@@ -119,11 +118,11 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                 copied.set(false);
             });
         }
-    });
+    };
 
-    let pid_for_cancel = profile_id.clone();
-    let on_cancel = Callback::new(move |_: ()| {
-        let pid = pid_for_cancel.clone();
+    let pid_cancel = profile_id.clone();
+    let on_cancel = move |_| {
+        let pid = pid_cancel.clone();
         let sid = session_id.get_untracked();
         leptos::task::spawn_local(async move {
             if let Some(s) = sid {
@@ -135,7 +134,11 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
         verify_url.set(None);
         flow_status.set("idle".to_string());
         error_msg.set(String::new());
-    });
+    };
+
+    let on_start_device = Callback::new(on_start_device);
+    let on_copy_code = Callback::new(on_copy_code);
+    let on_cancel = Callback::new(on_cancel);
 
     // Poll loop
     let pid_for_poll = profile_id.clone();
@@ -158,7 +161,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                         match status_resp.status.as_str() {
                             "pending" => {
                                 let interval = poll_interval.get_untracked();
-                                TimeoutFuture::new(interval * 1000).await;
+                                TimeoutFuture::new((interval * 1000) as u32).await;
                             }
                             "completed" => {
                                 flow_status.set("completed".to_string());
@@ -194,7 +197,13 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
         creds_loading.set(true);
         if let Ok(list) = api::list_codex_credentials().await {
             if alive_for_creds.load(Ordering::Relaxed) {
-                credentials.set(list.credentials);
+                credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
+                    id: c.id,
+                    email: c.email,
+                    plan_type: c.plan_type,
+                    expired_at: c.expired_at,
+                    disabled: c.disabled,
+                }).collect());
             }
         }
         creds_loading.set(false);
@@ -205,14 +214,14 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
     view! {
         <div class="space-y-3">
             // Idle
-            {move || (flow_status.get() == "idle").then(|| {
-                let cb = on_start_device.clone();
-                view! {
-                    <button class="btn btn-secondary text-xs" on:click=move |_| cb.run(())>
+            {move || {
+                let on_start = on_start_device.clone();
+                (flow_status.get() == "idle").then(|| view! {
+                    <button class="btn btn-secondary text-xs" on:click=on_start>
                         {t.upstream_codex_oauth_start()}
                     </button>
-                }
-            })}
+                })
+            }}
 
             // Starting
             {move || (flow_status.get() == "starting").then(|| view! {
@@ -223,35 +232,37 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
             })}
 
             // Polling
-            {move || (flow_status.get() == "polling").then(|| {
-                let code = user_code.get().unwrap_or_default();
-                let url = verify_url.get().unwrap_or_default();
-                let copied_signal = copied.get();
-                let cb_copy = on_copy_code.clone();
-                let cb_cancel = on_cancel.clone();
-                view! {
-                    <div class="space-y-3">
-                        <div class="flex items-center gap-3 p-3 rounded-lg bg-accent/10 border border-accent/20">
-                            <span class="font-mono text-2xl font-bold text-accent tracking-widest select-all">
-                                {code.clone()}
-                            </span>
-                            <button class="btn btn-secondary text-xs" on:click=move |_| cb_copy.run(())>
-                                {if copied_signal { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
+            {move || {
+                let on_copy = on_copy_code.clone();
+                let on_cancel_c = on_cancel.clone();
+                (flow_status.get() == "polling").then(|| {
+                    let code = user_code.get().unwrap_or_default();
+                    let url = verify_url.get().unwrap_or_default();
+                    let copied_signal = copied.get();
+                    view! {
+                        <div class="space-y-3">
+                            <div class="flex items-center gap-3 p-3 rounded-lg bg-accent/10 border border-accent/20">
+                                <span class="font-mono text-2xl font-bold text-accent tracking-widest select-all">
+                                    {code.clone()}
+                                </span>
+                                <button class="btn btn-secondary text-xs" on:click=on_copy>
+                                    {if copied_signal { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
+                                </button>
+                            </div>
+                            <a href=url.clone() target="_blank" class="text-xs text-accent underline">
+                                {t.upstream_codex_oauth_verify()}
+                            </a>
+                            <div class="flex items-center gap-2">
+                                <Spinner />
+                                <span class="text-xs text-theme-muted">{t.upstream_codex_oauth_polling()}</span>
+                            </div>
+                            <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
+                                {t.upstream_codex_oauth_cancel()}
                             </button>
                         </div>
-                        <a href=url.clone() target="_blank" class="text-xs text-accent underline">
-                            {t.upstream_codex_oauth_verify()}
-                        </a>
-                        <div class="flex items-center gap-2">
-                            <Spinner />
-                            <span class="text-xs text-theme-muted">{t.upstream_codex_oauth_polling()}</span>
-                        </div>
-                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
-                            {t.upstream_codex_oauth_cancel()}
-                        </button>
-                    </div>
-                }
-            })}
+                    }
+                })
+            }}
 
             // Completed
             {move || (flow_status.get() == "completed").then(|| {
@@ -322,11 +333,10 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
     let alive = Arc::new(AtomicBool::new(true));
 
     // Start PKCE
-    let pid_for_start = profile_id.clone();
-    let alive_for_pkce = Arc::clone(&alive);
-    let on_start_pkce = Callback::new(move |_: ()| {
-        let pid = pid_for_start.clone();
-        let alive = Arc::clone(&alive_for_pkce);
+    let pid_start_pkce = profile_id.clone();
+    let on_start_pkce = move |_| {
+        let pid = pid_start_pkce.clone();
+        let alive = Arc::clone(&alive);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -350,9 +360,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    });
+    };
 
-    let on_copy_url = Callback::new(move |_: ()| {
+    let on_copy_url = move |_| {
         if let Some(url) = auth_url.get() {
             crate::clipboard::copy_text(&url);
             copied.set(true);
@@ -361,12 +371,12 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 copied.set(false);
             });
         }
-    });
+    };
 
     // Confirm manual exchange
-    let pid_for_confirm = profile_id.clone();
-    let on_confirm = Callback::new(move |_: ()| {
-        let pid = pid_for_confirm.clone();
+    let pid_confirm = profile_id.clone();
+    let on_confirm = move |_| {
+        let pid = pid_confirm.clone();
         let sid = session_id.get_untracked().unwrap_or_default();
         let url = callback_input.get_untracked();
         if url.is_empty() {
@@ -395,11 +405,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    });
+    };
 
-    let pid_for_cancel = profile_id.clone();
-    let on_cancel_pkce = Callback::new(move |_: ()| {
-        let pid = pid_for_cancel.clone();
+    let pid_cancel_pkce = profile_id.clone();
+    let on_cancel_pkce = move |_| {
+        let pid = pid_cancel_pkce.clone();
         let sid = session_id.get_untracked();
         leptos::task::spawn_local(async move {
             if let Some(s) = sid {
@@ -411,7 +421,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         flow_status.set("idle".to_string());
         error_msg.set(String::new());
         callback_input.set(String::new());
-    });
+    };
 
     // Auto-poll loop (for "auto" mode)
     let pid_for_poll = profile_id.clone();
@@ -465,7 +475,13 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         creds_loading.set(true);
         if let Ok(list) = api::list_codex_credentials().await {
             if alive_for_creds.load(Ordering::Relaxed) {
-                credentials.set(list.credentials);
+                credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
+                    id: c.id,
+                    email: c.email,
+                    plan_type: c.plan_type,
+                    expired_at: c.expired_at,
+                    disabled: c.disabled,
+                }).collect());
             }
         }
         creds_loading.set(false);
@@ -476,16 +492,16 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
     view! {
         <div class="space-y-3">
             // Idle: start button
-            {move || (flow_status.get() == "idle").then(|| {
-                let cb = on_start_pkce.clone();
-                view! {
+            {move || {
+                let on = on_start_pkce.clone();
+                (flow_status.get() == "idle").then(|| view! {
                     <div class="space-y-2">
-                        <button class="btn btn-secondary text-xs" on:click=move |_| cb.run(())>
+                        <button class="btn btn-secondary text-xs" on:click=on>
                             {t.upstream_codex_pkce_start()}
                         </button>
                     </div>
-                }
-            })}
+                })
+            }}
 
             // Starting
             {move || (flow_status.get() == "starting").then(|| view! {
@@ -496,44 +512,46 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             })}
 
             // Waiting for paste (manual mode)
-            {move || (flow_status.get() == "waiting_paste").then(|| {
-                let url = auth_url.get().unwrap_or_default();
-                let c = copied.get();
-                let cb_copy = on_copy_url.clone();
-                let cb_confirm = on_confirm.clone();
-                let cb_cancel = on_cancel_pkce.clone();
-                view! {
-                    <div class="space-y-3">
-                        // Auth URL
-                        <div class="flex items-center gap-2">
-                            <a href=url.clone() target="_blank"
-                               class="btn btn-secondary text-xs">
-                                {t.upstream_codex_pkce_open_browser()}
-                            </a>
-                            <button class="btn btn-secondary text-xs" on:click=move |_| cb_copy.run(())>
-                                {if c { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
+            {move || {
+                let on_copy = on_copy_url.clone();
+                let on_confirm_c = on_confirm.clone();
+                let on_cancel_c = on_cancel_pkce.clone();
+                (flow_status.get() == "waiting_paste").then(|| {
+                    let url = auth_url.get().unwrap_or_default();
+                    let c = copied.get();
+                    view! {
+                        <div class="space-y-3">
+                            // Auth URL
+                            <div class="flex items-center gap-2">
+                                <a href=url.clone() target="_blank"
+                                   class="btn btn-secondary text-xs">
+                                    {t.upstream_codex_pkce_open_browser()}
+                                </a>
+                                <button class="btn btn-secondary text-xs" on:click=on_copy>
+                                    {if c { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
+                                </button>
+                            </div>
+                            <p class="text-xs text-theme-muted">{t.upstream_codex_pkce_manual_hint()}</p>
+                            // Callback URL input
+                            <div class="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    class="input input-bordered input-xs flex-1 text-xs font-mono"
+                                    placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                                    prop:value=callback_input
+                                    on:input=move |ev| callback_input.set(event_target_value(&ev))
+                                />
+                                <button class="btn btn-primary text-xs" on:click=on_confirm_c>
+                                    {t.upstream_codex_pkce_confirm()}
+                                </button>
+                            </div>
+                            <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
+                                {t.upstream_codex_oauth_cancel()}
                             </button>
                         </div>
-                        <p class="text-xs text-theme-muted">{t.upstream_codex_pkce_manual_hint()}</p>
-                        // Callback URL input
-                        <div class="flex items-center gap-2">
-                            <input
-                                type="text"
-                                class="input input-bordered input-xs flex-1 text-xs font-mono"
-                                placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-                                prop:value=callback_input
-                                on:input=move |ev| callback_input.set(event_target_value(&ev))
-                            />
-                            <button class="btn btn-primary text-xs" on:click=move |_| cb_confirm.run(())>
-                                {t.upstream_codex_pkce_confirm()}
-                            </button>
-                        </div>
-                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
-                            {t.upstream_codex_oauth_cancel()}
-                        </button>
-                    </div>
-                }
-            })}
+                    }
+                })
+            }}
 
             // Exchanging (manual mode confirmed)
             {move || (flow_status.get() == "exchanging").then(|| view! {
@@ -544,20 +562,20 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             })}
 
             // Polling (auto mode — waiting for callback)
-            {move || (flow_status.get() == "polling").then(|| {
-                let cb_cancel = on_cancel_pkce.clone();
-                view! {
+            {move || {
+                let on_cancel_c = on_cancel_pkce.clone();
+                (flow_status.get() == "polling").then(|| view! {
                     <div class="space-y-2">
                         <div class="flex items-center gap-2">
                             <Spinner />
                             <span class="text-xs text-theme-muted">{t.upstream_codex_pkce_waiting()}</span>
                         </div>
-                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
+                        <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
                             {t.upstream_codex_oauth_cancel()}
                         </button>
                     </div>
-                }
-            })}
+                })
+            }}
 
             // Completed
             {move || (flow_status.get() == "completed").then(|| {

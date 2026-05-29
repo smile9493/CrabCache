@@ -1,4 +1,4 @@
-use super::{availability::is_blocked_for_model, AuthEntry, SelectionContext, Selector};
+use super::{AuthEntry, SelectionContext, Selector, availability::is_blocked_for_model};
 use async_trait::async_trait;
 
 /// Fill-first selector: always picks the first available auth (sorted by ID).

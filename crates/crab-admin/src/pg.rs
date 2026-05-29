@@ -103,7 +103,6 @@ const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_leng
                     prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                     upstream_model, client_body_user_id, upstream_user_id,
                     user_id_audit, upstream_key_id,
-                    streaming_defer, streaming_defer_reject_reason,
                     session_store, stable_session_kind, upstream_outbound_bytes,
                     prefill_ms, pre_header_ms,
                     affinity_key, affinity_kind, backend_name,
@@ -146,19 +145,17 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         upstream_user_id: row.get(27),
         user_id_audit: row.get(28),
         upstream_key_id: row.get(29),
-        affinity_key: row.get(37),
-        affinity_kind: row.get(38),
-        backend_name: row.get(39),
-        session_fingerprint: row.get(40),
-        is_coalesced: row.get(41),
-        client_key_id: row.get(42),
-        streaming_defer: row.get(30),
-        streaming_defer_reject_reason: row.get(31),
-        session_store: row.get(32),
-        stable_session_kind: row.get(33),
-        upstream_outbound_bytes: row.get::<_, Option<i32>>(34).map(|v| v as usize),
-        request_passthrough: row.get(43),
-        request_passthrough_prefix_len: row.get::<_, Option<i32>>(44).map(|v| v as usize),
+        affinity_key: row.get(35),
+        affinity_kind: row.get(36),
+        backend_name: row.get(37),
+        session_fingerprint: row.get(38),
+        is_coalesced: row.get(39),
+        client_key_id: row.get(40),
+        session_store: row.get(30),
+        stable_session_kind: row.get(31),
+        upstream_outbound_bytes: row.get::<_, Option<i32>>(32).map(|v| v as usize),
+        request_passthrough: row.get(41),
+        request_passthrough_prefix_len: row.get::<_, Option<i32>>(42).map(|v| v as usize),
     }
 }
 
@@ -405,8 +402,6 @@ impl PgStore {
                     upstream_user_id TEXT,
                     user_id_audit   TEXT,
                     upstream_key_id TEXT,
-                    streaming_defer BOOLEAN NOT NULL DEFAULT false,
-                    streaming_defer_reject_reason TEXT,
                     session_store   TEXT,
                     stable_session_kind TEXT,
                     upstream_outbound_bytes INTEGER,
@@ -459,8 +454,6 @@ impl PgStore {
             .await?;
 
         for stmt in [
-            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS streaming_defer BOOLEAN NOT NULL DEFAULT false",
-            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS streaming_defer_reject_reason TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS session_store TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS stable_session_kind TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS upstream_outbound_bytes INTEGER",
@@ -1306,7 +1299,6 @@ impl PgStore {
                      prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                      upstream_model, client_body_user_id, upstream_user_id,
                      user_id_audit, upstream_key_id,
-                     streaming_defer, streaming_defer_reject_reason,
                      session_store, stable_session_kind, upstream_outbound_bytes,
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
@@ -1315,7 +1307,7 @@ impl PgStore {
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43,$44,$45)
+                         $39,$40,$41,$42,$43)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1360,8 +1352,6 @@ impl PgStore {
                     &e.upstream_user_id,
                     &e.user_id_audit,
                     &e.upstream_key_id,
-                    &e.streaming_defer,
-                    &e.streaming_defer_reject_reason,
                     &e.session_store,
                     &e.stable_session_kind,
                     &e.upstream_outbound_bytes.map(|v| v as i32),

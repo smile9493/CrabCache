@@ -109,10 +109,6 @@ pub struct TraceLogEntry {
     #[serde(default)]
     pub client_key_id: Option<String>,
     #[serde(default)]
-    pub streaming_defer: bool,
-    #[serde(default)]
-    pub streaming_defer_reject_reason: Option<String>,
-    #[serde(default)]
     pub session_store: Option<String>,
     #[serde(default)]
     pub stable_session_kind: Option<String>,
@@ -259,8 +255,6 @@ pub fn trace_entry_to_request_detail(e: &TraceLogEntry) -> crab_admin_types::Req
         client_key_id: e.client_key_id.clone(),
         pipeline: e.pipeline.clone(),
         upstream_model: e.upstream_model.clone(),
-        streaming_defer: e.streaming_defer,
-        streaming_defer_reject_reason: e.streaming_defer_reject_reason.clone(),
         request_passthrough: e.request_passthrough,
         request_passthrough_prefix_len: e.request_passthrough_prefix_len,
     }
@@ -1278,8 +1272,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
@@ -1325,8 +1317,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
@@ -1412,8 +1402,6 @@ mod tests {
                 session_fingerprint: None,
                 is_coalesced: false,
                 client_key_id: None,
-                streaming_defer: false,
-                streaming_defer_reject_reason: None,
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
@@ -1459,8 +1447,6 @@ mod tests {
                 session_fingerprint: None,
                 is_coalesced: false,
                 client_key_id: None,
-                streaming_defer: false,
-                streaming_defer_reject_reason: None,
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
@@ -1833,8 +1819,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
@@ -1886,8 +1870,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,

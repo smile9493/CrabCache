@@ -312,8 +312,8 @@ pub fn InfraPage() -> impl IntoView {
         }
         leptos::task::spawn_local(async move {
             match api::fetch_infra_timeseries(&window, Some(&container_id)).await {
-                Ok(ts) => timeseries.set(Some(ts)),
-                Err(_) => timeseries.set(None),
+                Ok(ts) => { timeseries.try_set(Some(ts)); },
+                Err(_) => { timeseries.try_set(None); },
             }
         });
     };
@@ -332,20 +332,20 @@ pub fn InfraPage() -> impl IntoView {
                 match api::post_infra_speed_test(&dir).await {
                     Ok(accepted) => match poll_speed_job(&accepted.job_id, &dir, 120).await {
                         Ok(job) => {
-                            speed_job.set(Some(job));
-                            speed_message.set(String::new());
+                            speed_job.try_set(Some(job));
+                            speed_message.try_set(String::new());
                         }
                         Err(e) => {
-                            speed_message.set(if e == "timeout" {
+                            speed_message.try_set(if e == "timeout" {
                                 t.infra_speed_test_timeout().to_string()
                             } else {
                                 e
                             });
                         }
                     },
-                    Err(e) => speed_message.set(e),
+                    Err(e) => { speed_message.try_set(e); },
                 }
-                speed_testing.set(false);
+                speed_testing.try_set(false);
             });
         }
     };
@@ -358,34 +358,34 @@ pub fn InfraPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::fetch_infra_status().await {
                 Ok(status) => {
-                    docker_connected.set(status.docker_connected);
-                    compose_project.set(status.compose_project);
-                    last_collected.set(status.last_collected_at);
-                    history_samples.set(status.history_sample_count);
+                    docker_connected.try_set(status.docker_connected);
+                    compose_project.try_set(status.compose_project);
+                    last_collected.try_set(status.last_collected_at);
+                    history_samples.try_set(status.history_sample_count);
                 }
-                Err(_) => docker_connected.set(false),
+                Err(_) => { docker_connected.try_set(false); },
             }
-            if load_gen.get() != req_id {
+            if load_gen.try_get() != Some(req_id) {
                 return;
             }
             match api::fetch_infra_snapshot().await {
                 Ok(snap) => {
                     let connected = snap.docker_connected;
                     let first_id = snap.containers.first().map(|c| c.container_id.clone());
-                    containers.set(snap.containers.clone());
-                    host_disks.set(snap.host_disks.clone());
-                    volumes.set(snap.volumes.clone());
-                    compose_project.set(snap.compose_project.clone());
-                    last_collected.set(Some(snap.collected_at));
-                    collection_warning.set(snap.collection_error.clone());
-                    docker_connected.set(connected);
-                    snapshot.set(Some(Ok(snap)));
-                    error.set(None);
+                    containers.try_set(snap.containers.clone());
+                    host_disks.try_set(snap.host_disks.clone());
+                    volumes.try_set(snap.volumes.clone());
+                    compose_project.try_set(snap.compose_project.clone());
+                    last_collected.try_set(Some(snap.collected_at));
+                    collection_warning.try_set(snap.collection_error.clone());
+                    docker_connected.try_set(connected);
+                    snapshot.try_set(Some(Ok(snap)));
+                    error.try_set(None);
 
-                    if selected_container.get_untracked().is_empty()
+                    if selected_container.try_get_untracked().unwrap_or_default().is_empty()
                         && let Some(id) = first_id.clone()
                     {
-                        selected_container.set(id);
+                        selected_container.try_set(id);
                     }
                     let chart_cid = if cid.is_empty() {
                         first_id.unwrap_or_default()
@@ -397,8 +397,8 @@ pub fn InfraPage() -> impl IntoView {
                     }
                 }
                 Err(e) => {
-                    error.set(Some(e));
-                    snapshot.set(None);
+                    error.try_set(Some(e));
+                    snapshot.try_set(None);
                 }
             }
         });

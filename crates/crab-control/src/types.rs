@@ -350,6 +350,8 @@ pub struct UpstreamProfileView {
     pub tls_sni: String,
     pub key_pool_count: usize,
     pub keys_available: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,6 +371,8 @@ pub struct PutUpstreamProfileRequest {
     pub tls_sni: Option<String>,
     #[serde(default = "default_weight")]
     pub default_weight: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

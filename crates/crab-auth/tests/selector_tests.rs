@@ -1,7 +1,7 @@
 use crab_auth::selector::{
-    availability::{canonical_model_key, is_blocked_for_model, BlockReason},
     AuthEntry, FillFirstSelector, ModelState, RoundRobinSelector, SelectionContext, Selector,
     SessionAffinitySelector,
+    availability::{BlockReason, canonical_model_key, is_blocked_for_model},
 };
 use crab_auth::types::{Provider, TokenRecord};
 use std::collections::HashMap;
@@ -56,7 +56,11 @@ fn ctx_with_session(model: &str, session_id: &str) -> SelectionContext {
 #[tokio::test]
 async fn test_round_robin_rotates() {
     let selector = RoundRobinSelector::new();
-    let auths = vec![make_entry("a", false), make_entry("b", false), make_entry("c", false)];
+    let auths = vec![
+        make_entry("a", false),
+        make_entry("b", false),
+        make_entry("c", false),
+    ];
     let ctx = ctx("claude-sonnet-4");
 
     let r1 = selector.pick(&ctx, &auths).await.unwrap();
@@ -64,7 +68,10 @@ async fn test_round_robin_rotates() {
     let r3 = selector.pick(&ctx, &auths).await.unwrap();
     let r4 = selector.pick(&ctx, &auths).await.unwrap();
 
-    let ids: Vec<&str> = [r1, r2, r3, r4].iter().map(|&i| auths[i].record.id.as_str()).collect();
+    let ids: Vec<&str> = [r1, r2, r3, r4]
+        .iter()
+        .map(|&i| auths[i].record.id.as_str())
+        .collect();
     assert_eq!(ids[0], ids[3]);
 }
 
@@ -140,7 +147,11 @@ async fn test_round_robin_per_model_cooldown() {
 #[tokio::test]
 async fn test_fill_first_picks_first() {
     let selector = FillFirstSelector;
-    let auths = vec![make_entry("a", false), make_entry("b", false), make_entry("c", false)];
+    let auths = vec![
+        make_entry("a", false),
+        make_entry("b", false),
+        make_entry("c", false),
+    ];
     let ctx = ctx("claude-sonnet-4");
 
     for _ in 0..5 {
@@ -190,7 +201,11 @@ async fn test_session_affinity_sticky() {
     let inner = RoundRobinSelector::new();
     let selector = SessionAffinitySelector::new(Box::new(inner), Duration::from_secs(300));
 
-    let auths = vec![make_entry("a", false), make_entry("b", false), make_entry("c", false)];
+    let auths = vec![
+        make_entry("a", false),
+        make_entry("b", false),
+        make_entry("c", false),
+    ];
     let ctx = ctx_with_session("claude-sonnet-4", "session-123");
 
     let first = selector.pick(&ctx, &auths).await.unwrap();
@@ -297,7 +312,10 @@ fn test_expired_cooldown_allows() {
 
 #[test]
 fn test_canonical_model_key_strips_suffix() {
-    assert_eq!(canonical_model_key("claude-sonnet-4-thinking"), "claude-sonnet-4");
+    assert_eq!(
+        canonical_model_key("claude-sonnet-4-thinking"),
+        "claude-sonnet-4"
+    );
     assert_eq!(canonical_model_key("gpt-4-max"), "gpt-4");
     assert_eq!(canonical_model_key("gpt-4-none"), "gpt-4");
     assert_eq!(canonical_model_key("claude-sonnet-4"), "claude-sonnet-4");

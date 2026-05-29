@@ -11,15 +11,14 @@ use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
     ClearReasoningCacheResponse, ClientEndpointView, ConnectionRuntimeView,
     CreateGatewayKeyRequest, CreateGatewayKeyResponse, CursorModelAliasView,
-    CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse,
-    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus,
-    PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PipelineProfileView,
-    PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest, PutDomainUsageRequest,
-    PutTtlConfigRequest, PutUpstreamKeysRequest, PutUpstreamRelayConfigRequest,
-    ReasoningRuntimeConfigView, RoutingBackendsView, RoutingSummaryView, SemanticRuntimeView,
-    StreamCacheConfig, TtlConfigView, UpstreamKeyView, UpstreamKeysPutMode, UpstreamKeysView,
-    UpstreamRelayConfigView, constant_time_eq_str, parse_backend_endpoints,
-    parse_upstream_base_url,
+    CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse, ErrorResponse,
+    GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
+    PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
+    PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
+    PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
+    RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
+    UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str,
+    parse_backend_endpoints, parse_upstream_base_url,
 };
 use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
@@ -685,6 +684,7 @@ async fn put_upstream_relay(
             endpoints: endpoints.clone(),
             tls_sni: Some(tls_sni.clone()),
             default_weight: 1,
+            proxy_url: None,
         };
         if let Ok(profile) = crab_proxy::build_profile_runtime(
             input,

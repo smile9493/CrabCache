@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex as AsyncMutex;
+use uuid::Uuid;
 
 /// Extended metadata for an API key (quota/UI fields not stored on the gateway).
 #[derive(Debug, Clone)]
@@ -126,6 +127,12 @@ pub struct AppState {
     pub sse_broadcast: tokio::sync::broadcast::Sender<crate::sse::SseEvent>,
     /// Short-lived SSE tokens (token -> expiration Instant).
     pub sse_tokens: DashMap<String, Instant>,
+    /// Auth credential directory for Codex OAuth (CRABCACHE_AUTH_DIR or ~/.crabcache/auths).
+    pub auth_dir: std::path::PathBuf,
+    /// Active Codex device-code OAuth sessions (session_id → session state).
+    pub codex_device_sessions: DashMap<Uuid, crate::oauth_codex::CodexDeviceSession>,
+    /// Active Codex PKCE OAuth sessions (session_id → session state).
+    pub codex_pkce_sessions: DashMap<Uuid, crate::oauth_codex::CodexPkceSession>,
 }
 
 impl AppState {
@@ -528,6 +535,9 @@ impl AppState {
             pg_health_cache: RwLock::new(None),
             sse_broadcast: crate::sse::create_broadcast(),
             sse_tokens: DashMap::new(),
+            auth_dir: crate::oauth_codex::resolve_auth_dir(),
+            codex_device_sessions: DashMap::new(),
+            codex_pkce_sessions: DashMap::new(),
         };
 
         // Initialize PostgreSQL store (async) if configured.

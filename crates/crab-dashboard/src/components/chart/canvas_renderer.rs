@@ -43,24 +43,30 @@ impl ChartRenderer for CanvasLineRenderer {
         let root = backend.into_drawing_area();
         root.fill(&palette.bg).ok();
 
-        // Compute Y range from all series values.
-        let mut ymin = f64::MAX;
-        let mut ymax = f64::MIN;
-        for s in &req.series {
-            for v in s.values.iter().flatten() {
-                if v.is_finite() {
-                    ymin = ymin.min(*v);
-                    ymax = ymax.max(*v);
+        // Compute Y range — use the same logic as `y_range()` in core.rs
+        // so that canvas coordinates match tooltip hover calculations.
+        let (auto_ymin, auto_ymax) = {
+            let mut ymin = f64::MAX;
+            let mut ymax = f64::MIN;
+            for s in &req.series {
+                for v in &s.values {
+                    if let Some(x) = v {
+                        if *x > 0.0 && x.is_finite() {
+                            ymin = ymin.min(*x);
+                            ymax = ymax.max(*x);
+                        }
+                    }
                 }
             }
-        }
-        if ymin > ymax {
-            ymin = 0.0;
-            ymax = 1.0;
-        }
-        let y_margin = (ymax - ymin).abs() * 0.05;
-        ymin = (ymin - y_margin).min(0.0);
-        ymax += y_margin;
+            if ymax <= ymin {
+                ymin = 0.0;
+                ymax = 1.0;
+            }
+            let pad = (ymax - ymin) * 0.1;
+            ((ymin - pad).max(0.0), ymax + pad)
+        };
+        let ymin = req.y_min.unwrap_or(auto_ymin);
+        let ymax = req.y_max.unwrap_or(auto_ymax);
 
         let n = req.labels.len();
         let x_max = (n.saturating_sub(1)).max(1) as f64;

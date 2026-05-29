@@ -22,6 +22,27 @@ pub struct ChartPalette {
     pub tier_miss: RGBColor,
 }
 
+/// Number of distinct series colors available for cycling.
+pub const SERIES_PALETTE_LEN: usize = 9;
+
+impl ChartPalette {
+    /// Return a distinct color by series index, cycling through accent/info/success/warning/purple/tier_l0/l1/l2.
+    pub fn nth_series_color(&self, index: usize) -> RGBColor {
+        match index % SERIES_PALETTE_LEN {
+            0 => self.accent,
+            1 => self.info,
+            2 => self.success,
+            3 => self.warning,
+            4 => self.purple,
+            5 => self.tier_l0,
+            6 => self.tier_l1,
+            7 => self.tier_l2,
+            8 => self.tier_l3,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl ChartPalette {
     pub fn for_theme(theme: Theme) -> Self {
         match theme {

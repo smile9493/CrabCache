@@ -202,21 +202,14 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
     if !entry.model.is_empty() {
         *slot.model_counts.entry(entry.model.clone()).or_insert(0) += 1;
     }
-    if let Some(kid) = entry
-        .upstream_key_id
-        .as_deref()
-        .or(entry.client_key_id.as_deref())
-    {
+    if let Some(kid) = entry.upstream_key_id.as_deref().or(entry.client_key_id.as_deref()) {
         if !kid.is_empty() {
             *slot.upstream_key_counts.entry(kid.to_string()).or_insert(0) += 1;
         }
     }
     if let Some(cons) = entry.consumer.as_deref() {
         if !cons.is_empty() {
-            *slot
-                .downstream_key_counts
-                .entry(cons.to_string())
-                .or_insert(0) += 1;
+            *slot.downstream_key_counts.entry(cons.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -326,6 +319,7 @@ impl BucketAcc {
                 None
             },
             upstream_sample_count: self.upstream_count,
+            pre_header_sample_count: self.pre_header_count,
             ttft_sample_count: self.ttft_count,
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
@@ -375,6 +369,7 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         pre_header_ms: None,
         ttft_ms: None,
         upstream_sample_count: 0,
+        pre_header_sample_count: 0,
         ttft_sample_count: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -426,8 +421,8 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
             upstream_total_count += b.upstream_sample_count;
         }
         if let Some(pre) = b.pre_header_ms {
-            pre_header_weighted_sum += pre * f64::from(b.request_count);
-            pre_header_total_count += b.request_count;
+            pre_header_weighted_sum += pre * f64::from(b.pre_header_sample_count);
+            pre_header_total_count += b.pre_header_sample_count;
         }
         if let Some(ttft) = b.ttft_ms {
             ttft_weighted_sum += ttft * f64::from(b.ttft_sample_count);
@@ -522,8 +517,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,
@@ -596,6 +589,7 @@ mod tests {
                 pre_header_ms: None,
                 ttft_ms: Some(50.0),
                 upstream_sample_count: 1000,
+                pre_header_sample_count: 0,
                 ttft_sample_count: 1000,
                 input_tokens: 10000,
                 output_tokens: 5000,
@@ -615,6 +609,7 @@ mod tests {
                 pre_header_ms: None,
                 ttft_ms: Some(5.0),
                 upstream_sample_count: 1,
+                pre_header_sample_count: 0,
                 ttft_sample_count: 1,
                 input_tokens: 10,
                 output_tokens: 5,

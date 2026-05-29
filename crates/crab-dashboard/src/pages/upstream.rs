@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use leptos::prelude::*;
 
@@ -8,6 +9,15 @@ use crate::components::routing_tab::RoutingTab;
 use crate::components::skeleton::SkeletonUpstreamProfileCard;
 use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
+
+/// Incremented by [`CodexOAuthPanel`] when a credential is imported,
+/// so the upstream page effect can re-load the key pool.
+pub static KEY_POOL_REFRESH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Signal the upstream page to refresh the key pool for the current profile.
+pub fn signal_refresh_key_pool() {
+    KEY_POOL_REFRESH_COUNTER.fetch_add(1, Ordering::Relaxed);
+}
 use crate::locale::use_translations;
 use crate::types::{
     KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest,
@@ -81,6 +91,16 @@ const PRESETS: &[PresetTemplate] = &[
         models: &[],
         default_model: "",
         tls_sni: "",
+    },
+    PresetTemplate {
+        id: "codex",
+        label_zh: "OpenAI Codex",
+        label_en: "OpenAI Codex",
+        provider: "codex",
+        base_url: "https://api.openai.com",
+        models: &["gpt-4o", "gpt-4o-mini", "o3-mini"],
+        default_model: "gpt-4o",
+        tls_sni: "api.openai.com",
     },
 ];
 
@@ -173,6 +193,7 @@ pub fn UpstreamPage() -> impl IntoView {
     let model = RwSignal::new("deepseek-v4-pro".to_string());
     let endpoints_text = RwSignal::new(String::new());
     let tls_sni = RwSignal::new(String::new());
+    let proxy_url = RwSignal::new(String::new());
     let show_advanced = RwSignal::new(false);
 
     // Inline creation state
@@ -226,8 +247,8 @@ pub fn UpstreamPage() -> impl IntoView {
                     .map(|v| UpstreamKeysView { keys: v.keys })
             };
             match result {
-                Ok(v) => key_pool.set(Some(Ok(v))),
-                Err(e) => key_pool.set(Some(Err(e))),
+                Ok(v) => { key_pool.try_set(Some(Ok(v))); },
+                Err(e) => { key_pool.try_set(Some(Err(e))); },
             }
         });
     };
@@ -246,18 +267,19 @@ pub fn UpstreamPage() -> impl IntoView {
             leptos::task::spawn_local(async move {
                 match api::fetch_upstream_config().await {
                     Ok(c) => {
-                        base_url.set(c.base_url.clone());
-                        model.set(c.model.clone());
-                        endpoints_text.set(c.endpoints.join("\n"));
-                        tls_sni.set(String::new());
-                        provider.set("deepseek".to_string());
-                        gateway_reachable.set(c.gateway_reachable);
+                        base_url.try_set(c.base_url.clone());
+                        model.try_set(c.model.clone());
+                        endpoints_text.try_set(c.endpoints.join("\n"));
+                        tls_sni.try_set(String::new());
+                        proxy_url.try_set(String::new());
+                        provider.try_set("deepseek".to_string());
+                        gateway_reachable.try_set(c.gateway_reachable);
                         if let Some(ref lt) = c.last_test {
-                            test_result.set(Some(lt.clone()));
+                            test_result.try_set(Some(lt.clone()));
                         }
                     }
                     Err(e) => {
-                        save_error.set(e);
+                        save_error.try_set(e);
                     }
                 }
             });
@@ -267,6 +289,7 @@ pub fn UpstreamPage() -> impl IntoView {
             model.set(p.fallback_model.clone());
             endpoints_text.set(p.endpoints.join("\n"));
             tls_sni.set(p.tls_sni.clone());
+            proxy_url.set(p.proxy_url.clone().unwrap_or_default());
         }
         load_key_pool(pid);
     };
@@ -275,13 +298,13 @@ pub fn UpstreamPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             if let Ok(resp) = api::fetch_upstream_profiles().await {
                 let def = resp.default_profile_id.clone();
-                default_profile_id.set(def.clone());
-                profiles.set(resp.profiles);
+                default_profile_id.try_set(def.clone());
+                profiles.try_set(resp.profiles);
                 let select = pid.unwrap_or(def);
-                active_profile.set(select.clone());
+                active_profile.try_set(select.clone());
                 load_profile_data(select);
             }
-            profiles_loaded.set(true);
+            profiles_loaded.try_set(true);
         });
     };
 
@@ -313,23 +336,23 @@ pub fn UpstreamPage() -> impl IntoView {
                 })
                 .await
                 {
-                    Ok(r) => test_result.set(Some(r)),
-                    Err(e) => test_error.set(e),
+                    Ok(r) => { test_result.try_set(Some(r)); },
+                    Err(e) => { test_error.try_set(e); },
                 }
-            } else if pid == default_profile_id.get_untracked()
-                || profiles.get().iter().any(|p| p.id == pid)
+            } else if pid == default_profile_id.try_get_untracked().unwrap_or_default()
+                || profiles.try_get().unwrap_or_default().iter().any(|p| p.id == pid)
             {
                 // Otherwise test saved profile keys
                 match api::test_upstream_profile(&pid).await {
-                    Ok(r) => test_result.set(Some(r)),
-                    Err(e) => test_error.set(e),
+                    Ok(r) => { test_result.try_set(Some(r)); },
+                    Err(e) => { test_error.try_set(e); },
                 }
             } else {
-                test_error.set(
+                test_error.try_set(
                     "Please enter a key in bulk input to test this unsaved profile.".to_string(),
                 );
             }
-            testing.set(false);
+            testing.try_set(false);
         });
     };
 
@@ -375,10 +398,16 @@ pub fn UpstreamPage() -> impl IntoView {
         } else {
             Some(sni_val)
         };
+        let proxy = proxy_url.get().trim().to_string();
+        let proxy_opt = if proxy.is_empty() {
+            None
+        } else {
+            Some(proxy)
+        };
         let keys_to_append_clone = keys_to_append.clone();
 
         leptos::task::spawn_local(async move {
-            let result = if pid == default_profile_id.get_untracked() {
+            let result = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
                 let req = UpdateUpstreamConfigRequest {
                     base_url: url.clone(),
                     model: model_val.clone(),
@@ -388,7 +417,7 @@ pub fn UpstreamPage() -> impl IntoView {
                 };
                 api::update_upstream_config(&req).await.map(|resp| {
                     if let Some(s) = resp.sync {
-                        sync_result.set(Some(s));
+                        sync_result.try_set(Some(s));
                     }
                 })
             } else {
@@ -398,6 +427,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     fallback_model: model_val.clone(),
                     endpoints: endpoints.clone(),
                     tls_sni: sni,
+                    proxy_url: proxy_opt,
                 };
                 api::put_upstream_profile(&pid, &req).await.map(|_| ())
             };
@@ -410,25 +440,25 @@ pub fn UpstreamPage() -> impl IntoView {
                             keys,
                             mode: UpstreamKeysPutMode::Append,
                         };
-                        let key_err = if pid == default_profile_id.get_untracked() {
+                        let key_err = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
                             api::put_upstream_keys(&key_req).await.err()
                         } else {
                             api::put_upstream_profile_keys(&pid, &key_req).await.err()
                         };
                         if let Some(e) = key_err {
-                            save_error.set(format!("Profile saved but keys failed: {e}"));
+                            save_error.try_set(format!("Profile saved but keys failed: {e}"));
                         } else {
-                            pool_secrets_text.set(String::new());
+                            pool_secrets_text.try_set(String::new());
                         }
                     } else {
-                        pool_secrets_text.set(String::new());
+                        pool_secrets_text.try_set(String::new());
                     }
-                    saved.set(true);
+                    saved.try_set(true);
                     load_profiles_and_select(Some(pid));
                 }
-                Err(e) => save_error.set(e),
+                Err(e) => { save_error.try_set(e); },
             }
-            saving.set(false);
+            saving.try_set(false);
         });
     };
 
@@ -460,7 +490,7 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let req = PutUpstreamKeysRequest { keys, mode };
         leptos::task::spawn_local(async move {
-            let result = if pid == default_profile_id.get_untracked() {
+            let result = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
                 api::put_upstream_keys(&req).await
             } else {
                 api::put_upstream_profile_keys(&pid, &req)
@@ -469,18 +499,18 @@ pub fn UpstreamPage() -> impl IntoView {
             };
             match result {
                 Ok(v) => {
-                    key_pool.set(Some(Ok(v)));
-                    pool_secrets_text.set(String::new());
-                    pool_saved.set(true);
+                    key_pool.try_set(Some(Ok(v)));
+                    pool_secrets_text.try_set(String::new());
+                    pool_saved.try_set(true);
                     // Refresh profiles list (since key count changed)
                     if let Ok(resp) = api::fetch_upstream_profiles().await {
-                        default_profile_id.set(resp.default_profile_id.clone());
-                        profiles.set(resp.profiles);
+                        default_profile_id.try_set(resp.default_profile_id.clone());
+                        profiles.try_set(resp.profiles);
                     }
                 }
-                Err(e) => pool_error.set(e),
+                Err(e) => { pool_error.try_set(e); },
             }
-            pool_saving.set(false);
+            pool_saving.try_set(false);
         });
     };
 
@@ -493,16 +523,16 @@ pub fn UpstreamPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::delete_upstream_profile(&pid).await {
                 Ok(_) => {
-                    show_delete_confirm.set(false);
-                    drawer_profile.set(None);
-                    drawer_creating.set(false);
+                    show_delete_confirm.try_set(false);
+                    drawer_profile.try_set(None);
+                    drawer_creating.try_set(false);
                     load_profiles_and_select(None);
                 }
                 Err(e) => {
-                    save_error.set(e);
+                    save_error.try_set(e);
                 }
             }
-            deleting.set(false);
+            deleting.try_set(false);
         });
     };
 
@@ -529,6 +559,12 @@ pub fn UpstreamPage() -> impl IntoView {
         } else {
             Some(sni_val)
         };
+        let proxy = proxy_url.get().trim().to_string();
+        let proxy_opt = if proxy.is_empty() {
+            None
+        } else {
+            Some(proxy)
+        };
 
         saving.set(true);
         leptos::task::spawn_local(async move {
@@ -538,20 +574,21 @@ pub fn UpstreamPage() -> impl IntoView {
                 fallback_model: model_val,
                 endpoints: Vec::new(),
                 tls_sni: sni,
+                proxy_url: proxy_opt,
             };
             match api::put_upstream_profile(&id, &req).await {
                 Ok(_) => {
-                    drawer_creating.set(false);
-                    new_profile_id.set(String::new());
-                    active_profile.set(id.clone());
-                    drawer_profile.set(Some(id.clone()));
+                    drawer_creating.try_set(false);
+                    new_profile_id.try_set(String::new());
+                    active_profile.try_set(id.clone());
+                    drawer_profile.try_set(Some(id.clone()));
                     load_profiles_and_select(Some(id));
                 }
                 Err(e) => {
-                    save_error.set(e);
+                    save_error.try_set(e);
                 }
             }
-            saving.set(false);
+            saving.try_set(false);
         });
     };
 
@@ -701,6 +738,7 @@ pub fn UpstreamPage() -> impl IntoView {
                             model.set(String::new());
                             endpoints_text.set(String::new());
                             tls_sni.set(String::new());
+                            proxy_url.set(String::new());
                             save_error.set(String::new());
                         }
                     >
@@ -898,6 +936,13 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             on:input=move |ev| tls_sni.set(event_target_value(&ev))
                                                         />
                                                     </div>
+                                                    <div class="md:col-span-2">
+                                                        <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_proxy_label()}</label>
+                                                        <input type="text" class="input font-mono text-sm" placeholder="socks5://127.0.0.1:1080"
+                                                            prop:value=move || proxy_url.get()
+                                                            on:input=move |ev| proxy_url.set(event_target_value(&ev))
+                                                        />
+                                                    </div>
                                                 </div>
                                                 {move || if !save_error.get().is_empty() {
                                                     view! { <div class="text-xs text-error mt-2">{save_error.get()}</div> }.into_any()
@@ -1025,6 +1070,14 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 ></textarea>
                                                                 <p class="text-xs text-theme-muted mt-1">{t.upstream_endpoints_hint()}</p>
                                                             </div>
+                                                            <div class="mt-3">
+                                                                <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_proxy_label()}</label>
+                                                                <input type="text" prop:value=move || proxy_url.get()
+                                                                    on:input=move |ev| proxy_url.set(event_target_value(&ev))
+                                                                    class="input font-mono text-sm" placeholder="socks5://127.0.0.1:1080"
+                                                                />
+                                                                <p class="text-xs text-theme-muted mt-1">{t.upstream_proxy_hint()}</p>
+                                                            </div>
                                                         })}
                                                     </div>
                                                     <div class="upstream-drawer-test-section space-y-4">
@@ -1127,9 +1180,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                     testing_all.set(true);
                                                                                     leptos::task::spawn_local(async move {
                                                                                         for k in &keys {
-                                                                                            key_testing.update(|m| { m.insert(k.id.clone(), true); });
+                                                                                            key_testing.try_update(|m| { m.insert(k.id.clone(), true); });
                                                                                             let result = api::test_upstream_profile_key(&pid, &k.id).await;
-                                                                                            key_testing.update(|m| { m.insert(k.id.clone(), false); });
+                                                                                            key_testing.try_update(|m| { m.insert(k.id.clone(), false); });
                                                                                             let tr = match result {
                                                                                                 Ok(r) => r,
                                                                                                 Err(e) => UpstreamTestResult {
@@ -1137,9 +1190,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                                     model_count: None, error: Some(e), quota: None,
                                                                                                 },
                                                                                             };
-                                                                                            key_test_results.update(|m| { m.insert(k.id.clone(), tr); });
+                                                                                            key_test_results.try_update(|m| { m.insert(k.id.clone(), tr); });
                                                                                         }
-                                                                                        testing_all.set(false);
+                                                                                        testing_all.try_set(false);
                                                                                     });
                                                                                 }
                                                                             }}
@@ -1243,9 +1296,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                                                 let kid = kid.clone();
                                                                                                                 let pid = pid.clone();
                                                                                                                 leptos::task::spawn_local(async move {
-                                                                                                                    key_testing.update(|m| { m.insert(kid.clone(), true); });
+                                                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), true); });
                                                                                                                     let result = api::test_upstream_profile_key(&pid, &kid).await;
-                                                                                                                    key_testing.update(|m| { m.insert(kid.clone(), false); });
+                                                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), false); });
                                                                                                                     let tr = match result {
                                                                                                                         Ok(r) => r,
                                                                                                                         Err(e) => UpstreamTestResult {
@@ -1253,7 +1306,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                                                             model_count: None, error: Some(e), quota: None,
                                                                                                                         },
                                                                                                                     };
-                                                                                                                    key_test_results.update(|m| { m.insert(kid, tr); });
+                                                                                                                    key_test_results.try_update(|m| { m.insert(kid, tr); });
                                                                                                                 });
                                                                                                             }
                                                                                                         }}
@@ -1269,6 +1322,15 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 </div>
                                                             }.into_any()
                                                         },
+                                                    }}
+                                                    {move || {
+                                                        let prov = provider.get();
+                                                        let b_url = base_url.get();
+                                                        let pid = drawer_profile.get().unwrap_or_default();
+                                                        let is_codex = prov == "codex" || prov == "openai" || b_url.contains("openai.com");
+                                                        is_codex.then(|| view! {
+                                                            <CodexOAuthPanel profile_id=pid />
+                                                        })
                                                     }}
                                                     <div class="space-y-4 pt-4 border-t border-theme/10">
                                                         <div>

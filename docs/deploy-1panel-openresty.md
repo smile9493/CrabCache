@@ -83,9 +83,11 @@ CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 curl -sk https://127.0.0.1:18000/ready -H 'Host: your-domain.example.com'
 ```
 
-### 4) 流式 SSE
+### 4) 流式 SSE 与请求体
 
-`location` 中保留 **`proxy_buffering off;`**、`proxy_read_timeout 300s`。
+`location` 中保留 **`proxy_buffering off;`**（响应）、**`proxy_request_buffering off;`**（请求，配合网关 `streaming_body_forward` defer）、`client_body_buffer_size 128k`、`proxy_read_timeout 300s`。
+
+大 body 场景下，关闭请求缓冲可使 Pingora 更早开始 partial read，与 `upstream_peer` 连 MiMo 并行。
 
 ## 稳定 `x-conversation-id`（ReasoningStore）
 

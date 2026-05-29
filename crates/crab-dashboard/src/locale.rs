@@ -673,6 +673,24 @@ impl Translations {
             Locale::EnUS => "Request throughput",
         }
     }
+    pub fn live_chart_hit_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率",
+            Locale::EnUS => "hit%",
+        }
+    }
+    pub fn live_chart_target_95(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "95% 目标",
+            Locale::EnUS => "95% target",
+        }
+    }
+    pub fn live_backend_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端",
+            Locale::EnUS => "Backend",
+        }
+    }
     pub fn live_routing_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "负载均衡",
@@ -1075,6 +1093,12 @@ impl Translations {
             Locale::EnUS => "Token usage trend",
         }
     }
+    pub fn live_token_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无 Token 用量数据（上游未返回 usage 或均为 0）",
+            Locale::EnUS => "No token usage data (upstream did not report usage or all zero)",
+        }
+    }
     pub fn live_series_e2e(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "端到端（完整流）",
@@ -1121,6 +1145,234 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "缓存状态",
             Locale::EnUS => "Cache status",
+        }
+    }
+    pub fn live_config_group_by(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "分线维度",
+            Locale::EnUS => "Group by",
+        }
+    }
+    pub fn live_key_affinity_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Key / 亲和性",
+            Locale::EnUS => "Key / Affinity",
+        }
+    }
+    pub fn live_key_activity_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Key 活跃度 (5m)",
+            Locale::EnUS => "Key activity (5m)",
+        }
+    }
+    pub fn live_heatmap_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "桶热力图",
+            Locale::EnUS => "Bucket Heatmap",
+        }
+    }
+    pub fn live_select_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择 key_id",
+            Locale::EnUS => "Select key_id",
+        }
+    }
+    pub fn live_heatmap_time(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "时间",
+            Locale::EnUS => "Time",
+        }
+    }
+    pub fn live_heatmap_req(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求",
+            Locale::EnUS => "Req",
+        }
+    }
+    pub fn live_heatmap_e2e(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "E2E (ms)",
+            Locale::EnUS => "E2E (ms)",
+        }
+    }
+    pub fn live_heatmap_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中%",
+            Locale::EnUS => "Hit%",
+        }
+    }
+    pub fn live_heatmap_in_tok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入Token",
+            Locale::EnUS => "In Tok",
+        }
+    }
+    pub fn live_heatmap_out_tok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出Token",
+            Locale::EnUS => "Out Tok",
+        }
+    }
+    pub fn live_heatmap_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn live_heatmap_upstream_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游Key",
+            Locale::EnUS => "Up Key",
+        }
+    }
+    pub fn live_heatmap_downstream_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "下游Key",
+            Locale::EnUS => "Down Key",
+        }
+    }
+    pub fn live_recent_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最近请求",
+            Locale::EnUS => "Recent requests",
+        }
+    }
+    pub fn live_affinity_migrations(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "亲和性迁移",
+            Locale::EnUS => "Affinity migrations",
+        }
+    }
+    pub fn live_active_now(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "当前活跃",
+            Locale::EnUS => "Active now",
+        }
+    }
+    pub fn live_peak_concurrent(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "峰值并发",
+            Locale::EnUS => "Peak concurrent",
+        }
+    }
+    pub fn live_window_requests(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "窗口请求",
+            Locale::EnUS => "Window requests",
+        }
+    }
+    pub fn live_prefix_breaks(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀断裂",
+            Locale::EnUS => "Prefix breaks",
+        }
+    }
+    pub fn live_migrations_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "迁移次数",
+            Locale::EnUS => "Migrations",
+        }
+    }
+    pub fn live_routing_backends(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端",
+            Locale::EnUS => "Backends",
+        }
+    }
+    pub fn live_routing_upstream_keys(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游密钥",
+            Locale::EnUS => "Upstream keys",
+        }
+    }
+    pub fn live_routing_circuit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "熔断器",
+            Locale::EnUS => "Circuit",
+        }
+    }
+    pub fn live_routing_node(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "节点",
+            Locale::EnUS => "Node",
+        }
+    }
+    pub fn live_key_routing_loading(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载路由中…",
+            Locale::EnUS => "Loading key routing…",
+        }
+    }
+    pub fn live_no_migrations_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "窗口内无亲和性迁移。",
+            Locale::EnUS => "No affinity migrations in window.",
+        }
+    }
+    pub fn live_no_routing_profiles(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无路由配置。",
+            Locale::EnUS => "No routing profiles.",
+        }
+    }
+    pub fn live_select_key_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请在负载均衡卡片中选择一个 key。",
+            Locale::EnUS => "Select a key in load balancing card.",
+        }
+    }
+    pub fn live_circuit_closed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "关闭",
+            Locale::EnUS => "closed",
+        }
+    }
+    pub fn live_circuit_open_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "打开",
+            Locale::EnUS => "open",
+        }
+    }
+    pub fn live_max_e2e(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大 E2E",
+            Locale::EnUS => "Max E2E",
+        }
+    }
+    pub fn live_max_ttft(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大 TTFT",
+            Locale::EnUS => "Max TTFT",
+        }
+    }
+    pub fn live_hit_pct_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中%",
+            Locale::EnUS => "Hit%",
+        }
+    }
+    pub fn live_target_95(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "95% 目标",
+            Locale::EnUS => "95% target",
+        }
+    }
+    pub fn live_slo_500ms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "SLO 500ms",
+            Locale::EnUS => "SLO 500ms",
+        }
+    }
+    pub fn live_status_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正常",
+            Locale::EnUS => "OK",
+        }
+    }
+    pub fn live_status_degraded(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "降级",
+            Locale::EnUS => "DEGRADED",
         }
     }
     pub fn sidebar_upstream(self) -> &'static str {
@@ -1645,6 +1897,144 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "紧凑",
             Locale::EnUS => "Compact",
+        }
+    }
+    pub fn overview_card_click_detail(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击查看详情",
+            Locale::EnUS => "Click for details",
+        }
+    }
+    pub fn overview_card_infra_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "容器与主机资源",
+            Locale::EnUS => "Containers and host resources",
+        }
+    }
+    pub fn overview_error_rate_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误率",
+            Locale::EnUS => "Error rate",
+        }
+    }
+    pub fn overview_error_elevated(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "偏高",
+            Locale::EnUS => "elevated",
+        }
+    }
+    pub fn overview_error_normal(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正常",
+            Locale::EnUS => "normal",
+        }
+    }
+    pub fn overview_http_4xx_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "HTTP 4xx (5m)",
+            Locale::EnUS => "HTTP 4xx (5m)",
+        }
+    }
+    pub fn overview_http_5xx_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "HTTP 5xx (5m)",
+            Locale::EnUS => "HTTP 5xx (5m)",
+        }
+    }
+    pub fn overview_domain_card_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名",
+            Locale::EnUS => "Domain",
+        }
+    }
+    pub fn overview_domain_hit_fmt(self, hit_pct: f64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("命中率 {hit_pct:.1}%"),
+            Locale::EnUS => format!("{hit_pct:.1}% hit"),
+        }
+    }
+    pub fn overview_prefix_breaks_subtitle(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀断裂次数",
+            Locale::EnUS => "prefix breaks",
+        }
+    }
+    pub fn overview_prefix_breaks_detected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检测到断裂",
+            Locale::EnUS => "breaks detected",
+        }
+    }
+    pub fn overview_prefix_breaks_stable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "稳定",
+            Locale::EnUS => "stable",
+        }
+    }
+    pub fn session_backend_requests_fmt(self, count: u64, hit_pct: f64, latency_ms: f64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("请求 {count} · 命中 {hit_pct:.1}% · {latency_ms:.1}ms"),
+            Locale::EnUS => format!("requests: {count}  hit: {hit_pct:.1}%  latency: {latency_ms:.1}ms"),
+        }
+    }
+    pub fn session_drilldown_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Session 下钻",
+            Locale::EnUS => "Session drill-down",
+        }
+    }
+    pub fn session_drilldown_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 session fingerprint 查看时间线与路由",
+            Locale::EnUS => "Enter session fingerprint to inspect timeline and routing",
+        }
+    }
+    pub fn session_load_timeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载时间线",
+            Locale::EnUS => "Load timeline",
+        }
+    }
+    pub fn session_load_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载路由",
+            Locale::EnUS => "Load routing",
+        }
+    }
+    pub fn session_enter_fingerprint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入 session fingerprint 后加载时间线",
+            Locale::EnUS => "Enter a session fingerprint to load the timeline",
+        }
+    }
+    pub fn session_select_key_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择 Key 查看路由",
+            Locale::EnUS => "Select key for routing",
+        }
+    }
+    pub fn session_latency_dist(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求延迟分布",
+            Locale::EnUS => "Request latency distribution",
+        }
+    }
+    pub fn session_routing_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由分布",
+            Locale::EnUS => "Routing distribution",
+        }
+    }
+    pub fn session_migration_alerts(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "亲和性迁移告警",
+            Locale::EnUS => "Affinity migration alerts",
+        }
+    }
+    pub fn session_no_migrations(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "当前窗口无迁移",
+            Locale::EnUS => "No migration in current window",
         }
     }
     pub fn session_monitor_desc(self) -> &'static str {
@@ -2726,36 +3116,6 @@ impl Translations {
             Locale::EnUS => "Cache Path",
         }
     }
-    pub fn cursor_models_title(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "Cursor 模型别名",
-            Locale::EnUS => "Cursor Model Aliases",
-        }
-    }
-    pub fn cursor_models_desc(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "管理 Cursor 模型别名映射",
-            Locale::EnUS => "Manage Cursor model alias map",
-        }
-    }
-    pub fn cursor_models_col_model(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "模型",
-            Locale::EnUS => "Model",
-        }
-    }
-    pub fn cursor_models_col_alias(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "别名",
-            Locale::EnUS => "Alias",
-        }
-    }
-    pub fn cursor_models_alias_add(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "添加别名",
-            Locale::EnUS => "Add Alias",
-        }
-    }
     pub fn auth_tagline(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "多供应商 LLM API 高性能网关控制台 · DeepSeek V4",
@@ -3093,6 +3453,30 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "/百万 Token",
             Locale::EnUS => "/M tokens",
+        }
+    }
+    pub fn models_card_ctx_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上下文",
+            Locale::EnUS => "Context",
+        }
+    }
+    pub fn models_card_input_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入",
+            Locale::EnUS => "Input",
+        }
+    }
+    pub fn models_card_output_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输出",
+            Locale::EnUS => "Output",
+        }
+    }
+    pub fn models_catalog_footer(self, count: usize) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("共 {count} 个模型"),
+            Locale::EnUS => format!("{count} models"),
         }
     }
 
@@ -3462,12 +3846,6 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "请求合并",
             Locale::EnUS => "Coalesced",
-        }
-    }
-    pub fn logs_detail_streaming_defer(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "流式延迟 (原因)",
-            Locale::EnUS => "Streaming defer (reason)",
         }
     }
     pub fn logs_detail_passthrough(self) -> &'static str {
@@ -3884,7 +4262,9 @@ impl Translations {
     pub fn upstream_profiles_empty_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "点击右侧「新建 Profile」从模板创建第一个上游池。",
-            Locale::EnUS => "Use “New Profile” on the right to create your first pool from a template.",
+            Locale::EnUS => {
+                "Use “New Profile” on the right to create your first pool from a template."
+            }
         }
     }
     pub fn upstream_test_not_run(self) -> &'static str {
@@ -4289,6 +4669,18 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "上游 TLS 握手的 SNI 服务器名称（可选）",
             Locale::EnUS => "SNI Server Name Indication for upstream TLS handshake (optional)",
+        }
+    }
+    pub fn upstream_proxy_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "代理地址",
+            Locale::EnUS => "Proxy Address",
+        }
+    }
+    pub fn upstream_proxy_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "OAuth 请求代理（支持 socks5://、http://、https://）",
+            Locale::EnUS => "Proxy for OAuth requests (supports socks5://, http://, https://)",
         }
     }
     pub fn upstream_subtab_profiles(self) -> &'static str {
@@ -4898,146 +5290,180 @@ impl Translations {
             Locale::EnUS => "Error: {}",
         }
     }
-
-    // ── Overview card / card grid ──────────────────────────────────
-    pub fn overview_card_click_detail(self) -> &'static str {
+    // ── Codex OAuth ──
+    pub fn upstream_codex_oauth_title(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "点击查看详情",
-            Locale::EnUS => "Click for details",
+            Locale::ZhCN => "Codex OAuth 登录",
+            Locale::EnUS => "Codex OAuth Login",
         }
     }
-    pub fn overview_error_rate_title(self) -> &'static str {
+    pub fn upstream_codex_oauth_subtitle(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "错误率",
-            Locale::EnUS => "Error rate",
+            Locale::ZhCN => "无浏览器回调，适合远程面板",
+            Locale::EnUS => "Headless device flow for remote admin",
         }
     }
-    pub fn overview_error_elevated(self) -> &'static str {
+    pub fn upstream_codex_oauth_start(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "偏高",
-            Locale::EnUS => "elevated",
+            Locale::ZhCN => "开始 Device 登录",
+            Locale::EnUS => "Start Device Login",
         }
     }
-    pub fn overview_error_normal(self) -> &'static str {
+    pub fn upstream_codex_oauth_starting(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "正常",
-            Locale::EnUS => "normal",
+            Locale::ZhCN => "正在创建设备登录请求...",
+            Locale::EnUS => "Requesting device user code...",
         }
     }
-    pub fn overview_http_4xx_5m(self) -> &'static str {
+    pub fn upstream_codex_oauth_copy(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "4xx (5m)",
-            Locale::EnUS => "4xx (5m)",
+            Locale::ZhCN => "复制代码",
+            Locale::EnUS => "Copy Code",
         }
     }
-    pub fn overview_http_5xx_5m(self) -> &'static str {
+    pub fn upstream_codex_oauth_copied(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "5xx (5m)",
-            Locale::EnUS => "5xx (5m)",
+            Locale::ZhCN => "已复制",
+            Locale::EnUS => "Copied",
         }
     }
-    pub fn overview_domain_card_title(self) -> &'static str {
+    pub fn upstream_codex_oauth_verify(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "域名用量",
-            Locale::EnUS => "Domain usage",
+            Locale::ZhCN => "在 OpenAI 验证页面输入上述代码",
+            Locale::EnUS => "Enter this code at OpenAI verification page",
         }
     }
-    pub fn overview_domain_hit_fmt(self, pct: f64) -> String {
+    pub fn upstream_codex_oauth_polling(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => format!("命中率 {pct:.1}%"),
-            Locale::EnUS => format!("hit rate {pct:.1}%"),
+            Locale::ZhCN => "等待用户在浏览器中授权...",
+            Locale::EnUS => "Waiting for user to authorize in browser...",
         }
     }
-    pub fn overview_prefix_breaks_subtitle(self) -> &'static str {
+    pub fn upstream_codex_oauth_cancel(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "前缀中断次数",
-            Locale::EnUS => "Prefix break count",
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
         }
     }
-    pub fn overview_prefix_breaks_detected(self) -> &'static str {
+    pub fn upstream_codex_oauth_success(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "检测到中断",
-            Locale::EnUS => "breaks detected",
+            Locale::ZhCN => "登录成功",
+            Locale::EnUS => "Login Successful",
         }
     }
-    pub fn overview_prefix_breaks_stable(self) -> &'static str {
+    pub fn upstream_codex_oauth_failed(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "稳定",
-            Locale::EnUS => "stable",
+            Locale::ZhCN => "登录失败",
+            Locale::EnUS => "Login Failed",
         }
     }
-    pub fn overview_card_infra_hint(self) -> &'static str {
+    pub fn upstream_codex_oauth_expired(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "容器 / 磁盘 / 网络",
-            Locale::EnUS => "Containers / Disk / Net",
+            Locale::ZhCN => "登录超时",
+            Locale::EnUS => "Login Expired",
         }
     }
-
-    // ── Session drill-down panel ───────────────────────────────────
-    pub fn session_drilldown_title(self) -> &'static str {
+    pub fn upstream_codex_oauth_retry(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "会话钻取",
-            Locale::EnUS => "Session drill-down",
+            Locale::ZhCN => "重试",
+            Locale::EnUS => "Retry",
         }
     }
-    pub fn session_drilldown_hint(self) -> &'static str {
+    pub fn upstream_codex_oauth_email(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "输入会话指纹查看请求时序、路由分布和迁移记录",
-            Locale::EnUS => "Enter a session fingerprint to view timeline, routing, and migrations",
+            Locale::ZhCN => "邮箱",
+            Locale::EnUS => "Email",
         }
     }
-    pub fn session_load_timeline(self) -> &'static str {
+    pub fn upstream_codex_oauth_account(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "加载时序",
-            Locale::EnUS => "Load timeline",
+            Locale::ZhCN => "账号",
+            Locale::EnUS => "Account",
         }
     }
-    pub fn session_enter_fingerprint(self) -> &'static str {
+    pub fn upstream_codex_oauth_imported(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "输入会话指纹后点击加载",
-            Locale::EnUS => "Enter a session fingerprint and click Load",
+            Locale::ZhCN => "已自动导入密钥到当前 Profile",
+            Locale::EnUS => "Key automatically imported to this profile",
         }
     }
-    pub fn session_select_key_routing(self) -> &'static str {
+    pub fn upstream_codex_oauth_credentials(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "选择 API Key 查看路由",
-            Locale::EnUS => "Select a key to view routing",
+            Locale::ZhCN => "已保存凭证",
+            Locale::EnUS => "Saved Credentials",
         }
     }
-    pub fn session_load_routing(self) -> &'static str {
+    pub fn upstream_codex_oauth_no_credentials(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "加载路由",
-            Locale::EnUS => "Load routing",
+            Locale::ZhCN => "暂无已保存凭证",
+            Locale::EnUS => "No saved credentials",
         }
     }
-    pub fn session_latency_dist(self) -> &'static str {
+    pub fn upstream_codex_oauth_import(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "延迟分布",
-            Locale::EnUS => "Latency distribution",
+            Locale::ZhCN => "导入",
+            Locale::EnUS => "Import",
         }
     }
-    pub fn session_routing_title(self) -> &'static str {
+    // ── PKCE OAuth ──
+    pub fn upstream_codex_pkce_title(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "路由分布",
-            Locale::EnUS => "Routing distribution",
+            Locale::ZhCN => "PKCE 快速登录",
+            Locale::EnUS => "PKCE Quick Login",
         }
     }
-    pub fn session_backend_requests_fmt(self, count: u64, hit_pct: f64, avg_ms: f64) -> String {
+    pub fn upstream_codex_pkce_subtitle(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => format!("{count} 次请求 · 命中 {hit_pct:.1}% · 平均 {avg_ms:.0}ms"),
-            Locale::EnUS => format!("{count} reqs · hit {hit_pct:.1}% · avg {avg_ms:.0}ms"),
+            Locale::ZhCN => "浏览器自动跳转",
+            Locale::EnUS => "Browser redirect flow",
         }
     }
-    pub fn session_migration_alerts(self) -> &'static str {
+    pub fn upstream_codex_pkce_start(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "迁移告警",
-            Locale::EnUS => "Migration alerts",
+            Locale::ZhCN => "开始 PKCE 登录",
+            Locale::EnUS => "Start PKCE Login",
         }
     }
-    pub fn session_no_migrations(self) -> &'static str {
+    pub fn upstream_codex_pkce_open_browser(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "无迁移记录",
-            Locale::EnUS => "No migrations",
+            Locale::ZhCN => "点击打开浏览器登录",
+            Locale::EnUS => "Open browser to login",
+        }
+    }
+    pub fn upstream_codex_pkce_paste_url(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "粘贴浏览器回调 URL",
+            Locale::EnUS => "Paste browser callback URL",
+        }
+    }
+    pub fn upstream_codex_pkce_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认登录",
+            Locale::EnUS => "Confirm Login",
+        }
+    }
+    pub fn upstream_codex_pkce_waiting(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "等待浏览器回调...",
+            Locale::EnUS => "Waiting for browser callback...",
+        }
+    }
+    pub fn upstream_codex_pkce_manual_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "打开上方链接完成登录后，将浏览器跳转后的地址粘贴到下方",
+            Locale::EnUS => "After logging in via the link above, paste the redirected URL below",
+        }
+    }
+    pub fn upstream_codex_tab_device(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "设备码",
+            Locale::EnUS => "Device Code",
+        }
+    }
+    pub fn upstream_codex_tab_pkce(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "PKCE 登录",
+            Locale::EnUS => "PKCE Login",
         }
     }
 }

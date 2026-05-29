@@ -49,7 +49,7 @@ pub fn KeysPage() -> impl IntoView {
         copy_notice.set(Some(kind));
         leptos::task::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(2000).await;
-            copy_notice.set(None);
+            copy_notice.try_set(None);
         });
     };
 
@@ -64,8 +64,8 @@ pub fn KeysPage() -> impl IntoView {
     let load_keys = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_keys().await {
-                Ok(k) => keys.set(Some(Ok(k))),
-                Err(e) => keys.set(Some(Err(e))),
+                Ok(k) => { keys.try_set(Some(Ok(k))); },
+                Err(e) => { keys.try_set(Some(Err(e))); },
             }
         });
     };
@@ -74,8 +74,8 @@ pub fn KeysPage() -> impl IntoView {
         network_info.set(None);
         leptos::task::spawn_local(async move {
             match api::fetch_network_info().await {
-                Ok(info) => network_info.set(Some(Ok(info))),
-                Err(e) => network_info.set(Some(Err(e))),
+                Ok(info) => { network_info.try_set(Some(Ok(info))); },
+                Err(e) => { network_info.try_set(Some(Err(e))); },
             }
         });
     };
@@ -86,7 +86,7 @@ pub fn KeysPage() -> impl IntoView {
         }
         leptos::task::spawn_local(async move {
             let result = api::fetch_key_routing(&key_id).await;
-            key_routing.update(|m| {
+            key_routing.try_update(|m| {
                 m.insert(key_id, result);
             });
         });
@@ -98,7 +98,7 @@ pub fn KeysPage() -> impl IntoView {
         }
         leptos::task::spawn_local(async move {
             let result = api::fetch_key_concurrency(&key_id).await;
-            key_concurrency.update(|m| {
+            key_concurrency.try_update(|m| {
                 m.insert(key_id, result);
             });
         });
@@ -164,12 +164,12 @@ pub fn KeysPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::batch_revoke_keys(&ids).await {
                 Ok(_) => {
-                    show_confirm_batch_revoke.set(false);
-                    selected_keys.set(HashSet::new());
+                    show_confirm_batch_revoke.try_set(false);
+                    selected_keys.try_set(HashSet::new());
                     load_keys();
                 }
                 Err(e) => {
-                    revoke_message.set(e);
+                    revoke_message.try_set(e);
                 }
             }
         });
@@ -180,7 +180,7 @@ pub fn KeysPage() -> impl IntoView {
         show_confirm_revoke.set(None);
         leptos::task::spawn_local(async move {
             if let Err(e) = api::revoke_key(&id).await {
-                revoke_message.set(e);
+                revoke_message.try_set(e);
             } else {
                 load_keys();
             }
@@ -246,15 +246,15 @@ pub fn KeysPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::create_key(&req).await {
                 Ok(key) => {
-                    show_create.set(false);
-                    new_key_name.set(String::new());
-                    created_key.set(Some(key));
+                    show_create.try_set(false);
+                    new_key_name.try_set(String::new());
+                    created_key.try_set(Some(key));
                 }
                 Err(e) => {
-                    create_error.set(e);
+                    create_error.try_set(e);
                 }
             }
-            creating.set(false);
+            creating.try_set(false);
         });
     };
 
@@ -294,7 +294,7 @@ pub fn KeysPage() -> impl IntoView {
         edit_quota.set(key.remain_quota);
         leptos::task::spawn_local(async move {
             if let Ok(cfg) = api::fetch_pipeline_runtime().await {
-                pipeline_profiles.set(Some(cfg.profiles.into_iter().map(|p| p.id).collect()));
+                pipeline_profiles.try_set(Some(cfg.profiles.into_iter().map(|p| p.id).collect()));
             }
         });
     };
@@ -350,18 +350,18 @@ pub fn KeysPage() -> impl IntoView {
             unlimited_quota: Some(unlimited_val),
         };
         leptos::task::spawn_local(async move {
-            edit_error.set(String::new());
+            edit_error.try_set(String::new());
             match api::patch_key(&id, &req).await {
                 Ok(_) => {
-                    edit_success.set(true);
-                    editing_key_id.set(None);
+                    edit_success.try_set(true);
+                    editing_key_id.try_set(None);
                     load_keys();
                     leptos::task::spawn_local(async move {
                         gloo_timers::future::TimeoutFuture::new(3000).await;
-                        edit_success.set(false);
+                        edit_success.try_set(false);
                     });
                 }
-                Err(e) => edit_error.set(e),
+                Err(e) => { edit_error.try_set(e); },
             }
         });
     };
@@ -379,7 +379,7 @@ pub fn KeysPage() -> impl IntoView {
                         edit_success.set(false);
                         leptos::task::spawn_local(async move {
                             if let Ok(cfg) = api::fetch_pipeline_runtime().await {
-                                pipeline_profiles.set(Some(
+                                pipeline_profiles.try_set(Some(
                                     cfg.profiles.into_iter().map(|p| p.id).collect(),
                                 ));
                             }

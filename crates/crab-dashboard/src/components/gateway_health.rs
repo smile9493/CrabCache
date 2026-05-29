@@ -50,7 +50,7 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    health.set(Some(next));
+                    health.try_set(Some(next));
                 });
             }
         };

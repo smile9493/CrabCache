@@ -94,7 +94,7 @@ fn DomainPolicyEditor(
     Effect::new(move |_| {
         leptos::task::spawn_local(async move {
             if let Ok(cfg) = api::fetch_pipeline_runtime().await {
-                profile_ids.set(cfg.profiles.into_iter().map(|p| p.id).collect());
+                profile_ids.try_set(cfg.profiles.into_iter().map(|p| p.id).collect());
             }
         });
     });
@@ -129,15 +129,15 @@ fn DomainPolicyEditor(
             let saved_msg = saved_msg.clone();
             leptos::task::spawn_local(async move {
                 match api::upsert_domain_policy(policy).await {
-                    Ok(_) => {
-                        feedback.set(saved_msg);
-                        if let Some(n) = after_save {
-                            n.update(|v| *v += 1);
-                        }
+                Ok(_) => {
+                    feedback.try_set(saved_msg);
+                    if let Some(n) = after_save {
+                        n.try_update(|v| *v += 1);
                     }
-                    Err(e) => feedback.set(e),
                 }
-                saving.set(false);
+                Err(e) => { feedback.try_set(e); }
+            }
+            saving.try_set(false);
             });
         }
     };
@@ -256,15 +256,15 @@ fn DomainPolicyEditor(
                                 let domain_del = domain_del.clone();
                                 leptos::task::spawn_local(async move {
                                     match api::delete_domain_policy(&domain_del).await {
-                                        Ok(_) => {
-                                            feedback.set(deleted_msg);
-                                            if let Some(n) = after_save {
-                                                n.update(|v| *v += 1);
-                                            }
+                                    Ok(_) => {
+                                        feedback.try_set(deleted_msg);
+                                        if let Some(n) = after_save {
+                                            n.try_update(|v| *v += 1);
                                         }
-                                        Err(e) => feedback.set(e),
                                     }
-                                    saving.set(false);
+                                    Err(e) => { feedback.try_set(e); }
+                                }
+                                saving.try_set(false);
                                 });
                             }
                         >
@@ -353,7 +353,7 @@ pub fn DomainDetailDrawer(domain: RwSignal<Option<String>>) -> impl IntoView {
 
     let load_detail = move |name: String| {
         leptos::task::spawn_local(async move {
-            detail.set(Some(api::fetch_domain_detail(&name).await));
+            detail.try_set(Some(api::fetch_domain_detail(&name).await));
         });
     };
 
@@ -368,7 +368,7 @@ pub fn DomainDetailDrawer(domain: RwSignal<Option<String>>) -> impl IntoView {
 
     view! {
         <Show when=visible>
-            <div class="fixed inset-0 z-50 flex justify-end">
+            <div class="fixed inset-0 z-[60] flex justify-end domain-detail-drawer-layer">
                 <div class="absolute inset-0 bg-black/30" on:click=close></div>
                 <div class="relative w-full max-w-2xl bg-[var(--bg-primary)] shadow-xl overflow-y-auto">
                     <div class="sticky top-0 flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-primary)] z-10">

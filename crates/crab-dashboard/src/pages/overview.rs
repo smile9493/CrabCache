@@ -7,11 +7,10 @@ use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::ChartSeries;
-use crate::components::sparkline::Sparkline;
 use crate::components::page_header::PageHeader;
 use crate::components::skeleton::SkeletonOverview;
-use crate::components::ui::*;
-use crate::locale::{Translations, use_translations};
+use crate::components::sparkline::Sparkline;
+use crate::locale::use_translations;
 use crate::page_visible::page_visible;
 use crate::types::TimeSeriesPoint;
 use crate::types::{
@@ -153,9 +152,9 @@ pub fn OverviewPage() -> impl IntoView {
                     if *dirty.borrow() {
                         if let Some(core) = buffer.borrow_mut().take() {
                             detect_and_toast_with(toasts, &core);
-                            overview_core.set(Some(Ok(core)));
-                            last_update.set(now_hms_string());
-                            last_update_ts.set(js_sys::Date::now() as u64);
+                            overview_core.try_set(Some(Ok(core)));
+                            last_update.try_set(now_hms_string());
+                            last_update_ts.try_set(js_sys::Date::now() as u64);
                         }
                         *dirty.borrow_mut() = false;
                     }
@@ -189,13 +188,13 @@ pub fn OverviewPage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             break;
                         }
-                        sse_active.set(false);
+                        sse_active.try_set(false);
                         *active.borrow_mut() = false;
                         gloo_timers::future::TimeoutFuture::new(5_000).await;
                         continue;
                     }
                 };
-                sse_active.set(true);
+                sse_active.try_set(true);
                 *active.borrow_mut() = true;
 
                 // Kick off the rAF loop if not already running.
@@ -262,7 +261,7 @@ pub fn OverviewPage() -> impl IntoView {
                     es.close();
                     break;
                 }
-                sse_active.set(false);
+                sse_active.try_set(false);
                 *active.borrow_mut() = false;
                 es.close();
                 gloo_timers::future::TimeoutFuture::new(3_000).await;
@@ -275,25 +274,24 @@ pub fn OverviewPage() -> impl IntoView {
         if !alive_for_core.load(Ordering::Relaxed) {
             return;
         }
-        load_generation.update(|g| *g += 1);
-        let request_id = load_generation.get();
-        let current_etag = etag.get();
-        is_loading.set(true);
-        // Watchdog: avoid endless skeleton when request hangs (network/proxy issues).
+        load_generation.try_update(|g| *g += 1);
+        let request_id = load_generation.try_get().unwrap_or(0);
+        let current_etag = etag.try_get().unwrap_or_default();
+        is_loading.try_set(true);
         let alive = Arc::clone(&alive_for_core);
         leptos::task::spawn_local(async move {
             TimeoutFuture::new(12_000).await;
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            if load_generation.get() == request_id {
-                if overview_core.get().is_none() {
-                    overview_core.set(Some(Err(
+            if load_generation.try_get() == Some(request_id) {
+                if overview_core.try_get().map_or(true, |o| o.is_none()) {
+                    overview_core.try_set(Some(Err(
                         "Overview request timed out. Please refresh or re-login admin key."
                             .to_string(),
                     )));
                 }
-                is_loading.set(false);
+                is_loading.try_set(false);
             }
         });
         let alive = Arc::clone(&alive_for_core);
@@ -303,26 +301,26 @@ pub fn OverviewPage() -> impl IntoView {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    etag.set(result.etag);
-                    if load_generation.get() == request_id
+                    etag.try_set(result.etag);
+                    if load_generation.try_get() == Some(request_id)
                         && let Some(core) = result.core
                     {
                         detect_and_toast_with(toasts, &core);
-                        overview_core.set(Some(Ok(core)));
-                        last_update.set(now_hms_string());
-                        last_update_ts.set(js_sys::Date::now() as u64);
+                        overview_core.try_set(Some(Ok(core)));
+                        last_update.try_set(now_hms_string());
+                        last_update_ts.try_set(js_sys::Date::now() as u64);
                     }
                 }
                 Err(e) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    if load_generation.get() == request_id {
-                        overview_core.set(Some(Err(e)));
+                    if load_generation.try_get() == Some(request_id) {
+                        overview_core.try_set(Some(Err(e)));
                     }
                 }
             }
-            is_loading.set(false);
+            is_loading.try_set(false);
         });
     });
 
@@ -337,7 +335,7 @@ pub fn OverviewPage() -> impl IntoView {
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }
-                trace_summary.set(Some(summary));
+                trace_summary.try_set(Some(summary));
             }
         });
     });
@@ -347,10 +345,10 @@ pub fn OverviewPage() -> impl IntoView {
         if !alive_for_ts.load(Ordering::Relaxed) {
             return;
         }
-        ts_generation.update(|g| *g += 1);
-        let request_id = ts_generation.get();
-        let window = ts_window.get_untracked();
-        let current_ts_etag = ts_etag.get();
+        ts_generation.try_update(|g| *g += 1);
+        let request_id = ts_generation.try_get().unwrap_or(0);
+        let window = ts_window.try_get_untracked().unwrap_or_default();
+        let current_ts_etag = ts_etag.try_get().unwrap_or_default();
         let alive = Arc::clone(&alive_for_ts);
         leptos::task::spawn_local(async move {
             match api::fetch_overview_timeseries_etag(&window, &current_ts_etag).await {
@@ -358,10 +356,10 @@ pub fn OverviewPage() -> impl IntoView {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    ts_etag.set(result.etag);
-                    if ts_generation.get() == request_id {
+                    ts_etag.try_set(result.etag);
+                    if ts_generation.try_get() == Some(request_id) {
                         if let Some(points) = result.points {
-                            ts_points.set(points);
+                            ts_points.try_set(points);
                         }
                     }
                 }
@@ -426,12 +424,13 @@ pub fn OverviewPage() -> impl IntoView {
                 break;
             }
             tick += 1;
-            // Skip polling when SSE is actively pushing updates.
-            if auto_refresh.try_get_untracked() == Some(true) && page_visible() && !sse_active.try_get_untracked().unwrap_or(false) {
-                load_core_poll();
-                // Timeseries and trace refresh every 60s (every 6th tick)
-                // to align with the 60s backend sampling interval.
-                if tick.is_multiple_of(6) && deferred_loaded.get_untracked() {
+            if auto_refresh.try_get() == Some(true) && page_visible() {
+                // Core metrics: skip polling when SSE is actively pushing updates.
+                if sse_active.try_get() != Some(true) {
+                    load_core_poll();
+                }
+                // Timeseries & trace: always poll regardless of SSE (SSE does not push these).
+                if tick.is_multiple_of(6) && deferred_loaded.try_get_untracked() == Some(true) {
                     load_ts_poll();
                     load_trace_poll();
                 }
@@ -448,7 +447,7 @@ pub fn OverviewPage() -> impl IntoView {
             if !alive_clock.load(Ordering::Relaxed) {
                 break;
             }
-            let ts = last_update_ts.get();
+            let ts = last_update_ts.try_get().unwrap_or(0);
             if ts > 0 {
                 let now = js_sys::Date::now() as u64;
                 let elapsed_ms = now.saturating_sub(ts);
@@ -461,7 +460,7 @@ pub fn OverviewPage() -> impl IntoView {
                 } else {
                     format!("{}h ago", elapsed_ms / 3_600_000)
                 };
-                relative_time.set(text);
+                relative_time.try_set(text);
             }
         }
     });
@@ -633,25 +632,24 @@ fn OverviewContent(
                 </div>
             })}
 
-            // ── Card grid with center-modal drill-down ──────────────
             {move || {
                 let h = health_memo.get();
                 let m = metrics_memo.get();
                 let o = ops_memo.get();
-                let p = prefix_memo.get();
-                let s = semantic_memo.get();
+                let pref = prefix_memo.get();
+                let sem = semantic_memo.get();
+                let sugg = suggestions_memo.get().unwrap_or_default();
                 let tr = trace.get();
-                let sug = suggestions_memo.get();
-                match (h, m, o, p, s, sug) {
-                    (Some(h), Some(m), Some(o), Some(p), Some(s), Some(sug)) => view! {
+                match (h, m, o, pref, sem) {
+                    (Some(h), Some(m), Some(o), Some(pref), Some(sem)) => view! {
                         <super::overview_cards::OverviewCardGrid
                             health=h
                             metrics=m
                             ops=o
-                            prefix=p
-                            semantic=s
+                            prefix=pref
+                            semantic=sem
                             trace=tr
-                            suggestions=sug
+                            suggestions=sugg
                             ts_points=ts_points
                             ts_window=ts_window
                             selected_domain=selected_domain
@@ -663,131 +661,6 @@ fn OverviewContent(
 
             <ObservabilityFooter />
         </div>
-    }
-}
-
-// ── Hero strip: 6 tiles across the top ─────────────────────────────
-
-#[component]
-fn OverviewHeroStrip(
-    health: GatewayHealth,
-    metrics: MetricsSnapshot,
-    ops: OverviewOpsMetrics,
-) -> impl IntoView {
-    let t = use_translations();
-    let keys_display = format!(
-        "{}/{}",
-        health.upstream_keys_available, health.upstream_key_count
-    );
-    let hit_display = if metrics.metrics_sample_insufficient {
-        "—".to_string()
-    } else {
-        format!("{:.1}%", metrics.hit_rate_5m * 100.0)
-    };
-    let qps_display = format!("{:.1}", metrics.qps_5m);
-    let cost_display = format!("${:.4}", ops.cost_saved_usd_5m);
-    let err_display = if metrics.error_rate_5m > 0.001 {
-        format!("{:.1}%", metrics.error_rate_5m * 100.0)
-    } else {
-        "0%".to_string()
-    };
-    let err_variant = if metrics.error_rate_5m > 0.01 {
-        "live-stat-tile live-stat-tile-warn"
-    } else {
-        "live-stat-tile live-stat-tile-muted"
-    };
-
-    view! {
-        <div class="overview-hero-grid">
-            <div class=if health.healthy { "live-stat-tile live-stat-tile-green" } else { "live-stat-tile live-stat-tile-warn" }>
-                <span class="live-stat-tile-label">{t.overview_health_title()}</span>
-                <span class="live-stat-tile-value">
-                    {if health.healthy { t.overview_status_active() } else { t.overview_health_unhealthy() }}
-                </span>
-            </div>
-            <div class="live-stat-tile live-stat-tile-teal">
-                <span class="live-stat-tile-label">{t.overview_health_upstream_keys()}</span>
-                <span class="live-stat-tile-value">{keys_display}</span>
-            </div>
-            <div class="live-stat-tile live-stat-tile-accent">
-                <span class="live-stat-tile-label">{t.overview_hit_rate()}</span>
-                <span class="live-stat-tile-value">{hit_display}</span>
-            </div>
-            <div class="live-stat-tile live-stat-tile-accent">
-                <span class="live-stat-tile-label">{Translations::overview_qps()}</span>
-                <span class="live-stat-tile-value">{qps_display}</span>
-            </div>
-            <div class="live-stat-tile live-stat-tile-orange">
-                <span class="live-stat-tile-label">{t.overview_cost_saved()}</span>
-                <span class="live-stat-tile-value">{cost_display}</span>
-            </div>
-            <div class=err_variant>
-                <span class="live-stat-tile-label">"Error"</span>
-                <span class="live-stat-tile-value">{err_display}</span>
-            </div>
-        </div>
-    }
-}
-
-// ── Collapsible module wrapper ─────────────────────────────────────
-
-#[derive(Clone, Copy)]
-enum OverviewModuleIcon {
-    Cache,
-    Users,
-    Latency,
-    Advanced,
-}
-
-#[component]
-fn OverviewModuleIconView(kind: OverviewModuleIcon) -> impl IntoView {
-    match kind {
-        OverviewModuleIcon::Cache => view! {
-            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M12 6v6l4 2"></path>
-            </svg>
-        }.into_any(),
-        OverviewModuleIcon::Users => view! {
-            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M16 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path>
-                <circle cx="10" cy="7" r="4"></circle>
-                <path d="M22 21v-2a4 4 0 00-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 010 7.75"></path>
-            </svg>
-        }.into_any(),
-        OverviewModuleIcon::Latency => view! {
-            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-            </svg>
-        }.into_any(),
-        OverviewModuleIcon::Advanced => view! {
-            <svg class="overview-module-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"></path>
-            </svg>
-        }.into_any(),
-    }
-}
-
-#[component]
-fn OverviewCollapsible(
-    title: &'static str,
-    icon: OverviewModuleIcon,
-    children: Children,
-) -> impl IntoView {
-    view! {
-        <details class="overview-collapsible">
-            <summary class="overview-collapsible-head">
-                <span class="overview-collapsible-title">
-                    <OverviewModuleIconView kind=icon />
-                    <span>{title}</span>
-                </span>
-            </summary>
-            <div class="overview-collapsible-body">
-                {children()}
-            </div>
-        </details>
     }
 }
 
@@ -822,24 +695,6 @@ fn ChartSuggestions(suggestions: Vec<OverviewSuggestion>, target: &'static str) 
                 }).collect::<Vec<_>>()}
             </div>
         })}
-    }
-}
-
-#[component]
-fn MetricsLegend() -> impl IntoView {
-    let t = use_translations();
-    view! {
-        <details class="glass-card text-xs text-theme-muted">
-            <summary class="cursor-pointer select-none font-medium text-theme-secondary">
-                "📊 " {t.overview_tab_status()} " — " "指标说明"
-            </summary>
-            <div class="space-y-1 mt-2">
-                <p>{t.overview_legend_l0_l2()}</p>
-                <p>{t.overview_legend_l3()}</p>
-                <p>{t.overview_legend_5m()}</p>
-                <p>{t.overview_legend_cumulative()}</p>
-            </div>
-        </details>
     }
 }
 
@@ -891,24 +746,6 @@ pub fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoV
     }
 }
 
-#[component]
-fn HistoryMetaHint(metrics: MetricsSnapshot) -> impl IntoView {
-    let t = use_translations();
-    let meta = metrics.history_meta.clone();
-    let insufficient = metrics.metrics_sample_insufficient;
-    let show_hint = !insufficient && meta.sample_count < 3;
-
-    view! {
-        {show_hint.then(|| view! {
-            <p class="text-xs text-theme-muted mt-2">
-                {t.overview_history_meta(meta.sample_count, meta.oldest_sample_at_secs)}
-            </p>
-        })}
-        {meta.gateway_counter_reset.then(|| view! {
-            <p class="text-xs text-warning mt-1">{t.overview_gateway_reset()}</p>
-        })}
-    }
-}
 
 #[component]
 pub fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl IntoView {
@@ -1072,273 +909,6 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     }
 }
 
-#[component]
-fn MetricsBento(
-    metrics: MetricsSnapshot,
-    health: Option<GatewayHealth>,
-    _suggestions: Vec<OverviewSuggestion>,
-) -> impl IntoView {
-    let t = use_translations();
-    let total_hits = metrics.l0_hits + metrics.l1_hits + metrics.l2_hits;
-    let total_requests = total_hits + metrics.cache_misses;
-    let hit_rate_cumulative = if metrics.hit_rate_cumulative > 0.0 {
-        metrics.hit_rate_cumulative * 100.0
-    } else if total_requests > 0 {
-        total_hits as f64 / total_requests as f64 * 100.0
-    } else {
-        0.0
-    };
-    let hit_rate_5m = metrics.hit_rate_5m * 100.0;
-    let token_hit_5m = metrics.token_hit_rate_5m * 100.0;
-    let insufficient = metrics.metrics_sample_insufficient;
-
-    // Trend calculations vs 1h ago
-    let qps_trend = if metrics.qps_prev_1h > 0.01 {
-        (metrics.qps_5m - metrics.qps_prev_1h) / metrics.qps_prev_1h * 100.0
-    } else {
-        0.0
-    };
-    let hit_rate_trend = if metrics.hit_rate_prev_1h > 0.001 {
-        (metrics.hit_rate_5m - metrics.hit_rate_prev_1h) / metrics.hit_rate_prev_1h * 100.0
-    } else {
-        0.0
-    };
-
-    view! {
-        <div class="bento-grid">
-            <div class="bento-cell-hero">
-                <div class="metric-card h-full">
-                    <div class="flex items-start justify-between mb-4">
-                        <div>
-                            <div class="metric-card-label">{t.overview_qps_5m()}</div>
-                            <div class="metric-card-value">
-                                {format!("{:.2}", metrics.qps_5m)}
-                            </div>
-                            <div class="text-xs text-theme-muted mt-1">
-                                {format!("{} {:.2}", t.overview_hit_rate_cumulative_hint(), metrics.qps)}
-                                {move || {
-                                    if qps_trend.abs() > 0.1 {
-                                        let cls = if qps_trend > 0.0 { "ml-2 trend-up" } else { "ml-2 trend-down" };
-                                        view! { <span class=cls>{format!("{:+.1}%", qps_trend)}</span> }.into_any()
-                                    } else {
-                                        ().into_any()
-                                    }
-                                }}
-                            </div>
-                        </div>
-                        <div class="text-3xl opacity-30">"⚡"</div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4 mt-auto">
-                        <div>
-                            <div class="text-xs text-theme-muted mb-1">{t.overview_hit_rate_5m()}</div>
-                            <div class="text-lg font-mono tabular-nums text-accent font-semibold">
-                                {if insufficient {
-                                    "—".to_string()
-                                } else {
-                                    format!("{hit_rate_5m:.1}%")
-                                }}
-                            </div>
-                            <div class="text-xs text-theme-muted mt-0.5">
-                                {format!("{:.1}% {}", hit_rate_cumulative, t.overview_hit_rate_cumulative_hint())}
-                                    {move || {
-                                        if !insufficient && hit_rate_trend.abs() > 0.01 {
-                                            let cls = if hit_rate_trend > 0.0 { "ml-1 trend-up" } else { "ml-1 trend-down" };
-                                            view! { <span class=cls>{format!("{:+.1}%", hit_rate_trend)}</span> }.into_any()
-                                        } else {
-                                            ().into_any()
-                                        }
-                                    }}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-theme-muted mb-1">{t.overview_token_hit_rate_5m()}</div>
-                            <div class="text-lg font-mono tabular-nums text-theme">
-                                {if insufficient {
-                                    "—".to_string()
-                                } else {
-                                    format!("{token_hit_5m:.1}%")
-                                }}
-                            </div>
-                            <div class="text-xs text-theme-muted mt-0.5">
-                                {Translations::overview_tps()} " " {format!("{:.2}", metrics.tps)}
-                            </div>
-                        </div>
-                    </div>
-                    {insufficient.then(|| view! {
-                        <p class="text-xs text-warning mt-3">{t.overview_sample_insufficient()}</p>
-                    })}
-                    {(!insufficient && metrics.history_meta.sample_count < 3).then(|| view! {
-                        <p class="text-xs text-theme-muted mt-2">
-                            {t.overview_history_meta(metrics.history_meta.sample_count, metrics.history_meta.oldest_sample_at_secs)}
-                        </p>
-                    })}
-                    // Suggestions moved to analytics tab to reduce visual noise
-                </div>
-            </div>
-            <div class="bento-cell">
-                <div class="metric-card h-full">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="metric-card-label">{t.overview_active_keys()}</div>
-                        <div class="text-2xl opacity-30">"🔑"</div>
-                    </div>
-                    <div class="metric-card-value">
-                        {format!("{}", metrics.active_keys)}
-                    </div>
-                    <div class="metric-card-sub">{t.overview_active_keys_sub()}</div>
-                    <div class="mt-3 flex items-center gap-2">
-                        <div class="online-dot"></div>
-                        <span class="online-label">{t.overview_status_active()}</span>
-                    </div>
-                </div>
-            </div>
-            <div class="bento-cell">
-                <div class="metric-card h-full">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="metric-card-label">{t.overview_uptime()}</div>
-                        <div class="text-2xl opacity-30">"⏱"</div>
-                    </div>
-                    <div class="metric-card-value">
-                        {format_uptime_display(metrics.uptime_secs, metrics.uptime_hours)}
-                    </div>
-                    <div class="metric-card-sub">{t.overview_uptime_sub()}</div>
-                    <div class="mt-3 pt-3 border-t border-theme space-y-1">
-                        <div class="flex justify-between text-xs">
-                            <span class="text-theme-muted">{t.overview_cache_hits()}</span>
-                            <Tooltip text=Signal::derive(move || format!("{total_hits}"))>
-                                <span class="font-mono tabular-nums text-accent">
-                                    {format_number(total_hits)}
-                                </span>
-                            </Tooltip>
-                        </div>
-                        <div class="flex justify-between text-xs text-theme-muted" title=t.overview_semantic_hint()>
-                            <span>{t.overview_semantic_guard()}</span>
-                            <span class="font-mono tabular-nums">
-                                {format!(
-                                    "{} / {} / {}",
-                                    metrics.semantic_hits,
-                                    metrics.semantic_rejected,
-                                    metrics.semantic_skipped
-                                )}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="bento-cell">
-                <div class="metric-card h-full">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="metric-card-label">{t.overview_cache_tokens()}</div>
-                        <div class="text-2xl opacity-30">"💾"</div>
-                    </div>
-                    <div class="space-y-2">
-                        <div class="flex justify-between items-baseline">
-                            <span class="text-xs text-theme-muted">{t.overview_token_hit()}</span>
-                            <span class="text-lg font-mono tabular-nums text-accent">
-                                {format_number(metrics.cache_hit_tokens)}
-                            </span>
-                        </div>
-                        <div class="flex justify-between items-baseline">
-                            <span class="text-xs text-theme-muted">{t.overview_token_miss()}</span>
-                            <span class="text-lg font-mono tabular-nums text-theme">
-                                {format_number(metrics.cache_miss_tokens)}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="mt-3 pt-3 border-t border-theme">
-                        <div class="progress-bar h-2">
-                            <div
-                                class="progress-bar-fill"
-                                style=format!("width: {}%", if metrics.cache_hit_tokens + metrics.cache_miss_tokens > 0 {
-                                    metrics.cache_hit_tokens as f64 / (metrics.cache_hit_tokens + metrics.cache_miss_tokens) as f64 * 100.0
-                                } else { 0.0 })
-                            ></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            // Routing Summary Card
-            {move || {
-                let h = health.as_ref()?;
-                let total = h.backends_total;
-                if total == 0 {
-                    return None;
-                }
-                let healthy = h.backends_healthy;
-                let unhealthy = total.saturating_sub(healthy);
-                let warning = healthy < total || unhealthy > 0;
-                Some(view! {
-                    <div class="bento-cell">
-                        <a href="/upstream?tab=routing" class="block metric-card h-full hover:border-accent/30 transition-colors cursor-pointer">
-                            <div class="flex items-start justify-between mb-3">
-                                <div class="metric-card-label">{t.routing_summary_card_title()}</div>
-                                <div class="text-2xl opacity-30">"🔀"</div>
-                            </div>
-                            <div class={if warning { "metric-card-value text-warning" } else { "metric-card-value text-accent" }}>
-                                {format!("{}/{}", healthy, total)}
-                            </div>
-                            <div class="metric-card-sub">{t.routing_summary_healthy_label()}</div>
-                            {if unhealthy > 0 {
-                                view! {
-                                    <div class="mt-2 flex items-center gap-1.5">
-                                        <span class="w-2 h-2 rounded-full bg-error"></span>
-                                        <span class="text-xs text-error font-medium">
-                                            {format!("{} unhealthy", unhealthy)}
-                                        </span>
-                                    </div>
-                                }.into_any()
-                            } else {
-                                ().into_any()
-                            }}
-                        </a>
-                    </div>
-                })
-            }}
-            // Donut chart: L0-L2 cache tier distribution (mirrors demo page)
-            <div class="bento-cell-wide">
-                {{
-                    let d = metrics.tier_deltas_5m;
-                    let total = (d.l0 + d.l1 + d.l2 + d.miss).max(1) as f64;
-                    let hit_rate = (d.l0 + d.l1 + d.l2) as f64 / total * 100.0;
-                    let segments = vec![
-                        crate::components::donut_chart::DonutSegment {
-                            label: "L0".to_string(),
-                            value: d.l0 as f64,
-                            color: "var(--cc-tier-l0)",
-                        },
-                        crate::components::donut_chart::DonutSegment {
-                            label: "L1".to_string(),
-                            value: d.l1 as f64,
-                            color: "var(--cc-tier-l1)",
-                        },
-                        crate::components::donut_chart::DonutSegment {
-                            label: "L2".to_string(),
-                            value: d.l2 as f64,
-                            color: "var(--cc-tier-l2)",
-                        },
-                        crate::components::donut_chart::DonutSegment {
-                            label: t.overview_miss_label().to_string(),
-                            value: d.miss as f64,
-                            color: "var(--cc-tier-miss)",
-                        },
-                    ];
-                    view! {
-                        <div class="glass-card h-full">
-                            <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_gateway_cache_title()}</h3>
-                            <p class="text-xs text-theme-muted mb-4">{t.overview_tier_5m_hint()}</p>
-                            <div class="flex justify-center">
-                                <crate::components::donut_chart::DonutChart
-                                    segments=segments
-                                    center_label=format!("{:.1}%", hit_rate)
-                                    size=160
-                                />
-                            </div>
-                        </div>
-                    }
-                }}
-            </div>
-        </div>
-    }
-}
 
 #[component]
 pub fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
@@ -1980,11 +1550,7 @@ pub fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
             metrics.latency_upstream_ms,
             metrics.latency_upstream_p99_ms,
         ),
-        (
-            "MiMo prefill (hdr)",
-            0.0,
-            metrics.latency_prefill_p99_ms,
-        ),
+        ("MiMo prefill (hdr)", 0.0, metrics.latency_prefill_p99_ms),
     ];
 
     let max_latency = stages

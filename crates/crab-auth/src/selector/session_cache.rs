@@ -38,7 +38,8 @@ impl SessionCache {
         if let Some(entry) = self.entries.get_mut(key)
             && entry.expires_at > now
         {
-            entry.expires_at = now + chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(300));
+            entry.expires_at = now
+                + chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(300));
             return Some(entry.auth_id.clone());
         }
         None
@@ -46,8 +47,15 @@ impl SessionCache {
 
     /// Bind a session to an auth ID.
     pub fn insert(&mut self, key: String, auth_id: String) {
-        let expires_at = Utc::now() + chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(300));
-        self.entries.insert(key, SessionEntry { auth_id, expires_at });
+        let expires_at = Utc::now()
+            + chrono::Duration::from_std(self.ttl).unwrap_or(chrono::Duration::seconds(300));
+        self.entries.insert(
+            key,
+            SessionEntry {
+                auth_id,
+                expires_at,
+            },
+        );
     }
 
     /// Remove all sessions bound to a specific auth ID.

@@ -61,6 +61,35 @@ pub fn SkeletonBento() -> impl IntoView {
     }
 }
 
+/// Skeleton placeholder for model catalog cards.
+#[component]
+pub fn SkeletonModelCard() -> impl IntoView {
+    view! {
+        <div class="model-card model-card-skeleton">
+            <div class="flex items-start justify-between gap-2 mb-2">
+                <div class="flex items-start gap-2 min-w-0 flex-1">
+                    <div class="skeleton-block skeleton-block-rounded" style="width: 2rem; height: 2rem"></div>
+                    <div class="flex-1 space-y-2 min-w-0">
+                        <div class="skeleton-block" style="width: 70%; height: 0.75rem"></div>
+                        <div class="skeleton-block" style="width: 45%; height: 0.5rem"></div>
+                    </div>
+                </div>
+                <div class="skeleton-block skeleton-block-rounded" style="width: 3.5rem; height: 1.25rem"></div>
+            </div>
+            <div class="model-card-stats">
+                <div class="model-card-stat">
+                    <div class="skeleton-block" style="width: 2.5rem; height: 0.75rem"></div>
+                    <div class="skeleton-block" style="width: 2rem; height: 0.5rem; margin-top: 0.25rem"></div>
+                </div>
+                <div class="model-card-stat">
+                    <div class="skeleton-block" style="width: 3rem; height: 0.75rem"></div>
+                    <div class="skeleton-block" style="width: 2rem; height: 0.5rem; margin-top: 0.25rem"></div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 /// Skeleton placeholder for upstream profile cards on the pool grid.
 #[component]
 pub fn SkeletonUpstreamProfileCard() -> impl IntoView {
@@ -128,31 +157,22 @@ pub fn SkeletonChart(#[prop(default = "240px")] height: &'static str) -> impl In
     }
 }
 
-/// Full overview page skeleton (Status tab view).
+/// Full overview page skeleton (card grid layout).
 #[component]
 pub fn SkeletonOverview() -> impl IntoView {
     view! {
-        <div class="space-y-6">
-            // Health strip skeleton
-            <div class="glass-card skeleton-card-inner" style="height: 2.5rem; display: flex; align-items: center; gap: 0.75rem">
-                <div class="skeleton-block skeleton-block-rounded" style="width: 0.5rem; height: 0.5rem"></div>
-                <div class="skeleton-block" style="width: 20%; height: 0.75rem"></div>
+        <div class="space-y-4">
+            <div class="glass-card skeleton-card-inner" style="min-height: 3.25rem">
+                <div class="skeleton-block" style="width: 28%; height: 0.625rem"></div>
+                <div class="skeleton-block" style="width: 55%; height: 0.5rem; margin-top: 0.5rem"></div>
             </div>
-            // Metrics bento
-            <SkeletonBento />
-            // Ops row skeleton
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem">
-                {(0..4).map(|_| view! {
-                    <div class="glass-card skeleton-card-inner" style="min-height: 80px">
-                        <div class="skeleton-block" style="width: 50%; height: 0.5rem"></div>
-                        <div class="skeleton-block" style="width: 70%; height: 1.25rem; margin-top: 0.5rem"></div>
-                    </div>
-                }).collect_view()}
+            <div class="overview-cards-hero">
+                {(0..6).map(|_| view! { <SkeletonMetricCard /> }).collect_view()}
             </div>
-            // Chart skeleton
             <SkeletonChart />
-            // Secondary grid
-            <SkeletonGrid cols=3 rows=1 card_height="140px" />
+            <div class="overview-cards-detail">
+                {(0..10).map(|_| view! { <SkeletonMetricCard /> }).collect_view()}
+            </div>
         </div>
     }
 }

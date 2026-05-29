@@ -37,15 +37,15 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    routing.set(Some(data));
-                    loading.set(false);
+                    routing.try_set(Some(data));
+                    loading.try_set(false);
                 }
                 Err(e) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    error.set(e);
-                    loading.set(false);
+                    error.try_set(e);
+                    loading.try_set(false);
                 }
             }
         });
@@ -66,7 +66,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                 if !alive.load(Ordering::Relaxed) {
                     break;
                 }
-                routing.set(Some(data));
+                routing.try_set(Some(data));
             }
         }
     });

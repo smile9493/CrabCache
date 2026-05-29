@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 use crab_pipeline::RequestPipeline;
-use crab_proxy::{defer_partial_ready_for_arm, should_defer_upstream_request_body};
+use crab_proxy::should_defer_upstream_request_body;
 
 fn large_mimo_body(content_len: usize, stream: bool) -> Vec<u8> {
     let content = "x".repeat(content_len);
@@ -53,15 +53,6 @@ fn passthrough_relay_next(
         *finalized = true;
     }
     None
-}
-
-#[test]
-fn passthrough_partial_prefix_is_armable() {
-    let body = large_mimo_body(80_000, true);
-    const PREFIX_SPLIT: usize = 1024;
-    let partial = &body[..PREFIX_SPLIT];
-    assert!(partial.len() >= 1024);
-    assert!(defer_partial_ready_for_arm(partial));
 }
 
 #[test]
@@ -154,21 +145,21 @@ fn passthrough_defers_upstream_body_while_buffering() {
 #[test]
 fn passthrough_mimo_pipelines_are_distinct_from_defer_eligible_generic() {
     let mimo = [
-        RequestPipeline::MimoRelay,
+        RequestPipeline::MimoTokenPlanRelay,
         RequestPipeline::MimoTokenPlanRelay,
         RequestPipeline::MimoPaygRelay,
     ];
     for pipeline in mimo {
         assert!(matches!(
             pipeline,
-            RequestPipeline::MimoRelay
+            RequestPipeline::MimoTokenPlanRelay
                 | RequestPipeline::MimoTokenPlanRelay
                 | RequestPipeline::MimoPaygRelay
         ));
     }
     assert!(!matches!(
         RequestPipeline::GenericRelay,
-        RequestPipeline::MimoRelay
+        RequestPipeline::MimoTokenPlanRelay
             | RequestPipeline::MimoTokenPlanRelay
             | RequestPipeline::MimoPaygRelay
     ));

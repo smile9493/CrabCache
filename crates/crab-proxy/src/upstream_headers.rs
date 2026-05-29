@@ -75,21 +75,6 @@ pub fn prepare_passthrough_upstream_headers(
     smooth_upstream_client_headers(req, is_streaming);
 }
 
-/// Headers for `streaming_body_forward` before the full body exists at `upstream_request_filter`.
-///
-/// Omits both `Content-Length` and `Transfer-Encoding`; the prepared body is emitted once at
-/// client EOS and `normalize_replaced_body_headers` sets `Content-Length` in `request_body_filter`.
-pub fn prepare_streaming_deferred_upstream_headers(req: &mut RequestHeader, is_streaming: bool) {
-    let _ = req.remove_header(&header::TRANSFER_ENCODING);
-    let _ = req.remove_header(&header::CONTENT_LENGTH);
-    let _ = req.remove_header(&header::CONTENT_ENCODING);
-    let _ = req.remove_header(&header::EXPECT);
-    if req.headers.get(header::CONTENT_TYPE).is_none() {
-        let _ = req.insert_header(header::CONTENT_TYPE, "application/json");
-    }
-    smooth_upstream_client_headers(req, is_streaming);
-}
-
 /// Header field names present on the upstream request (for debug logging only).
 pub fn upstream_header_names(req: &RequestHeader) -> Vec<String> {
     req.headers.keys().map(|k| k.as_str().to_string()).collect()
@@ -188,20 +173,6 @@ mod tests {
                 .get(header::TRANSFER_ENCODING)
                 .and_then(|v| v.to_str().ok()),
             Some("chunked")
-        );
-    }
-
-    #[test]
-    fn deferred_headers_omit_zero_content_length() {
-        let mut req = sample_req();
-        prepare_streaming_deferred_upstream_headers(&mut req, true);
-        assert!(req.headers.get(header::CONTENT_LENGTH).is_none());
-        assert!(req.headers.get(header::TRANSFER_ENCODING).is_none());
-        assert_eq!(
-            req.headers
-                .get(header::ACCEPT_ENCODING)
-                .map(|v| v.to_str().unwrap()),
-            Some("identity")
         );
     }
 

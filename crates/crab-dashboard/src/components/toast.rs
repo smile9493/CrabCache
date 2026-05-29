@@ -47,7 +47,7 @@ pub fn show_toast(toast: RwSignal<Option<Toast>>, kind: ToastKind, message: &str
     }));
     leptos::task::spawn_local(async move {
         gloo_timers::future::TimeoutFuture::new(3000).await;
-        toast.set(None);
+        toast.try_set(None);
     });
 }
 

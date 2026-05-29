@@ -824,12 +824,6 @@ fn LogDetailPane(
                                                     </div>
                                                 }.into_any()
                                             } else { view! { <span></span> }.into_any() }}
-                                            {if d.streaming_defer {
-                                                let reason = d.streaming_defer_reject_reason.clone().unwrap_or_else(|| "—".to_string());
-                                                view! {
-                                                    <DetailField label=t.logs_detail_streaming_defer() value=reason />
-                                                }.into_any()
-                                            } else { view! { <span></span> }.into_any() }}
                                             {if d.request_passthrough {
                                                 let prefix = d.request_passthrough_prefix_len
                                                     .map(|n| format!("{} B", n))

@@ -205,11 +205,20 @@ mod tests {
 
     #[test]
     fn test_canonical_model_key_strips_suffix() {
-        assert_eq!(canonical_model_key("claude-sonnet-4-thinking"), "claude-sonnet-4");
-        assert_eq!(canonical_model_key("claude-sonnet-4-max"), "claude-sonnet-4");
+        assert_eq!(
+            canonical_model_key("claude-sonnet-4-thinking"),
+            "claude-sonnet-4"
+        );
+        assert_eq!(
+            canonical_model_key("claude-sonnet-4-max"),
+            "claude-sonnet-4"
+        );
         assert_eq!(canonical_model_key("gpt-4-none"), "gpt-4");
         assert_eq!(canonical_model_key("claude-sonnet-4"), "claude-sonnet-4");
-        assert_eq!(canonical_model_key("CLAUDE-SONNET-4-THINKING"), "claude-sonnet-4");
+        assert_eq!(
+            canonical_model_key("CLAUDE-SONNET-4-THINKING"),
+            "claude-sonnet-4"
+        );
     }
 
     #[test]

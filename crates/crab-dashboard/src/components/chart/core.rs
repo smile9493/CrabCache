@@ -406,8 +406,6 @@ mod tests {
             client_key_id: None,
             pipeline: None,
             upstream_model: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
         };
@@ -463,8 +461,6 @@ mod tests {
             client_key_id: None,
             pipeline: None,
             upstream_model: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
         };

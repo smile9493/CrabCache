@@ -4,8 +4,9 @@ pub mod round_robin;
 pub mod session_affinity;
 pub mod session_cache;
 
-pub use availability::{canonical_model_key, extract_claude_session_id, fnv64a_hash,
-    is_blocked_for_model, BlockReason};
+pub use availability::{
+    BlockReason, canonical_model_key, extract_claude_session_id, fnv64a_hash, is_blocked_for_model,
+};
 pub use fill_first::FillFirstSelector;
 pub use round_robin::RoundRobinSelector;
 pub use session_affinity::SessionAffinitySelector;

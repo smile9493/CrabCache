@@ -939,18 +939,18 @@ body {
   min-height: 0;
 }
 
-/* Live bottom: 2 rows × 2 cols, cards align to top */
+/* Live bottom: 2 rows × 3 cols, cards stretch per row only */
 .live-detail-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
 }
 .live-detail-row-2col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
 }
 @media (max-width: 1023px) {
   .live-detail-row,
@@ -959,8 +959,13 @@ body {
   }
 }
 .live-detail-card {
-  min-height: 12rem;
   height: auto;
+}
+/* Stat bar: compact 1-row strip below config row */
+.live-stat-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
 }
 .live-chart-compact {
   min-height: 4.5rem;
@@ -2168,44 +2173,60 @@ body {
 }
 
 /* ==============================================================
-   PROFILE PILL SELECTOR (Segmented Control)
+   PROFILE CHIP SELECTOR
    ============================================================== */
 
-.profile-segment-group {
+.profile-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.profile-chip {
   display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.875rem;
   border-radius: var(--radius-md, 0.75rem);
   border: 1px solid var(--cc-border);
-  background: var(--cc-bg-elevated);
-  overflow: hidden;
-}
-.profile-segment {
-  padding: 0.375rem 1rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  font-family: var(--font-mono);
-  color: var(--cc-text-muted);
   background: transparent;
-  border: none;
   cursor: pointer;
-  white-space: nowrap;
   transition:
+    border-color 0.15s ease-out,
     background-color 0.15s ease-out,
     color 0.15s ease-out;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--cc-text-muted);
+  white-space: nowrap;
 }
-.profile-segment + .profile-segment {
-  border-left: 1px solid var(--cc-border);
-}
-.profile-segment:hover {
+.profile-chip:hover {
+  border-color: var(--cc-accent-muted);
   color: var(--cc-text);
-  background: color-mix(in srgb, var(--cc-text) 5%, transparent);
 }
-.profile-segment-active {
+.profile-chip-active {
+  border-color: var(--cc-accent);
+  background: color-mix(in srgb, var(--cc-accent) 12%, transparent);
   color: var(--cc-accent-bright);
-  background: color-mix(in srgb, var(--cc-accent) 15%, transparent);
   font-weight: 600;
 }
-.profile-segment-active:hover {
-  background: color-mix(in srgb, var(--cc-accent) 20%, transparent);
+.profile-chip-active:hover {
+  background: color-mix(in srgb, var(--cc-accent) 18%, transparent);
+}
+.profile-chip-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.375rem;
+  background: var(--cc-accent-muted);
+  color: var(--cc-accent-bright);
+  font-weight: 700;
+  font-size: 0.625rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.profile-chip-active .profile-chip-icon {
+  background: color-mix(in srgb, var(--cc-accent) 25%, transparent);
 }
 
 /* ==============================================================

@@ -308,6 +308,7 @@ pub fn apply_snapshot_to_runtime(
                 endpoints,
                 tls_sni: Some(p.tls_sni.clone()),
                 default_weight: 1,
+                proxy_url: None,
             };
             // Apply key fallback: explicit -> default profile -> legacy global pool.
             let resolved_specs = resolve_profile_key_specs(specs, runtime, &p.id);

@@ -75,10 +75,7 @@ pub fn is_public_hostname(host: &str) -> bool {
 fn is_public_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            !v4.is_loopback()
-                && !v4.is_private()
-                && !v4.is_link_local()
-                && !v4.is_unspecified()
+            !v4.is_loopback() && !v4.is_private() && !v4.is_link_local() && !v4.is_unspecified()
         }
         IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unspecified(),
     }
@@ -108,25 +105,17 @@ mod tests {
     #[test]
     fn forwarded_host_with_port() {
         assert_eq!(
-            url_from_forwarded_headers(
-                None,
-                Some("gateway.example.com:10801"),
-                Some("http"),
-                None
-            )
-            .as_deref(),
+            url_from_forwarded_headers(None, Some("gateway.example.com:10801"), Some("http"), None)
+                .as_deref(),
             Some("http://gateway.example.com:10801")
         );
     }
 
     #[test]
     fn rejects_private_host() {
-        assert!(url_from_forwarded_headers(
-            Some("192.168.1.100:8080"),
-            None,
-            Some("http"),
-            None
-        )
-        .is_none());
+        assert!(
+            url_from_forwarded_headers(Some("192.168.1.100:8080"), None, Some("http"), None)
+                .is_none()
+        );
     }
 }

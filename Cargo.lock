@@ -1202,6 +1202,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crab-admin-types",
+ "crab-auth",
  "crab-capture",
  "crab-client-endpoint",
  "crab-composition",

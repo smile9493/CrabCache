@@ -38,6 +38,7 @@ pub struct GatewayHealth {
 pub struct SemanticConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub similarity_threshold: f64,
 }
 
@@ -47,6 +48,7 @@ pub struct TimeSeriesPoint {
     pub requests: u64,
     pub tokens: u64,
     pub cache_hits: u64,
+    #[serde(default)]
     pub avg_latency_ms: f64,
     #[serde(default)]
     pub hit_rate: f64,
@@ -82,6 +84,7 @@ pub struct ConsumerMetricsBucket {
     pub consumer: String,
     pub hit_tokens: u64,
     pub miss_tokens: u64,
+    #[serde(default)]
     pub hit_ratio: f64,
 }
 
@@ -90,8 +93,11 @@ pub struct DomainMetricsBucket {
     pub domain: String,
     pub hit_tokens: u64,
     pub miss_tokens: u64,
+    #[serde(default)]
     pub hit_ratio: f64,
+    #[serde(default)]
     pub cost_saved_usd: f64,
+    #[serde(default)]
     pub qps_5m: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alert: Option<String>,
@@ -99,7 +105,9 @@ pub struct DomainMetricsBucket {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
+    #[serde(default)]
     pub qps: f64,
+    #[serde(default)]
     pub tps: f64,
     pub l0_hits: u64,
     pub l1_hits: u64,
@@ -110,9 +118,13 @@ pub struct MetricsSnapshot {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default)]
     pub latency_l0_ms: f64,
+    #[serde(default)]
     pub latency_l1_ms: f64,
+    #[serde(default)]
     pub latency_l2_ms: f64,
+    #[serde(default)]
     pub latency_upstream_ms: f64,
     pub active_keys: u64,
     pub uptime_hours: u64,
@@ -176,7 +188,9 @@ pub struct MetricsSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetricsSnapshotCore {
+    #[serde(default)]
     pub qps: f64,
+    #[serde(default)]
     pub tps: f64,
     pub l0_hits: u64,
     pub l1_hits: u64,
@@ -187,9 +201,13 @@ pub struct MetricsSnapshotCore {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default)]
     pub latency_l0_ms: f64,
+    #[serde(default)]
     pub latency_l1_ms: f64,
+    #[serde(default)]
     pub latency_l2_ms: f64,
+    #[serde(default)]
     pub latency_upstream_ms: f64,
     pub active_keys: u64,
     pub uptime_hours: u64,
@@ -247,14 +265,67 @@ pub struct MetricsSnapshotCore {
     pub hit_rate_prev_1h: f64,
 }
 
+fn fin(v: f64) -> f64 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
+impl MetricsSnapshotCore {
+    pub fn sanitize_finite(&mut self) {
+        self.qps = fin(self.qps);
+        self.tps = fin(self.tps);
+        self.latency_l0_ms = fin(self.latency_l0_ms);
+        self.latency_l1_ms = fin(self.latency_l1_ms);
+        self.latency_l2_ms = fin(self.latency_l2_ms);
+        self.latency_upstream_ms = fin(self.latency_upstream_ms);
+        self.prefix_cache_hit_ratio = fin(self.prefix_cache_hit_ratio);
+        self.hit_rate_cumulative = fin(self.hit_rate_cumulative);
+        self.hit_rate_5m = fin(self.hit_rate_5m);
+        self.token_hit_rate_5m = fin(self.token_hit_rate_5m);
+        self.qps_5m = fin(self.qps_5m);
+        self.latency_upstream_p99_ms = fin(self.latency_upstream_p99_ms);
+        self.latency_ttft_p99_ms = fin(self.latency_ttft_p99_ms);
+        self.latency_prefill_p99_ms = fin(self.latency_prefill_p99_ms);
+        self.latency_cache_fetch_p99_ms = fin(self.latency_cache_fetch_p99_ms);
+        self.error_rate_5m = fin(self.error_rate_5m);
+        self.qps_prev_1h = fin(self.qps_prev_1h);
+        self.hit_rate_prev_1h = fin(self.hit_rate_prev_1h);
+    }
+}
+
+impl MetricsSnapshot {
+    pub fn sanitize_finite(&mut self) {
+        self.qps = fin(self.qps);
+        self.tps = fin(self.tps);
+        self.latency_l0_ms = fin(self.latency_l0_ms);
+        self.latency_l1_ms = fin(self.latency_l1_ms);
+        self.latency_l2_ms = fin(self.latency_l2_ms);
+        self.latency_upstream_ms = fin(self.latency_upstream_ms);
+        self.prefix_cache_hit_ratio = fin(self.prefix_cache_hit_ratio);
+        self.hit_rate_cumulative = fin(self.hit_rate_cumulative);
+        self.hit_rate_5m = fin(self.hit_rate_5m);
+        self.token_hit_rate_5m = fin(self.token_hit_rate_5m);
+        self.qps_5m = fin(self.qps_5m);
+        self.latency_upstream_p99_ms = fin(self.latency_upstream_p99_ms);
+        self.latency_ttft_p99_ms = fin(self.latency_ttft_p99_ms);
+        self.latency_prefill_p99_ms = fin(self.latency_prefill_p99_ms);
+        self.latency_cache_fetch_p99_ms = fin(self.latency_cache_fetch_p99_ms);
+        self.error_rate_5m = fin(self.error_rate_5m);
+        self.qps_prev_1h = fin(self.qps_prev_1h);
+        self.hit_rate_prev_1h = fin(self.hit_rate_prev_1h);
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OverviewOpsMetrics {
+    #[serde(default)]
     pub cost_saved_usd_total: f64,
+    #[serde(default)]
     pub cost_saved_usd_5m: f64,
     pub coalesced_total: u64,
     pub coalesced_5m: u64,
     pub rejected_total: u64,
     pub rejected_5m: u64,
+    #[serde(default)]
     pub ttft_ms: f64,
     pub prefix_break_total: u64,
     pub reasoning_store_hits: u64,
@@ -267,10 +338,19 @@ pub struct OverviewOpsMetrics {
     pub upstream_default_profile_id: Option<String>,
 }
 
+impl OverviewOpsMetrics {
+    pub fn sanitize_finite(&mut self) {
+        self.cost_saved_usd_total = fin(self.cost_saved_usd_total);
+        self.cost_saved_usd_5m = fin(self.cost_saved_usd_5m);
+        self.ttft_ms = fin(self.ttft_ms);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TraceSummary {
     pub hours: u32,
     pub total_requests: usize,
+    #[serde(default)]
     pub cache_hit_ratio: f64,
 }
 
@@ -286,6 +366,7 @@ pub struct PrefixCacheModelBucket {
     pub model: String,
     pub hit_tokens: u64,
     pub miss_tokens: u64,
+    #[serde(default)]
     pub hit_ratio: f64,
 }
 
@@ -293,6 +374,7 @@ pub struct PrefixCacheModelBucket {
 pub struct PrefixCacheMetricsSnapshot {
     pub hit_tokens: u64,
     pub miss_tokens: u64,
+    #[serde(default)]
     pub hit_ratio: f64,
     pub by_model: Vec<PrefixCacheModelBucket>,
 }

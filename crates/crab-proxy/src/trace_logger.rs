@@ -49,10 +49,6 @@ pub struct SanitizedLogEntry {
     pub reasoning_strategy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_hit_ratio: Option<f64>,
-    #[serde(default)]
-    pub streaming_defer: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub streaming_defer_reject_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_store: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,8 +188,6 @@ impl SanitizedLogEntry {
             retired_prefix_messages: None,
             reasoning_strategy: None,
             prompt_cache_hit_ratio: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,

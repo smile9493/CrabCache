@@ -76,15 +76,6 @@ pub fn OverviewAnalytics(
     }
 }
 
-/// One-line summary for the card grid preview.
-pub fn infra_container_headline(s: &InfraSnapshot) -> String {
-    let summary = summarize_infra(s);
-    format!(
-        "{}/{} containers",
-        summary.active_containers, summary.total_containers
-    )
-}
-
 #[derive(Clone, Copy)]
 enum InfraTileVariant {
     Teal,
@@ -121,6 +112,12 @@ struct InfraSnapshotSummary {
 fn container_is_active(status: &str) -> bool {
     let s = status.to_ascii_lowercase();
     s.contains("up") || s.contains("running")
+}
+
+/// Active/total container count for overview Infra metric card headline.
+pub fn infra_container_headline(snapshot: &InfraSnapshot) -> String {
+    let summary = summarize_infra(snapshot);
+    format!("{}/{}", summary.active_containers, summary.total_containers)
 }
 
 fn summarize_infra(s: &InfraSnapshot) -> InfraSnapshotSummary {
@@ -229,7 +226,11 @@ fn InfraDetailModule(
 }
 
 #[component]
-pub fn InfraOverviewModule(#[prop(optional, default = false)] embedded: bool) -> impl IntoView {
+pub fn InfraOverviewModule(
+    /// When true, loads on mount and renders without collapsible wrapper (for modals).
+    #[prop(default = false)]
+    embedded: bool,
+) -> impl IntoView {
     let t = use_translations();
     let snapshot: RwSignal<Option<Result<InfraSnapshot, String>>> = RwSignal::new(None);
     let loaded = RwSignal::new(false);
@@ -241,30 +242,30 @@ pub fn InfraOverviewModule(#[prop(optional, default = false)] embedded: bool) ->
         leptos::task::spawn_local(async move {
             let result = api::fetch_infra_snapshot().await;
             match result {
-                Ok(s) => snapshot.set(Some(Ok(s))),
-                Err(e) => snapshot.set(Some(Err(e))),
+                Ok(s) => { snapshot.try_set(Some(Ok(s))); }
+                Err(e) => { snapshot.try_set(Some(Err(e))); }
             }
         });
     };
 
-    // When embedded, load immediately; otherwise defer until toggle.
-    if embedded {
-        load_snapshot();
-    }
-
-    // Refresh loop (only runs after first load)
     leptos::task::spawn_local(async move {
         loop {
             TimeoutFuture::new(15_000).await;
-            if loaded.get_untracked() {
+            if loaded.try_get_untracked() == Some(true) {
                 load_snapshot();
             }
         }
     });
 
-    let content = view! {
-        <div>
-        {move || match snapshot.get() {
+    if embedded {
+        Effect::new(move |_| {
+            if !loaded.get_untracked() {
+                load_snapshot();
+            }
+        });
+    }
+
+    let body = move || match snapshot.get() {
                 None => view! {
                     <div class="text-xs text-theme-muted">"Loading infrastructure snapshot..."</div>
                 }.into_any(),
@@ -453,33 +454,33 @@ pub fn InfraOverviewModule(#[prop(optional, default = false)] embedded: bool) ->
                         </div>
                     }.into_any()
                 }
-            }}
-        </div>
     };
 
-    if embedded {
-        content.into_any()
-    } else {
-        view! {
-            <details class="overview-collapsible"
-                on:toggle=move |ev| {
-                    let el = ev.target().unwrap().unchecked_into::<web_sys::HtmlDetailsElement>();
-                    if el.open() && !loaded.get_untracked() {
-                        load_snapshot();
+    view! {
+        {if embedded {
+            view! { <div class="space-y-3">{body}</div> }.into_any()
+        } else {
+            view! {
+                <details class="overview-collapsible"
+                    on:toggle=move |ev| {
+                        let el = ev.target().unwrap().unchecked_into::<web_sys::HtmlDetailsElement>();
+                        if el.open() && !loaded.get_untracked() {
+                            load_snapshot();
+                        }
                     }
-                }
-            >
-                <summary class="overview-collapsible-head">
-                    <span class="overview-collapsible-title">
-                        <InfraModuleIconContainers />
-                        <span>{t.infra_title()}</span>
-                    </span>
-                </summary>
-                <div class="overview-collapsible-body">
-                    {content}
-                </div>
-            </details>
-        }.into_any()
+                >
+                    <summary class="overview-collapsible-head">
+                        <span class="overview-collapsible-title">
+                            <InfraModuleIconContainers />
+                            <span>{t.infra_title()}</span>
+                        </span>
+                    </summary>
+                    <div class="overview-collapsible-body">
+                        {body}
+                    </div>
+                </details>
+            }.into_any()
+        }}
     }
 }
 

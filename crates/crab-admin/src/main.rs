@@ -7,6 +7,7 @@ mod log_management;
 mod metrics_history;
 mod metrics_store;
 mod network;
+mod oauth_codex;
 mod overview;
 mod persist;
 mod pg;
@@ -152,7 +153,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
     if admin_key == "admin" && !cfg!(debug_assertions) {
-        unreachable!("release builds exit above when key is unset");
+        tracing::warn!(
+            "CRABCACHE_ADMIN_KEY is unset or uses the default 'admin'; set a strong key for production. \
+             Dashboard must use the same value in the Admin API Key sign-in screen."
+        );
     }
 
     let config = ServerConfig::from_args();

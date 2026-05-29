@@ -15,8 +15,8 @@ pub fn PipelinePage() -> impl IntoView {
     let reload = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_pipeline_runtime().await {
-                Ok(c) => config.set(Some(Ok(c))),
-                Err(e) => config.set(Some(Err(e))),
+                Ok(c) => { config.try_set(Some(Ok(c))); },
+                Err(e) => { config.try_set(Some(Err(e))); },
             }
         });
     };
@@ -58,10 +58,10 @@ pub fn PipelinePage() -> impl IntoView {
                             let save_ok = save_ok.clone();
                             leptos::task::spawn_local(async move {
                                 match api::update_pipeline_runtime(&req).await {
-                                    Ok(_) => feedback.set(save_ok),
-                                    Err(e) => feedback.set(e),
+                                    Ok(_) => { feedback.try_set(save_ok); },
+                                    Err(e) => { feedback.try_set(e); },
                                 }
-                                saving.set(false);
+                                saving.try_set(false);
                                 reload();
                             });
                         }

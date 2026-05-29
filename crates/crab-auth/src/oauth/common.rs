@@ -1,6 +1,9 @@
 use base64::Engine;
 use rand::Rng;
 use sha2::Digest;
+use std::future::Future;
+use std::pin::Pin;
+use tokio::time::{Duration, sleep};
 
 /// Result from the OAuth callback
 pub struct CallbackResult {
@@ -101,7 +104,8 @@ pub async fn start_callback_server(
 
         // If not the callback path, return 404
         if path != callback_path {
-            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let response =
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await;
             let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
             return;
@@ -150,4 +154,35 @@ fn decode_query_value(value: &str) -> String {
 /// Print the URL for the user to open in their browser
 pub fn open_browser(url: &str) {
     println!("Open this URL in your browser:\n{url}");
+}
+
+/// Retry an async operation with linear backoff (1s, 2s, ... between attempts).
+///
+/// Non-retryable errors return immediately. `max_retries` is the total number of attempts.
+pub async fn retry_with_backoff<T, E>(
+    max_retries: usize,
+    is_retryable: impl Fn(&E) -> bool,
+    mut op: impl FnMut() -> Pin<Box<dyn Future<Output = Result<T, E>> + Send>>,
+) -> Result<T, E> {
+    if max_retries == 0 {
+        return op().await;
+    }
+
+    let mut last_err = None;
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            sleep(Duration::from_secs(attempt as u64)).await;
+        }
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if !is_retryable(&err) {
+                    return Err(err);
+                }
+                last_err = Some(err);
+            }
+        }
+    }
+
+    Err(last_err.expect("max_retries > 0 guarantees at least one attempt"))
 }

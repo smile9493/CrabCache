@@ -1,6 +1,5 @@
 use leptos::prelude::*;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
@@ -53,75 +52,37 @@ pub fn CachePage() -> impl IntoView {
 fn ConfigTab() -> impl IntoView {
     let t = use_translations();
     let feedback: RwSignal<String> = RwSignal::new(String::new());
-    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 
-    // Cache config (sliders from Routing)
     let cache_config: RwSignal<Option<Result<CacheConfig, String>>> = RwSignal::new(None);
-    // Semantic config (slider from Routing + enabled toggle from CacheOps)
     let semantic_config: RwSignal<Option<Result<SemanticConfig, String>>> = RwSignal::new(None);
-    // Fingerprint / stream cache from CacheOps
     let ops: RwSignal<Option<Result<CacheOpsView, String>>> = RwSignal::new(None);
 
-    {
-        let alive = Arc::clone(&alive);
-        leptos::task::spawn_local(async move {
-            let result = api::fetch_cache_config().await;
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            match result {
-                Ok(c) => cache_config.set(Some(Ok(c))),
-                Err(e) => cache_config.set(Some(Err(e))),
-            }
-        });
-    }
-    {
-        let alive = Arc::clone(&alive);
-        leptos::task::spawn_local(async move {
-            let result = api::fetch_semantic_config().await;
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            match result {
-                Ok(c) => semantic_config.set(Some(Ok(c))),
-                Err(e) => semantic_config.set(Some(Err(e))),
-            }
-        });
-    }
-    {
-        let alive = Arc::clone(&alive);
-        leptos::task::spawn_local(async move {
-            let result = api::fetch_cache_ops().await;
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            match result {
-                Ok(v) => ops.set(Some(Ok(v))),
-                Err(e) => ops.set(Some(Err(e))),
-            }
-        });
-    }
+    leptos::task::spawn_local(async move {
+        match api::fetch_cache_config().await {
+            Ok(c) => cache_config.try_set(Some(Ok(c))),
+            Err(e) => cache_config.try_set(Some(Err(e))),
+        };
+    });
+    leptos::task::spawn_local(async move {
+        match api::fetch_semantic_config().await {
+            Ok(c) => semantic_config.try_set(Some(Ok(c))),
+            Err(e) => semantic_config.try_set(Some(Err(e))),
+        };
+    });
+    leptos::task::spawn_local(async move {
+        match api::fetch_cache_ops().await {
+            Ok(v) => ops.try_set(Some(Ok(v))),
+            Err(e) => ops.try_set(Some(Err(e))),
+        };
+    });
 
-    let reload_ops: Arc<dyn Fn() + Send + Sync> = {
-        let alive = Arc::clone(&alive);
-        Arc::new(move || {
-            let alive = Arc::clone(&alive);
-            leptos::task::spawn_local(async move {
-                let result = api::fetch_cache_ops().await;
-                if !alive.load(Ordering::Relaxed) {
-                    return;
-                }
-                match result {
-                    Ok(v) => ops.set(Some(Ok(v))),
-                    Err(e) => ops.set(Some(Err(e))),
-                }
-            });
-        })
-    };
-
-    on_cleanup({
-        let alive = Arc::clone(&alive);
-        move || alive.store(false, Ordering::Relaxed)
+    let reload_ops: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_cache_ops().await {
+                Ok(v) => ops.try_set(Some(Ok(v))),
+                Err(e) => ops.try_set(Some(Err(e))),
+            };
+        });
     });
 
     view! {
@@ -192,9 +153,9 @@ fn ConfigTab() -> impl IntoView {
                                                 version,
                                                 normalize_content: normalize,
                                             }).await {
-                                                Ok(_) => feedback.set(t.routing_saved().to_string()),
-                                                Err(e) => feedback.set(e),
-                                            }
+                                                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                                                Err(e) => feedback.try_set(e),
+                                            };
                                         });
                                     }
                                 >
@@ -215,11 +176,11 @@ fn ConfigTab() -> impl IntoView {
                                             leptos::task::spawn_local(async move {
                                                 match api::update_stream_cache(&StreamCacheToggle { enabled }).await {
                                                     Ok(_) => {
-                                                        feedback.set(t.routing_saved().to_string());
+                                                        feedback.try_set(t.routing_saved().to_string());
                                                         (reload_ops)();
                                                     }
-                                                    Err(e) => { feedback.set(e); }
-                                                }
+                                                    Err(e) => { feedback.try_set(e); }
+                                                };
                                             });
                                         }
                                     />
@@ -251,9 +212,9 @@ fn TtlConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl IntoV
         };
         leptos::task::spawn_local(async move {
             match api::update_cache_config(&req).await {
-                Ok(_) => feedback.set(t.routing_saved().to_string()),
-                Err(e) => feedback.set(e),
-            }
+                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                Err(e) => feedback.try_set(e),
+            };
         });
     };
 
@@ -302,9 +263,9 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
         };
         leptos::task::spawn_local(async move {
             match api::update_semantic_config(&req).await {
-                Ok(_) => feedback.set(t.routing_saved().to_string()),
-                Err(e) => feedback.set(e),
-            }
+                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                Err(e) => feedback.try_set(e),
+            };
         });
     };
 
@@ -368,15 +329,15 @@ fn RoutingTab() -> impl IntoView {
 
     leptos::task::spawn_local(async move {
         match api::fetch_connection_config().await {
-            Ok(c) => connection_config.set(Some(Ok(c))),
-            Err(e) => connection_config.set(Some(Err(e))),
-        }
+            Ok(c) => connection_config.try_set(Some(Ok(c))),
+            Err(e) => connection_config.try_set(Some(Err(e))),
+        };
     });
     leptos::task::spawn_local(async move {
         match api::fetch_routing_status().await {
-            Ok(s) => routing_status.set(Some(Ok(s))),
-            Err(e) => routing_status.set(Some(Err(e))),
-        }
+            Ok(s) => routing_status.try_set(Some(Ok(s))),
+            Err(e) => routing_status.try_set(Some(Err(e))),
+        };
     });
 
     view! {
@@ -431,9 +392,9 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
         };
         leptos::task::spawn_local(async move {
             match api::update_connection_config(&req).await {
-                Ok(_) => feedback.set(t.routing_saved().to_string()),
-                Err(e) => feedback.set(e),
-            }
+                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                Err(e) => feedback.try_set(e),
+            };
         });
     };
 
@@ -575,10 +536,10 @@ fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl I
         };
         leptos::task::spawn_local(async move {
             match api::update_routing_backends(&req).await {
-                Ok(_) => feedback.set(t.routing_saved().to_string()),
-                Err(e) => feedback.set(e),
-            }
-            saving.set(false);
+                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                Err(e) => feedback.try_set(e),
+            };
+            saving.try_set(false);
         });
     };
 
@@ -670,10 +631,10 @@ fn CacheTierHitRateChart() -> impl IntoView {
         loading.set(true);
         leptos::task::spawn_local(async move {
             match api::fetch_overview_timeseries(&w).await {
-                Ok(resp) => points.set(resp.points),
-                Err(_) => points.set(Vec::new()),
-            }
-            loading.set(false);
+                Ok(resp) => points.try_set(resp.points),
+                Err(_) => points.try_set(Vec::new()),
+            };
+            loading.try_set(false);
         });
     });
 
@@ -776,9 +737,9 @@ fn OpsTab() -> impl IntoView {
     let reload = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_cache_ops().await {
-                Ok(v) => ops.set(Some(Ok(v))),
-                Err(e) => ops.set(Some(Err(e))),
-            }
+                Ok(v) => ops.try_set(Some(Ok(v))),
+                Err(e) => ops.try_set(Some(Err(e))),
+            };
         });
     };
 
@@ -824,11 +785,11 @@ fn OpsTab() -> impl IntoView {
                                         leptos::task::spawn_local(async move {
                                             match api::invalidate_cache(&InvalidateCacheBody { scope: scope_val }).await {
                                                 Ok(r) => {
-                                                    message.set(format!("{}: {}", r.scope, r.status));
+                                                    message.try_set(format!("{}: {}", r.scope, r.status));
                                                     reload();
                                                 }
-                                                Err(e) => { message.set(e); }
-                                            }
+                                                Err(e) => { message.try_set(e); }
+                                            };
                                         });
                                     }
                                 }
@@ -889,11 +850,11 @@ fn OpsTab() -> impl IntoView {
                                     leptos::task::spawn_local(async move {
                                         match api::invalidate_cache(&InvalidateCacheBody { scope: "all".to_string() }).await {
                                             Ok(r) => {
-                                                message.set(format!("{}: {}", r.scope, r.status));
+                                                message.try_set(format!("{}: {}", r.scope, r.status));
                                                 reload();
                                             }
-                                            Err(e) => { message.set(e); }
-                                        }
+                                            Err(e) => { message.try_set(e); }
+                                        };
                                     });
                                 }
                             >
@@ -914,38 +875,25 @@ fn OpsTab() -> impl IntoView {
 #[component]
 fn TraceTab() -> impl IntoView {
     let t = use_translations();
-    let alive: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     let analysis: RwSignal<Option<Result<TraceAnalysis, String>>> = RwSignal::new(None);
     let cached_etag = RwSignal::new(String::new());
 
-    let alive_for_loader = Arc::clone(&alive);
     let load_analysis = move || {
         let etag = cached_etag.get_untracked();
-        let alive = Arc::clone(&alive_for_loader);
         leptos::task::spawn_local(async move {
-            let result = api::fetch_trace_analysis_etag(24, &etag).await;
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            match result {
+            match api::fetch_trace_analysis_etag(24, &etag).await {
                 Ok(result) => {
-                    cached_etag.set(result.etag);
+                    cached_etag.try_set(result.etag);
                     if let Some(a) = result.analysis {
-                        analysis.set(Some(Ok(a)));
+                        analysis.try_set(Some(Ok(a)));
                     }
-                    // 304: keep existing analysis data
                 }
-                Err(e) => analysis.set(Some(Err(e))),
-            }
+                Err(e) => { analysis.try_set(Some(Err(e))); }
+            };
         });
     };
 
     load_analysis();
-
-    on_cleanup({
-        let alive = Arc::clone(&alive);
-        move || alive.store(false, Ordering::Relaxed)
-    });
 
     view! {
         <div class="space-y-6">

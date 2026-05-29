@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn mimo_pipeline_not_applicable() {
         let status = compute_user_id_audit(
-            Some(RequestPipeline::MimoRelay),
+            Some(RequestPipeline::MimoTokenPlanRelay),
             Some("tenant_a"),
             None,
             Some("tenant_a"),

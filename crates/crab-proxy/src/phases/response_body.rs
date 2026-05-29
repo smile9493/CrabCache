@@ -17,6 +17,7 @@ use crate::metrics_helpers::{
 };
 use crate::proxy::GatewayProxy;
 use crate::sse::UsageData;
+use crate::sse::parse_sse_chunk;
 use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crate::upstream_response_decompress::decompress_upstream_chunk;
 use crab_metrics::{CacheTier, LatencyKind, global_metrics};
@@ -137,6 +138,50 @@ pub(crate) fn run(
             if ctx.stream.stream_pipeline.is_none() {
                 ctx.stream.stream_pipeline =
                     select_sse_pipeline(ctx, proxy.state.reasoning_store.clone());
+            }
+
+            // Detect rate-limit errors embedded in SSE data chunks.
+            // Must run before the mutable borrow of stream_pipeline below.
+            if !ctx.upstream.sse_rate_limited {
+                let sse_events = parse_sse_chunk(&data);
+                let rate_limited = sse_events.iter().any(|e| e.is_rate_limit_error());
+                if rate_limited {
+                    ctx.upstream.sse_rate_limited = true;
+                    let old_key_id = ctx
+                        .upstream
+                        .key_guard
+                        .as_ref()
+                        .map(|g| g.key_id().to_string());
+                    if let Some(ref key_id) = old_key_id {
+                        let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
+                        pool.report_rate_limited(key_id);
+                        crab_metrics::global_metrics()
+                            .record_upstream_key_request(key_id, "rate_limited");
+                        let account_id = ctx
+                            .upstream
+                            .key_guard
+                            .as_ref()
+                            .and_then(|g| {
+                                pool.list_status()
+                                    .into_iter()
+                                    .find(|s| s.id == g.key_id())
+                                    .map(|s| s.account_id)
+                            });
+                        if let Some(new_guard) =
+                            pool.acquire_excluding_account(account_id.as_deref())
+                        {
+                            ctx.upstream.key_guard = Some(new_guard);
+                            crab_metrics::global_metrics()
+                                .record_upstream_key_retry("sse_rate_limited_rotate");
+                        }
+                        warn!(
+                            request_id = %ctx.request_id,
+                            key_id = key_id,
+                            model = %ctx.model,
+                            "SSE stream contains rate-limit error from upstream; key cooled down"
+                        );
+                    }
+                }
             }
 
             if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {

@@ -67,10 +67,7 @@ pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
 pub use session_store::SessionStore;
 pub use sse_rewrite::flush_streaming_reasoning;
 pub use stored_key::StoredKey;
-pub use streaming_body_forward::{
-    StreamingBodyState, StreamingDeferCircuitBreaker, defer_body_incomplete,
-    defer_partial_ready_for_arm, hash_body_chunks,
-};
+pub use streaming_body_forward::hash_body_chunks;
 pub use tenant::{
     ProjectResolveError, effective_cache_namespace, resolve_project_id, sanitize_user_id,
 };

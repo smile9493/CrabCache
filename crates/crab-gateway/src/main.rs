@@ -84,7 +84,6 @@ impl PgTraceStore {
                      prompt_cache_hit_ratio, upstream_profile_id, pipeline,
                      upstream_model, client_body_user_id, upstream_user_id,
                      user_id_audit, upstream_key_id,
-                     streaming_defer, streaming_defer_reject_reason,
                      session_store, stable_session_kind, upstream_outbound_bytes,
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
@@ -93,7 +92,7 @@ impl PgTraceStore {
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43,$44,$45)
+                         $39,$40,$41,$42,$43)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await
@@ -139,8 +138,6 @@ impl PgTraceStore {
                     &e.upstream_user_id,
                     &e.user_id_audit,
                     &e.upstream_key_id,
-                    &e.streaming_defer,
-                    &e.streaming_defer_reject_reason,
                     &e.session_store,
                     &e.stable_session_kind,
                     &e.upstream_outbound_bytes.map(|v| v as i32),
@@ -861,7 +858,6 @@ fn main() -> Result<()> {
             "request_coalesce_max_inflight": config.upstream.max_coalesce_inflight.unwrap_or(1000),
             "request_coalesce_timeout_secs": config.upstream.coalesce_timeout_secs.unwrap_or(60),
             "max_request_concurrency": config.limits.max_concurrent_requests,
-            "streaming_defer_auto_disable_threshold": config.features.streaming_body_forward_auto_disable_threshold,
             "mimo_session_store": config.features.mimo_session_store,
         }),
     );
@@ -903,20 +899,6 @@ fn main() -> Result<()> {
         "[DEBUG] global rate constructed",
         serde_json::json!({ "window_secs": 1 }),
     );
-    let streaming_defer_circuit_breaker =
-        Arc::new(crab_proxy::StreamingDeferCircuitBreaker::new(
-            config
-                .features
-                .streaming_body_forward_auto_disable_threshold,
-        ));
-    debug_agent_log(
-        "B",
-        "main.rs:gateway_state_build",
-        "[DEBUG] streaming defer circuit breaker constructed",
-        serde_json::json!({
-            "threshold": config.features.streaming_body_forward_auto_disable_threshold,
-        }),
-    );
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -949,7 +931,6 @@ fn main() -> Result<()> {
         prewarm_semaphore,
         global_rate: startup_global_rate,
         client_endpoint: client_endpoint.clone(),
-        streaming_defer_circuit_breaker,
         session_store,
     });
     // #region debug-point C:state-build-done

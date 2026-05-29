@@ -10,6 +10,8 @@ pub struct UpstreamProfileAdminView {
     pub tls_sni: String,
     pub key_pool_count: usize,
     pub keys_available: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +29,8 @@ pub struct PutUpstreamProfileAdminRequest {
     pub endpoints: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_sni: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 /// Alias for profile key pool entries (same wire shape as [`UpstreamKeyView`]).

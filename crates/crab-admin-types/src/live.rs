@@ -57,6 +57,8 @@ pub struct LiveMetricsBucket {
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub upstream_sample_count: u32,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub pre_header_sample_count: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub ttft_sample_count: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,

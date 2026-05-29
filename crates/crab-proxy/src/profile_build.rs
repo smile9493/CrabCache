@@ -20,6 +20,7 @@ pub struct ProfileBuildInput {
     pub endpoints: Vec<String>,
     pub tls_sni: Option<String>,
     pub default_weight: u32,
+    pub proxy_url: Option<String>,
 }
 
 pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>, String> {
@@ -167,5 +168,6 @@ pub fn build_profile_runtime(
         tls_sni,
         router,
         upstream_pool: pool_handle,
+        proxy_url: input.proxy_url.filter(|s| !s.is_empty()),
     }))
 }

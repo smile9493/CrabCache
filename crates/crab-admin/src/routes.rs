@@ -202,6 +202,38 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/models/apply", post(post_models_apply))
         .route("/api/admin/routing/status", get(get_routing_status))
         .route("/api/admin/routing/backends", put(put_routing_backends))
+        // ── Codex OAuth Device Login ──
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/device/start",
+            post(crate::oauth_codex::start_device_login),
+        )
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/device/:session_id",
+            get(crate::oauth_codex::poll_device_status)
+                .delete(crate::oauth_codex::cancel_device_login),
+        )
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/import",
+            post(crate::oauth_codex::import_codex_credential),
+        )
+        .route(
+            "/api/admin/oauth/codex/credentials",
+            get(crate::oauth_codex::list_codex_credentials),
+        )
+        // ── Codex OAuth PKCE Login ──
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/pkce/start",
+            post(crate::oauth_codex::start_pkce_login),
+        )
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id",
+            get(crate::oauth_codex::poll_pkce_status)
+                .delete(crate::oauth_codex::cancel_pkce_login),
+        )
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id/exchange",
+            post(crate::oauth_codex::exchange_pkce),
+        )
         .route(
             "/api/admin/cursor/models",
             get(get_cursor_models).put(put_cursor_models),
@@ -2271,8 +2303,6 @@ async fn get_log_detail(
             client_key_id: None,
             pipeline: None,
             upstream_model: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
         }));
@@ -2944,6 +2974,7 @@ async fn get_key_concurrency(
         .filter(|e| {
             e.upstream_key_id.as_deref() == Some(&key_id)
                 || e.client_key_id.as_deref() == Some(&key_id)
+                || e.consumer.as_deref() == Some(&key_id)
         })
         .map(|e| KeyConcurrencyEntry {
             request_hash: e.request_hash.clone(),
@@ -3025,6 +3056,7 @@ async fn get_key_routing(
         .filter(|e| {
             e.upstream_key_id.as_deref() == Some(&key_id)
                 || e.client_key_id.as_deref() == Some(&key_id)
+                || e.consumer.as_deref() == Some(&key_id)
         })
         .collect();
 

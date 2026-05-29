@@ -116,6 +116,8 @@ pub fn CanvasLineChart(
                 thresholds: (*thresholds).clone(),
                 width_px: 640,
                 height_px,
+                y_min,
+                y_max,
             };
             let mut renderer = CanvasLineRenderer::new(theme.get());
             let _ = renderer.render_line(&canvas_dom, &req);

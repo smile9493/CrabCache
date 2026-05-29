@@ -8,7 +8,8 @@ use std::collections::HashMap;
 const TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 const DEFAULT_PORT: u16 = 54545;
 const CALLBACK_PATH: &str = "/callback";
-const SCOPES: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+const SCOPES: &str =
+    "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
 fn get_client_id() -> String {
     std::env::var("CRABCACHE_OAUTH_CLAUDE_CLIENT_ID")

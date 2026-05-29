@@ -117,12 +117,27 @@ impl Authenticator for GeminiAuthenticator {
         let email = fetch_user_email(&client, &access_token).await;
 
         let mut metadata = HashMap::new();
-        metadata.insert("token_uri".to_owned(), serde_json::Value::String(TOKEN_URL.to_owned()));
-        metadata.insert("client_id".to_owned(), serde_json::Value::String(get_client_id()));
-        metadata.insert("client_secret".to_owned(), serde_json::Value::String(get_client_secret()));
-        metadata.insert("scopes".to_owned(), serde_json::Value::Array(
-            SCOPES.split_whitespace().map(|s| serde_json::Value::String(s.to_owned())).collect()
-        ));
+        metadata.insert(
+            "token_uri".to_owned(),
+            serde_json::Value::String(TOKEN_URL.to_owned()),
+        );
+        metadata.insert(
+            "client_id".to_owned(),
+            serde_json::Value::String(get_client_id()),
+        );
+        metadata.insert(
+            "client_secret".to_owned(),
+            serde_json::Value::String(get_client_secret()),
+        );
+        metadata.insert(
+            "scopes".to_owned(),
+            serde_json::Value::Array(
+                SCOPES
+                    .split_whitespace()
+                    .map(|s| serde_json::Value::String(s.to_owned()))
+                    .collect(),
+            ),
+        );
 
         let id = email.clone().unwrap_or_else(|| "default".to_string());
 

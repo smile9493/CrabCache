@@ -324,6 +324,8 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
     };
     let suggestions = build_overview_suggestions(&bundle_for_suggestions);
 
+    ops.sanitize_finite();
+
     Ok(OverviewCore {
         metrics,
         health,
@@ -387,6 +389,8 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
         ops.upstream_keys_available = status.upstream_keys_available as u32;
     }
     enrich_ops_upstream_keys(state, &mut ops).await;
+
+    ops.sanitize_finite();
 
     let trace_summary = cached_trace_summary(state, 24).await;
 
@@ -585,7 +589,7 @@ pub async fn build_metrics_snapshot_core(
 
     drop(history);
 
-    Ok(MetricsSnapshotCore {
+    let mut core = MetricsSnapshotCore {
         qps,
         tps,
         l0_hits: counters.l0_hits,
@@ -647,7 +651,9 @@ pub async fn build_metrics_snapshot_core(
         http_5xx_5m,
         qps_prev_1h,
         hit_rate_prev_1h,
-    })
+    };
+    core.sanitize_finite();
+    Ok(core)
 }
 
 pub async fn build_metrics_snapshot(
@@ -664,7 +670,7 @@ pub async fn build_metrics_snapshot(
     let monthly_stats = history.build_monthly_stats(now);
     drop(history);
 
-    Ok(MetricsSnapshot {
+    let mut snap = MetricsSnapshot {
         qps: core.qps,
         tps: core.tps,
         l0_hits: core.l0_hits,
@@ -712,7 +718,9 @@ pub async fn build_metrics_snapshot(
         http_5xx_5m: core.http_5xx_5m,
         qps_prev_1h: core.qps_prev_1h,
         hit_rate_prev_1h: core.hit_rate_prev_1h,
-    })
+    };
+    snap.sanitize_finite();
+    Ok(snap)
 }
 
 pub async fn build_gateway_health(state: &Arc<AppState>) -> GatewayHealthView {

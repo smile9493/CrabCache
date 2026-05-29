@@ -4,36 +4,14 @@ use crate::api;
 use crate::components::sync_result::SyncResultCard;
 use crate::components::ui::*;
 use crate::locale::{Translations, use_translations};
-use crate::types::{
-    CursorModelAlias, CursorModelsConfig, ModelApplyBody, ModelDetectResponse, ModelListResponse,
-    SyncResult,
-};
+use crate::types::{ModelApplyBody, ModelDetectResponse, ModelListResponse, SyncResult};
 
 #[component]
 pub fn ModelsPage() -> impl IntoView {
     let t = use_translations();
-    let active_tab: RwSignal<usize> = RwSignal::new(0);
-
-    let tab_labels = vec![t.tab_catalog().to_string(), t.tab_aliases().to_string()];
-
-    view! {
-        <div class="page-content space-y-6">
-            <SectionHeader title=t.models_title() description=t.models_desc() />
-            <TabBar tabs=tab_labels active=active_tab />
-            {move || match active_tab.get() {
-                0 => view! { <CatalogPanel /> }.into_any(),
-                _ => view! { <AliasesPanel /> }.into_any(),
-            }}
-        </div>
-    }
-}
-
-#[component]
-fn CatalogPanel() -> impl IntoView {
-    let t = use_translations();
     let profile_id = RwSignal::new("deepseek".to_string());
     let models: RwSignal<Option<Result<ModelListResponse, String>>> = RwSignal::new(None);
-    let profiles: RwSignal<Vec<String>> = RwSignal::new(vec!["deepseek".to_string()]);
+    let profiles: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
     let sync_result: RwSignal<Option<SyncResult>> = RwSignal::new(None);
     let detect_result: RwSignal<Option<Result<ModelDetectResponse, String>>> = RwSignal::new(None);
     let syncing: RwSignal<bool> = RwSignal::new(false);
@@ -43,30 +21,24 @@ fn CatalogPanel() -> impl IntoView {
     let reload_models = move |pid: String| {
         leptos::task::spawn_local(async move {
             match api::fetch_models(Some(&pid)).await {
-                Ok(m) => models.set(Some(Ok(m))),
-                Err(e) => models.set(Some(Err(e))),
+                Ok(m) => { models.try_set(Some(Ok(m))); }
+                Err(e) => { models.try_set(Some(Err(e))); }
             }
         });
     };
 
     leptos::task::spawn_local(async move {
-        if let Ok(list) = api::fetch_upstream_profiles().await {
-            let ids: Vec<String> = list.profiles.into_iter().map(|p| p.id).collect();
+        if let Ok(resp) = api::fetch_upstream_profiles().await {
+            let ids: Vec<String> = resp.profiles.iter().map(|p| p.id.clone()).collect();
             if !ids.is_empty() {
-                profiles.set(ids.clone());
-                if !ids.contains(&profile_id.get_untracked()) {
-                    profile_id.set(ids[0].clone());
+                profiles.try_set(ids.clone());
+                if !ids.contains(&profile_id.try_get_untracked().unwrap_or_default()) {
+                    profile_id.try_set(ids[0].clone());
                 }
             }
         }
-        reload_models(profile_id.get_untracked());
+        reload_models(profile_id.try_get_untracked().unwrap_or_default());
     });
-
-    let on_profile_change = move |ev| {
-        let pid = event_target_value(&ev);
-        profile_id.set(pid.clone());
-        reload_models(pid);
-    };
 
     let on_detect = move |_| {
         let pid = profile_id.get();
@@ -74,10 +46,10 @@ fn CatalogPanel() -> impl IntoView {
         detect_result.set(None);
         leptos::task::spawn_local(async move {
             match api::detect_models(&pid).await {
-                Ok(d) => detect_result.set(Some(Ok(d))),
-                Err(e) => detect_result.set(Some(Err(e))),
+                Ok(d) => { detect_result.try_set(Some(Ok(d))); }
+                Err(e) => { detect_result.try_set(Some(Err(e))); }
             }
-            detecting.set(false);
+            detecting.try_set(false);
         });
     };
 
@@ -95,13 +67,13 @@ fn CatalogPanel() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::apply_models(&body).await {
                 Ok(result) => {
-                    sync_result.set(Some(result));
-                    detect_result.set(None);
+                    sync_result.try_set(Some(result));
+                    detect_result.try_set(None);
                     reload_models(pid);
                 }
-                Err(e) => detect_result.set(Some(Err(e))),
+                Err(e) => { detect_result.try_set(Some(Err(e))); }
             }
-            applying.set(false);
+            applying.try_set(false);
         });
     };
 
@@ -112,31 +84,55 @@ fn CatalogPanel() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::sync_models(&pid).await {
                 Ok(result) => {
-                    sync_result.set(Some(result));
+                    sync_result.try_set(Some(result));
                     reload_models(pid);
                 }
-                Err(e) => models.set(Some(Err(e))),
+                Err(e) => { models.try_set(Some(Err(e))); }
             }
-            syncing.set(false);
+            syncing.try_set(false);
         });
     };
 
     view! {
-        <div class="space-y-4">
+        <div class="page-content space-y-6">
+            <SectionHeader title=t.models_title() description=t.models_desc() />
+
+            // Profile chip selector
+            <div class="profile-chip-group">
+                {move || {
+                    let selected = profile_id.get();
+                    profiles.get().into_iter().map(|id| {
+                        let pid = id.clone();
+                        let pid2 = id.clone();
+                        let icon_char = id.chars().next()
+                            .map(|c| c.to_uppercase().to_string())
+                            .unwrap_or_default();
+                        let is_active = selected == pid;
+                        let class = if is_active {
+                            "profile-chip profile-chip-active"
+                        } else {
+                            "profile-chip"
+                        };
+                        view! {
+                            <button
+                                type="button"
+                                class=class
+                                on:click=move |_| {
+                                    profile_id.set(pid2.clone());
+                                    reload_models(pid2.clone());
+                                }
+                            >
+                                <span class="profile-chip-icon">{icon_char}</span>
+                                <span class="font-mono">{id}</span>
+                            </button>
+                        }
+                    }).collect_view()
+                }}
+            </div>
+
+            // Action bar
             <div class="flex items-center justify-between flex-wrap gap-3">
                 <div class="flex items-center gap-3 flex-wrap">
-                    <label class="text-xs text-theme-muted">{t.upstream_profile_label()}</label>
-                    <select
-                        class="config-input text-sm"
-                        prop:value=move || profile_id.get()
-                        on:change=on_profile_change
-                    >
-                        {move || profiles.get().into_iter().map(|id| {
-                            let opt_val = id.clone();
-                            let label = id;
-                            view! { <option value=opt_val>{label}</option> }
-                        }).collect_view()}
-                    </select>
                     {move || match models.get() {
                         Some(Ok(m)) => view! {
                             <span class="text-xs text-theme-muted">
@@ -168,8 +164,10 @@ fn CatalogPanel() -> impl IntoView {
                 </div>
             </div>
 
+            // Sync result
             {move || sync_result.get().map(|r| view! { <SyncResultCard result=r /> })}
 
+            // Detect diff preview
             {move || match detect_result.get() {
                 Some(Ok(diff)) => view! {
                     <div class="glass-card space-y-3">
@@ -194,8 +192,13 @@ fn CatalogPanel() -> impl IntoView {
                 None => view! { <span></span> }.into_any(),
             }}
 
+            // Model cards
             {move || match models.get() {
-                None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
+                None => view! {
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {(0..6).map(|_| view! { <crate::components::skeleton::SkeletonModelCard /> }).collect_view()}
+                    </div>
+                }.into_any(),
                 Some(Err(e)) => view! {
                     <div class="glass-card text-error text-sm">
                         {format!("{}: {}", t.models_sync_result(), e)}
@@ -210,228 +213,85 @@ fn CatalogPanel() -> impl IntoView {
                             </div>
                         }.into_any()
                     } else {
+                        let total = resp.total;
                         view! {
-                            <div class="glass-card-flat overflow-hidden p-0">
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>{t.models_col_id()}</th>
-                                            <th>{t.models_col_owner()}</th>
-                                            <th class="text-right">{t.models_col_context()}</th>
-                                            <th class="text-right">{t.models_col_input_price()}</th>
-                                            <th class="text-right">{t.models_col_output_price()}</th>
-                                            <th class="text-center">{t.models_col_status()}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {resp.models.into_iter().map(|model| {
-                                            let status_text = if model.available {
-                                                t.models_status_available()
-                                            } else {
-                                                t.models_status_unavailable()
-                                            };
-                                            let context_str = model.context_length
-                                                .map(|c| format!("{}K", c / 1024))
-                                                .unwrap_or_else(|| "\u{2014}".to_string());
-                                            let input_price = model.input_price_per_mtok
-                                                .map(|p| format!("${:.2}", p))
-                                                .unwrap_or_else(|| "\u{2014}".to_string());
-                                            let output_price = model.output_price_per_mtok
-                                                .map(|p| format!("${:.2}", p))
-                                                .unwrap_or_else(|| "\u{2014}".to_string());
-                                            view! {
-                                                <tr>
-                                                    <td>
-                                                        <span class="font-mono text-sm text-theme">{model.id}</span>
-                                                    </td>
-                                                    <td class="text-theme-secondary">{model.owned_by}</td>
-                                                    <td class="text-right font-mono tabular-nums text-theme">
-                                                        {context_str}
-                                                    </td>
-                                                    <td class="text-right font-mono tabular-nums text-warning">
-                                                        {input_price}
-                                                    </td>
-                                                    <td class="text-right font-mono tabular-nums text-error">
-                                                        {output_price}
-                                                    </td>
-                                                    <td class="text-center">
-                                                        <Badge
-                                                            text=status_text.to_string()
-                                                            color=if model.available { "teal" } else { "rose" }
-                                                        />
-                                                    </td>
-                                                </tr>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </tbody>
-                                </table>
-                                <div class="px-5 py-3 border-t border-theme text-xs text-theme-muted">
-                                    {format!("{} {}", resp.total, t.models_col_id())}
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                {resp.models.into_iter().map(|model| {
+                                    let status_text = if model.available {
+                                        t.models_status_available()
+                                    } else {
+                                        t.models_status_unavailable()
+                                    };
+                                    let badge_color = if model.available { "green" } else { "stone" };
+                                    let card_class = if model.available {
+                                        "model-card"
+                                    } else {
+                                        "model-card model-card-unavailable"
+                                    };
+                                    let name_class = if model.available {
+                                        "model-card-name truncate"
+                                    } else {
+                                        "model-card-name model-card-name-unavailable truncate"
+                                    };
+                                    let price_unit = t.models_price_unit();
+                                    let context_str = model.context_length
+                                        .map(|c| format!("{}K", c / 1024))
+                                        .unwrap_or_else(|| "\u{2014}".to_string());
+                                    let input_price = model.input_price_per_mtok
+                                        .map(|p| format!("${:.2}{price_unit}", p))
+                                        .unwrap_or_else(|| "\u{2014}".to_string());
+                                    let output_price = model.output_price_per_mtok
+                                        .map(|p| format!("${:.2}{price_unit}", p))
+                                        .unwrap_or_else(|| "\u{2014}".to_string());
+                                    let icon_char = model.id.chars().next()
+                                        .map(|c| c.to_uppercase().to_string())
+                                        .unwrap_or_default();
+                                    view! {
+                                        <div class=card_class>
+                                            <div class="flex items-start justify-between gap-2 mb-1">
+                                                <div class="flex items-start gap-2 min-w-0 flex-1">
+                                                    <span class="model-card-icon">{icon_char}</span>
+                                                    <div class="min-w-0">
+                                                        <div class=name_class title=model.id.clone()>
+                                                            {model.id.clone()}
+                                                        </div>
+                                                        <div class="model-card-owner truncate" title=model.owned_by.clone()>
+                                                            {model.owned_by.clone()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <Badge
+                                                    text=status_text.to_string()
+                                                    color=badge_color
+                                                />
+                                            </div>
+                                            <div class="model-card-stats">
+                                                <div class="model-card-stat">
+                                                    <span class="model-card-stat-value">{context_str}</span>
+                                                    <span class="model-card-stat-label">{t.models_card_ctx_label()}</span>
+                                                </div>
+                                                <div class="model-card-stat model-card-pricing">
+                                                    <div class="model-card-pricing-row">
+                                                        <span class="model-card-stat-label">{t.models_card_input_label()}</span>
+                                                        <span class="model-card-stat-value model-card-stat-value-price-in">{input_price}</span>
+                                                    </div>
+                                                    <div class="model-card-pricing-row">
+                                                        <span class="model-card-stat-label">{t.models_card_output_label()}</span>
+                                                        <span class="model-card-stat-value model-card-stat-value-price-out">{output_price}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    }
+                                }).collect::<Vec<_>>()}
+                                <div class="models-catalog-footer">
+                                    {t.models_catalog_footer(total)}
                                 </div>
                             </div>
                         }.into_any()
                     }
                 }
             }}
-        </div>
-    }
-}
-
-#[component]
-fn AliasesPanel() -> impl IntoView {
-    let t = use_translations();
-    let data: RwSignal<Option<Result<CursorModelsConfig, String>>> = RwSignal::new(None);
-    let saving: RwSignal<bool> = RwSignal::new(false);
-    let feedback: RwSignal<String> = RwSignal::new(String::new());
-    let aliases: RwSignal<Vec<(RwSignal<String>, RwSignal<String>)>> = RwSignal::new(Vec::new());
-
-    let load = move || {
-        leptos::task::spawn_local(async move {
-            match api::fetch_cursor_models().await {
-                Ok(config) => {
-                    let pairs: Vec<(RwSignal<String>, RwSignal<String>)> = config
-                        .aliases
-                        .clone()
-                        .into_iter()
-                        .map(|a| (RwSignal::new(a.model), RwSignal::new(a.alias)))
-                        .collect();
-                    aliases.set(pairs);
-                    data.set(Some(Ok(config)));
-                }
-                Err(e) => data.set(Some(Err(e))),
-            }
-        });
-    };
-
-    load();
-
-    let on_add = move |_| {
-        aliases.update(|list| {
-            list.push((RwSignal::new(String::new()), RwSignal::new(String::new())));
-        });
-    };
-
-    let on_remove = move |idx: usize| {
-        aliases.update(|list| {
-            if idx < list.len() {
-                list.remove(idx);
-            }
-        });
-    };
-
-    let on_save = move |_| {
-        saving.set(true);
-        feedback.set(String::new());
-        let pairs = aliases.get();
-        let config = CursorModelsConfig {
-            aliases: pairs
-                .into_iter()
-                .map(|(model, alias)| CursorModelAlias {
-                    model: model.get(),
-                    alias: alias.get(),
-                })
-                .filter(|a| !a.model.is_empty() && !a.alias.is_empty())
-                .collect(),
-        };
-        leptos::task::spawn_local(async move {
-            match api::update_cursor_models(&config).await {
-                Ok(_) => {
-                    feedback.set(t.routing_saved().to_string());
-                }
-                Err(e) => feedback.set(e),
-            }
-            saving.set(false);
-        });
-    };
-
-    view! {
-        <div class="config-card glass-card">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.cursor_models_title()}</h4>
-                <p class="config-card-desc">{t.cursor_models_desc()}</p>
-            </div>
-            <div class="config-card-body">
-                {move || match data.get() {
-                    None => view! { <div class="text-sm text-theme-secondary py-4">"Loading..."</div> }.into_any(),
-                    Some(Err(e)) => view! {
-                        <div class="text-error text-sm py-4">{e}</div>
-                    }.into_any(),
-                    Some(Ok(_)) => {
-                        let rows = aliases.get();
-                        view! {
-                            <table class="w-full text-sm">
-                                <thead>
-                                    <tr class="text-left text-theme-secondary border-b border-theme-border">
-                                        <th class="pb-2 pr-3 font-medium">{t.cursor_models_col_model()}</th>
-                                        <th class="pb-2 pr-3 font-medium">{t.cursor_models_col_alias()}</th>
-                                        <th class="pb-2 w-20"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {rows.into_iter().enumerate().map(|(idx, (model_sig, alias_sig))| {
-                                        let remove_idx = idx;
-                                        view! {
-                                            <tr class="border-b border-theme-border/50">
-                                                <td class="py-2 pr-3">
-                                                    <input
-                                                        type="text"
-                                                        class="input w-full text-sm"
-                                                        prop:value=move || model_sig.get()
-                                                        on:input=move |e| model_sig.set(event_target_value(&e))
-                                                        placeholder="gpt-4o"
-                                                    />
-                                                </td>
-                                                <td class="py-2 pr-3">
-                                                    <input
-                                                        type="text"
-                                                        class="input w-full text-sm"
-                                                        prop:value=move || alias_sig.get()
-                                                        on:input=move |e| alias_sig.set(event_target_value(&e))
-                                                        placeholder="deepseek-chat"
-                                                    />
-                                                </td>
-                                                <td class="py-2 text-center">
-                                                    <button
-                                                        on:click=move |_| on_remove(remove_idx)
-                                                        class="btn btn-ghost text-xs text-error"
-                                                    >
-                                                        "\u{2715}"
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        }
-                                    }).collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
-
-                            <div class="flex items-center justify-between mt-4 pt-3 border-t border-theme-border/50">
-                                <button
-                                    on:click=on_add
-                                    class="btn btn-secondary text-xs"
-                                >
-                                    {t.cursor_models_alias_add()}
-                                </button>
-                                <div class="flex items-center gap-3">
-                                    {move || if !feedback.get().is_empty() {
-                                        view! {
-                                            <span class="text-xs text-theme-secondary">{feedback.get()}</span>
-                                        }.into_any()
-                                    } else {
-                                        view! { <span></span> }.into_any()
-                                    }}
-                                    <button
-                                        on:click=on_save
-                                        disabled=move || saving.get()
-                                        class="btn btn-primary text-sm"
-                                    >
-                                        {t.routing_save()}
-                                    </button>
-                                </div>
-                            </div>
-                        }.into_any()
-                    },
-                }}
-            </div>
         </div>
     }
 }

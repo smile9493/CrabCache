@@ -199,7 +199,6 @@ mod tests {
         let chunk = b"data: hello\ndata: world\n\n";
         let events = parse_sse_chunk(chunk);
         assert_eq!(events.len(), 2);
-        // Verify the events borrow from the original chunk
         let chunk_ptr = chunk.as_ptr();
         let data0_ptr = events[0].data.as_ptr();
         let data1_ptr = events[1].data.as_ptr();

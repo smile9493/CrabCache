@@ -624,6 +624,7 @@ impl GatewayConfig {
                     tls_sni,
                     router,
                     upstream_pool: pool_handle,
+                    proxy_url: None,
                 }),
             );
         }

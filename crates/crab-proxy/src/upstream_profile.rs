@@ -13,6 +13,8 @@ pub struct UpstreamProfileRuntime {
     pub router: LbRouter,
     /// Shared with `RuntimeConfig::upstream_pool` so Management hot-reload applies to outbound calls.
     pub upstream_pool: Arc<RwLock<Arc<UpstreamKeyPool>>>,
+    /// Optional proxy for OAuth HTTP requests (socks5://, http://, etc.).
+    pub proxy_url: Option<String>,
 }
 
 impl UpstreamProfileRuntime {

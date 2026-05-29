@@ -316,32 +316,20 @@ let sse_body = std::mem::take(&mut ctx.stream.client_sse_body);
 
 ## 优化 H（高收益 · 中风险）：streaming defer 更激进的阈值
 
-### 问题
+### 现状（2026-05）
 
-[request_filter.rs:785](file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L785)：
+- 阈值已降为 **32 KiB**（[`request_filter.rs`](../crates/crab-proxy/src/phases/request_filter.rs) `MIN_STREAMING_DEFER_BYTES`）。
+- **H2 已落地**：`try_defer_finalize_early_exact_cache` 在 EOS 对完整 body 做 L0/L1 exact lookup；命中则 `suppress_upstream` 返回缓存（upstream 可能已 idle 连接）。
+- 安全门禁：`defer_body_incomplete`（Content-Length / truncated JSON）、circuit breaker、`skip_upstream_trailing_empty_eos` PATCH。
 
-```rust
-const MIN_STREAMING_DEFER_BYTES: usize = 64 * 1024;
-```
+### 历史问题（已缓解）
 
-streaming body forward 只在 body ≥ 64KB 时才触发。但 MiMo 请求的典型 body 在 200KB–2MB，中位数约 400KB。
-
-问题在于：64KB 阈值意味着客户端需要先上传 64KB 才能触发 defer，而这 64KB 的上传时间（以及后续的 pipeline select + upstream connect）是**串行等待**的。
-
-更关键的是，`streaming_deferred_handoff` 跳过了 Phase 5（cache + coalesce）—— 这是有意为之（[L938–955](file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L938-L955)），因为 defer 时 body 不完整无法生成 cache key。但这意味着 **defer 路径永远不会命中缓存**。
-
-### 修复方向
-
-两个独立方向：
-
-**H1. 降低阈值到 32KB**（小风险）：MiMo body 在前 32KB 就能 `quick_parse` 出 model/stream 字段（这些字段通常在 JSON 的前 2KB）。
-
-**H2. defer 路径加入 "deferred cache lookup"**（中风险）：在 `finalize_streaming_body`（body 完整后）增加 cache 查询。如果命中，直接返回缓存结果而不发给 upstream。当前 [finalize_streaming_body:938](file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L938) 的 `run_post_body_phases` 已经包含完整的 Phase 4–5，但此时 upstream 连接可能已经建立（浪费了一个连接）。可以在 cache hit 时主动关闭上游连接。
+defer 路径在 partial read 时无法生成 exact cache key，因此 **early handoff 阶段**仍跳过 Phase 5；完整 body 到达后在 `finalize_streaming_body` 再查缓存。
 
 ### 预估收益
 
-- **H1**：对 200–700KB body，defer 更早触发，upstream connect 提前 ~5–10ms
-- **H2**：defer 路径也能享受缓存命中，但增加了代码复杂度
+- **32 KiB 阈值**：对 200–700KB body，upstream connect 更早与上传并行（典型 **~1–2s** wall clock，取决于上行带宽）。
+- **EOS early exact**：defer 路径与正常路径共享 cache hit；idle upstream 连接为可接受浪费。
 
 ---
 

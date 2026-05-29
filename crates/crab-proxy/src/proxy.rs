@@ -27,8 +27,7 @@ impl GatewayProxy {
     pub(crate) fn is_mimo_pipeline(p: RequestPipeline) -> bool {
         matches!(
             p,
-            RequestPipeline::MimoRelay
-                | RequestPipeline::MimoTokenPlanRelay
+            RequestPipeline::MimoTokenPlanRelay
                 | RequestPipeline::MimoPaygRelay
         )
     }
@@ -561,21 +560,16 @@ pub(crate) fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> 
 
 /// Whether Pingora should defer upstream body I/O until `request_body_filter` supplies bytes.
 ///
-/// Covers streaming defer and MiMo direct passthrough (prefix sniff + chunk relay). Without
-/// this, H1/H2 may skip the initial body pipe or send an empty END_STREAM before the armed
-/// prefix is forwarded — upstream sees invalid/empty JSON (`400 Param Incorrect`).
+/// MiMo direct passthrough: prefix sniff + chunk relay. Without this, H1/H2 may skip the
+/// initial body pipe or send an empty END_STREAM before the armed prefix is forwarded —
+/// upstream sees invalid/empty JSON (`400 Param Incorrect`).
 pub fn should_defer_upstream_request_body(ctx: &GatewayContext) -> bool {
-    (ctx.request_passthrough.active && !ctx.request_passthrough.finalized)
-        || ctx.streaming_body.streaming_defer_emit_at_eos
-        || (ctx.streaming_body.active && !ctx.streaming_body.finalized)
+    ctx.request_passthrough.active && !ctx.request_passthrough.finalized
 }
 
 /// Whether the current defer-path upstream chunk should end the request body.
 pub fn should_upstream_body_end_stream(session: &mut Session, ctx: &GatewayContext) -> bool {
     if ctx.request_passthrough.active && !ctx.request_passthrough.finalized {
-        return false;
-    }
-    if ctx.streaming_body.active && !ctx.streaming_body.finalized {
         return false;
     }
     session.is_body_done()
@@ -586,7 +580,6 @@ pub fn should_upstream_body_end_stream(session: &mut Session, ctx: &GatewayConte
 /// upstream sees headers + 0-byte body → MiMo `400 Invalid JSON`).
 pub fn should_skip_upstream_trailing_empty_eos(ctx: &GatewayContext) -> bool {
     ctx.upstream.prepared_upstream_body_emitted
-        || ctx.streaming_body.suppress_upstream
         || (ctx.request_passthrough.active && !ctx.request_passthrough.finalized)
 }
 
@@ -640,39 +633,5 @@ mod tests {
         assert!(should_skip_upstream_trailing_empty_eos(&ctx));
         ctx.request_passthrough.finalized = true;
         assert!(!should_skip_upstream_trailing_empty_eos(&ctx));
-    }
-
-    #[test]
-    fn skip_trailing_empty_eos_when_suppress_upstream() {
-        let mut ctx = GatewayContext::new("req".into());
-        assert!(!should_skip_upstream_trailing_empty_eos(&ctx));
-        ctx.streaming_body.suppress_upstream = true;
-        assert!(should_skip_upstream_trailing_empty_eos(&ctx));
-        ctx.streaming_body.suppress_upstream = false;
-        ctx.upstream.prepared_upstream_body_emitted = true;
-        assert!(should_skip_upstream_trailing_empty_eos(&ctx));
-    }
-
-    #[test]
-    fn defer_upstream_body_for_passthrough_and_streaming_defer() {
-        let mut ctx = GatewayContext::new("req".into());
-        assert!(!should_defer_upstream_request_body(&ctx));
-
-        ctx.request_passthrough.active = true;
-        assert!(should_defer_upstream_request_body(&ctx));
-        ctx.request_passthrough.finalized = true;
-        assert!(!should_defer_upstream_request_body(&ctx));
-        ctx.request_passthrough.active = false;
-        ctx.request_passthrough.finalized = false;
-
-        ctx.streaming_body.streaming_defer_emit_at_eos = true;
-        assert!(should_defer_upstream_request_body(&ctx));
-        ctx.streaming_body.streaming_defer_emit_at_eos = false;
-
-        ctx.streaming_body.active = true;
-        ctx.streaming_body.finalized = false;
-        assert!(should_defer_upstream_request_body(&ctx));
-        ctx.streaming_body.finalized = true;
-        assert!(!should_defer_upstream_request_body(&ctx));
     }
 }

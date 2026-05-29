@@ -68,22 +68,22 @@ pub fn AuditLogPage() -> impl IntoView {
             match api::fetch_audit_logs(limit_val, offset_val, action_opt).await {
                 Ok(mut new_entries) => {
                     if append {
-                        entries.update(|opt| {
+                        entries.try_update(|opt| {
                             if let Some(Ok(existing)) = opt {
                                 existing.append(&mut new_entries);
                             }
                         });
-                        offset.set(offset_val + limit_val);
-                        has_more.set(new_entries.len() >= limit_val as usize);
+                        offset.try_set(offset_val + limit_val);
+                        has_more.try_set(new_entries.len() >= limit_val as usize);
                     } else {
-                        has_more.set(new_entries.len() >= limit_val as usize);
-                        offset.set(limit_val);
-                        entries.set(Some(Ok(new_entries)));
+                        has_more.try_set(new_entries.len() >= limit_val as usize);
+                        offset.try_set(limit_val);
+                        entries.try_set(Some(Ok(new_entries)));
                     }
                 }
-                Err(e) => entries.set(Some(Err(e))),
+                Err(e) => entries.try_set(Some(Err(e))),
             }
-            loading.set(false);
+            loading.try_set(false);
         });
     };
 

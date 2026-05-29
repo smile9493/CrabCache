@@ -66,10 +66,6 @@ pub struct RequestDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
     #[serde(default)]
-    pub streaming_defer: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub streaming_defer_reject_reason: Option<String>,
-    #[serde(default)]
     pub request_passthrough: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,

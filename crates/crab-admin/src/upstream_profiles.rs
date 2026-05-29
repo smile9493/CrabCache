@@ -23,6 +23,7 @@ fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
         tls_sni: p.tls_sni,
         key_pool_count: p.key_pool_count,
         keys_available: p.keys_available,
+        proxy_url: p.proxy_url,
     }
 }
 
@@ -51,6 +52,7 @@ pub async fn put_profile(
         endpoints: req.endpoints,
         tls_sni: req.tls_sni,
         default_weight: 1,
+        proxy_url: req.proxy_url,
     };
     let view = state
         .gateway
@@ -250,4 +252,23 @@ pub async fn list_profiles_json(
         .await
         .map(Json)
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))
+}
+
+/// Append a single API key to a profile's key pool (used by Codex OAuth import).
+pub async fn put_profile_keys_append(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    secret: &str,
+    account_id: &str,
+) -> Result<(), (axum::http::StatusCode, String)> {
+    let key_input = UpstreamKeyInput {
+        id: String::new(),
+        secret: secret.to_string(),
+        enabled: true,
+        account_id: account_id.to_string(),
+    };
+    put_profile_keys(state, profile_id, vec![key_input], false)
+        .await
+        .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))?;
+    Ok(())
 }

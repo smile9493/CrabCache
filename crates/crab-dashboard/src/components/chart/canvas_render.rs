@@ -241,16 +241,16 @@ pub fn render_horizontal_bar_chart(
         .draw()
         .ok()?;
 
-    let bar_h = 0.72;
-    for (i, &v) in values.iter().enumerate() {
-        if !(v > 0.0 && v.is_finite()) {
-            continue;
+        let bar_h = 0.72;
+        for (i, &v) in values.iter().enumerate() {
+            if !(v > 0.0 && v.is_finite()) {
+                continue;
+            }
+            let y0 = i as f64 + (1.0 - bar_h) / 2.0;
+            let y1 = y0 + bar_h;
+            let color = palette.nth_series_color(i).mix(0.85).filled();
+            let _ = chart.draw_series(std::iter::once(Rectangle::new([(0.0, y0), (v, y1)], color)));
         }
-        let y0 = i as f64 + (1.0 - bar_h) / 2.0;
-        let y1 = y0 + bar_h;
-        let color = palette.accent.mix(0.85).filled();
-        let _ = chart.draw_series(std::iter::once(Rectangle::new([(0.0, y0), (v, y1)], color)));
-    }
 
     drop(chart);
     root.present().ok()?;

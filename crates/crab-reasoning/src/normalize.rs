@@ -1165,7 +1165,10 @@ pub struct GenericPreparedRequest {
 }
 
 /// True when MiMo prepare only filtered unsupported top-level fields or normalized `model`.
-fn mimo_prepare_changes_wire_body(payload: &Value, prepared: &serde_json::Map<String, Value>) -> bool {
+fn mimo_prepare_changes_wire_body(
+    payload: &Value,
+    prepared: &serde_json::Map<String, Value>,
+) -> bool {
     let supported_set: std::collections::HashSet<&str> =
         SUPPORTED_REQUEST_FIELDS.iter().copied().collect();
     if let Some(obj) = payload.as_object() {
@@ -1177,10 +1180,7 @@ fn mimo_prepare_changes_wire_body(payload: &Value, prepared: &serde_json::Map<St
     } else {
         return true;
     }
-    let raw_model = payload
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("");
+    let raw_model = payload.get("model").and_then(|m| m.as_str()).unwrap_or("");
     let normalized = normalize_mimo_model(raw_model);
     if payload.get("model").and_then(|m| m.as_str()) != Some(normalized.as_str()) {
         return true;

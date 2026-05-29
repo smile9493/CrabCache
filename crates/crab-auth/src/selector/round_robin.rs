@@ -1,4 +1,4 @@
-use super::{availability::is_blocked_for_model, AuthEntry, SelectionContext, Selector};
+use super::{AuthEntry, SelectionContext, Selector, availability::is_blocked_for_model};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -60,7 +60,11 @@ impl Selector for RoundRobinSelector {
 
         available.sort_by(|a, b| a.1.record.id.cmp(&b.1.record.id));
 
-        let cursor_key = format!("{}:{}", ctx.provider, super::availability::canonical_model_key(&ctx.model));
+        let cursor_key = format!(
+            "{}:{}",
+            ctx.provider,
+            super::availability::canonical_model_key(&ctx.model)
+        );
         let len = available.len();
 
         let mut cursors = self.cursors.write();

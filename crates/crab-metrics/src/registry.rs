@@ -100,12 +100,6 @@ pub struct GatewayMetrics {
     pub admin_log_pg_rows: IntGaugeVec,
     /// Global requests-per-second estimate from pingora-limits::Rate.
     pub global_rps: Gauge,
-    pub streaming_defer_total: IntCounter,
-    pub streaming_defer_finalize_ok_total: IntCounter,
-    pub streaming_defer_cache_hit_total: IntCounter,
-    pub streaming_defer_parse_fail_total: IntCounter,
-    pub streaming_defer_empty_body_total: IntCounter,
-    pub streaming_defer_suppress_total: IntCounter,
     pub session_store_hit_total: IntCounter,
     pub session_store_miss_total: IntCounter,
     pub session_store_prefix_break_total: IntCounter,
@@ -491,31 +485,6 @@ impl GatewayMetrics {
             "Estimated global requests per second (pingora-limits 1s double-buffered)",
         ))?;
 
-        let streaming_defer_total = IntCounter::new(
-            "gateway_streaming_defer_total",
-            "MiMo streaming_body_forward defer handoffs (partial body read before upstream)",
-        )?;
-        let streaming_defer_finalize_ok_total = IntCounter::new(
-            "gateway_streaming_defer_finalize_ok_total",
-            "Streaming defer finalize continued to upstream with prepared body",
-        )?;
-        let streaming_defer_cache_hit_total = IntCounter::new(
-            "gateway_streaming_defer_cache_hit_total",
-            "Streaming defer finalize short-circuited by cache hit",
-        )?;
-        let streaming_defer_parse_fail_total = IntCounter::new(
-            "gateway_streaming_defer_parse_fail_total",
-            "Streaming defer finalize rejected invalid JSON",
-        )?;
-        let streaming_defer_empty_body_total = IntCounter::new(
-            "gateway_streaming_defer_empty_body_total",
-            "Streaming defer empty upstream body suppressed at EOS",
-        )?;
-        let streaming_defer_suppress_total = IntCounter::new(
-            "gateway_streaming_defer_suppress_total",
-            "Streaming defer upstream chunk suppressions",
-        )?;
-
         let session_store_hit_total = IntCounter::new(
             "gateway_session_store_hit_total",
             "MiMo session store Redis hits (append-only merge)",
@@ -587,12 +556,6 @@ impl GatewayMetrics {
             admin_log_disk_bytes,
             admin_log_pg_rows,
             global_rps,
-            streaming_defer_total,
-            streaming_defer_finalize_ok_total,
-            streaming_defer_cache_hit_total,
-            streaming_defer_parse_fail_total,
-            streaming_defer_empty_body_total,
-            streaming_defer_suppress_total,
             session_store_hit_total,
             session_store_miss_total,
             session_store_prefix_break_total,
@@ -651,42 +614,12 @@ impl GatewayMetrics {
         registry.register(Box::new(self.admin_log_disk_bytes.clone()))?;
         registry.register(Box::new(self.admin_log_pg_rows.clone()))?;
         registry.register(Box::new(self.global_rps.clone()))?;
-        registry.register(Box::new(self.streaming_defer_total.clone()))?;
-        registry.register(Box::new(self.streaming_defer_finalize_ok_total.clone()))?;
-        registry.register(Box::new(self.streaming_defer_cache_hit_total.clone()))?;
-        registry.register(Box::new(self.streaming_defer_parse_fail_total.clone()))?;
-        registry.register(Box::new(self.streaming_defer_empty_body_total.clone()))?;
-        registry.register(Box::new(self.streaming_defer_suppress_total.clone()))?;
         registry.register(Box::new(self.session_store_hit_total.clone()))?;
         registry.register(Box::new(self.session_store_miss_total.clone()))?;
         registry.register(Box::new(self.session_store_prefix_break_total.clone()))?;
         registry.register(Box::new(self.session_store_upstream_bytes_saved.clone()))?;
         registry.register(Box::new(self.request_passthrough_total.clone()))?;
         Ok(())
-    }
-
-    pub fn record_streaming_defer_total(&self) {
-        self.streaming_defer_total.inc();
-    }
-
-    pub fn record_streaming_defer_finalize_ok(&self) {
-        self.streaming_defer_finalize_ok_total.inc();
-    }
-
-    pub fn record_streaming_defer_cache_hit(&self) {
-        self.streaming_defer_cache_hit_total.inc();
-    }
-
-    pub fn record_streaming_defer_parse_fail(&self) {
-        self.streaming_defer_parse_fail_total.inc();
-    }
-
-    pub fn record_streaming_defer_empty_body(&self) {
-        self.streaming_defer_empty_body_total.inc();
-    }
-
-    pub fn record_streaming_defer_suppress(&self) {
-        self.streaming_defer_suppress_total.inc();
     }
 
     pub fn record_session_store_hit(&self) {

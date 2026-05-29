@@ -220,8 +220,6 @@ mod tests {
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
-            streaming_defer: false,
-            streaming_defer_reject_reason: None,
             session_store: None,
             stable_session_kind: None,
             upstream_outbound_bytes: None,

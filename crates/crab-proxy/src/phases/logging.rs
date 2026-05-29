@@ -101,7 +101,6 @@ pub(crate) async fn run(
             cache_hit = ctx.cache_tier.is_some(),
             cache_tier = ?ctx.cache_tier,
             is_streaming = ctx.is_streaming,
-            streaming_defer = ctx.streaming_body.active,
             session_store = ?ctx.session_store_outcome,
             consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
             conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
@@ -157,10 +156,14 @@ pub(crate) async fn run(
                     ctx.cache_tier.is_some(),
                     ctx.cache_tier.map(|t| t.as_str().to_string()),
                     ctx.request_composition.clone(),
-                    if passthrough_trace { 0 } else { max_payload },
+                    max_payload,
                 );
                 if passthrough_trace {
                     entry.content_length = ctx.content_length;
+                    if let Some(full_hash) = ctx.req_hash.as_deref() {
+                        entry.request_hash =
+                            crate::helper_fns::trace_request_hash_prefix(full_hash);
+                    }
                 }
                 entry.retired_prefix_messages = ctx.retired_prefix_messages;
                 entry.reasoning_strategy =
@@ -170,6 +173,8 @@ pub(crate) async fn run(
                                 .missing_reasoning_strategy
                                 .clone(),
                         )
+                    } else if passthrough_trace {
+                        Some("passthrough".to_string())
                     } else {
                         Some("none".to_string())
                     };
@@ -178,8 +183,6 @@ pub(crate) async fn run(
                 if hit + miss > 0 {
                     entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
                 }
-                entry.streaming_defer = ctx.streaming_body.active;
-                entry.streaming_defer_reject_reason = ctx.streaming_defer_reject_reason.clone();
                 entry.session_store = ctx.session_store_outcome.clone();
                 entry.stable_session_kind = ctx.stable_session_kind.clone();
                 entry.upstream_outbound_bytes = Some(ctx.upstream_outbound_body_len);

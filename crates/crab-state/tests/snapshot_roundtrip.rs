@@ -34,6 +34,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             tls_sni: "api.deepseek.com".to_string(),
             router: LbRouter::new(&backends).unwrap(),
             upstream_pool: pool_handle.clone(),
+            proxy_url: None,
         }),
     );
     RuntimeConfig::new(
@@ -297,6 +298,7 @@ fn upsert_profile_is_immediately_readable() {
         tls_sni: "api.xiaomimimo.com".to_string(),
         router: LbRouter::new(&mimo_backends).unwrap(),
         upstream_pool: mimo_pool_handle,
+        proxy_url: None,
     });
 
     runtime.upsert_profile(mimo_profile).expect("upsert");

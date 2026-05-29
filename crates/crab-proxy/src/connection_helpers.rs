@@ -41,7 +41,8 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
         });
     }
 
-    if config.upstream_disable_keepalive {
+    if config.upstream_disable_keepalive && config.upstream_force_http1 {
+        // Stale HTTP/1.1 reuse only; H2 multiplexing keeps idle_timeout for pool reuse.
         options.idle_timeout = Some(Duration::from_secs(0));
     } else if let Some(idle_secs) = config.idle_timeout_secs {
         options.idle_timeout = Some(Duration::from_secs(idle_secs));
@@ -89,5 +90,26 @@ mod tests {
         apply_connection_options(&config, &mut options);
         assert_eq!(options.alpn, ALPN::H1);
         assert!(options.h2_ping_interval.is_none());
+    }
+
+    #[test]
+    fn disable_keepalive_h2_keeps_pool_idle_timeout() {
+        let mut config = ConnectionConfig::default();
+        config.upstream_disable_keepalive = true;
+        config.upstream_force_http1 = false;
+        config.idle_timeout_secs = Some(120);
+        let mut options = PeerOptions::new();
+        apply_connection_options(&config, &mut options);
+        assert_eq!(options.idle_timeout, Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn disable_keepalive_h1_disables_pool() {
+        let mut config = ConnectionConfig::default();
+        config.upstream_disable_keepalive = true;
+        config.upstream_force_http1 = true;
+        let mut options = PeerOptions::new();
+        apply_connection_options(&config, &mut options);
+        assert_eq!(options.idle_timeout, Some(Duration::from_secs(0)));
     }
 }

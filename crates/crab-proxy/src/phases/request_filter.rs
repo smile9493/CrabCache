@@ -53,10 +53,6 @@ fn request_passthrough_allowed_pipeline(pipeline: RequestPipeline) -> bool {
     mimo_direct_passthrough(pipeline)
 }
 
-fn streaming_defer_allowed_pipeline(pipeline: RequestPipeline) -> bool {
-    crate::streaming_body_forward::pipeline_eligible(pipeline) && !mimo_direct_passthrough(pipeline)
-}
-
 /// Shared path after the full client body is available (normal read or streaming finalize).
 async fn run_post_body_phases(
     proxy: &GatewayProxy,
@@ -212,7 +208,7 @@ async fn run_post_body_phases(
     };
 
     let reasoning_cfg_early = proxy.reasoning_config();
-    let skip_early_exact = skip_early_pipeline_select || ctx.streaming_body.active;
+    let skip_early_exact = skip_early_pipeline_select;
     if !skip_early_exact
         && (GatewayProxy::is_mimo_pipeline(selection.pipeline)
             || matches!(selection.pipeline, RequestPipeline::GenericRelay))
@@ -313,8 +309,6 @@ async fn run_post_body_phases(
                         body_len = full_body.len(),
                         body_prefix_hex = %preview,
                         parse_error = %parse_err,
-                        streaming_defer = ctx.streaming_body.active,
-                        deferred_partial_len = ctx.streaming_body.deferred_partial_len,
                         "Rejecting request: client JSON parse failed"
                     );
                     let body = serde_json::json!({
@@ -329,11 +323,6 @@ async fn run_post_body_phases(
                         .await
                     {
                         let _ = session.respond_error(400).await;
-                    }
-                    if ctx.streaming_body.active {
-                        ctx.streaming_body.suppress_upstream = true;
-                        global_metrics().record_streaming_defer_parse_fail();
-                        proxy.state.streaming_defer_circuit_breaker.record_failure();
                     }
                     return Ok(true);
                 }
@@ -430,8 +419,7 @@ async fn run_post_body_phases(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::MimoRelay
-            | RequestPipeline::MimoTokenPlanRelay
+            RequestPipeline::MimoTokenPlanRelay
             | RequestPipeline::MimoPaygRelay => {
                 let features = &proxy.state.features;
                 let mimo = prepare_mimo_request(
@@ -750,13 +738,12 @@ async fn run_post_body_phases(
 mod tests {
     use super::{
         mimo_direct_passthrough, request_passthrough_allowed_pipeline,
-        streaming_defer_allowed_pipeline,
     };
     use crab_pipeline::RequestPipeline;
 
     #[test]
     fn mimo_pipelines_use_direct_passthrough() {
-        assert!(mimo_direct_passthrough(RequestPipeline::MimoRelay));
+        assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
         assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
         assert!(mimo_direct_passthrough(RequestPipeline::MimoPaygRelay));
         assert!(!mimo_direct_passthrough(RequestPipeline::GenericRelay));
@@ -764,16 +751,9 @@ mod tests {
     }
 
     #[test]
-    fn mimo_pipelines_do_not_arm_streaming_defer() {
-        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoRelay));
-        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoTokenPlanRelay));
-        assert!(!streaming_defer_allowed_pipeline(RequestPipeline::MimoPaygRelay));
-    }
-
-    #[test]
     fn mimo_pipelines_allow_request_passthrough() {
         assert!(request_passthrough_allowed_pipeline(
-            RequestPipeline::MimoRelay
+            RequestPipeline::MimoTokenPlanRelay
         ));
         assert!(request_passthrough_allowed_pipeline(
             RequestPipeline::MimoTokenPlanRelay
@@ -811,8 +791,13 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     if session.is_body_done() || partial_body.len() < MIN_PASSTHROUGH_PREFIX_BYTES {
         return false;
     }
-    if !crate::streaming_body_forward::defer_partial_ready_for_arm(partial_body) {
-        return false;
+    {
+        let Ok(text) = std::str::from_utf8(partial_body) else {
+            return false;
+        };
+        if text.trim().is_empty() || !text.contains("\"model\"") {
+            return false;
+        }
     }
     let quick = quick_parse_request_fields(partial_body);
     let Some(model) = quick.model.filter(|m| !m.is_empty()) else {
@@ -868,165 +853,6 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     true
 }
 
-/// Early pipeline select on a partial body so `upstream_peer` can run before EOS.
-fn try_arm_streaming_defer_on_partial_body(
-    proxy: &GatewayProxy,
-    session: &mut Session,
-    ctx: &mut GatewayContext,
-    partial_body: &[u8],
-    req_path: &str,
-    req_method: &http::Method,
-    user_agent: &Option<String>,
-    key_pipeline: &Option<String>,
-    key_upstream_profile: &Option<String>,
-    domain_pipeline: &Option<String>,
-    domain_upstream_profile: &Option<String>,
-) -> bool {
-    fn reject(ctx: &mut GatewayContext, reason: &str) -> bool {
-        ctx.streaming_defer_reject_reason = Some(reason.to_string());
-        false
-    }
-
-    // Safety guard: only defer when the client body is large enough to justify overlapping
-    // upstream connect. Small bodies (a few KB) are more likely to be incomplete JSON prefixes
-    // during early reads, which would lead to upstream seeing an empty/invalid body.
-    const MIN_STREAMING_DEFER_BYTES: usize = 32 * 1024;
-    if !proxy.state.streaming_defer_circuit_breaker.defer_allowed() {
-        return reject(ctx, "circuit_open");
-    }
-    if !crate::streaming_body_forward::feature_enabled(proxy) {
-        return reject(ctx, "feature_disabled");
-    }
-    if !crate::streaming_body_forward::path_eligible(req_path, req_method) {
-        return reject(ctx, "path_ineligible");
-    }
-    if partial_body.len() < MIN_STREAMING_DEFER_BYTES {
-        return reject(ctx, "below_min_bytes");
-    }
-    if partial_body.len() < 48 {
-        return reject(ctx, "below_min_prefix");
-    }
-    if !crate::streaming_body_forward::defer_partial_ready_for_arm(partial_body) {
-        return reject(ctx, "body_incomplete");
-    }
-    let quick = quick_parse_request_fields(partial_body);
-    let Some(model) = quick.model.filter(|m| !m.is_empty()) else {
-        return reject(ctx, "model_missing");
-    };
-    ctx.model = model;
-    ctx.is_streaming = quick.stream.unwrap_or(false);
-    if !ctx.is_streaming {
-        return reject(ctx, "non_streaming_request");
-    }
-    ctx.conversation_id = quick
-        .conversation_id
-        .clone()
-        .or_else(|| ctx.conversation_id.clone());
-    ctx.prompt_cache_key = quick.prompt_cache_key.or(ctx.prompt_cache_key.clone());
-
-    let pipeline_globals = proxy.state.runtime.pipeline_globals();
-    let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
-    let pipe_ctx = PipelineRequestContext {
-        model: &ctx.model,
-        payload: None,
-        key_pipeline: key_pipeline.as_deref().map(PipelineOverride::from_str),
-        key_upstream_profile: key_upstream_profile.as_deref(),
-        domain_pipeline: domain_pipeline.as_deref().map(PipelineOverride::from_str),
-        domain_upstream_profile: domain_upstream_profile.as_deref(),
-        conversation_id_header: ctx.conversation_id.as_deref(),
-        user_agent: user_agent.as_deref(),
-        alias_upstream_model: model_alias_entry.map(|e| e.upstream.as_str()),
-        model_alias_pipeline: model_alias_entry.map(|e| e.pipeline),
-    };
-    let selection = select_request_pipeline(
-        &pipeline_globals,
-        &proxy.state.runtime.profile_descriptors(),
-        &pipe_ctx,
-    );
-    if mimo_direct_passthrough(selection.pipeline) {
-        return reject(ctx, "direct_passthrough_pipeline");
-    }
-    if !streaming_defer_allowed_pipeline(selection.pipeline)
-        || !crate::streaming_body_forward::try_arm_defer(
-        proxy,
-        req_path,
-        req_method,
-        selection.pipeline,
-        session,
-    ) {
-        return if !streaming_defer_allowed_pipeline(selection.pipeline) {
-            reject(ctx, "pipeline_ineligible")
-        } else {
-            reject(ctx, "defer_gate_blocked")
-        };
-    }
-    ctx.streaming_defer_reject_reason = None;
-    ctx.request_pipeline = Some(selection.pipeline);
-    ctx.pipeline_reason = Some(selection.reason);
-    ctx.upstream_profile_id = Some(selection.upstream_profile_id);
-    global_metrics().record_pipeline_selected(
-        selection.pipeline.as_str(),
-        ctx.upstream_profile_id.as_deref().unwrap_or("default"),
-        selection.reason.as_str(),
-    );
-    timeline_stamp(&mut ctx.timeline.pipeline_select_done);
-    true
-}
-
-/// Partial MiMo body read: upstream connects while the client still uploads.
-async fn streaming_deferred_handoff(
-    proxy: &GatewayProxy,
-    session: &mut Session,
-    ctx: &mut GatewayContext,
-    partial_body: Vec<u8>,
-) -> Result<bool> {
-    if partial_body.is_empty() {
-        let _ = session.respond_error(400).await;
-        return Ok(true);
-    }
-    ctx.streaming_body.active = true;
-    ctx.streaming_body.deferred_partial_len = partial_body.len();
-    ctx.streaming_body.buffer = partial_body;
-    // Prepared body is injected at client EOS; use a dedicated flag (not retry_buffer_truncated).
-    ctx.streaming_body.streaming_defer_emit_at_eos = true;
-    // #region debug-point A:defer-arm
-    debug_agent_log(
-        "A",
-        "request_filter.rs:streaming_deferred_handoff",
-        "[DEBUG] streaming defer armed",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "partial_len": ctx.streaming_body.buffer.len(),
-            "inbound_content_length": ctx.streaming_body.inbound_content_length,
-            "is_streaming": ctx.is_streaming,
-            "pipeline": ctx.request_pipeline.map(|p| format!("{p:?}")),
-            "send_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
-            "session_is_body_done_at_arm": session.is_body_done(),
-            "retry_buffer_truncated_at_arm": session.retry_buffer_truncated(),
-            "retry_buffer_len_at_arm": session.get_retry_buffer().map(|b| b.len()),
-        }),
-    );
-    // #endregion
-    if !proxy.try_acquire_upstream_key(ctx) {
-        let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
-        let failure = pool.diagnose_acquire_failure();
-        let (body, _code, retry_after) = upstream_pool_exhausted_error_details(failure);
-        if !send_json_error_with_retry_after(
-            session,
-            http::StatusCode::SERVICE_UNAVAILABLE,
-            &body,
-            retry_after,
-        )
-        .await
-        {
-            let _ = session.respond_error(503).await;
-        }
-        return Ok(true);
-    }
-    global_metrics().record_streaming_defer_total();
-    Ok(false)
-}
-
 /// Direct MiMo body relay: only the sniffed prefix is buffered locally, later chunks pass through.
 async fn request_passthrough_handoff(
     proxy: &GatewayProxy,
@@ -1040,13 +866,15 @@ async fn request_passthrough_handoff(
     }
     ctx.request_passthrough.active = true;
     ctx.request_passthrough.armed_prefix_len = partial_body.len();
-    ctx.request_passthrough.buffer = partial_body;
     ctx.request_passthrough.prefix_emitted = false;
     ctx.request_passthrough.finalized = false;
+    ctx.request_passthrough.body_hasher = Some(Sha256::new());
+    crate::helper_fns::passthrough_hash_update(ctx, &partial_body);
+    ctx.request_passthrough.buffer = partial_body;
     ctx.upstream.retry_budget = 0;
     global_metrics().record_request_passthrough_total();
     ctx.content_length = ctx
-        .streaming_body
+        .request_passthrough
         .inbound_content_length
         .unwrap_or(ctx.request_passthrough.buffer.len());
     ctx.upstream_outbound_body_len = 0;
@@ -1104,193 +932,6 @@ async fn request_passthrough_handoff(
     );
     // #endregion
     Ok(false)
-}
-
-/// Exact cache at defer finalize (body complete, before full `run_post_body_phases` JSON work).
-async fn try_defer_finalize_early_exact_cache(
-    proxy: &GatewayProxy,
-    session: &mut Session,
-    ctx: &mut GatewayContext,
-    full_body: &Bytes,
-) -> Result<bool, pingora_core::Error> {
-    let Some(pipeline) = ctx.request_pipeline else {
-        return Ok(false);
-    };
-    if !GatewayProxy::is_mimo_pipeline(pipeline)
-        && !matches!(pipeline, RequestPipeline::GenericRelay)
-    {
-        return Ok(false);
-    }
-
-    let quick = quick_parse_request_fields(full_body);
-    ctx.content_length = full_body.len();
-    ctx.original_request_body = Some(full_body.clone());
-    if ctx.req_hash.is_none() {
-        let mut hasher = Sha256::new();
-        hasher.update(full_body.as_ref());
-        ctx.req_hash = Some(hex::encode(hasher.finalize()));
-    }
-    ctx.is_streaming = quick.stream.unwrap_or(false);
-    if ctx.model.is_empty() {
-        ctx.model = quick
-            .model
-            .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| proxy.active_upstream_profile(ctx).fallback_model.clone());
-    }
-
-    let fingerprint = proxy.state.runtime.fingerprint.read().clone();
-    let cache_namespace = effective_cache_namespace(
-        proxy.state.cache_key_namespace.as_deref(),
-        ctx.project_id.as_deref(),
-    );
-    let Ok(early_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
-        full_body.as_ref(),
-        cache_namespace.as_deref(),
-        &fingerprint,
-    ) else {
-        return Ok(false);
-    };
-    ctx.cache_key = Some(early_key.clone());
-    let reasoning_cfg = proxy.reasoning_config();
-    proxy
-        .try_early_exact_cache(session, ctx, &early_key, reasoning_cfg.display_reasoning)
-        .await
-}
-
-pub(crate) async fn finalize_streaming_body(
-    proxy: &GatewayProxy,
-    session: &mut Session,
-    ctx: &mut GatewayContext,
-) -> pingora_core::Result<crate::streaming_body_forward::StreamingFinalizeOutcome> {
-    if ctx.streaming_body.finalized {
-        return Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::ContinueUpstream);
-    }
-    ctx.streaming_body.finalized = true;
-    timeline_stamp(&mut ctx.timeline.body_read_done);
-    let deferred_partial_len = ctx.streaming_body.deferred_partial_len;
-    let append_tail_bytes = ctx.streaming_body.append_tail_bytes;
-    let full_body = Bytes::from(std::mem::take(&mut ctx.streaming_body.buffer));
-    if ctx.streaming_body.active {
-        debug!(
-            request_id = %ctx.request_id,
-            deferred_partial_len,
-            append_tail_bytes,
-            assembled_len = full_body.len(),
-            "streaming defer body assembly"
-        );
-        // #region debug-point B:finalize-assembled
-        debug_agent_log(
-            "B",
-            "request_filter.rs:finalize_streaming_body",
-            "[DEBUG] streaming defer finalized body",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "deferred_partial_len": deferred_partial_len,
-                "append_tail_bytes": append_tail_bytes,
-                "assembled_len": full_body.len(),
-                "inbound_content_length": ctx.streaming_body.inbound_content_length,
-                "emit_at_eos": ctx.streaming_body.streaming_defer_emit_at_eos,
-            }),
-        );
-        // #endregion
-        if full_body.len() < deferred_partial_len {
-            warn!(
-                request_id = %ctx.request_id,
-                deferred_partial_len,
-                assembled_len = full_body.len(),
-                "streaming defer assembled body shorter than deferred partial"
-            );
-        }
-    }
-    if ctx.streaming_body.active
-        && crate::streaming_body_forward::defer_body_incomplete(
-            &full_body,
-            ctx.streaming_body.inbound_content_length,
-        )
-    {
-        warn!(
-            request_id = %ctx.request_id,
-            body_len = full_body.len(),
-            inbound_content_length = ?ctx.streaming_body.inbound_content_length,
-            deferred_partial_len,
-            append_tail_bytes,
-            "streaming defer finalized with incomplete body"
-        );
-        let body = serde_json::json!({
-            "error": {
-                "message": "Request body incomplete (client upload truncated or proxy buffering)",
-                "type": "invalid_request_error",
-                "code": "incomplete_body"
-            }
-        });
-        let body_str = body.to_string();
-        if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
-            let _ = session.respond_error(400).await;
-        }
-        ctx.streaming_body.suppress_upstream = true;
-        global_metrics().record_streaming_defer_parse_fail();
-        proxy.state.streaming_defer_circuit_breaker.record_failure();
-        return Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::Handled);
-    }
-    if full_body.is_empty() {
-        let body = serde_json::json!({
-            "error": {
-                "message": "Request body is empty",
-                "type": "invalid_request_error",
-                "code": "empty_body"
-            }
-        });
-        let body_str = body.to_string();
-        if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
-            let _ = session.respond_error(400).await;
-        }
-        ctx.streaming_body.suppress_upstream = true;
-        global_metrics().record_streaming_defer_empty_body();
-        proxy.state.streaming_defer_circuit_breaker.record_failure();
-        return Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::Handled);
-    }
-    if try_defer_finalize_early_exact_cache(proxy, session, ctx, &full_body).await? {
-        ctx.streaming_body.suppress_upstream = true;
-        global_metrics().record_streaming_defer_cache_hit();
-        proxy.state.streaming_defer_circuit_breaker.record_success();
-        return Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::Handled);
-    }
-    let conversation_id_from_header = session
-        .req_header()
-        .headers
-        .get("x-conversation-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let user_agent = session
-        .req_header()
-        .headers
-        .get(http::header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let handled = run_post_body_phases(
-        proxy,
-        session,
-        ctx,
-        full_body,
-        conversation_id_from_header,
-        user_agent,
-        ctx.streaming_body.key_pipeline.clone(),
-        ctx.streaming_body.key_upstream_profile.clone(),
-        ctx.streaming_body.domain_pipeline.clone(),
-        ctx.streaming_body.domain_upstream_profile.clone(),
-    )
-    .await?;
-    if handled {
-        ctx.streaming_body.suppress_upstream = true;
-        if ctx.cache_hit.is_some() {
-            global_metrics().record_streaming_defer_cache_hit();
-            proxy.state.streaming_defer_circuit_breaker.record_success();
-        }
-        return Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::Handled);
-    }
-    global_metrics().record_streaming_defer_finalize_ok();
-    proxy.state.streaming_defer_circuit_breaker.record_success();
-    Ok(crate::streaming_body_forward::StreamingFinalizeOutcome::ContinueUpstream)
 }
 
 /// Run the full request_filter phase (Phases 1–5 + upstream key acquisition).
@@ -1644,12 +1285,12 @@ pub(crate) async fn run(
     // enables retry buffering again when the upstream connection starts; full bodies use
     // `request_body_filter` at EOS (see third_party/pingora-proxy/PATCH.md).
     timeline_stamp(&mut ctx.timeline.body_read_start);
-    ctx.streaming_body.key_pipeline = key_pipeline.clone();
-    ctx.streaming_body.key_upstream_profile = key_upstream_profile.clone();
-    ctx.streaming_body.domain_pipeline = domain_pipeline.clone();
-    ctx.streaming_body.domain_upstream_profile = domain_upstream_profile.clone();
-    ctx.streaming_body.inbound_content_length =
-        crate::streaming_body_forward::inbound_content_length(session);
+    ctx.request_passthrough.inbound_content_length = session
+        .req_header()
+        .headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
 
     let mut full_body = Vec::new();
     let max_body = proxy.state.max_request_body_bytes;
@@ -1683,25 +1324,6 @@ pub(crate) async fn run(
             )
         {
             return request_passthrough_handoff(proxy, session, ctx, full_body).await;
-        }
-        if !ctx.streaming_body.active
-            && !session.is_body_done()
-            && try_arm_streaming_defer_on_partial_body(
-                proxy,
-                session,
-                ctx,
-                &full_body,
-                &req_path,
-                &req_method,
-                &user_agent,
-                &key_pipeline,
-                &key_upstream_profile,
-                &domain_pipeline,
-                &domain_upstream_profile,
-            )
-        {
-            ctx.streaming_body.active = true;
-            return streaming_deferred_handoff(proxy, session, ctx, full_body).await;
         }
         if session.is_body_done() {
             break;
