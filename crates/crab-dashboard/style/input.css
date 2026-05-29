@@ -681,6 +681,12 @@ body {
 .chart-preview-card-body {
   pointer-events: auto;
 }
+.chart-detail-host {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
 .chart-detail-host--hidden {
   display: none;
   pointer-events: none;
@@ -696,6 +702,7 @@ body {
   background: color-mix(in srgb, var(--cc-bg) 35%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  pointer-events: auto;
 }
 .chart-detail-modal {
   width: min(960px, 96vw);
@@ -960,6 +967,8 @@ body {
 }
 .live-detail-card {
   height: auto;
+  max-height: 520px;
+  overflow-y: auto;
 }
 /* Stat bar: compact 1-row strip below config row */
 .live-stat-bar {

@@ -16,11 +16,12 @@ pub fn build_cache_entry(
     ttl_secs: u64,
     is_stream: bool,
     client_display_reasoning: bool,
+    usage: UsageInfo,
 ) -> CacheEntry {
     CacheEntry {
         response_body,
         model,
-        usage: UsageInfo::default(),
+        usage,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -39,12 +40,13 @@ pub fn build_cache_entry_with_sse(
     ttl_secs: u64,
     is_stream: bool,
     client_display_reasoning: bool,
+    usage: UsageInfo,
 ) -> CacheEntry {
     CacheEntry {
         response_body,
         sse_body: Some(sse_body),
         model,
-        usage: UsageInfo::default(),
+        usage,
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

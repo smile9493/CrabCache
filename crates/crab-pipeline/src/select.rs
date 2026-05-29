@@ -171,7 +171,7 @@ fn auto_pipeline_legacy(
             }
         }
         UpstreamProvider::Mimo => RequestPipeline::MimoTokenPlanRelay,
-        UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Other => {
+        UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Codex | UpstreamProvider::Other => {
             RequestPipeline::GenericRelay
         }
     }

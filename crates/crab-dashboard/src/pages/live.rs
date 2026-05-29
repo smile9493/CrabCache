@@ -458,8 +458,9 @@ pub fn LivePage() -> impl IntoView {
                             .unwrap_or_else(|| ids[0].clone());
                         selected_routing_key_for_routing.try_set(Some(chosen.clone()));
                         routing_key_ids_for_routing.try_set(ids);
-                        let routing = api::fetch_key_routing(&chosen).await;
-                        let concurrency = api::fetch_key_concurrency(&chosen).await;
+                        let w = window_secs.try_get_untracked().unwrap_or(12 * 3600);
+                        let routing = api::fetch_key_routing(&chosen, w).await;
+                        let concurrency = api::fetch_key_concurrency(&chosen, w).await;
                         routing_key_data_for_routing.try_set(Some(routing));
                         routing_key_concurrency_for_routing.try_set(Some(concurrency));
                     } else {
@@ -503,11 +504,12 @@ pub fn LivePage() -> impl IntoView {
             routing_key_concurrency.set(None);
             return;
         };
+        let w = window_secs.get();
         let alive = Arc::clone(&alive_for_key_effect);
         leptos::task::spawn_local(async move {
             let (routing, concurrency) = futures::join!(
-                api::fetch_key_routing(&key_id),
-                api::fetch_key_concurrency(&key_id),
+                api::fetch_key_routing(&key_id, w),
+                api::fetch_key_concurrency(&key_id, w),
             );
             if !alive.load(Ordering::Relaxed) {
                 return;
@@ -1113,13 +1115,12 @@ fn LiveBottomRow(
                 <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() e2e_open=latency_e2e_open upstream_open=latency_upstream_open />
                 <LiveTokenPanel buckets=buckets.clone() summary=data.summary.clone() open=token_open />
             </div>
-            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <LiveRoutingSummaryPanel profiles=routing_profiles selected_profile=selected_routing_profile />
                 <LiveKeyActivityPanel
                     routing_key_data=routing_key_data
                     routing_key_concurrency=routing_key_concurrency
                 />
-                <LiveLatestPanel data=data.clone() />
             </div>
             <LiveKeyDistributionPanel
                 routing_key_ids=routing_key_ids
@@ -1723,11 +1724,12 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         return ().into_any();
     }
     const MAX_ROWS: usize = 20;
-    let rows: Vec<&LiveMetricsBucket> = buckets
+    let rows: Vec<LiveMetricsBucket> = buckets
         .iter()
         .filter(|b| b.request_count > 0)
         .rev()
         .take(MAX_ROWS)
+        .cloned()
         .collect();
     if rows.is_empty() {
         return ().into_any();
@@ -1786,6 +1788,9 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             let hit_bg = heatmap_bg(hit_pct / 100.0, true);
                             let in_bg = heatmap_bg(b.input_tokens as f64 / max_in, false);
                             let out_bg = heatmap_bg(b.output_tokens as f64 / max_out, false);
+                            let top_model = b.top_model.clone();
+                            let top_upstream_key = b.top_upstream_key.clone();
+                            let top_downstream_key = b.top_downstream_key.clone();
                             view! {
                                 <tr class="border-b border-theme/30">
                                     <td class="py-1 pr-3 text-theme">
@@ -1794,14 +1799,14 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     <td class="text-right py-1 px-2" style=format!("background:{req_bg}")>
                                         {b.request_count}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[100px]" title=&b.top_model>
-                                        {if b.top_model.is_empty() { "—".to_string() } else { b.top_model.clone() }}
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[100px]" title=top_model.clone()>
+                                        {if top_model.is_empty() { "—".to_string() } else { top_model.clone() }}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=&b.top_upstream_key>
-                                        {if b.top_upstream_key.is_empty() { "—".to_string() } else { b.top_upstream_key.clone() }}
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=top_upstream_key.clone()>
+                                        {if top_upstream_key.is_empty() { "—".to_string() } else { top_upstream_key.clone() }}
                                     </td>
-                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=&b.top_downstream_key>
-                                        {if b.top_downstream_key.is_empty() { "—".to_string() } else { b.top_downstream_key.clone() }}
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=top_downstream_key.clone()>
+                                        {if top_downstream_key.is_empty() { "—".to_string() } else { top_downstream_key.clone() }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
                                         {format!("{:.0}", b.e2e_latency_ms)}
@@ -1823,70 +1828,6 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
             </div>
         </div>
     }.into_any()
-}
-
-#[component]
-fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
-    let t = use_translations();
-    let s = data.summary;
-    view! {
-        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
-            <h3 class="text-sm font-semibold text-theme">{t.live_latest_request()}</h3>
-            {match data.latest {
-                None => view! {
-                    <p class="text-xs text-theme-muted">{t.live_no_data()}</p>
-                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
-                        <LiveStatTile
-                            label=t.live_tokens_input()
-                            value=format_number(s.input_tokens)
-                            variant=LiveTileVariant::Muted
-                        />
-                        <LiveStatTile
-                            label=t.live_tokens_output()
-                            value=format_number(s.output_tokens)
-                            variant=LiveTileVariant::Muted
-                        />
-                    </div>
-                }.into_any(),
-                Some(latest) => view! {
-                    <dl class="space-y-2 text-xs">
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_latest_model()}</dt>
-                            <dd class="font-mono text-theme truncate">{latest.model}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_latest_cache()}</dt>
-                            <dd class="font-mono text-theme">{latest.cache_status}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_series_e2e()}</dt>
-                            <dd class="font-mono text-theme">{format!("{:.0} ms", latest.e2e_latency_ms)}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_series_ttft()}</dt>
-                            <dd class="font-mono text-theme">
-                                {latest.ttft_ms
-                                    .map(|v| format!("{v:.0} ms"))
-                                    .unwrap_or_else(|| t.live_upstream_na().to_string())}
-                            </dd>
-                        </div>
-                    </dl>
-                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
-                        <LiveStatTile
-                            label=t.live_tokens_input()
-                            value=format_number(latest.input_tokens)
-                            variant=LiveTileVariant::Accent
-                        />
-                        <LiveStatTile
-                            label=t.live_tokens_output()
-                            value=format_number(latest.output_tokens)
-                            variant=LiveTileVariant::Teal
-                        />
-                    </div>
-                }.into_any(),
-            }}
-        </div>
-    }
 }
 
 #[component]

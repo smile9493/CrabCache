@@ -20,6 +20,7 @@ use crate::sse::UsageData;
 use crate::sse::parse_sse_chunk;
 use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crate::upstream_response_decompress::decompress_upstream_chunk;
+use crab_cache::UsageInfo;
 use crab_metrics::{CacheTier, LatencyKind, global_metrics};
 use crab_reasoning::{rewrite_response_body, sanitize_client_completion};
 use pingora_core::prelude::*;
@@ -327,12 +328,19 @@ pub(crate) fn run(
 
                 let cache_body =
                     prepare_response_body_for_cache(client_body.clone(), display_reasoning);
+                let cache_usage = UsageInfo {
+                    prompt_tokens: ctx.tokens.last_input,
+                    completion_tokens: ctx.tokens.last_output,
+                    prompt_cache_hit_tokens: ctx.tokens.last_prompt_cache_hit,
+                    prompt_cache_miss_tokens: ctx.tokens.last_prompt_cache_miss,
+                };
                 let entry = build_cache_entry(
                     cache_body,
                     ctx.model.clone(),
                     ttl_secs,
                     ctx.is_streaming,
                     display_reasoning,
+                    cache_usage,
                 );
 
                 timeline_stamp(&mut ctx.timeline.cache_write_done);
@@ -362,6 +370,12 @@ pub(crate) fn run(
                         ttl_secs,
                         ctx.is_streaming,
                         display_reasoning,
+                        UsageInfo {
+                            prompt_tokens: ctx.tokens.last_input,
+                            completion_tokens: ctx.tokens.last_output,
+                            prompt_cache_hit_tokens: ctx.tokens.last_prompt_cache_hit,
+                            prompt_cache_miss_tokens: ctx.tokens.last_prompt_cache_miss,
+                        },
                     );
 
                     let project_id = ctx.project_id.clone();
@@ -470,6 +484,12 @@ pub(crate) fn run(
                 {
                     let sse_body = std::mem::take(&mut ctx.stream.client_sse_body);
                     let max_sse = proxy.state.max_sse_cache_bytes;
+                    let stream_cache_usage = UsageInfo {
+                        prompt_tokens: ctx.tokens.last_input,
+                        completion_tokens: ctx.tokens.last_output,
+                        prompt_cache_hit_tokens: ctx.tokens.last_prompt_cache_hit,
+                        prompt_cache_miss_tokens: ctx.tokens.last_prompt_cache_miss,
+                    };
                     let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                         build_cache_entry_with_sse(
                             response_bytes.clone(),
@@ -478,6 +498,7 @@ pub(crate) fn run(
                             ttl_secs,
                             true,
                             reasoning_cfg.display_reasoning,
+                            stream_cache_usage,
                         )
                     } else {
                         warn!(
@@ -492,6 +513,7 @@ pub(crate) fn run(
                             ttl_secs,
                             true,
                             reasoning_cfg.display_reasoning,
+                            stream_cache_usage,
                         )
                     };
                     timeline_stamp(&mut ctx.timeline.cache_write_done);
@@ -544,6 +566,12 @@ pub(crate) fn run(
                         ttl_secs,
                         true,
                         reasoning_cfg.display_reasoning,
+                        UsageInfo {
+                            prompt_tokens: ctx.tokens.last_input,
+                            completion_tokens: ctx.tokens.last_output,
+                            prompt_cache_hit_tokens: ctx.tokens.last_prompt_cache_hit,
+                            prompt_cache_miss_tokens: ctx.tokens.last_prompt_cache_miss,
+                        },
                     );
                     let query_text = query_text.to_string();
                     let project_id = ctx.project_id.clone();
