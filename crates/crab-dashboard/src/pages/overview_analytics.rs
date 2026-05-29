@@ -76,6 +76,15 @@ pub fn OverviewAnalytics(
     }
 }
 
+/// One-line summary for the card grid preview.
+pub fn infra_container_headline(s: &InfraSnapshot) -> String {
+    let summary = summarize_infra(s);
+    format!(
+        "{}/{} containers",
+        summary.active_containers, summary.total_containers
+    )
+}
+
 #[derive(Clone, Copy)]
 enum InfraTileVariant {
     Teal,
@@ -220,7 +229,7 @@ fn InfraDetailModule(
 }
 
 #[component]
-pub fn InfraOverviewModule() -> impl IntoView {
+pub fn InfraOverviewModule(#[prop(optional, default = false)] embedded: bool) -> impl IntoView {
     let t = use_translations();
     let snapshot: RwSignal<Option<Result<InfraSnapshot, String>>> = RwSignal::new(None);
     let loaded = RwSignal::new(false);
@@ -238,6 +247,11 @@ pub fn InfraOverviewModule() -> impl IntoView {
         });
     };
 
+    // When embedded, load immediately; otherwise defer until toggle.
+    if embedded {
+        load_snapshot();
+    }
+
     // Refresh loop (only runs after first load)
     leptos::task::spawn_local(async move {
         loop {
@@ -248,23 +262,9 @@ pub fn InfraOverviewModule() -> impl IntoView {
         }
     });
 
-    view! {
-        <details class="overview-collapsible"
-            on:toggle=move |ev| {
-                let el = ev.target().unwrap().unchecked_into::<web_sys::HtmlDetailsElement>();
-                if el.open() && !loaded.get_untracked() {
-                    load_snapshot();
-                }
-            }
-        >
-            <summary class="overview-collapsible-head">
-                <span class="overview-collapsible-title">
-                    <InfraModuleIconContainers />
-                    <span>{t.infra_title()}</span>
-                </span>
-            </summary>
-            <div class="overview-collapsible-body">
-            {move || match snapshot.get() {
+    let content = view! {
+        <div>
+        {move || match snapshot.get() {
                 None => view! {
                     <div class="text-xs text-theme-muted">"Loading infrastructure snapshot..."</div>
                 }.into_any(),
@@ -454,8 +454,32 @@ pub fn InfraOverviewModule() -> impl IntoView {
                     }.into_any()
                 }
             }}
-            </div>
-        </details>
+        </div>
+    };
+
+    if embedded {
+        content.into_any()
+    } else {
+        view! {
+            <details class="overview-collapsible"
+                on:toggle=move |ev| {
+                    let el = ev.target().unwrap().unchecked_into::<web_sys::HtmlDetailsElement>();
+                    if el.open() && !loaded.get_untracked() {
+                        load_snapshot();
+                    }
+                }
+            >
+                <summary class="overview-collapsible-head">
+                    <span class="overview-collapsible-title">
+                        <InfraModuleIconContainers />
+                        <span>{t.infra_title()}</span>
+                    </span>
+                </summary>
+                <div class="overview-collapsible-body">
+                    {content}
+                </div>
+            </details>
+        }.into_any()
     }
 }
 

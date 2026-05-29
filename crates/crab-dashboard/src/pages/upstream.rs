@@ -98,11 +98,10 @@ fn parse_upstream_pool_line(line: &str) -> (String, String) {
 fn pool_lines_to_key_inputs(lines: Vec<String>) -> Vec<UpstreamKeyInput> {
     lines
         .into_iter()
-        .enumerate()
-        .map(|(i, line)| {
+        .map(|line| {
             let (account_id, secret) = parse_upstream_pool_line(&line);
             UpstreamKeyInput {
-                id: format!("key-{}", i + 1),
+                id: String::new(),
                 secret,
                 enabled: true,
                 account_id,

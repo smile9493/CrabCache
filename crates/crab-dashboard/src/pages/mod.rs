@@ -10,6 +10,7 @@ pub mod logs_manage;
 pub mod models;
 pub mod overview;
 pub mod overview_analytics;
+pub mod overview_cards;
 pub mod pipeline;
 pub mod reasoning;
 pub mod requests;

@@ -256,6 +256,7 @@ pub struct UpstreamState {
     pub prepared_upstream_body_emitted: bool,
     /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
     pub error_body_logged: bool,
+    pub sse_rate_limited: bool,
     /// Whether the first upstream body chunk was logged for debug.
     pub first_body_chunk_logged: bool,
     /// Upstream `Content-Encoding` (stripped from forwarded headers); drives R7 decompress.
@@ -285,6 +286,7 @@ impl Default for UpstreamState {
             retry_buffer_truncated: false,
             prepared_upstream_body_emitted: false,
             error_body_logged: false,
+            sse_rate_limited: false,
             first_body_chunk_logged: false,
             response_decompress:
                 crate::upstream_response_decompress::UpstreamDecompressState::default(),
@@ -323,6 +325,10 @@ pub struct RequestPassthroughState {
     pub armed_prefix_len: usize,
     /// First upstream body chunk (armed prefix) has been forwarded.
     pub prefix_emitted: bool,
+    /// Client body tail chunks captured via `Bytes::clone()` for Raw Capture (zero-copy).
+    pub captured_client_chunks: Vec<Bytes>,
+    /// Upstream response body chunks captured via `Bytes::clone()` for Raw Capture (zero-copy).
+    pub captured_upstream_chunks: Vec<Bytes>,
 }
 
 pub struct GatewayContext {

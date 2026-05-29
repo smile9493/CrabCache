@@ -1050,8 +1050,9 @@ async fn request_passthrough_handoff(
         .inbound_content_length
         .unwrap_or(ctx.request_passthrough.buffer.len());
     ctx.upstream_outbound_body_len = 0;
-    // Raw capture / exact-cache are intentionally disabled on this path; bodies are not buffered.
-    ctx.original_request_body = None;
+    // Exact-cache is intentionally disabled on this path; bodies are not buffered.
+    // Store prefix body for trace logging (request_messages_snapshot will contain first 1KB+).
+    ctx.original_request_body = Some(Bytes::from(ctx.request_passthrough.buffer.clone()));
     ctx.parsed_request_payload = None;
     ctx.upstream_body_for_capture = None;
     ctx.parsed_upstream_payload = None;
@@ -1076,11 +1077,11 @@ async fn request_passthrough_handoff(
         request_id = %ctx.request_id,
         pipeline = ?ctx.request_pipeline,
         upstream_profile = ctx.upstream_profile_id.as_deref().unwrap_or("default"),
-        pipeline_reason = ctx.pipeline_reason.as_deref().unwrap_or(""),
+        pipeline_reason = ctx.pipeline_reason.map(|r| r.as_str()).unwrap_or(""),
         client_model = %ctx.model,
         upstream_model = ctx.upstream_model.as_deref().unwrap_or(""),
         consumer = ctx.consumer.as_deref().unwrap_or(""),
-        prefix_len = partial_body.len(),
+        prefix_len = ctx.request_passthrough.armed_prefix_len,
         is_streaming = ctx.is_streaming,
         "MiMo passthrough handoff armed"
     );
@@ -1096,7 +1097,7 @@ async fn request_passthrough_handoff(
             "model": ctx.model,
             "upstream_model": ctx.upstream_model,
             "consumer": ctx.consumer,
-            "prefix_len": partial_body.len(),
+            "prefix_len": ctx.request_passthrough.armed_prefix_len,
             "is_streaming": ctx.is_streaming,
             "content_length": ctx.content_length,
         }),

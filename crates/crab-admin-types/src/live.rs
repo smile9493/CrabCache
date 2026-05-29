@@ -71,6 +71,15 @@ pub struct LiveMetricsBucket {
     /// v2: max concurrent inflight requests observed in this bucket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_inflight: Option<u32>,
+    /// Most frequent model name in this bucket.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub top_model: String,
+    /// Most frequent upstream API key ID in this bucket.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub top_upstream_key: String,
+    /// Most frequent downstream key (consumer) in this bucket.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub top_downstream_key: String,
 }
 
 fn is_zero_u32(v: &u32) -> bool {

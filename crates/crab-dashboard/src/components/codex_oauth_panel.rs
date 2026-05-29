@@ -83,9 +83,11 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
 
     let alive = Arc::new(AtomicBool::new(true));
 
-    let on_start_device = move |_| {
-        let pid = profile_id.clone();
-        let alive = Arc::clone(&alive);
+    let pid_for_start = profile_id.clone();
+    let alive_for_start = Arc::clone(&alive);
+    let on_start_device = Callback::new(move |_: ()| {
+        let pid = pid_for_start.clone();
+        let alive = Arc::clone(&alive_for_start);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -106,9 +108,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
-    let on_copy_code = move |_| {
+    let on_copy_code = Callback::new(move |_: ()| {
         if let Some(code) = user_code.get() {
             crate::clipboard::copy_text(&code);
             copied.set(true);
@@ -117,10 +119,11 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                 copied.set(false);
             });
         }
-    };
+    });
 
-    let on_cancel = move |_| {
-        let pid = profile_id.clone();
+    let pid_for_cancel = profile_id.clone();
+    let on_cancel = Callback::new(move |_: ()| {
+        let pid = pid_for_cancel.clone();
         let sid = session_id.get_untracked();
         leptos::task::spawn_local(async move {
             if let Some(s) = sid {
@@ -132,7 +135,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
         verify_url.set(None);
         flow_status.set("idle".to_string());
         error_msg.set(String::new());
-    };
+    });
 
     // Poll loop
     let pid_for_poll = profile_id.clone();
@@ -202,10 +205,13 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
     view! {
         <div class="space-y-3">
             // Idle
-            {move || (flow_status.get() == "idle").then(|| view! {
-                <button class="btn btn-secondary text-xs" on:click=on_start_device>
-                    {t.upstream_codex_oauth_start()}
-                </button>
+            {move || (flow_status.get() == "idle").then(|| {
+                let cb = on_start_device.clone();
+                view! {
+                    <button class="btn btn-secondary text-xs" on:click=move |_| cb.run(())>
+                        {t.upstream_codex_oauth_start()}
+                    </button>
+                }
             })}
 
             // Starting
@@ -221,13 +227,15 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                 let code = user_code.get().unwrap_or_default();
                 let url = verify_url.get().unwrap_or_default();
                 let copied_signal = copied.get();
+                let cb_copy = on_copy_code.clone();
+                let cb_cancel = on_cancel.clone();
                 view! {
                     <div class="space-y-3">
                         <div class="flex items-center gap-3 p-3 rounded-lg bg-accent/10 border border-accent/20">
                             <span class="font-mono text-2xl font-bold text-accent tracking-widest select-all">
                                 {code.clone()}
                             </span>
-                            <button class="btn btn-secondary text-xs" on:click=on_copy_code>
+                            <button class="btn btn-secondary text-xs" on:click=move |_| cb_copy.run(())>
                                 {if copied_signal { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
                             </button>
                         </div>
@@ -238,7 +246,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                             <Spinner />
                             <span class="text-xs text-theme-muted">{t.upstream_codex_oauth_polling()}</span>
                         </div>
-                        <button class="btn btn-secondary text-xs" on:click=on_cancel>
+                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
                             {t.upstream_codex_oauth_cancel()}
                         </button>
                     </div>
@@ -314,9 +322,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
     let alive = Arc::new(AtomicBool::new(true));
 
     // Start PKCE
-    let on_start_pkce = move |_| {
-        let pid = profile_id.clone();
-        let alive = Arc::clone(&alive);
+    let pid_for_start = profile_id.clone();
+    let alive_for_pkce = Arc::clone(&alive);
+    let on_start_pkce = Callback::new(move |_: ()| {
+        let pid = pid_for_start.clone();
+        let alive = Arc::clone(&alive_for_pkce);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -340,9 +350,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
-    let on_copy_url = move |_| {
+    let on_copy_url = Callback::new(move |_: ()| {
         if let Some(url) = auth_url.get() {
             crate::clipboard::copy_text(&url);
             copied.set(true);
@@ -351,11 +361,12 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 copied.set(false);
             });
         }
-    };
+    });
 
     // Confirm manual exchange
-    let on_confirm = move |_| {
-        let pid = profile_id.clone();
+    let pid_for_confirm = profile_id.clone();
+    let on_confirm = Callback::new(move |_: ()| {
+        let pid = pid_for_confirm.clone();
         let sid = session_id.get_untracked().unwrap_or_default();
         let url = callback_input.get_untracked();
         if url.is_empty() {
@@ -384,10 +395,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
-    let on_cancel_pkce = move |_| {
-        let pid = profile_id.clone();
+    let pid_for_cancel = profile_id.clone();
+    let on_cancel_pkce = Callback::new(move |_: ()| {
+        let pid = pid_for_cancel.clone();
         let sid = session_id.get_untracked();
         leptos::task::spawn_local(async move {
             if let Some(s) = sid {
@@ -399,7 +411,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         flow_status.set("idle".to_string());
         error_msg.set(String::new());
         callback_input.set(String::new());
-    };
+    });
 
     // Auto-poll loop (for "auto" mode)
     let pid_for_poll = profile_id.clone();
@@ -464,12 +476,15 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
     view! {
         <div class="space-y-3">
             // Idle: start button
-            {move || (flow_status.get() == "idle").then(|| view! {
-                <div class="space-y-2">
-                    <button class="btn btn-secondary text-xs" on:click=on_start_pkce>
-                        {t.upstream_codex_pkce_start()}
-                    </button>
-                </div>
+            {move || (flow_status.get() == "idle").then(|| {
+                let cb = on_start_pkce.clone();
+                view! {
+                    <div class="space-y-2">
+                        <button class="btn btn-secondary text-xs" on:click=move |_| cb.run(())>
+                            {t.upstream_codex_pkce_start()}
+                        </button>
+                    </div>
+                }
             })}
 
             // Starting
@@ -484,6 +499,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             {move || (flow_status.get() == "waiting_paste").then(|| {
                 let url = auth_url.get().unwrap_or_default();
                 let c = copied.get();
+                let cb_copy = on_copy_url.clone();
+                let cb_confirm = on_confirm.clone();
+                let cb_cancel = on_cancel_pkce.clone();
                 view! {
                     <div class="space-y-3">
                         // Auth URL
@@ -492,7 +510,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                                class="btn btn-secondary text-xs">
                                 {t.upstream_codex_pkce_open_browser()}
                             </a>
-                            <button class="btn btn-secondary text-xs" on:click=on_copy_url>
+                            <button class="btn btn-secondary text-xs" on:click=move |_| cb_copy.run(())>
                                 {if c { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
                             </button>
                         </div>
@@ -506,11 +524,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                                 prop:value=callback_input
                                 on:input=move |ev| callback_input.set(event_target_value(&ev))
                             />
-                            <button class="btn btn-primary text-xs" on:click=on_confirm>
+                            <button class="btn btn-primary text-xs" on:click=move |_| cb_confirm.run(())>
                                 {t.upstream_codex_pkce_confirm()}
                             </button>
                         </div>
-                        <button class="btn btn-secondary text-xs" on:click=on_cancel_pkce>
+                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
                             {t.upstream_codex_oauth_cancel()}
                         </button>
                     </div>
@@ -526,16 +544,19 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             })}
 
             // Polling (auto mode — waiting for callback)
-            {move || (flow_status.get() == "polling").then(|| view! {
-                <div class="space-y-2">
-                    <div class="flex items-center gap-2">
-                        <Spinner />
-                        <span class="text-xs text-theme-muted">{t.upstream_codex_pkce_waiting()}</span>
+            {move || (flow_status.get() == "polling").then(|| {
+                let cb_cancel = on_cancel_pkce.clone();
+                view! {
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <Spinner />
+                            <span class="text-xs text-theme-muted">{t.upstream_codex_pkce_waiting()}</span>
+                        </div>
+                        <button class="btn btn-secondary text-xs" on:click=move |_| cb_cancel.run(())>
+                            {t.upstream_codex_oauth_cancel()}
+                        </button>
                     </div>
-                    <button class="btn btn-secondary text-xs" on:click=on_cancel_pkce>
-                        {t.upstream_codex_oauth_cancel()}
-                    </button>
-                </div>
+                }
             })}
 
             // Completed

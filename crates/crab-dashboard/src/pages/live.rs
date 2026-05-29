@@ -189,10 +189,6 @@ fn format_latency_opt(v: Option<f64>, na: &str) -> String {
         .unwrap_or_else(|| na.to_string())
 }
 
-fn series_has_points(values: &[Option<f64>]) -> bool {
-    values.iter().any(|v| matches!(v, Some(x) if *x > 0.0))
-}
-
 #[derive(Clone, Copy)]
 enum LiveTileVariant {
     Accent,
@@ -1130,10 +1126,9 @@ fn LiveBottomRow(
 ) -> impl IntoView {
     view! {
         <div class="space-y-4">
-            <div class="live-detail-row">
+            <div class="live-detail-row-2col">
                 <LiveRoutingSummaryPanel profiles=routing_profiles />
                 <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() e2e_open=latency_e2e_open upstream_open=latency_upstream_open />
-                <LiveLatestPanel data=data />
             </div>
             <div class="live-detail-row-2col">
                 <LiveKeyDistributionPanel
@@ -1249,8 +1244,8 @@ fn LiveRoutingSummaryPanel(
                                 }
                                 pct=circuit_pct
                             />
-                            <div class="space-y-1.5 pt-2 border-t border-theme flex-1">
-                                {active.backends.iter().take(4).map(|b| {
+                            <div class="space-y-1.5 pt-2 border-t border-theme flex-1 overflow-y-auto max-h-40">
+                                {active.backends.iter().map(|b| {
                                     let pct = if b.healthy { 100.0 } else { 25.0 };
                                     let state = if b.healthy { "healthy" } else { "unhealthy" };
                                     let latency_str = if b.latency_ms > 0 {
@@ -1314,16 +1309,32 @@ fn LiveKeyDistributionPanel(
             </select>
             {move || match routing_key_data.get() {
                 None => view! {
-                    <p class="text-[11px] text-theme-muted live-chart-compact">"Loading key routing…"</p>
+                    <div class="space-y-2 flex-1 flex flex-col">
+                        <div class="text-[11px] text-theme-muted font-mono h-4"></div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
+                            <div class="border border-theme rounded-md p-2 flex flex-col">
+                                <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
+                                <div class="live-chart-compact flex-1 flex items-center justify-center">
+                                    <p class="text-[11px] text-theme-muted">"Loading…"</p>
+                                </div>
+                            </div>
+                            <div class="border border-theme rounded-md p-2 flex flex-col">
+                                <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
+                                <div class="live-chart-compact flex-1 flex items-center justify-center">
+                                    <p class="text-[11px] text-theme-muted">"Loading…"</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 }.into_any(),
                 Some(Err(e)) => view! {
-                    <p class="text-[11px] text-error live-chart-compact">{e}</p>
+                    <div class="space-y-2 flex-1 flex flex-col">
+                        <div class="text-[11px] text-error">{e}</div>
+                    </div>
                 }.into_any(),
                 Some(Ok(resp)) => {
                     let (backend_labels, backend_values) = build_backend_distribution(&resp);
                     let (aff_labels, aff_values) = build_affinity_distribution(&resp);
-                    let backend_has = series_has_points(&backend_values);
-                    let aff_has = series_has_points(&aff_values);
                     let backend_labels_arc = std::sync::Arc::new(backend_labels);
                     let backend_values_arc: std::sync::Arc<Vec<f64>> =
                         std::sync::Arc::new(backend_values.into_iter().flatten().collect());
@@ -1355,43 +1366,27 @@ fn LiveKeyDistributionPanel(
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
                                 <div class="border border-theme rounded-md p-2 flex flex-col">
                                     <div class="text-[11px] text-theme-muted mb-1">"Backend"</div>
-                                    {if backend_has {
-                                        view! {
-                                            <HorizontalBarChart
-                                                labels=backend_labels_sig
-                                                values=backend_values_sig
-                                                width=280
-                                                height_px=72
-                                                empty_message=t.live_no_data()
-                                            />
-                                        }.into_any()
-                                    } else {
-                                        view! {
-                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
-                                                {t.live_no_data()}
-                                            </p>
-                                        }.into_any()
-                                    }}
+                                    <div class="live-chart-compact flex-1">
+                                        <HorizontalBarChart
+                                            labels=backend_labels_sig
+                                            values=backend_values_sig
+                                            width=280
+                                            height_px=72
+                                            empty_message=t.live_no_data()
+                                        />
+                                    </div>
                                 </div>
                                 <div class="border border-theme rounded-md p-2 flex flex-col">
                                     <div class="text-[11px] text-theme-muted mb-1">"Affinity kind"</div>
-                                    {if aff_has {
-                                        view! {
-                                            <HorizontalBarChart
-                                                labels=aff_labels_sig
-                                                values=aff_values_sig
-                                                width=280
-                                                height_px=72
-                                                empty_message=t.live_no_data()
-                                            />
-                                        }.into_any()
-                                    } else {
-                                        view! {
-                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
-                                                {t.live_no_data()}
-                                            </p>
-                                        }.into_any()
-                                    }}
+                                    <div class="live-chart-compact flex-1">
+                                        <HorizontalBarChart
+                                            labels=aff_labels_sig
+                                            values=aff_values_sig
+                                            width=280
+                                            height_px=72
+                                            empty_message=t.live_no_data()
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1764,6 +1759,9 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                         <tr class="text-theme-muted border-b border-theme">
                             <th class="text-left py-1 pr-3">"Time"</th>
                             <th class="text-right py-1 px-2">"Req"</th>
+                            <th class="text-left py-1 px-2">"Model"</th>
+                            <th class="text-left py-1 px-2">"Up Key"</th>
+                            <th class="text-left py-1 px-2">"Down Key"</th>
                             <th class="text-right py-1 px-2">"E2E (ms)"</th>
                             <th class="text-right py-1 px-2">"Hit%"</th>
                             <th class="text-right py-1 px-2">"In Tok"</th>
@@ -1790,6 +1788,15 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     <td class="text-right py-1 px-2" style=format!("background:{req_bg}")>
                                         {b.request_count}
                                     </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[100px]" title=b.top_model.clone()>
+                                        {if b.top_model.is_empty() { "—".to_string() } else { b.top_model.clone() }}
+                                    </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=b.top_upstream_key.clone()>
+                                        {if b.top_upstream_key.is_empty() { "—".to_string() } else { b.top_upstream_key.clone() }}
+                                    </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=b.top_downstream_key.clone()>
+                                        {if b.top_downstream_key.is_empty() { "—".to_string() } else { b.top_downstream_key.clone() }}
+                                    </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
                                         {format!("{:.0}", b.e2e_latency_ms)}
                                     </td>
@@ -1810,70 +1817,6 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
             </div>
         </div>
     }.into_any()
-}
-
-#[component]
-fn LiveLatestPanel(data: LiveMetricsResponse) -> impl IntoView {
-    let t = use_translations();
-    let s = data.summary;
-    view! {
-        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
-            <h3 class="text-sm font-semibold text-theme">{t.live_latest_request()}</h3>
-            {match data.latest {
-                None => view! {
-                    <p class="text-xs text-theme-muted">{t.live_no_data()}</p>
-                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
-                        <LiveStatTile
-                            label=t.live_tokens_input()
-                            value=format_number(s.input_tokens)
-                            variant=LiveTileVariant::Muted
-                        />
-                        <LiveStatTile
-                            label=t.live_tokens_output()
-                            value=format_number(s.output_tokens)
-                            variant=LiveTileVariant::Muted
-                        />
-                    </div>
-                }.into_any(),
-                Some(latest) => view! {
-                    <dl class="space-y-2 text-xs">
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_latest_model()}</dt>
-                            <dd class="font-mono text-theme truncate">{latest.model}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_latest_cache()}</dt>
-                            <dd class="font-mono text-theme">{latest.cache_status}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_series_e2e()}</dt>
-                            <dd class="font-mono text-theme">{format!("{:.0} ms", latest.e2e_latency_ms)}</dd>
-                        </div>
-                        <div class="flex justify-between gap-2">
-                            <dt class="text-theme-muted">{t.live_series_ttft()}</dt>
-                            <dd class="font-mono text-theme">
-                                {latest.ttft_ms
-                                    .map(|v| format!("{v:.0} ms"))
-                                    .unwrap_or_else(|| t.live_upstream_na().to_string())}
-                            </dd>
-                        </div>
-                    </dl>
-                    <div class="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-theme">
-                        <LiveStatTile
-                            label=t.live_tokens_input()
-                            value=format_number(latest.input_tokens)
-                            variant=LiveTileVariant::Accent
-                        />
-                        <LiveStatTile
-                            label=t.live_tokens_output()
-                            value=format_number(latest.output_tokens)
-                            variant=LiveTileVariant::Teal
-                        />
-                    </div>
-                }.into_any(),
-            }}
-        </div>
-    }
 }
 
 #[component]

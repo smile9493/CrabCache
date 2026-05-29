@@ -633,95 +633,33 @@ fn OverviewContent(
                 </div>
             })}
 
-            // ── Hero strip: 6 tiles ────────────────────────────────
+            // ── Card grid with center-modal drill-down ──────────────
             {move || {
                 let h = health_memo.get();
                 let m = metrics_memo.get();
                 let o = ops_memo.get();
-                match (h, m, o) {
-                    (Some(h), Some(m), Some(o)) => view! {
-                        <OverviewHeroStrip health=h metrics=m ops=o />
+                let p = prefix_memo.get();
+                let s = semantic_memo.get();
+                let tr = trace.get();
+                let sug = suggestions_memo.get();
+                match (h, m, o, p, s, sug) {
+                    (Some(h), Some(m), Some(o), Some(p), Some(s), Some(sug)) => view! {
+                        <super::overview_cards::OverviewCardGrid
+                            health=h
+                            metrics=m
+                            ops=o
+                            prefix=p
+                            semantic=s
+                            trace=tr
+                            suggestions=sug
+                            ts_points=ts_points
+                            ts_window=ts_window
+                            selected_domain=selected_domain
+                        />
                     }.into_any(),
                     _ => ().into_any(),
                 }
             }}
-
-            // ── Main chart (always visible) ────────────────────────
-            {move || suggestions_memo.get().map(|s| view! {
-                <TimeSeriesChart
-                    points=ts_points
-                    selected_view=ts_window
-                    suggestions=s
-                />
-            })}
-
-            // ── Collapsed deep-dive modules ────────────────────────
-            <super::overview_analytics::InfraOverviewModule />
-
-            <OverviewCollapsible
-                title=t.overview_module_cache_cost()
-                icon=OverviewModuleIcon::Cache
-            >
-                {move || metrics_memo.get().zip(Some(trace.get())).map(|(m, tr)| view! {
-                    <TraceCompareBanner trace=tr metrics=m.clone() />
-                })}
-                {move || prefix_memo.get().map(|pref| view! {
-                    <PrefixCacheCard prefix=pref.clone() />
-                })}
-                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                    <div class="bento-grid-2">
-                        <CacheHitSection metrics=m.clone() />
-                        <CostSavingsSection ops=ops.clone() />
-                    </div>
-                })}
-            </OverviewCollapsible>
-
-            <OverviewCollapsible
-                title=t.overview_module_consumer_domain()
-                icon=OverviewModuleIcon::Users
-            >
-                {move || metrics_memo.get().map(|m| view! {
-                    <ConsumerHitTable metrics=m.clone() />
-                })}
-                {move || metrics_memo.get().map(|m| {
-                    let cb = Callback::new(move |domain: String| {
-                        selected_domain.set(Some(domain));
-                    });
-                    view! {
-                        <super::domains::DomainOverviewTableInline metrics=m.clone() on_domain_click=cb />
-                    }
-                })}
-                <super::domains::DomainDetailDrawer domain=selected_domain />
-            </OverviewCollapsible>
-
-            <OverviewCollapsible
-                title=t.overview_module_latency_ops()
-                icon=OverviewModuleIcon::Latency
-            >
-                {move || metrics_memo.get().map(|m| view! { <LatencySection metrics=m.clone() /> })}
-                {move || ops_memo.get().map(|ops| view! { <OpsMetricsRow ops=ops.clone() /> })}
-            </OverviewCollapsible>
-
-            <OverviewCollapsible
-                title=t.overview_module_advanced()
-                icon=OverviewModuleIcon::Advanced
-            >
-                {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
-                    <div class="bento-grid-2">
-                        <CoalescingCard metrics=m.clone() ops=ops.clone() />
-                        <SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
-                    </div>
-                })}
-                {move || metrics_memo.get().zip(prefix_memo.get()).map(|(m, pref)| view! {
-                    <TokenStats metrics=m.clone() prefix=pref.clone() />
-                })}
-                {move || ops_memo.get().map(|ops| view! {
-                    <div class="bento-grid-2">
-                        <UpstreamKeyStrip ops=ops.clone() />
-                        <PrefixHealthCard ops=ops.clone() />
-                    </div>
-                })}
-            </OverviewCollapsible>
 
             <ObservabilityFooter />
         </div>
@@ -906,7 +844,7 @@ fn MetricsLegend() -> impl IntoView {
 }
 
 #[component]
-fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoView {
+pub fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoView {
     let t = use_translations();
     let healthy = health.healthy;
     let stream_on = health.stream_cache_enabled;
@@ -973,7 +911,7 @@ fn HistoryMetaHint(metrics: MetricsSnapshot) -> impl IntoView {
 }
 
 #[component]
-fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl IntoView {
+pub fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl IntoView {
     let t = use_translations();
     let trace_pct = trace.cache_hit_ratio * 100.0;
     let gw_pct = if metrics.metrics_sample_insufficient {
@@ -1031,7 +969,7 @@ fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl Int
 }
 
 #[component]
-fn OpsMetricsRow(ops: OverviewOpsMetrics) -> impl IntoView {
+pub fn OpsMetricsRow(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
     view! {
         <div class="glass-card">

@@ -939,18 +939,18 @@ body {
   min-height: 0;
 }
 
-/* Live bottom: 2 rows × 3 cols, cards stretch per row only */
+/* Live bottom: 2 rows × 2 cols, cards align to top */
 .live-detail-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
-  align-items: stretch;
+  align-items: start;
 }
 .live-detail-row-2col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  align-items: stretch;
+  align-items: start;
 }
 @media (max-width: 1023px) {
   .live-detail-row,
@@ -959,7 +959,7 @@ body {
   }
 }
 .live-detail-card {
-  min-height: 15rem;
+  min-height: 12rem;
   height: auto;
 }
 .live-chart-compact {

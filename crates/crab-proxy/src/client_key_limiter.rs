@@ -43,6 +43,12 @@ impl Drop for ClientKeyGuard {
     }
 }
 
+impl ClientKeyGuard {
+    pub fn key_id(&self) -> &str {
+        &self.slot.key_id
+    }
+}
+
 impl ClientKeyLimiter {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {

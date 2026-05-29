@@ -4898,6 +4898,148 @@ impl Translations {
             Locale::EnUS => "Error: {}",
         }
     }
+
+    // ── Overview card / card grid ──────────────────────────────────
+    pub fn overview_card_click_detail(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击查看详情",
+            Locale::EnUS => "Click for details",
+        }
+    }
+    pub fn overview_error_rate_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误率",
+            Locale::EnUS => "Error rate",
+        }
+    }
+    pub fn overview_error_elevated(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "偏高",
+            Locale::EnUS => "elevated",
+        }
+    }
+    pub fn overview_error_normal(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正常",
+            Locale::EnUS => "normal",
+        }
+    }
+    pub fn overview_http_4xx_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "4xx (5m)",
+            Locale::EnUS => "4xx (5m)",
+        }
+    }
+    pub fn overview_http_5xx_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "5xx (5m)",
+            Locale::EnUS => "5xx (5m)",
+        }
+    }
+    pub fn overview_domain_card_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "域名用量",
+            Locale::EnUS => "Domain usage",
+        }
+    }
+    pub fn overview_domain_hit_fmt(self, pct: f64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("命中率 {pct:.1}%"),
+            Locale::EnUS => format!("hit rate {pct:.1}%"),
+        }
+    }
+    pub fn overview_prefix_breaks_subtitle(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀中断次数",
+            Locale::EnUS => "Prefix break count",
+        }
+    }
+    pub fn overview_prefix_breaks_detected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检测到中断",
+            Locale::EnUS => "breaks detected",
+        }
+    }
+    pub fn overview_prefix_breaks_stable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "稳定",
+            Locale::EnUS => "stable",
+        }
+    }
+    pub fn overview_card_infra_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "容器 / 磁盘 / 网络",
+            Locale::EnUS => "Containers / Disk / Net",
+        }
+    }
+
+    // ── Session drill-down panel ───────────────────────────────────
+    pub fn session_drilldown_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话钻取",
+            Locale::EnUS => "Session drill-down",
+        }
+    }
+    pub fn session_drilldown_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入会话指纹查看请求时序、路由分布和迁移记录",
+            Locale::EnUS => "Enter a session fingerprint to view timeline, routing, and migrations",
+        }
+    }
+    pub fn session_load_timeline(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载时序",
+            Locale::EnUS => "Load timeline",
+        }
+    }
+    pub fn session_enter_fingerprint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入会话指纹后点击加载",
+            Locale::EnUS => "Enter a session fingerprint and click Load",
+        }
+    }
+    pub fn session_select_key_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择 API Key 查看路由",
+            Locale::EnUS => "Select a key to view routing",
+        }
+    }
+    pub fn session_load_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "加载路由",
+            Locale::EnUS => "Load routing",
+        }
+    }
+    pub fn session_latency_dist(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟分布",
+            Locale::EnUS => "Latency distribution",
+        }
+    }
+    pub fn session_routing_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由分布",
+            Locale::EnUS => "Routing distribution",
+        }
+    }
+    pub fn session_backend_requests_fmt(self, count: u64, hit_pct: f64, avg_ms: f64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{count} 次请求 · 命中 {hit_pct:.1}% · 平均 {avg_ms:.0}ms"),
+            Locale::EnUS => format!("{count} reqs · hit {hit_pct:.1}% · avg {avg_ms:.0}ms"),
+        }
+    }
+    pub fn session_migration_alerts(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "迁移告警",
+            Locale::EnUS => "Migration alerts",
+        }
+    }
+    pub fn session_no_migrations(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无迁移记录",
+            Locale::EnUS => "No migrations",
+        }
+    }
 }
 
 pub fn provide_locale() -> RwSignal<Locale> {

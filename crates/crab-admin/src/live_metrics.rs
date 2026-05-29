@@ -198,6 +198,28 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
     slot.input_tokens += inp;
     slot.output_tokens += out;
 
+    // Track model, upstream key, downstream key frequency.
+    if !entry.model.is_empty() {
+        *slot.model_counts.entry(entry.model.clone()).or_insert(0) += 1;
+    }
+    if let Some(kid) = entry
+        .upstream_key_id
+        .as_deref()
+        .or(entry.client_key_id.as_deref())
+    {
+        if !kid.is_empty() {
+            *slot.upstream_key_counts.entry(kid.to_string()).or_insert(0) += 1;
+        }
+    }
+    if let Some(cons) = entry.consumer.as_deref() {
+        if !cons.is_empty() {
+            *slot
+                .downstream_key_counts
+                .entry(cons.to_string())
+                .or_insert(0) += 1;
+        }
+    }
+
     // OHLC tracking for input tokens.
     if inp > 0 {
         slot.input_token_entries.push((entry.timestamp_ms, inp));
@@ -271,6 +293,10 @@ struct BucketAcc {
     /// Raw (timestamp_ms, value) pairs for OHLC computation.
     input_token_entries: Vec<(u64, u64)>,
     output_token_entries: Vec<(u64, u64)>,
+    /// Frequency maps for model, upstream key, and downstream key (consumer).
+    model_counts: HashMap<String, u32>,
+    upstream_key_counts: HashMap<String, u32>,
+    downstream_key_counts: HashMap<String, u32>,
 }
 
 impl BucketAcc {
@@ -307,8 +333,20 @@ impl BucketAcc {
             input_tokens_ohlc: compute_ohlc(&self.input_token_entries),
             output_tokens_ohlc: compute_ohlc(&self.output_token_entries),
             max_inflight: None,
+            top_model: top_value(&self.model_counts),
+            top_upstream_key: top_value(&self.upstream_key_counts),
+            top_downstream_key: top_value(&self.downstream_key_counts),
         }
     }
+}
+
+/// Return the most frequently occurring value from a frequency map, or empty string.
+fn top_value(counts: &HashMap<String, u32>) -> String {
+    counts
+        .iter()
+        .max_by_key(|(_, cnt)| *cnt)
+        .map(|(k, _)| k.clone())
+        .unwrap_or_default()
 }
 
 fn compute_ohlc(entries: &[(u64, u64)]) -> Option<Ohlc> {
@@ -344,6 +382,9 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         input_tokens_ohlc: None,
         output_tokens_ohlc: None,
         max_inflight: None,
+        top_model: String::new(),
+        top_upstream_key: String::new(),
+        top_downstream_key: String::new(),
     }
 }
 
@@ -562,6 +603,9 @@ mod tests {
                 input_tokens_ohlc: None,
                 output_tokens_ohlc: None,
                 max_inflight: None,
+                top_model: String::new(),
+                top_upstream_key: String::new(),
+                top_downstream_key: String::new(),
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -578,6 +622,9 @@ mod tests {
                 input_tokens_ohlc: None,
                 output_tokens_ohlc: None,
                 max_inflight: None,
+                top_model: String::new(),
+                top_upstream_key: String::new(),
+                top_downstream_key: String::new(),
             },
         ];
         let s = summarize_window(&buckets);

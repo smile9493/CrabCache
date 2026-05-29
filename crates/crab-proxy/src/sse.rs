@@ -10,6 +10,32 @@ impl SseEvent<'_> {
         self.data.trim() == "[DONE]"
     }
 
+    pub fn is_rate_limit_error(&self) -> bool {
+        if self.event == Some("error") {
+            return true;
+        }
+        let data = self.data.trim();
+        if data == "[DONE]" || data.len() < 10 {
+            return false;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+            if val.get("error").is_some() {
+                let msg = val
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+                let msg_lower = msg.to_lowercase();
+                return msg_lower.contains("rate limit")
+                    || msg_lower.contains("rate_limit")
+                    || msg_lower.contains("too many requests")
+                    || msg_lower.contains("quota")
+                    || msg_lower.contains("capacity");
+            }
+        }
+        false
+    }
+
     pub fn parse_usage(&self) -> Option<UsageData> {
         if self.data.trim() == "[DONE]" {
             return None;
@@ -179,5 +205,50 @@ mod tests {
         let data1_ptr = events[1].data.as_ptr();
         assert!(data0_ptr >= chunk_ptr && data0_ptr < unsafe { chunk_ptr.add(chunk.len()) });
         assert!(data1_ptr >= chunk_ptr && data1_ptr < unsafe { chunk_ptr.add(chunk.len()) });
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_event_type() {
+        let event = SseEvent {
+            event: Some("error"),
+            data: "something",
+        };
+        assert!(event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_json_message() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"error":{"message":"User API Key Rate limit exceeded","type":"rate_limit_error"}}"#,
+        };
+        assert!(event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_quota() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}"#,
+        };
+        assert!(event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_normal_chunk() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"choices":[{"delta":{"content":"hello"}}]}"#,
+        };
+        assert!(!event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_done() {
+        let event = SseEvent {
+            event: None,
+            data: "[DONE]",
+        };
+        assert!(!event.is_rate_limit_error());
     }
 }

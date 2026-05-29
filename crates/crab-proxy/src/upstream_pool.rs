@@ -102,8 +102,27 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn ensure_unique_ids(specs: &mut [UpstreamKeySpec]) {
+    let mut id_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut next_id: usize = specs.len().saturating_add(1);
+    for spec in specs.iter_mut() {
+        if spec.id.is_empty() || id_seen.contains(&spec.id) {
+            loop {
+                let candidate = format!("key-{}", next_id);
+                next_id += 1;
+                if !id_seen.contains(&candidate) {
+                    spec.id = candidate;
+                    break;
+                }
+            }
+        }
+        id_seen.insert(spec.id.clone());
+    }
+}
+
 impl UpstreamKeyPool {
-    pub fn new(specs: Vec<UpstreamKeySpec>, cooldown_secs: u64) -> Arc<Self> {
+    pub fn new(mut specs: Vec<UpstreamKeySpec>, cooldown_secs: u64) -> Arc<Self> {
+        ensure_unique_ids(&mut specs);
         let slots: Vec<UpstreamKeySlot> = specs
             .into_iter()
             .enumerate()
@@ -257,22 +276,34 @@ impl UpstreamKeyPool {
         let mut specs = pool.to_specs();
         let mut seen: std::collections::HashSet<String> =
             specs.iter().map(|s| s.secret.clone()).collect();
+        let mut id_seen: std::collections::HashSet<String> =
+            specs.iter().map(|s| s.id.clone()).collect();
+        let mut next_id: usize = specs.len().saturating_add(1);
         for mut k in incoming {
             k.secret = k.secret.trim().to_string();
             if k.secret.is_empty() || seen.contains(&k.secret) {
                 continue;
             }
             seen.insert(k.secret.clone());
-            if k.id.is_empty() {
-                k.id = format!("key-{}", specs.len() + 1);
+            if k.id.is_empty() || id_seen.contains(&k.id) {
+                loop {
+                    let candidate = format!("key-{}", next_id);
+                    next_id += 1;
+                    if !id_seen.contains(&candidate) {
+                        k.id = candidate;
+                        break;
+                    }
+                }
             }
+            id_seen.insert(k.id.clone());
             specs.push(k);
         }
         Self::hot_replace(pool, specs)
     }
 
     /// Hot-replace the key pool, preserving inflight/cooldown for matching ids.
-    pub fn hot_replace(pool: &Arc<Self>, specs: Vec<UpstreamKeySpec>) -> Arc<Self> {
+    pub fn hot_replace(pool: &Arc<Self>, mut specs: Vec<UpstreamKeySpec>) -> Arc<Self> {
+        ensure_unique_ids(&mut specs);
         let old = pool;
         let new_slots: Vec<UpstreamKeySlot> = specs
             .into_iter()
@@ -606,5 +637,62 @@ mod tests {
             }
             other => panic!("expected AllInCooldown, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn merge_append_dedupes_ids() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60);
+        let merged = UpstreamKeyPool::merge_append(
+            &pool,
+            vec![
+                UpstreamKeySpec {
+                    id: "key-1".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+                UpstreamKeySpec {
+                    id: "key-1".into(),
+                    secret: "sk-cccccccccccc".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+                UpstreamKeySpec {
+                    id: String::new(),
+                    secret: "sk-dddddddddddd".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+            ],
+        );
+        assert_eq!(merged.len(), 4);
+        let ids: Vec<String> = merged.list_status().into_iter().map(|s| s.id).collect();
+        let unique_ids: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(ids.len(), unique_ids.len(), "duplicate ids found: {:?}", ids);
+    }
+
+    #[test]
+    fn new_dedupes_ids() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "key-1".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+                UpstreamKeySpec {
+                    id: "key-1".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: String::new(),
+                },
+            ],
+            60,
+        );
+        assert_eq!(pool.len(), 2);
+        let ids: Vec<String> = pool.list_status().into_iter().map(|s| s.id).collect();
+        let unique_ids: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(ids.len(), unique_ids.len(), "duplicate ids found: {:?}", ids);
     }
 }
