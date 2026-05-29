@@ -393,6 +393,15 @@ pub(crate) fn run(
             guard.mark_completed();
         }
 
+        // For passthrough: accumulated_body already has raw upstream SSE bytes.
+        // Populate upstream_body_for_capture so Raw Capture gets the upstream body.
+        if ctx.request_passthrough.armed_prefix_len > 0
+            && ctx.upstream_body_for_capture.is_none()
+        {
+            ctx.upstream_body_for_capture =
+                Some(bytes::Bytes::from(ctx.accumulated_body.clone()));
+        }
+
         if let Some(headers_at) = ctx.upstream.headers_at {
             let latency = headers_at.elapsed();
             ctx.upstream.latency_ms = Some(latency.as_secs_f64() * 1000.0);

@@ -254,6 +254,25 @@ pub(crate) async fn run(
         }
     }
 
+    // ── Rebuild full client body for passthrough Raw Capture ──
+    if ctx.request_passthrough.armed_prefix_len > 0
+        && !ctx.request_passthrough.captured_client_chunks.is_empty()
+    {
+        let prefix = ctx.original_request_body.take().unwrap_or_default();
+        let tail_size: usize = ctx
+            .request_passthrough
+            .captured_client_chunks
+            .iter()
+            .map(|c| c.len())
+            .sum();
+        let mut full = Vec::with_capacity(prefix.len() + tail_size);
+        full.extend_from_slice(&prefix);
+        for chunk in &ctx.request_passthrough.captured_client_chunks {
+            full.extend_from_slice(chunk);
+        }
+        ctx.original_request_body = Some(bytes::Bytes::from(full));
+    }
+
     // ── Raw capture (with sampling) ───────────────────────────────
     if let Some(raw_logger) = &proxy.state.raw_capture_logger {
         let req_path = session.req_header().uri.path();

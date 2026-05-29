@@ -220,6 +220,8 @@ pub(crate) async fn run_request_body_filter(
         if let Some(chunk) = body.take() {
             crate::helper_fns::passthrough_hash_update(ctx, &chunk);
             ctx.upstream_outbound_body_len += chunk.len();
+            // Zero-copy capture for Raw Capture (O(1) refcount bump)
+            ctx.request_passthrough.captured_client_chunks.push(chunk.clone());
             if client_done {
                 timeline_stamp(&mut ctx.timeline.body_read_done);
                 timeline_stamp(&mut ctx.timeline.upstream_body_sent);
