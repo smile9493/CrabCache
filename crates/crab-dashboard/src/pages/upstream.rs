@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use leptos::prelude::*;
 
 use crate::api;
+use crate::components::codex_oauth_panel::CodexOAuthPanel;
 use crate::components::routing_tab::RoutingTab;
 use crate::components::skeleton::SkeletonUpstreamProfileCard;
 use crate::components::sync_result::SyncResultCard;
@@ -1298,6 +1299,11 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             } else { view! { <span></span> }.into_any() }}
                                                         </div>
                                                     </div>
+                                                    // Codex OAuth panel (device code + PKCE)
+                                                    {move || {
+                                                        let pid = drawer_profile.get().unwrap_or_default();
+                                                        view! { <CodexOAuthPanel profile_id=pid /> }
+                                                    }}
                                                 </div>
                                             }.into_any()
                                         },

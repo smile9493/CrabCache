@@ -427,7 +427,7 @@ pub fn OverviewPage() -> impl IntoView {
             }
             tick += 1;
             // Skip polling when SSE is actively pushing updates.
-            if auto_refresh.get() && page_visible() && !sse_active.get() {
+            if auto_refresh.try_get_untracked() == Some(true) && page_visible() && !sse_active.try_get_untracked().unwrap_or(false) {
                 load_core_poll();
                 // Timeseries and trace refresh every 60s (every 6th tick)
                 // to align with the 60s backend sampling interval.

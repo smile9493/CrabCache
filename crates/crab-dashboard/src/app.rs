@@ -13,7 +13,6 @@ use crate::pages::live::LivePage;
 use crate::pages::models::ModelsPage;
 use crate::pages::overview::OverviewPage;
 use crate::pages::requests::RequestsPage;
-use crate::pages::session_monitor::SessionMonitorPage;
 use crate::pages::system::SystemPage;
 use crate::pages::upstream::UpstreamPage;
 use crate::table_density::provide_table_density;
@@ -99,7 +98,7 @@ fn AuthenticatedShell() -> impl IntoView {
                                     <Route path=path!("/system") view=SystemPage />
                                     <Route path=path!("/cache") view=CachePage />
                                     <Route path=path!("/requests") view=RequestsPage />
-                                    <Route path=path!("/sessions") view=SessionMonitorPage />
+                                    <Route path=path!("/sessions") view=SessionsRedirectPage />
                                     <Route path=path!("/upstream") view=UpstreamPage />
                                 </Routes>
                             </main>
@@ -109,6 +108,20 @@ fn AuthenticatedShell() -> impl IntoView {
                 }.into_any()
             }
         }}
+    }
+}
+
+#[component]
+fn SessionsRedirectPage() -> impl IntoView {
+    Effect::new(move |_| {
+        if let Some(win) = web_sys::window() {
+            let _ = win.location().set_href("/live");
+        }
+    });
+    view! {
+        <div class="page-content">
+            <div class="glass-card text-sm text-theme-muted">"Redirecting to Live..."</div>
+        </div>
     }
 }
 

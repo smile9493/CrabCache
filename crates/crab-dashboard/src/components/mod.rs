@@ -5,6 +5,7 @@ pub mod canvas_bar_chart;
 pub mod canvas_line_chart;
 pub mod card_detail_modal;
 pub mod chart;
+pub mod codex_oauth_panel;
 pub mod chart_detail_modal;
 pub mod chart_preview_card;
 pub mod confirm;

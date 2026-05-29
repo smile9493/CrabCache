@@ -49,7 +49,6 @@ pub fn TopNav() -> impl IntoView {
                 <TopNavItem href="/" label=move || use_translations().sidebar_overview() icon=IconName::LayoutDashboard on_navigate=close_on_nav />
                 <TopNavItem href="/live" label=move || use_translations().sidebar_live() icon=IconName::Activity on_navigate=close_on_nav />
                 <TopNavItem href="/requests" label=move || use_translations().sidebar_requests() icon=IconName::ListChecks on_navigate=close_on_nav />
-                <TopNavItem href="/sessions" label=move || "Session Monitor" icon=IconName::Radar on_navigate=close_on_nav />
 
                 <span class="topnav-group-label">{move || use_translations().sidebar_group_config()}</span>
                 <TopNavItem href="/keys" label=move || use_translations().sidebar_keys() icon=IconName::KeyRound on_navigate=close_on_nav />

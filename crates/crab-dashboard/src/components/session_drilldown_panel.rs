@@ -1,6 +1,8 @@
 //! Floating session drill-down panel (merged from former Session Monitor page).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use leptos::prelude::*;
 
@@ -56,27 +58,49 @@ pub fn SessionDrilldownPanel(open: RwSignal<bool>) -> impl IntoView {
     let selected_key = RwSignal::new(String::new());
     let timeline: RwSignal<Option<Result<SessionTimelineResponse, String>>> = RwSignal::new(None);
     let key_routing: RwSignal<Option<Result<KeyRoutingResponse, String>>> = RwSignal::new(None);
+    let alive = Arc::new(AtomicBool::new(true));
 
-    let load_timeline = move || {
-        let fp = fingerprint.get().trim().to_string();
-        if fp.is_empty() {
-            return;
-        }
-        timeline.set(None);
-        leptos::task::spawn_local(async move {
-            timeline.try_set(Some(api::fetch_session_timeline(&fp).await));
-        });
+    on_cleanup({
+        let alive = Arc::clone(&alive);
+        move || alive.store(false, Ordering::Relaxed)
+    });
+
+    let load_timeline = {
+        let alive = Arc::clone(&alive);
+        Callback::new(move |_: ()| {
+            let fp = fingerprint.get().trim().to_string();
+            if fp.is_empty() {
+                return;
+            }
+            let _ = timeline.try_set(None);
+            let alive = Arc::clone(&alive);
+            leptos::task::spawn_local(async move {
+                let result = api::fetch_session_timeline(&fp).await;
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
+                let _ = timeline.try_set(Some(result));
+            });
+        })
     };
 
-    let load_routing = move || {
-        let key_id = selected_key.get().trim().to_string();
-        if key_id.is_empty() {
-            return;
-        }
-        key_routing.set(None);
-        leptos::task::spawn_local(async move {
-            key_routing.try_set(Some(api::fetch_key_routing(&key_id).await));
-        });
+    let load_routing = {
+        let alive = Arc::clone(&alive);
+        Callback::new(move |_: ()| {
+            let key_id = selected_key.get().trim().to_string();
+            if key_id.is_empty() {
+                return;
+            }
+            let _ = key_routing.try_set(None);
+            let alive = Arc::clone(&alive);
+            leptos::task::spawn_local(async move {
+                let result = api::fetch_key_routing(&key_id).await;
+                if !alive.load(Ordering::Relaxed) {
+                    return;
+                }
+                let _ = key_routing.try_set(Some(result));
+            });
+        })
     };
 
     let close_label = t.chart_detail_close();
@@ -130,7 +154,7 @@ pub fn SessionDrilldownPanel(open: RwSignal<bool>) -> impl IntoView {
                             prop:value=move || fingerprint.get()
                             on:input=move |ev| fingerprint.set(event_target_value(&ev))
                         />
-                        <button class="btn btn-primary text-sm shrink-0" on:click=move |_| load_timeline()>
+                        <button class="btn btn-primary text-sm shrink-0" on:click=move |_| load_timeline.run(())>
                             {t.session_load_timeline()}
                         </button>
                     </div>
@@ -178,7 +202,10 @@ pub fn SessionDrilldownPanel(open: RwSignal<bool>) -> impl IntoView {
                                                 <option value={k.clone()}>{k.clone()}</option>
                                             }).collect_view()}
                                         </select>
-                                        <button class="btn btn-secondary text-sm shrink-0" on:click=move |_| load_routing()>
+                                        <button class="btn btn-secondary text-sm shrink-0" on:click={
+                                            let cb = load_routing.clone();
+                                            move |_| cb.run(())
+                                        }>
                                             {t.session_load_routing()}
                                         </button>
                                     </div>

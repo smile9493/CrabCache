@@ -15,7 +15,9 @@ use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::line_chart::{
     ChartSeries, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M, TokenLineChart,
 };
+use crate::components::icons::{Icon, IconName};
 use crate::components::page_header::PageHeader;
+use crate::components::session_drilldown_panel::SessionDrilldownPanel;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
@@ -228,6 +230,7 @@ pub fn LivePage() -> impl IntoView {
     let latency_e2e_open = RwSignal::new(false);
     let latency_upstream_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
+    let session_drilldown_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
@@ -270,13 +273,13 @@ pub fn LivePage() -> impl IntoView {
                     })
                     .unwrap_or_default();
                 if !names.is_empty() {
-                    if selected_consumer.get_untracked().is_none()
+                    if selected_consumer.try_get_untracked().flatten().is_none()
                         && let Some(first) = names.first()
                     {
-                        selected_consumer.set(Some(first.clone()));
+                        let _ = selected_consumer.try_set(Some(first.clone()));
                     }
-                    consumers.set(names);
-                    consumers_loaded.set(true);
+                    let _ = consumers.try_set(names);
+                    let _ = consumers_loaded.try_set(true);
                     return;
                 }
             }
@@ -291,17 +294,19 @@ pub fn LivePage() -> impl IntoView {
                         .filter(|n| !n.is_empty())
                         .collect();
                     if !names.is_empty() {
-                        if selected_consumer.get_untracked().is_none()
+                        if selected_consumer.try_get_untracked().flatten().is_none()
                             && let Some(first) = names.first()
                         {
-                            selected_consumer.set(Some(first.clone()));
+                            let _ = selected_consumer.try_set(Some(first.clone()));
                         }
-                        consumers.set(names);
+                        let _ = consumers.try_set(names);
                     }
                 }
-                Err(e) => consumers_error.set(Some(e)),
+                Err(e) => {
+                    let _ = consumers_error.try_set(Some(e));
+                }
             }
-            consumers_loaded.set(true);
+            let _ = consumers_loaded.try_set(true);
         });
     };
 
@@ -331,8 +336,8 @@ pub fn LivePage() -> impl IntoView {
                     .expect("live_buffer lock poisoned")
                     .take()
                 {
-                    live_data.set(Some(data));
-                    last_update.set(now_hms_string());
+                    live_data.try_set(Some(data));
+                    let _ = last_update.try_set(now_hms_string());
                 }
                 *live_dirty.lock().expect("live_dirty lock poisoned") = false;
             }
@@ -387,15 +392,15 @@ pub fn LivePage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if load_generation.get() != request_id {
+                        if load_generation.try_get_untracked() != Some(request_id) {
                             return;
                         }
                         if !data.available_consumers.is_empty() {
-                            consumers.set(data.available_consumers.clone());
-                            if selected_consumer.get_untracked().is_none()
+                            let _ = consumers.try_set(data.available_consumers.clone());
+                            if selected_consumer.try_get_untracked().flatten().is_none()
                                 && let Some(first) = data.available_consumers.first()
                             {
-                                selected_consumer.set(Some(first.clone()));
+                                let _ = selected_consumer.try_set(Some(first.clone()));
                             }
                         }
                         buf.lock()
@@ -407,8 +412,8 @@ pub fn LivePage() -> impl IntoView {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
-                        if load_generation.get() == request_id {
-                            live_data.set(Some(Err(e)));
+                        if load_generation.try_get_untracked() == Some(request_id) {
+                            let _ = live_data.try_set(Some(Err(e)));
                         }
                     }
                 }
@@ -428,7 +433,11 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            routing_profiles_for_routing.set(Some(api::fetch_routing_profiles().await));
+            let profiles = api::fetch_routing_profiles().await;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            let _ = routing_profiles_for_routing.try_set(Some(profiles));
             match api::fetch_keys().await {
                 Ok(keys) => {
                     if !alive.load(Ordering::Relaxed) {
@@ -441,30 +450,34 @@ pub fn LivePage() -> impl IntoView {
                         .collect();
                     if !ids.is_empty() {
                         let chosen = selected_routing_key_for_routing
-                            .get_untracked()
+                            .try_get_untracked()
+                            .flatten()
                             .filter(|id| ids.iter().any(|x| x == id))
                             .unwrap_or_else(|| ids[0].clone());
-                        selected_routing_key_for_routing.set(Some(chosen.clone()));
-                        routing_key_ids_for_routing.set(ids);
+                        let _ = selected_routing_key_for_routing.try_set(Some(chosen.clone()));
+                        let _ = routing_key_ids_for_routing.try_set(ids);
                         let routing = api::fetch_key_routing(&chosen).await;
                         let concurrency = api::fetch_key_concurrency(&chosen).await;
-                        routing_key_data_for_routing.set(Some(routing));
-                        routing_key_concurrency_for_routing.set(Some(concurrency));
+                        if !alive.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let _ = routing_key_data_for_routing.try_set(Some(routing));
+                        let _ = routing_key_concurrency_for_routing.try_set(Some(concurrency));
                     } else {
-                        routing_key_ids_for_routing.set(Vec::new());
-                        selected_routing_key_for_routing.set(None);
-                        routing_key_data_for_routing.set(None);
-                        routing_key_concurrency_for_routing.set(None);
+                        let _ = routing_key_ids_for_routing.try_set(Vec::new());
+                        let _ = selected_routing_key_for_routing.try_set(None);
+                        let _ = routing_key_data_for_routing.try_set(None);
+                        let _ = routing_key_concurrency_for_routing.try_set(None);
                     }
                 }
                 Err(e) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
                     }
-                    routing_key_ids_for_routing.set(Vec::new());
-                    selected_routing_key_for_routing.set(None);
-                    routing_key_data_for_routing.set(Some(Err(e)));
-                    routing_key_concurrency_for_routing.set(None);
+                    let _ = routing_key_ids_for_routing.try_set(Vec::new());
+                    let _ = selected_routing_key_for_routing.try_set(None);
+                    let _ = routing_key_data_for_routing.try_set(Some(Err(e)));
+                    let _ = routing_key_concurrency_for_routing.try_set(None);
                 }
             }
         });
@@ -500,8 +513,8 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            routing_key_data.set(Some(routing));
-            routing_key_concurrency.set(Some(concurrency));
+            let _ = routing_key_data.try_set(Some(routing));
+            let _ = routing_key_concurrency.try_set(Some(concurrency));
         });
     });
 
@@ -515,8 +528,8 @@ pub fn LivePage() -> impl IntoView {
                 if !alive_poll.load(Ordering::Relaxed) {
                     break;
                 }
-                if auto_refresh.get()
-                    && selected_consumer.get_untracked().is_some()
+                if auto_refresh.try_get_untracked() == Some(true)
+                    && selected_consumer.try_get_untracked().flatten().is_some()
                     && page_visible()
                 {
                     ll.borrow_mut()();
@@ -561,6 +574,13 @@ pub fn LivePage() -> impl IntoView {
                 title=move || t.live_title()
                 description=move || t.live_desc()
             >
+                <button
+                    class="btn btn-secondary text-xs inline-flex items-center gap-1.5"
+                    on:click=move |_| session_drilldown_open.set(true)
+                >
+                    <Icon name=IconName::Radar class="icon icon-sm" />
+                    {move || t.session_drilldown_title()}
+                </button>
                 <button on:click=move |_| {
                     if !alive.load(Ordering::Relaxed) {
                         return;
@@ -581,15 +601,17 @@ pub fn LivePage() -> impl IntoView {
                         let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
                         match api::fetch_live_metrics_v2(&consumer, window, &gb_refs, "", "").await {
                             Ok(data) => {
-                                if !alive.load(Ordering::Relaxed) || load_generation.get() != request_id {
+                                if !alive.load(Ordering::Relaxed)
+                                    || load_generation.try_get_untracked() != Some(request_id)
+                                {
                                     return;
                                 }
                                 if !data.available_consumers.is_empty() {
-                                    consumers.set(data.available_consumers.clone());
-                                    if selected_consumer.get_untracked().is_none()
+                                    let _ = consumers.try_set(data.available_consumers.clone());
+                                    if selected_consumer.try_get_untracked().flatten().is_none()
                                         && let Some(first) = data.available_consumers.first()
                                     {
-                                        selected_consumer.set(Some(first.clone()));
+                                        let _ = selected_consumer.try_set(Some(first.clone()));
                                     }
                                 }
                                 buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
@@ -599,8 +621,8 @@ pub fn LivePage() -> impl IntoView {
                                 if !alive.load(Ordering::Relaxed) {
                                     return;
                                 }
-                                if load_generation.get() == request_id {
-                                    live_data.set(Some(Err(e)));
+                                if load_generation.try_get_untracked() == Some(request_id) {
+                                    let _ = live_data.try_set(Some(Err(e)));
                                 }
                             }
                         }
@@ -679,6 +701,7 @@ pub fn LivePage() -> impl IntoView {
                     }
                 }
             }}
+            <SessionDrilldownPanel open=session_drilldown_open />
         </div>
     }
 }
