@@ -248,7 +248,7 @@ Cursor 可使用：
 
 网关对替换后的上游请求还会：
 
-- `User-Agent: curl/8.7.1`、`Accept-Encoding: identity`（对齐 curl / deepseek-cursor-proxy）
+- `User-Agent: curl/8.7.1`、`Accept-Encoding: gzip, deflate, br`（网关在上游响应侧解压，见 `upstream_response_decompress.rs`）
 - 流式：`Accept: text/event-stream`；非流式：`Accept: application/json`
 
 **JA3 / TLS 指纹**：一般无需改；若 TE/CL 与请求头顺滑后仍断连，再考虑上游 TLS 套件调优（最后手段）。
@@ -268,7 +268,7 @@ cat .cursor/debug-3f9816.log | jq -c 'select(.hypothesisId=="H1")'
 `[connection]` 推荐（已写入 `gateway.docker.toml`）：
 
 ```toml
-upstream_force_http1 = true
+upstream_force_http1 = false
 upstream_request_timeout_secs = 300
 upstream_write_timeout_secs = 300
 upstream_connection_timeout_secs = 60

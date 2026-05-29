@@ -227,8 +227,8 @@ tcp_keepalive_idle_secs = 60
 tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 120
-# Force HTTP/1.1 to api.deepseek.com (recommended for Cursor; avoids H2 edge cases on large bodies)
-upstream_force_http1 = true
+# false = negotiate HTTP/2 with upstream (h2_ping_interval_secs applies); true = force HTTP/1.1
+upstream_force_http1 = false
 upstream_disable_keepalive = false
 h2_ping_interval_secs = 30
 upstream_request_timeout_secs = 300
@@ -302,7 +302,8 @@ max_files = 5
 # Each feature is independent and default off. Enable at your own risk.
 # [features]
 # prefix_aware_cache = false         # L0 prefix index only on shared prefixes (no full-response short-circuit)
-# streaming_body_forward = false     # Reserved: stream request body without buffering (not implemented)
+# streaming_body_forward = false     # MiMo: partial read + upstream_peer before body EOS; see docs/STREAMING_BODY_FORWARD.md
+# streaming_body_forward_auto_disable_threshold = 3  # consecutive parse/empty-body failures → disable defer for 60s
 # connection_prewarm = false         # Direct pool pre-warm: shared Pingora Connector, TCP+TLS only (no loopback HTTP).
 #                                    # Startup: all backends; runtime: first upstream_peer per new session_fingerprint.
 # affinity_prompt_cache_feedback = false  # Sticky backend hint from upstream prompt_cache_* tokens; invalidate after 3 consecutive pure misses at request end
@@ -311,6 +312,10 @@ max_files = 5
 # wasm_filters = false               # Experimental WASM filters (docs/DATA_PLANE_P3.md)
 # mimo_context_compression = false   # Auto-summarize old MiMo messages
 # mimo_compression_threshold = 40    # Message count to trigger compression
+# upstream_request_gzip = false      # Gzip request bodies to upstream when >= min bytes
+# upstream_request_gzip_min_bytes = 4096
+# mimo_retire_prefix_messages = false  # Trim old MiMo turns before upstream (cache keys unchanged)
+# mimo_keep_recent_turns = 6
 
 # ── Log Retention (Admin Dashboard) ──────────────────────────────
 # The admin dashboard runs a background cleanup task every 10 minutes

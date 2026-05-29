@@ -17,6 +17,7 @@ use crate::metrics_helpers::{
 };
 use crate::proxy::GatewayProxy;
 use crate::sse::UsageData;
+use crate::upstream_response_decompress::decompress_upstream_chunk;
 use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crab_metrics::{CacheTier, LatencyKind, global_metrics};
 use crab_reasoning::{rewrite_response_body, sanitize_client_completion};
@@ -44,6 +45,13 @@ pub(crate) fn run(
     {
         let preview = upstream_error_preview(chunk.as_ref());
         let has_reasoning_err = preview.contains("reasoning_content");
+        warn!(
+            request_id = %ctx.request_id,
+            status,
+            body_len = chunk.len(),
+            preview = %preview,
+            "Upstream error response body"
+        );
         // #region agent log
         debug_agent_log(
             "UP4B",
@@ -62,7 +70,29 @@ pub(crate) fn run(
         ctx.upstream.error_body_logged = true;
     }
 
-    if let Some(data) = body.take() {
+    if let Some(mut data) = body.take() {
+        if ctx.upstream.response_decompress.encoding.is_some() {
+            data = match decompress_upstream_chunk(
+                &mut ctx.upstream.response_decompress,
+                data,
+                end_of_stream,
+            ) {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "upstream response decompress chunk failed"
+                    );
+                    return Ok(None);
+                }
+            };
+        }
+        if data.is_empty() && !end_of_stream {
+            *body = None;
+            return Ok(None);
+        }
+
         // #region agent log
         if !ctx.upstream.first_body_chunk_logged {
             ctx.upstream.first_body_chunk_logged = true;
@@ -90,18 +120,17 @@ pub(crate) fn run(
 
         if ctx.is_streaming {
             if ctx.ttft.is_none()
-                && let Some(upstream_start) = ctx.upstream.start
+                && let Some(headers_at) = ctx.upstream.headers_at
             {
-                ctx.ttft = Some(upstream_start.elapsed());
+                let sse_ttft = headers_at.elapsed();
+                ctx.ttft = Some(sse_ttft);
                 timeline_stamp(&mut ctx.timeline.ttft);
-                if let Some(ttft) = ctx.ttft {
-                    global_metrics().record_latency(
-                        LatencyKind::TTFT,
-                        ttft,
-                        &ctx.model,
-                        Some(CacheTier::Miss),
-                    );
-                }
+                global_metrics().record_latency(
+                    LatencyKind::TTFT,
+                    sse_ttft,
+                    &ctx.model,
+                    Some(CacheTier::Miss),
+                );
             }
 
             // Initialize SSE pipeline on first streaming chunk.
@@ -160,8 +189,8 @@ pub(crate) fn run(
             guard.mark_completed();
         }
 
-        if let Some(upstream_start) = ctx.upstream.start {
-            let latency = upstream_start.elapsed();
+        if let Some(headers_at) = ctx.upstream.headers_at {
+            let latency = headers_at.elapsed();
             ctx.upstream.latency_ms = Some(latency.as_secs_f64() * 1000.0);
             timeline_stamp(&mut ctx.timeline.upstream_body_done);
             global_metrics().record_latency(
@@ -320,8 +349,8 @@ pub(crate) fn run(
             guard.mark_completed();
         }
 
-        if let Some(upstream_start) = ctx.upstream.start {
-            let latency = upstream_start.elapsed();
+        if let Some(headers_at) = ctx.upstream.headers_at {
+            let latency = headers_at.elapsed();
             ctx.upstream.latency_ms = Some(latency.as_secs_f64() * 1000.0);
             timeline_stamp(&mut ctx.timeline.upstream_body_done);
             global_metrics().record_latency(
@@ -386,7 +415,7 @@ pub(crate) fn run(
                         reasoning_cfg.display_reasoning,
                     )
                 {
-                    let sse_body = ctx.stream.client_sse_body.clone();
+                    let sse_body = std::mem::take(&mut ctx.stream.client_sse_body);
                     let max_sse = proxy.state.max_sse_cache_bytes;
                     let entry_for_cache = if should_store_sse_body(sse_body.len(), max_sse) {
                         build_cache_entry_with_sse(

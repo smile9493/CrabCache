@@ -28,6 +28,13 @@ pub struct SanitizedLogEntry {
     pub latency_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_latency_ms: Option<f64>,
+    /// Request start → upstream response headers (MiMo prefill SLO).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<f64>,
+    /// Legacy: `latency_ms - upstream_latency_ms` (first-byte window before stream segment ends).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_header_ms: Option<f64>,
+    /// Response headers → first upstream body chunk (SSE TTFT).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,6 +165,8 @@ impl SanitizedLogEntry {
             prompt_tokens,
             latency_ms,
             upstream_latency_ms: None,
+            prefill_ms: None,
+            pre_header_ms: None,
             ttft_ms: None,
             input_tokens: None,
             output_tokens: None,

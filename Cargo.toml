@@ -15,10 +15,12 @@ members = [
     "crates/crab-reasoning",
     "crates/crab-pipeline",
     "crates/crab-control",
+    "crates/crab-client-endpoint",
     "crates/crab-state",
     "crates/crab-composition",
     "crates/crab-admin-types",
     "crates/crab-capture",
+    "crates/crab-auth",
 ]
 
 [workspace.package]
@@ -78,6 +80,7 @@ once_cell      = "1"
 chrono         = { version = "0.4", features = ["serde"] }
 
 # -- Internal crates --
+crab-auth       = { path = "crates/crab-auth" }
 crab-metrics   = { path = "crates/crab-metrics" }
 crab-route     = { path = "crates/crab-route" }
 crab-cache     = { path = "crates/crab-cache" }
@@ -87,6 +90,7 @@ crab-reasoning = { path = "crates/crab-reasoning" }
 crab-pipeline   = { path = "crates/crab-pipeline" }
 crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
+crab-client-endpoint = { path = "crates/crab-client-endpoint" }
 crab-state      = { path = "crates/crab-state" }
 crab-composition = { path = "crates/crab-composition" }
 crab-capture    = { path = "crates/crab-capture" }

@@ -448,6 +448,7 @@ fn metrics_snapshot_from_core(
         tier_deltas_5m: core.tier_deltas_5m,
         latency_upstream_p99_ms: core.latency_upstream_p99_ms,
         latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_prefill_p99_ms: core.latency_prefill_p99_ms,
         latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
         error_rate_5m: core.error_rate_5m,
         http_4xx_5m: core.http_4xx_5m,
@@ -556,6 +557,12 @@ pub async fn build_metrics_snapshot_core(
         &[],
         0.99,
     );
+    let latency_prefill_p99_ms = percentile_from_buckets(
+        body,
+        "gateway_request_phase_latency_seconds",
+        &[("phase", "upstream_response_headers")],
+        0.99,
+    );
     let latency_cache_fetch_p99_ms =
         percentile_from_buckets(body, "gateway_cache_fetch_latency_seconds", &[], 0.99);
 
@@ -633,6 +640,7 @@ pub async fn build_metrics_snapshot_core(
         tier_deltas_5m,
         latency_upstream_p99_ms,
         latency_ttft_p99_ms,
+        latency_prefill_p99_ms,
         latency_cache_fetch_p99_ms,
         error_rate_5m,
         http_4xx_5m,
@@ -697,6 +705,7 @@ pub async fn build_metrics_snapshot(
         tier_deltas_5m: core.tier_deltas_5m,
         latency_upstream_p99_ms: core.latency_upstream_p99_ms,
         latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_prefill_p99_ms: core.latency_prefill_p99_ms,
         latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
         error_rate_5m: core.error_rate_5m,
         http_4xx_5m: core.http_4xx_5m,
@@ -725,7 +734,7 @@ fn build_gateway_health_from_probe(probe: &GatewayProbe) -> GatewayHealthView {
             qdrant_connected: probe.l2_status == "ok",
             backends_healthy: 0,
             backends_total: 0,
-            circuit_open_count: 0,
+            backends_unhealthy: 0,
         };
     }
     let mut health = match &probe.status {
@@ -751,7 +760,7 @@ fn gateway_health_from_status(s: GatewayStatus, error: Option<String>) -> Gatewa
         qdrant_connected: false,
         backends_healthy: 0,
         backends_total: 0,
-        circuit_open_count: 0,
+        backends_unhealthy: 0,
     }
 }
 
@@ -835,6 +844,7 @@ mod tests {
             tier_deltas_5m: TierDeltas5m::default(),
             latency_upstream_p99_ms: 0.0,
             latency_ttft_p99_ms: 0.0,
+            latency_prefill_p99_ms: 0.0,
             latency_cache_fetch_p99_ms: 0.0,
             error_rate_5m: 0.0,
             http_4xx_5m: 0,

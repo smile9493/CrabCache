@@ -31,6 +31,12 @@ pub fn init_debug_log(path: Option<&str>) {
     let _ = DEBUG_WRITER.set(tx);
 }
 
+/// True when `CRABCACHE_DEBUG_LOG_PATH` initialized the debug log writer.
+#[inline]
+pub fn is_debug_agent_log_enabled() -> bool {
+    DEBUG_WRITER.get().is_some_and(Option::is_some)
+}
+
 /// Append one NDJSON line for debug-mode hypothesis testing. Never log secrets.
 pub fn debug_agent_log(
     hypothesis_id: &str,

@@ -16,13 +16,11 @@ fn build_key_usage_top10(keys: &[ApiKey]) -> (Vec<String>, Vec<f64>) {
         .iter()
         .filter(|k| k.tokens_used_this_month > 0)
         .collect();
-    rows.sort_by_key(|k| k.tokens_used_this_month);
-    let top: Vec<&ApiKey> = rows.into_iter().rev().take(10).collect();
-    let mut top = top;
-    top.reverse();
-    let labels: Vec<String> = top.iter().map(|k| k.name.clone()).collect();
-    let values: Vec<f64> = top
+    rows.sort_by(|a, b| b.tokens_used_this_month.cmp(&a.tokens_used_this_month));
+    let labels: Vec<String> = rows.iter().take(10).map(|k| k.name.clone()).collect();
+    let values: Vec<f64> = rows
         .iter()
+        .take(10)
         .map(|k| k.tokens_used_this_month as f64)
         .collect();
     (labels, values)

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
+use crab_client_endpoint::{DiscoveryConfig, discover};
 use crab_gateway::config::GatewayConfig;
 use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
 use crab_metrics::global_metrics;
@@ -676,9 +677,13 @@ fn main() -> Result<()> {
         } else {
             let (version, snap) = rt.block_on(store.load_all())?;
             apply_snapshot_to_runtime(&runtime, &snap, config.upstream.key_cooldown_secs)?;
+            let profile_ids: Vec<String> = runtime.upstream_profiles.read().keys().cloned().collect();
             info!(
                 version,
                 keys = snap.keys.len(),
+                profile_count = profile_ids.len(),
+                profiles = ?profile_ids,
+                snap_has_upstream_profiles = snap.upstream_profiles.is_some(),
                 "Loaded control plane state from Redis"
             );
         }
@@ -752,6 +757,16 @@ fn main() -> Result<()> {
         std::time::Duration::from_secs(1),
     ));
 
+    let client_endpoint = Arc::new(RwLock::new({
+        let snap = discover(&DiscoveryConfig::from_env());
+        info!(
+            gateway_url_public = ?snap.gateway_url_public,
+            public_source = ?snap.public_source,
+            "Client endpoint discovery at gateway startup"
+        );
+        snap
+    }));
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -768,6 +783,7 @@ fn main() -> Result<()> {
         upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
         semantic_runtime: semantic_runtime.clone(),
         semantic_cache: semantic_cache.clone(),
+        client_endpoint: client_endpoint.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -831,6 +847,14 @@ fn main() -> Result<()> {
         global_rate: Arc::new(pingora_limits::rate::Rate::new(
             std::time::Duration::from_secs(1),
         )),
+        client_endpoint: client_endpoint.clone(),
+        streaming_defer_circuit_breaker: Arc::new(
+            crab_proxy::StreamingDeferCircuitBreaker::new(
+                config
+                    .features
+                    .streaming_body_forward_auto_disable_threshold,
+            ),
+        ),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -879,62 +903,22 @@ fn main() -> Result<()> {
     // connection ready.
     if config.features.connection_prewarm {
         let profiles = runtime_warmup.upstream_profiles.read().clone();
-        let connector_ref = state.upstream_connector.read().clone();
-        if let Some(connector) = connector_ref {
-            tokio::spawn(async move {
-                // Small delay so the proxy listener is ready.
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-                let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
-                let mut join_set = tokio::task::JoinSet::new();
-
-                // Collect all backends into owned data to avoid borrow issues.
-                let backends: Vec<(String, std::net::SocketAddr, String, String)> = profiles
-                    .iter()
-                    .flat_map(|(pid, profile)| {
-                        profile.router.meta().iter().map(move |(addr, meta)| {
-                            (pid.clone(), *addr, meta.name.clone(), meta.tls_sni.clone())
-                        })
+        if let Some(connector) = state.upstream_connector.read().clone() {
+            let backends: Vec<crab_proxy::connection_prewarm::PrewarmBackend> = profiles
+                .iter()
+                .flat_map(|(pid, profile)| {
+                    profile.router.meta().iter().map(move |(addr, meta)| {
+                        (pid.clone(), *addr, meta.name.clone(), meta.tls_sni.clone())
                     })
-                    .collect();
-
-                for (profile_id, addr, name, tls_sni) in backends {
-                    let peer = pingora_core::upstreams::peer::HttpPeer::new(addr, true, tls_sni);
-                    let connector = connector.clone();
-                    let semaphore = semaphore.clone();
-                    join_set.spawn(async move {
-                        let Ok(_permit) = semaphore.try_acquire() else {
-                            return;
-                        };
-                        match connector.get_http_session(&peer).await {
-                            Ok((session, _reused)) => {
-                                connector.release_http_session(session, &peer, None).await;
-                                tracing::debug!(
-                                    profile = %profile_id,
-                                    backend = %name,
-                                    addr = %addr,
-                                    "Startup direct pre-warm OK"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    profile = %profile_id,
-                                    backend = %name,
-                                    addr = %addr,
-                                    error = %e,
-                                    "Startup direct pre-warm failed"
-                                );
-                            }
-                        }
-                    });
-                }
-
-                let results = join_set.join_all().await;
-                tracing::info!(
-                    count = results.len(),
-                    "Startup connection pre-warm completed"
-                );
-            });
+                })
+                .collect();
+            server.add_service(background_service(
+                "connection-prewarm",
+                crab_proxy::connection_prewarm::StartupPrewarmService {
+                    connector,
+                    backends,
+                },
+            ));
         }
     }
 

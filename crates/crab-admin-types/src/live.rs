@@ -51,6 +51,8 @@ pub struct LiveMetricsBucket {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_header_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub upstream_sample_count: u32,
@@ -108,6 +110,8 @@ pub struct LiveRequestPoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_header_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -119,6 +123,8 @@ pub struct LiveMetricsSummary {
     pub request_count: u32,
     pub avg_e2e_latency_ms: f64,
     pub avg_upstream_latency_ms: f64,
+    /// Average time from request start to upstream response headers (`e2e - upstream`).
+    pub avg_pre_header_ms: f64,
     pub avg_ttft_ms: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,

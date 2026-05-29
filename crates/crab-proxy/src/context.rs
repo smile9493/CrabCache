@@ -8,6 +8,7 @@ use crate::upstream_pool::UpstreamKeyGuard;
 use crate::upstream_user_id_limiter::{UpstreamUserIdGuard, UpstreamUserIdLimiter};
 use bytes::Bytes;
 use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
+use crab_client_endpoint::ClientEndpointSnapshot;
 use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
 use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
@@ -56,7 +57,7 @@ fn default_upstream_disable_keepalive() -> bool {
 }
 
 fn default_upstream_force_http1() -> bool {
-    true
+    false
 }
 
 fn default_upstream_write_timeout_secs() -> Option<u64> {
@@ -84,7 +85,7 @@ impl Default for ConnectionConfig {
             idle_timeout_secs: Some(120),
             h2_ping_interval_secs: Some(30),
             upstream_request_timeout_secs: default_upstream_request_timeout_secs(),
-            upstream_force_http1: true,
+            upstream_force_http1: false,
             upstream_write_timeout_secs: default_upstream_write_timeout_secs(),
             upstream_connection_timeout_secs: default_upstream_connection_timeout_secs(),
             upstream_disable_keepalive: false,
@@ -217,7 +218,12 @@ pub struct RequestTimeline {
     pub upstream_connect_done: Option<Instant>,
     pub upstream_headers_sent: Option<Instant>,
     pub upstream_body_sent: Option<Instant>,
+    /// Upstream response headers received (`response_filter` on 2xx).
+    pub upstream_response_headers: Option<Instant>,
+    /// First upstream response body chunk (SSE TTFT after headers).
     pub ttft: Option<Instant>,
+    /// Request start → upstream response headers (MiMo prefill SLO).
+    pub prefill_done: Option<Instant>,
     pub upstream_body_done: Option<Instant>,
     pub cache_write_done: Option<Instant>,
     pub logging_done: Option<Instant>,
@@ -231,7 +237,10 @@ pub struct UpstreamState {
     pub affinity_key: Option<String>,
     /// Backend name for circuit breaker tracking.
     pub backend_name: Option<String>,
+    /// TCP/TLS connect completed (`upstream_peer`); not reset at response headers.
     pub start: Option<Instant>,
+    /// Upstream response headers received (`response_filter` on 2xx).
+    pub headers_at: Option<Instant>,
     /// Upstream body completion latency (response headers → EOS), miss paths only.
     pub latency_ms: Option<f64>,
     pub key_guard: Option<UpstreamKeyGuard>,
@@ -243,10 +252,14 @@ pub struct UpstreamState {
     pub connection_close: bool,
     /// Downstream retry buffer exceeded 64KiB while reading in `request_filter`.
     pub retry_buffer_truncated: bool,
+    /// Prepared upstream JSON was written in `request_body_filter` (skip trailing empty H2 EOS).
+    pub prepared_upstream_body_emitted: bool,
     /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
     pub error_body_logged: bool,
     /// Whether the first upstream body chunk was logged for debug.
     pub first_body_chunk_logged: bool,
+    /// Upstream `Content-Encoding` (stripped from forwarded headers); drives R7 decompress.
+    pub response_decompress: crate::upstream_response_decompress::UpstreamDecompressState,
 }
 
 impl UpstreamState {
@@ -262,6 +275,7 @@ impl Default for UpstreamState {
             affinity_key: None,
             backend_name: None,
             start: None,
+            headers_at: None,
             latency_ms: None,
             key_guard: None,
             miss: false,
@@ -269,8 +283,10 @@ impl Default for UpstreamState {
             http_status: None,
             connection_close: false,
             retry_buffer_truncated: false,
+            prepared_upstream_body_emitted: false,
             error_body_logged: false,
             first_body_chunk_logged: false,
+            response_decompress: crate::upstream_response_decompress::UpstreamDecompressState::default(),
         }
     }
 }
@@ -367,6 +383,8 @@ pub struct GatewayContext {
     pub exact_cache_probed: bool,
     /// Lifecycle watermarks for `gateway_request_phase_latency_seconds`.
     pub timeline: RequestTimeline,
+    /// MiMo streaming body forward (partial read in `request_filter`, finalize at EOS).
+    pub streaming_body: crate::streaming_body_forward::StreamingBodyState,
 }
 
 impl GatewayContext {
@@ -421,6 +439,7 @@ impl GatewayContext {
             affinity_pure_miss_streak: 0,
             exact_cache_probed: false,
             timeline: RequestTimeline::default(),
+            streaming_body: crate::streaming_body_forward::StreamingBodyState::default(),
         }
     }
 }
@@ -434,6 +453,9 @@ pub struct FeaturesConfig {
     /// Enable zero-buffer streaming body forwarding in `request_body_filter`.
     #[serde(default)]
     pub streaming_body_forward: bool,
+    /// Consecutive parse/empty-body failures on defer path before auto-disabling defer (`0` = off).
+    #[serde(default = "default_streaming_defer_auto_disable_threshold")]
+    pub streaming_body_forward_auto_disable_threshold: u32,
     /// Pre-warm upstream connections on new session fingerprints.
     #[serde(default)]
     pub connection_prewarm: bool,
@@ -455,10 +477,34 @@ pub struct FeaturesConfig {
     /// MiMo context compression: message count threshold to trigger compression.
     #[serde(default = "default_compression_threshold")]
     pub mimo_compression_threshold: usize,
+    /// Gzip upstream request bodies when size >= `upstream_request_gzip_min_bytes`.
+    #[serde(default)]
+    pub upstream_request_gzip: bool,
+    /// Minimum raw JSON body size before `upstream_request_gzip` applies.
+    #[serde(default = "default_upstream_request_gzip_min_bytes")]
+    pub upstream_request_gzip_min_bytes: usize,
+    /// Retire old MiMo `messages` turns before upstream (does not change cache keys).
+    #[serde(default)]
+    pub mimo_retire_prefix_messages: bool,
+    /// User/assistant turn pairs to keep when `mimo_retire_prefix_messages` is on.
+    #[serde(default = "default_mimo_keep_recent_turns")]
+    pub mimo_keep_recent_turns: usize,
+}
+
+fn default_mimo_keep_recent_turns() -> usize {
+    6
+}
+
+fn default_upstream_request_gzip_min_bytes() -> usize {
+    4096
 }
 
 fn default_compression_threshold() -> usize {
     40
+}
+
+fn default_streaming_defer_auto_disable_threshold() -> u32 {
+    3
 }
 
 pub struct GatewayState {
@@ -494,6 +540,11 @@ pub struct GatewayState {
     pub prewarm_semaphore: Arc<Semaphore>,
     /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).
     pub global_rate: Arc<pingora_limits::rate::Rate>,
+    /// Client Base URL discovery (FRP / OpenResty / observed request headers).
+    pub client_endpoint: Arc<parking_lot::RwLock<ClientEndpointSnapshot>>,
+    /// Auto-disable `streaming_body_forward` after repeated defer-path failures.
+    pub streaming_defer_circuit_breaker:
+        Arc<crate::streaming_body_forward::StreamingDeferCircuitBreaker>,
 }
 
 #[cfg(test)]

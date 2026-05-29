@@ -61,6 +61,26 @@ pub fn SkeletonBento() -> impl IntoView {
     }
 }
 
+/// Skeleton placeholder for upstream profile cards on the pool grid.
+#[component]
+pub fn SkeletonUpstreamProfileCard() -> impl IntoView {
+    view! {
+        <div class="upstream-card upstream-card-skeleton">
+            <div class="flex items-start gap-2 mb-3">
+                <div class="skeleton-block skeleton-block-rounded" style="width: 2rem; height: 2rem"></div>
+                <div class="flex-1 space-y-2">
+                    <div class="skeleton-block" style="width: 45%; height: 0.75rem"></div>
+                    <div class="skeleton-block" style="width: 80%; height: 0.5rem"></div>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <div class="skeleton-block" style="width: 3rem; height: 0.5rem"></div>
+                <div class="skeleton-block" style="width: 4.5rem; height: 0.5rem"></div>
+            </div>
+        </div>
+    }
+}
+
 /// Generic skeleton grid for secondary sections (2/3/4 columns).
 #[component]
 pub fn SkeletonGrid(

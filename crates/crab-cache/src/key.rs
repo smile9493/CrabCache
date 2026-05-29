@@ -101,12 +101,15 @@ pub fn generate_namespaced_cache_key(
 /// 4. Injects fingerprint version for safe rule upgrades
 /// 5. Sorts remaining object keys for canonical serialization
 /// 6. SHA-256 hashes the normalized JSON
-pub fn generate_cache_key_with_fingerprint(
-    request_body: &[u8],
-    config: &FingerprintConfig,
-) -> Result<String> {
-    let mut value: Value = serde_json::from_slice(request_body)?;
+fn fingerprint_hash_normalized_value(value: &Value) -> String {
+    let mut canonical = String::new();
+    canonical_write(value, &mut canonical);
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hex::encode(hasher.finalize())
+}
 
+fn prepare_value_for_fingerprint(mut value: Value, config: &FingerprintConfig) -> Value {
     if let Some(obj) = value.as_object_mut() {
         for field in STRIPPED_FIELDS {
             obj.remove(*field);
@@ -115,22 +118,32 @@ pub fn generate_cache_key_with_fingerprint(
 
     normalize_for_fingerprint(&mut value, config);
 
-    // Inject fingerprint version into the hash input (only this copy, never sent upstream)
     if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "__crab_fp_version".to_string(),
             Value::Number(serde_json::Number::from(config.version)),
         );
     }
+    value
+}
 
-    let mut canonical = String::with_capacity(request_body.len());
-    canonical_write(&value, &mut canonical);
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    let hash = hasher.finalize();
-    let key = hex::encode(hash);
+/// Generate a cache key from a parsed request body (avoids redundant `from_slice` in hot path).
+pub fn generate_cache_key_with_fingerprint_from_value(
+    value: &Value,
+    config: &FingerprintConfig,
+) -> Result<String> {
+    Ok(fingerprint_hash_normalized_value(&prepare_value_for_fingerprint(
+        value.clone(),
+        config,
+    )))
+}
 
-    Ok(key)
+pub fn generate_cache_key_with_fingerprint(
+    request_body: &[u8],
+    config: &FingerprintConfig,
+) -> Result<String> {
+    let value: Value = serde_json::from_slice(request_body)?;
+    generate_cache_key_with_fingerprint_from_value(&value, config)
 }
 
 /// Generate a fingerprint-normalized cache key with an optional consumer namespace.
@@ -143,6 +156,20 @@ pub fn generate_namespaced_cache_key_with_fingerprint(
     config: &FingerprintConfig,
 ) -> Result<String> {
     let base = generate_cache_key_with_fingerprint(request_body, config)?;
+    namespaced_fingerprint_key(base, namespace)
+}
+
+/// Namespaced cache key from an already-parsed client payload.
+pub fn generate_namespaced_cache_key_with_fingerprint_from_value(
+    value: &Value,
+    namespace: Option<&str>,
+    config: &FingerprintConfig,
+) -> Result<String> {
+    let base = generate_cache_key_with_fingerprint_from_value(value, config)?;
+    namespaced_fingerprint_key(base, namespace)
+}
+
+fn namespaced_fingerprint_key(base: String, namespace: Option<&str>) -> Result<String> {
     match namespace {
         Some(ns) if !ns.is_empty() => Ok(format!("{ns}:{base}")),
         _ => Ok(base),
@@ -821,6 +848,22 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_key_from_value_matches_bytes() {
+        let body = json!({
+            "model": "mimo-v2.5-pro",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true,
+            "temperature": 0.7
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let config = FingerprintConfig::default_v1();
+        let from_bytes =
+            generate_cache_key_with_fingerprint(&bytes, &config).unwrap();
+        let from_value =
+            generate_cache_key_with_fingerprint_from_value(&body, &config).unwrap();
+        assert_eq!(from_bytes, from_value);
+    }
+
     fn test_fingerprint_multimodal_content_normalization() {
         let body1 = json!({
             "model": "v4-pro",

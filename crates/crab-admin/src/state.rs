@@ -350,7 +350,14 @@ impl AppState {
             }
         }
 
-        let key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string());
+        let key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| {
+            if cfg!(debug_assertions) {
+                "admin".to_string()
+            } else {
+                eprintln!("FATAL: CRABCACHE_ADMIN_KEY is not set. Refusing to start with default 'admin' key.");
+                std::process::exit(1);
+            }
+        });
         let _ = std::fs::create_dir_all(&state_dir);
         let _ = std::fs::write(&key_path, &key);
         key

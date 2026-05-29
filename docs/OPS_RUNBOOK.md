@@ -56,6 +56,24 @@
 
 详见 [CURSOR_SETUP — 限流排查](CURSOR_SETUP.md#限流排查user-api-key-rate-limit-exceeded)。
 
+### P1b：MiMo 端到端偏慢（大 context）
+
+**症状**：`duration_ms` 18–26s（`client_body_bytes` ~700KB），而 ~137KB 时约 6–11s；`gap` 与 `prefill_ms` 均在 **5–8s** 量级。
+
+| 指标 | 含义 | 典型值（wuming 样本） |
+|------|------|------------------------|
+| `prefill_ms` | 请求进入 → 上游**响应头**（MiMo prefill，主 SLO） | p50 ~6s |
+| `ttft_ms` | 响应头 → 首个上游 body chunk | 通常 &lt;500ms |
+| `upstream_latency_ms` | 响应头 → SSE 结束（生成） | 随输出 token 增长 |
+| `gap` | `duration - upstream`（含读 body + 上传 + prefill） | 大 body 上传更明显 |
+
+**处置（优先运维，再开网关特性）**：
+
+1. Cursor：限制对话历史、避免整文件进 `messages`、长会话开新 thread（目标 body **&lt;200KB**）。
+2. 分析：`python3 scripts/analyze_downstream_latency.py` + `raw_capture/index.jsonl`（看 `prefill_ms` 与 body 分桶）。
+3. 可选网关：`[features] mimo_retire_prefix_messages = true`、`mimo_keep_recent_turns = 6`（**只缩小上游 body，不改 L0/L1 缓存键**）。
+4. **不要**在未通过门禁前开启 `streaming_body_forward = true`（见 [STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)）。
+
 ### P1：可观测与启动
 
 | 项 | 动作 |

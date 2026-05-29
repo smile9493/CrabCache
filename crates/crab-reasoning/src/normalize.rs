@@ -716,7 +716,7 @@ fn leading_system_messages(messages: &[Value]) -> Vec<Value> {
 ///
 /// Returns `(retired_messages, token_estimate_before, token_estimate_after)` where
 /// token estimates are rough character-based proxies (4 chars ≈ 1 token).
-fn retire_prefix_messages_by_turns(
+pub fn retire_prefix_messages_by_turns(
     messages: &[Value],
     keep_turns: usize,
 ) -> (Vec<Value>, usize, usize) {
@@ -1158,6 +1158,44 @@ pub fn prepare_light_request(
 pub struct GenericPreparedRequest {
     pub payload: Value,
     pub model: String,
+    /// Messages removed by optional prefix retirement (MiMo feature).
+    pub retired_prefix_messages: usize,
+    /// When `None`, upstream should send the original request body (no `serde_json::to_vec`).
+    pub serialized_body: Option<Vec<u8>>,
+}
+
+/// True when MiMo prepare only filtered unsupported top-level fields or normalized `model`.
+fn mimo_prepare_changes_wire_body(payload: &Value, prepared: &serde_json::Map<String, Value>) -> bool {
+    let supported_set: std::collections::HashSet<&str> =
+        SUPPORTED_REQUEST_FIELDS.iter().copied().collect();
+    if let Some(obj) = payload.as_object() {
+        for key in obj.keys() {
+            if !supported_set.contains(key.as_str()) {
+                return true;
+            }
+        }
+    } else {
+        return true;
+    }
+    let raw_model = payload
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    let normalized = normalize_mimo_model(raw_model);
+    if payload.get("model").and_then(|m| m.as_str()) != Some(normalized.as_str()) {
+        return true;
+    }
+    if payload.get("max_completion_tokens").is_some()
+        && payload
+            .as_object()
+            .is_none_or(|o| !o.contains_key("max_tokens"))
+    {
+        return true;
+    }
+    if payload.get("messages") != prepared.get("messages") {
+        return true;
+    }
+    false
 }
 
 /// Normalize MiMo model id for the OpenAI-compatible API (`xiaomi/mimo-v2.5-pro`).
@@ -1176,8 +1214,13 @@ pub fn normalize_mimo_model(model: &str) -> String {
     lower
 }
 
-/// MiMo relay: field filter + OpenAI model id normalization; no reasoning/thinking transforms.
-pub fn prepare_mimo_request(payload: &Value, fallback_model: &str) -> GenericPreparedRequest {
+/// MiMo relay: field filter + OpenAI model id normalization; optional turn-based prefix retirement.
+pub fn prepare_mimo_request(
+    payload: &Value,
+    fallback_model: &str,
+    retire_prefix: bool,
+    keep_recent_turns: usize,
+) -> GenericPreparedRequest {
     let raw = payload
         .get("model")
         .and_then(|m| m.as_str())
@@ -1192,9 +1235,33 @@ pub fn prepare_mimo_request(payload: &Value, fallback_model: &str) -> GenericPre
     };
     let mut prepared = filter_supported_request_fields(payload);
     prepared.insert("model".into(), Value::String(model.clone()));
+
+    let mut retired_prefix_messages = 0usize;
+    if retire_prefix {
+        if let Some(messages) = prepared.get("messages").and_then(|m| m.as_array()) {
+            let (trimmed, _before, _after) =
+                retire_prefix_messages_by_turns(messages, keep_recent_turns);
+            retired_prefix_messages = messages.len().saturating_sub(trimmed.len());
+            if retired_prefix_messages > 0 {
+                prepared.insert("messages".into(), Value::Array(trimmed));
+            }
+        }
+    }
+
+    let payload_value = Value::Object(prepared);
+    let serialized_body = if retired_prefix_messages > 0
+        || mimo_prepare_changes_wire_body(payload, payload_value.as_object().expect("object"))
+    {
+        Some(serde_json::to_vec(&payload_value).unwrap_or_default())
+    } else {
+        None
+    };
+
     GenericPreparedRequest {
-        payload: Value::Object(prepared),
+        payload: payload_value,
         model,
+        retired_prefix_messages,
+        serialized_body,
     }
 }
 
@@ -1209,9 +1276,12 @@ pub fn prepare_generic_request(payload: &Value) -> GenericPreparedRequest {
     if !prepared.contains_key("model") {
         prepared.insert("model".into(), Value::String(model.clone()));
     }
+    let payload_value = Value::Object(prepared);
     GenericPreparedRequest {
-        payload: Value::Object(prepared),
+        serialized_body: Some(serde_json::to_vec(&payload_value).unwrap_or_default()),
+        payload: payload_value,
         model,
+        retired_prefix_messages: 0,
     }
 }
 
@@ -1693,9 +1763,56 @@ mod tests {
             "model": "mimo-v2.5-pro",
             "messages": [{"role": "user", "content": "hi"}]
         });
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro");
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
         assert_eq!(result.model, "xiaomi/mimo-v2.5-pro");
         assert!(!result.payload.to_string().contains("thinking"));
+        assert_eq!(result.retired_prefix_messages, 0);
+        assert!(
+            result.serialized_body.is_some(),
+            "model normalization requires serialized upstream body"
+        );
+    }
+
+    #[test]
+    fn prepare_mimo_request_short_circuits_unchanged_body() {
+        let payload = serde_json::json!({
+            "model": "xiaomi/mimo-v2.5-pro",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        });
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        assert_eq!(result.retired_prefix_messages, 0);
+        assert!(
+            result.serialized_body.is_none(),
+            "expected O(1) upstream body when payload already MiMo-clean"
+        );
+    }
+
+    #[test]
+    fn prepare_mimo_request_retires_old_turns() {
+        let mut messages = Vec::new();
+        for i in 0..24 {
+            messages.push(serde_json::json!({
+                "role": if i % 2 == 0 { "user" } else { "assistant" },
+                "content": format!("turn-{i} with padding {}", "x".repeat(400)),
+            }));
+        }
+        let payload = serde_json::json!({
+            "model": "mimo-v2.5-pro",
+            "messages": messages,
+        });
+        let before = payload.to_string().len();
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", true, 6);
+        let after = result.payload.to_string().len();
+        assert!(result.retired_prefix_messages > 0, "expected retire");
+        assert!(after < before, "upstream body should shrink");
+        let out_msgs = result
+            .payload
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        assert!(out_msgs < 24);
     }
 
     #[test]

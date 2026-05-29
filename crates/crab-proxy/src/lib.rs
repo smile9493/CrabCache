@@ -14,7 +14,9 @@ mod stored_key;
 mod tenant;
 mod trace_logger;
 mod upstream_body;
+mod upstream_body_compress;
 mod upstream_headers;
+mod upstream_response_decompress;
 mod upstream_pool;
 mod upstream_profile;
 mod upstream_user_id_limiter;
@@ -26,7 +28,8 @@ mod cache_helpers;
 mod cache_response;
 mod cache_revalidate;
 mod connection_helpers;
-mod connection_prewarm;
+pub mod connection_prewarm;
+mod streaming_body_forward;
 mod error_jsons;
 mod helper_fns;
 mod metrics_helpers;
@@ -49,7 +52,8 @@ pub use context::{
     ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig,
     ReasoningConfig,
 };
-pub use debug_log::{debug_agent_log, init_debug_log};
+pub use streaming_body_forward::StreamingDeferCircuitBreaker;
+pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
 pub use profile_build::{
     ProfileBuildInput, build_profile_runtime, parse_profile_backends, resolve_profile_key_specs,

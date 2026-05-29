@@ -1,10 +1,7 @@
 # Docker build context — exclude local toolchains and build artifacts
 
-# Other projects (not needed for CrabCache build)
-cursor-deepseek
-deepseek-cursor-proxy
-CLIProxyAPI
-new-api
+# External / reference projects (unified under _externals/)
+_externals
 
 # Git and IDE
 .git

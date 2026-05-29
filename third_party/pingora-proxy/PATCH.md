@@ -11,6 +11,15 @@ Pingora's retry buffer is capped at 64KiB; when truncated, the proxy skipped the
 
 CrabCache `request_body_filter` injects `new_request_body` on that path.
 
+## 1b. Streaming defer + trailing empty EOS (CrabCache)
+
+`ProxyHttp::defer_upstream_request_body` / `skip_upstream_trailing_empty_eos` (implemented on
+`GatewayProxy`):
+
+- H2: do not send empty END_STREAM DATA before deferred body; skip duplicate empty EOS after
+  prepared JSON was written.
+- H1: same via `send_body_to_pipe` startup path and trailing-empty guard.
+
 ## 2. Arc-wrapped Connector for shared connection pool pre-warm
 
 `HttpProxy.client_upstream` changed from `Connector<C>` to `Arc<Connector<C>>`.

@@ -15,6 +15,7 @@ crab-semantic.workspace = true
 crab-reasoning.workspace = true
 crab-pipeline.workspace = true
 crab-control.workspace = true
+crab-client-endpoint.workspace = true
 pingora.workspace = true
 pingora-core.workspace = true
 pingora-proxy.workspace = true
@@ -41,3 +42,5 @@ chrono.workspace = true
 thiserror.workspace = true
 indexmap = { workspace = true }
 regex.workspace = true
+flate2 = "1"
+brotli = "7"

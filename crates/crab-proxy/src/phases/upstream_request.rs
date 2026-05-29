@@ -6,15 +6,19 @@ use crate::debug_agent_log;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crate::upstream_body::apply_prepared_upstream_body;
+use crate::upstream_body_compress::maybe_gzip_request_body;
 use crate::upstream_headers::{
-    normalize_replaced_body_headers, smooth_upstream_client_headers, upstream_header_names,
+    apply_upstream_request_content_encoding, normalize_replaced_body_headers,
+    prepare_streaming_deferred_upstream_headers, smooth_upstream_client_headers,
+    upstream_header_names,
 };
 use bytes::Bytes;
 use pingora_http::RequestHeader;
 use pingora_core::prelude::*;
 use pingora_proxy::Session;
 use std::time::Instant;
-use tracing::debug;
+use crab_metrics::global_metrics;
+use tracing::{debug, warn};
 
 use crate::context::GatewayContext;
 
@@ -29,12 +33,29 @@ pub(crate) async fn run_upstream_request_filter(
     let host = ctx.upstream.host.as_deref().unwrap_or("api.deepseek.com");
     let _ = upstream_request.insert_header("host", host);
     let _ = upstream_request.insert_header("x-request-id", ctx.request_id.clone());
-    if let Some(ref new_body) = ctx.new_request_body {
+    if ctx.streaming_body.active && ctx.new_request_body.is_none() {
+        prepare_streaming_deferred_upstream_headers(upstream_request, ctx.is_streaming);
+        upstream_request.set_send_end_stream(false);
+    } else if ctx.new_request_body.is_some() {
+        let features = &proxy.state.features;
+        let raw = ctx.new_request_body.as_ref().unwrap();
+        let (payload, gzipped) = maybe_gzip_request_body(
+            raw,
+            features.upstream_request_gzip,
+            features.upstream_request_gzip_min_bytes,
+        );
+        if gzipped {
+            ctx.new_request_body = Some(Bytes::from(payload));
+        }
+        let new_body = ctx.new_request_body.as_ref().unwrap();
         let had_transfer_encoding = upstream_request
             .headers
             .get(http::header::TRANSFER_ENCODING)
             .is_some();
         normalize_replaced_body_headers(upstream_request, new_body.len());
+        if gzipped {
+            apply_upstream_request_content_encoding(upstream_request, "gzip");
+        }
         smooth_upstream_client_headers(upstream_request, ctx.is_streaming);
         // #region agent log
         debug_agent_log(
@@ -128,14 +149,61 @@ pub(crate) async fn run_upstream_request_filter(
 
 /// Run the `request_body_filter` phase: replace upstream body with prepared payload.
 pub(crate) async fn run_request_body_filter(
-    _proxy: &GatewayProxy,
-    _session: &mut Session,
+    proxy: &GatewayProxy,
+    session: &mut Session,
     body: &mut Option<Bytes>,
     end_of_stream: bool,
     ctx: &mut GatewayContext,
 ) -> Result<()> {
+    if ctx.streaming_body.active && !ctx.streaming_body.finalized {
+        if let Some(chunk) = body.take() {
+            ctx.streaming_body.append_chunk(&chunk);
+        }
+        if end_of_stream {
+            match crate::phases::request_filter::finalize_streaming_body(proxy, session, ctx)
+                .await?
+            {
+                crate::streaming_body_forward::StreamingFinalizeOutcome::Handled => {
+                    ctx.streaming_body.suppress_upstream = true;
+                    *body = None;
+                    return Ok(());
+                }
+                crate::streaming_body_forward::StreamingFinalizeOutcome::ContinueUpstream => {}
+            }
+        } else {
+            *body = None;
+            return Ok(());
+        }
+    }
+
+    if ctx.streaming_body.suppress_upstream {
+        global_metrics().record_streaming_defer_suppress();
+        *body = None;
+        return Ok(());
+    }
+
+    // Defer finalized without a prepared body: never send empty EOS to upstream.
+    if ctx.streaming_body.active
+        && ctx.streaming_body.finalized
+        && ctx.new_request_body.is_none()
+        && end_of_stream
+    {
+        warn!(
+            request_id = %ctx.request_id,
+            "streaming defer finalized but no prepared body; suppressing upstream"
+        );
+        ctx.streaming_body.suppress_upstream = true;
+        global_metrics().record_streaming_defer_empty_body();
+        proxy.state.streaming_defer_circuit_breaker.record_failure();
+        *body = None;
+        return Ok(());
+    }
+
     if let Some(new_body) = ctx.new_request_body.take() {
-        let emit_now = end_of_stream || ctx.upstream.retry_buffer_truncated;
+        let emit_now = end_of_stream
+            || ctx.upstream.retry_buffer_truncated
+            || ctx.streaming_body.streaming_defer_emit_at_eos
+            || (ctx.streaming_body.active && ctx.streaming_body.finalized);
         if emit_now {
             timeline_stamp(&mut ctx.timeline.upstream_body_sent);
             let header_to_body_ms = ctx
@@ -164,12 +232,27 @@ pub(crate) async fn run_request_body_filter(
                 "Setting upstream request body"
             );
         }
+        let force_emit = ctx.upstream.retry_buffer_truncated
+            || ctx.streaming_body.streaming_defer_emit_at_eos;
         ctx.new_request_body = apply_prepared_upstream_body(
             new_body,
             body,
             end_of_stream,
-            ctx.upstream.retry_buffer_truncated,
+            force_emit,
         );
+        if emit_now && body.as_ref().is_some_and(|b| !b.is_empty()) {
+            ctx.upstream.prepared_upstream_body_emitted = true;
+        } else if emit_now && ctx.streaming_body.active {
+            warn!(
+                request_id = %ctx.request_id,
+                "streaming defer: empty body at EOS, forcing suppress"
+            );
+            ctx.streaming_body.suppress_upstream = true;
+            global_metrics().record_streaming_defer_empty_body();
+            proxy.state.streaming_defer_circuit_breaker.record_failure();
+            *body = None;
+            return Ok(());
+        }
     } else {
         debug!(
             request_id = %ctx.request_id,

@@ -5,12 +5,76 @@
 //! `Connector` that handles real upstream traffic. This populates the pool
 //! with TCP+TLS connections without any HTTP overhead.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use async_trait::async_trait;
 use pingora_core::connectors::http::Connector;
+use pingora_core::server::ShutdownWatch;
+use pingora_core::services::background::BackgroundService;
 use pingora_core::upstreams::peer::HttpPeer;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+/// One backend row for startup pool pre-warm: `(profile_id, addr, backend_name, tls_sni)`.
+pub type PrewarmBackend = (String, SocketAddr, String, String);
+
+/// Pingora background task: warm TCP+TLS for all configured backends after runtime starts.
+pub struct StartupPrewarmService {
+    pub connector: Arc<Connector<()>>,
+    pub backends: Vec<PrewarmBackend>,
+}
+
+#[async_trait]
+impl BackgroundService for StartupPrewarmService {
+    async fn start(&self, _shutdown: ShutdownWatch) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let connector = self.connector.clone();
+        let backends = self.backends.clone();
+        let semaphore = Arc::new(Semaphore::new(8));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (profile_id, addr, name, tls_sni) in backends {
+            let peer = HttpPeer::new(addr, true, tls_sni);
+            let connector = connector.clone();
+            let semaphore = semaphore.clone();
+            let profile_id = profile_id.clone();
+            let name = name.clone();
+            join_set.spawn(async move {
+                let Ok(_permit) = semaphore.try_acquire() else {
+                    return;
+                };
+                match connector.get_http_session(&peer).await {
+                    Ok((session, _reused)) => {
+                        connector.release_http_session(session, &peer, None).await;
+                        debug!(
+                            profile = %profile_id,
+                            backend = %name,
+                            addr = %addr,
+                            "Startup direct pre-warm OK"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            profile = %profile_id,
+                            backend = %name,
+                            addr = %addr,
+                            error = %e,
+                            "Startup direct pre-warm failed"
+                        );
+                    }
+                }
+            });
+        }
+
+        let results = join_set.join_all().await;
+        info!(
+            count = results.len(),
+            "Startup connection pre-warm completed"
+        );
+    }
+}
 
 /// Directly establish a TCP+TLS connection to the backend and release it back
 /// to the pool. No HTTP request is sent; the connection is ready for reuse

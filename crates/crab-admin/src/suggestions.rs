@@ -171,6 +171,7 @@ mod tests {
             },
             latency_upstream_p99_ms: 0.0,
             latency_ttft_p99_ms: 0.0,
+            latency_prefill_p99_ms: 0.0,
             latency_cache_fetch_p99_ms: 0.0,
             error_rate_5m: 0.0,
             http_4xx_5m: 0,

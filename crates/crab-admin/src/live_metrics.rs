@@ -210,6 +210,10 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
         slot.upstream_sum += up;
         slot.upstream_count += 1;
     }
+    if let Some(pre) = entry.prefill_ms.or(entry.pre_header_ms) {
+        slot.pre_header_sum += pre;
+        slot.pre_header_count += 1;
+    }
     if let Some(ttft) = entry.ttft_ms {
         slot.ttft_sum += ttft;
         slot.ttft_count += 1;
@@ -257,6 +261,8 @@ struct BucketAcc {
     e2e_sum: f64,
     upstream_sum: f64,
     upstream_count: u32,
+    pre_header_sum: f64,
+    pre_header_count: u32,
     ttft_sum: f64,
     ttft_count: u32,
     input_tokens: u64,
@@ -280,6 +286,11 @@ impl BucketAcc {
             },
             upstream_latency_ms: if self.upstream_count > 0 {
                 Some(self.upstream_sum / f64::from(self.upstream_count))
+            } else {
+                None
+            },
+            pre_header_ms: if self.pre_header_count > 0 {
+                Some(self.pre_header_sum / f64::from(self.pre_header_count))
             } else {
                 None
             },
@@ -323,6 +334,7 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         request_count: 0,
         e2e_latency_ms: 0.0,
         upstream_latency_ms: None,
+        pre_header_ms: None,
         ttft_ms: None,
         upstream_sample_count: 0,
         ttft_sample_count: 0,
@@ -341,6 +353,7 @@ fn live_point_from_entry(entry: &TraceLogEntry) -> LiveRequestPoint {
         model: entry.model.clone(),
         e2e_latency_ms: entry.latency_ms,
         upstream_latency_ms: entry.upstream_latency_ms,
+        pre_header_ms: entry.pre_header_ms,
         ttft_ms: entry.ttft_ms,
         input_tokens: entry.resolved_input_tokens(),
         output_tokens: entry.resolved_output_tokens(),
@@ -353,6 +366,8 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
     let mut e2e_sum = 0.0f64;
     let mut upstream_weighted_sum = 0.0f64;
     let mut upstream_total_count = 0u32;
+    let mut pre_header_weighted_sum = 0.0f64;
+    let mut pre_header_total_count = 0u32;
     let mut ttft_weighted_sum = 0.0f64;
     let mut ttft_total_count = 0u32;
     let mut input_tokens = 0u64;
@@ -368,6 +383,10 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
             // Weight by the number of samples in this bucket
             upstream_weighted_sum += up * f64::from(b.upstream_sample_count);
             upstream_total_count += b.upstream_sample_count;
+        }
+        if let Some(pre) = b.pre_header_ms {
+            pre_header_weighted_sum += pre * f64::from(b.request_count);
+            pre_header_total_count += b.request_count;
         }
         if let Some(ttft) = b.ttft_ms {
             ttft_weighted_sum += ttft * f64::from(b.ttft_sample_count);
@@ -387,6 +406,11 @@ fn summarize_window(buckets: &[LiveMetricsBucket]) -> crate::types::LiveMetricsS
         },
         avg_upstream_latency_ms: if upstream_total_count > 0 {
             upstream_weighted_sum / f64::from(upstream_total_count)
+        } else {
+            0.0
+        },
+        avg_pre_header_ms: if pre_header_total_count > 0 {
+            pre_header_weighted_sum / f64::from(pre_header_total_count)
         } else {
             0.0
         },

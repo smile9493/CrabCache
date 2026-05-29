@@ -45,6 +45,11 @@ pub struct TraceLogEntry {
     pub latency_ms: f64,
     #[serde(default)]
     pub upstream_latency_ms: Option<f64>,
+    /// Request start → upstream response headers (MiMo prefill).
+    #[serde(default)]
+    pub prefill_ms: Option<f64>,
+    #[serde(default)]
+    pub pre_header_ms: Option<f64>,
     #[serde(default)]
     pub ttft_ms: Option<f64>,
     #[serde(default)]

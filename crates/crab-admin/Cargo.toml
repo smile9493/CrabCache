@@ -42,6 +42,7 @@ crab-metrics.workspace = true
 rusqlite.workspace = true
 crab-capture.workspace = true
 crab-proxy.workspace = true
+crab-client-endpoint.workspace = true
 tokio-postgres.workspace = true
 deadpool-postgres.workspace = true
 sha2.workspace = true

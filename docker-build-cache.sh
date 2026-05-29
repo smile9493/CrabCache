@@ -3,7 +3,7 @@ set -e
 
 DOCKER_BUILDKIT=1
 
-CACHE_DIR="/opt/projct/CrabCache/.docker-cache"
+CACHE_DIR="${CRABCACHE_DEPLOY_PATH:-/path/to/CrabCache}/.docker-cache"
 mkdir -p "$CACHE_DIR"
 
 build_with_cache() {

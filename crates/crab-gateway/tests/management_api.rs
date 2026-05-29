@@ -65,6 +65,9 @@ async fn test_management_state() -> Option<ManagementState> {
         global_rate: Arc::new(pingora_limits::rate::Rate::new(
             std::time::Duration::from_secs(1),
         )),
+        client_endpoint: Arc::new(RwLock::new(crab_client_endpoint::discover(
+            &crab_client_endpoint::DiscoveryConfig::default(),
+        ))),
     })
 }
 

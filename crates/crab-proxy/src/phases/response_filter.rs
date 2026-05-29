@@ -4,8 +4,11 @@
 
 use crate::context::GatewayContext;
 use crate::debug_agent_log;
+use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
+use crate::upstream_response_decompress::parse_content_encoding;
 use crab_metrics::global_metrics;
+use http::header;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use tracing::warn;
@@ -19,6 +22,14 @@ pub(crate) async fn run(
 ) -> pingora_core::Result<()> {
     let status = upstream_response.status.as_u16();
     ctx.upstream.http_status = Some(status);
+    ctx.upstream.response_decompress.reset();
+    if let Some(ce) = upstream_response.headers.get(header::CONTENT_ENCODING) {
+        if let Ok(value) = ce.to_str() {
+            let parsed = parse_content_encoding(value);
+            ctx.upstream.response_decompress.encoding = Some(parsed);
+            let _ = upstream_response.remove_header(&header::CONTENT_ENCODING);
+        }
+    }
     global_metrics().record_http_response(status);
     // #region agent log
     debug_agent_log(
@@ -34,6 +45,16 @@ pub(crate) async fn run(
     );
     // #endregion
     if status >= 400 {
+        warn!(
+            request_id = %ctx.request_id,
+            status,
+            is_streaming = ctx.is_streaming,
+            outbound_bytes = ctx.upstream_outbound_body_len,
+            model = %ctx.model,
+            pipeline = ?ctx.request_pipeline,
+            upstream_profile = ?ctx.upstream_profile_id,
+            "Upstream returned error status"
+        );
         // #region agent log
         debug_agent_log(
             "UP4",
@@ -134,7 +155,12 @@ pub(crate) async fn run(
     // Record success is deferred to logging phase (stream completion)
     // to avoid counting incomplete SSE streams as successes
 
-    ctx.upstream.start = Some(std::time::Instant::now());
+    let now = std::time::Instant::now();
+    if ctx.upstream.headers_at.is_none() {
+        ctx.upstream.headers_at = Some(now);
+    }
+    timeline_stamp(&mut ctx.timeline.upstream_response_headers);
+    timeline_stamp(&mut ctx.timeline.prefill_done);
 
     Ok(())
 }

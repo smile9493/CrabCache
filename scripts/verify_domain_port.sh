@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Smoke test for CrabCache published via domain:port (no public 80/443).
 # Usage:
-#   export DOMAIN=v4.wumingaicg.website
+#   export DOMAIN=your-domain.example.com
 #   export API_PORT=18000
 #   export ADMIN_PORT=18010
 #   export CLIENT_API_KEY=sk-...
 #   bash scripts/verify_domain_port.sh
 set -euo pipefail
 
-DOMAIN="${DOMAIN:-v4.wumingaicg.website}"
+DOMAIN="${DOMAIN:-your-domain.example.com}"
 API_PORT="${API_PORT:-18000}"
 ADMIN_PORT="${ADMIN_PORT:-18010}"
 CLIENT_API_KEY="${CLIENT_API_KEY:-}"

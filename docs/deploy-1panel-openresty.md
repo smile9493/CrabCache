@@ -2,7 +2,7 @@
 
 适用于：**公网 IP 未开放 80/443**，仅能通过 **`域名:端口`** 访问；OpenResty 使用 **host 网络**（容器 `1Panel-openresty-*`），CrabCache 网关监听 **`127.0.0.1:8080`**。
 
-测试域名：**`v4.wumingaicg.website`**
+测试域名：**`your-domain.example.com`**
 
 ## 端口规划（推荐）
 
@@ -17,11 +17,11 @@
 
 ```text
 # Cursor / OpenAI SDK / 其他 Agent
-Base URL:  https://v4.wumingaicg.website:18000/v1
+Base URL:  https://your-domain.example.com:18000/v1
 API Key:   网关客户端密钥（如 CRABCACHE_BOOTSTRAP_CLIENT_KEYS 或 sk-cc-*）
 
 # 浏览器打开仪表盘
-https://v4.wumingaicg.website:18010
+https://your-domain.example.com:18010
 ```
 
 仪表盘前端请求同源的 `/api/admin/*`，经 **18010** 反代到本机 `18001` 即可，**无需**改 WASM 里的 API 路径。
@@ -31,8 +31,8 @@ https://v4.wumingaicg.website:18010
 站点证书目录（宿主机与 OpenResty 容器内路径一致）：
 
 ```text
-/opt/1panel/www/sites/v4.wumingaicg.website/ssl/fullchain.pem
-/opt/1panel/www/sites/v4.wumingaicg.website/ssl/privkey.pem
+/opt/1panel/www/sites/your-domain.example.com/ssl/fullchain.pem
+/opt/1panel/www/sites/your-domain.example.com/ssl/privkey.pem
 ```
 
 在 1Panel 为站点申请/绑定证书后，将面板导出的 **完整链** 与 **私钥** 放到上述路径（或确认面板已写入该目录），然后重载 OpenResty：
@@ -44,13 +44,13 @@ docker exec 1Panel-openresty-yLy6 openresty -s reload
 
 当前服务器若 `ssl/` 为空，可先用自签证书做联调；客户端需信任证书或临时关闭校验（仅测试）。
 
-参考配置（已用于本机联调）：**`/opt/1panel/www/conf.d/v4.wumingaicg.website.conf`**  
+参考配置（已用于本机联调）：**`/opt/1panel/www/conf.d/your-domain.example.com.conf`**  
 仓库镜像示例：**[`deploy/nginx/crabcache-openresty-1panel.example.conf`](../deploy/nginx/crabcache-openresty-1panel.example.conf)**
 
 ## 前置条件
 
 ```bash
-cd /opt/projct/CrabCache
+cd /path/to/CrabCache
 docker compose --profile admin up -d
 curl -sf http://127.0.0.1:8080/ready
 curl -sf -o /dev/null http://127.0.0.1:18001/   # admin 本地
@@ -80,7 +80,7 @@ CRABCACHE_GATEWAY_ADMIN_KEY=<管理密钥>
 部分 WAF 对「公网域名 + RFC1918 来源」返回 `Rejected request from RFC1918 IP...`。请用 **外网客户端** 或本机：
 
 ```bash
-curl -sk https://127.0.0.1:18000/ready -H 'Host: v4.wumingaicg.website'
+curl -sk https://127.0.0.1:18000/ready -H 'Host: your-domain.example.com'
 ```
 
 ### 4) 流式 SSE
@@ -105,14 +105,14 @@ Cursor / 子代理往往不带会话头时，网关会用 **`client:<sk-cc>`** �
 一键脚本（公网域名 + 端口）：
 
 ```bash
-export DOMAIN=v4.wumingaicg.website
+export DOMAIN=your-domain.example.com
 export CLIENT_API_KEY='你的客户端密钥'
 bash scripts/verify_domain_port.sh
 ```
 
 | 检查项 | 命令 / 预期 |
 |--------|-------------|
-| API HTTPS | `curl -sk https://127.0.0.1:18000/ready -H 'Host: v4.wumingaicg.website'` → **200** |
+| API HTTPS | `curl -sk https://127.0.0.1:18000/ready -H 'Host: your-domain.example.com'` → **200** |
 | 仪表盘 | `curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:18010/` → **200** |
 | 鉴权 | `curl -sk https://127.0.0.1:18000/v1/models -H 'Authorization: Bearer <客户端密钥>'` → **200** |
 | 外网 | 在放行 18000/18010 后，用手机流量访问上述 URL |

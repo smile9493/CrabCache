@@ -9,6 +9,18 @@ pub const CACHE_INVALIDATE_CONFIRM_HEADER: &str = "x-cache-invalidate-confirm";
 /// Header value that must accompany `scope=all`.
 pub const CACHE_INVALIDATE_CONFIRM_ALL: &str = "all";
 
+/// Client-facing gateway base URL (from Pingora discovery + FRP/OpenResty scan).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientEndpointView {
+    pub gateway_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_url_lan: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_url_public: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_source: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayStatus {
     pub uptime_secs: u64,

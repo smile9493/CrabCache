@@ -583,10 +583,31 @@ async fn get_pg_health(State(state): State<Arc<AppState>>) -> Json<crate::types:
     Json(health)
 }
 
-async fn get_network_info() -> Json<NetworkInfo> {
-    Json(NetworkInfo::build(
-        crate::network::NetworkInfoConfig::from_env(),
-    ))
+async fn get_network_info(State(state): State<Arc<AppState>>) -> Json<NetworkInfo> {
+    match state.gateway.get_client_endpoint().await {
+        Ok(view) => {
+            let snap = crab_client_endpoint::ClientEndpointSnapshot {
+                gateway_url: view.gateway_url,
+                gateway_url_lan: view.gateway_url_lan,
+                gateway_url_public: view.gateway_url_public,
+                public_source: view.public_source.and_then(|s| match s.as_str() {
+                    "env" => Some(crab_client_endpoint::PublicUrlSource::Env),
+                    "observed" => Some(crab_client_endpoint::PublicUrlSource::Observed),
+                    "frp" => Some(crab_client_endpoint::PublicUrlSource::Frp),
+                    "openresty" => Some(crab_client_endpoint::PublicUrlSource::Openresty),
+                    _ => None,
+                }),
+            };
+            Json(NetworkInfo::from_snapshot(snap))
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Gateway client-endpoint API unavailable; using local FRP/OpenResty discovery"
+            );
+            Json(NetworkInfo::build(crate::network::NetworkInfoConfig::from_env()))
+        }
+    }
 }
 
 async fn get_metrics(

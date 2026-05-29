@@ -3821,6 +3821,30 @@ impl Translations {
             Locale::EnUS => "Configure upstream provider relay and key pool.",
         }
     }
+    pub fn upstream_profiles_empty_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "尚无上游配置池",
+            Locale::EnUS => "No upstream profiles yet",
+        }
+    }
+    pub fn upstream_profiles_empty_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "点击右侧「新建 Profile」从模板创建第一个上游池。",
+            Locale::EnUS => "Use “New Profile” on the right to create your first pool from a template.",
+        }
+    }
+    pub fn upstream_test_not_run(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "尚未执行连接测试",
+            Locale::EnUS => "No connection test performed yet",
+        }
+    }
+    pub fn upstream_default_badge(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "默认",
+            Locale::EnUS => "default",
+        }
+    }
     pub fn upstream_base_url_label(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游 Base URL",

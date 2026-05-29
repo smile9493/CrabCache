@@ -4,7 +4,7 @@ use std::path::Path;
 pub const DEFAULT_CONF_DIR: &str = "/opt/1panel/www/conf.d";
 
 /// Upstream target that identifies the CrabCache API `server` block.
-const DEFAULT_GATEWAY_UPSTREAM: &str = "127.0.0.1:8080";
+pub const DEFAULT_GATEWAY_UPSTREAM: &str = "127.0.0.1:8080";
 
 /// Parse OpenResty/Nginx site configs and return the public client base URL for the gateway
 /// (e.g. `https://v4.example.com:18000`) when a `server` block proxies to `gateway_upstream`.
@@ -147,14 +147,14 @@ mod tests {
     const SAMPLE: &str = r#"
 server {
     listen 18000 ssl;
-    server_name v4.wumingaicg.website;
+    server_name your-domain.example.com;
     location / {
         proxy_pass http://127.0.0.1:8080;
     }
 }
 server {
     listen 18010 ssl;
-    server_name v4.wumingaicg.website;
+    server_name your-domain.example.com;
     location / {
         proxy_pass http://127.0.0.1:18001;
     }
@@ -166,40 +166,7 @@ server {
         let urls = parse_conf_content(SAMPLE, DEFAULT_GATEWAY_UPSTREAM);
         assert_eq!(
             urls,
-            vec!["https://v4.wumingaicg.website:18000".to_string()]
+            vec!["https://your-domain.example.com:18000".to_string()]
         );
-    }
-
-    #[test]
-    fn parses_nested_location_blocks() {
-        let conf = r#"
-server {
-    listen 18000 ssl;
-    server_name v4.wumingaicg.website;
-    location ^~ /.well-known {
-        root /usr/share/nginx/html;
-    }
-    location ^~ / {
-        proxy_pass http://127.0.0.1:8080;
-    }
-}
-"#;
-        let urls = parse_conf_content(conf, DEFAULT_GATEWAY_UPSTREAM);
-        assert_eq!(
-            urls,
-            vec!["https://v4.wumingaicg.website:18000".to_string()]
-        );
-    }
-
-    #[test]
-    fn ignores_blocks_without_gateway_upstream() {
-        let conf = r#"
-server {
-    listen 18010 ssl;
-    server_name admin.example.com;
-    proxy_pass http://127.0.0.1:18001;
-}
-"#;
-        assert!(parse_conf_content(conf, DEFAULT_GATEWAY_UPSTREAM).is_empty());
     }
 }

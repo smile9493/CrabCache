@@ -312,7 +312,12 @@ where
         // proxy may replace the body in request_body_filter at end_of_stream.
         // Also send when downstream body was fully consumed in request_filter
         // (is_body_done true but is_body_empty false — body read manually, retry buffer never populated).
-        if buffer.is_some() || session.as_mut().is_body_empty() || retry_truncated || downstream_state.is_done() {
+        if buffer.is_some()
+            || session.as_mut().is_body_empty()
+            || retry_truncated
+            || self.inner.defer_upstream_request_body(session, ctx)
+            || downstream_state.is_done()
+        {
             let send_permit = tx
                 .reserve()
                 .await
@@ -798,6 +803,14 @@ where
          * treated as the terminating chunk */
         if !upstream_end_of_body && data.as_ref().is_some_and(|d| d.is_empty()) {
             return Ok(false);
+        }
+
+        if upstream_end_of_body
+            && data.is_none()
+            && self.inner.skip_upstream_trailing_empty_eos(session, ctx)
+        {
+            debug!("Skip trailing empty upstream body after prepared payload");
+            return Ok(end_of_body);
         }
 
         debug!(

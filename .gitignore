@@ -74,10 +74,15 @@ coverage/
 tarpaulin-report.html
 lcov.info
 
-# --- Reference clones (not shipped) ---
-dsv4-cc-proxy/
-deepseek-cursor-proxy/
-gateway/
+# --- External / reference projects (unified under _externals/) ---
+_externals/
+# --- Sensitive internal files (contain real IPs, domains, deploy paths) ---
+docs/network-config.md
+数据面优化.md
+负载均衡方案.md
+fangan.md
+CrabCache 性能优化.md
+
 # --- Misc local scratch ---
 site/
 .cache/

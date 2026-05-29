@@ -154,7 +154,10 @@ where
             return (false, Some(e.into_up()));
         }
 
-        if !send_end_stream && body_empty {
+        if !send_end_stream
+            && body_empty
+            && !self.inner.defer_upstream_request_body(session, ctx)
+        {
             // send END_STREAM on empty DATA frame
             match client_session.write_request_body(Bytes::new(), true).await {
                 Ok(()) => debug!("sent empty DATA frame to h2"),
@@ -313,7 +316,9 @@ where
                 write_timeout,
             )
             .await?;
-        } else if session.retry_buffer_truncated() {
+        } else if session.retry_buffer_truncated()
+            || self.inner.defer_upstream_request_body(session, ctx)
+        {
             self.send_body_to2(
                 session,
                 None,
@@ -764,6 +769,8 @@ where
             write_body(client_body, data, end_of_body, write_timeout)
                 .await
                 .map_err(|e| e.into_up())?;
+        } else if end_of_body && self.inner.skip_upstream_trailing_empty_eos(session, ctx) {
+            debug!("Skip trailing empty END_STREAM after prepared upstream body");
         } else {
             debug!("Read downstream body done");
             /* send a standalone END_STREAM flag */

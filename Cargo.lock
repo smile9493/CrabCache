@@ -604,6 +604,17 @@ dependencies = [
 
 [[package]]
 name = "brotli"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc97b8f16f944bba54f0433f07e30be199b6dc2bd25937444bbad560bcea29bd"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor 4.0.3",
+]
+
+[[package]]
+name = "brotli"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4bd8b9603c7aa97359dbd97ecf258968c95f3adddd6db2f7e7a5bef101c84560"
@@ -618,6 +629,16 @@ name = "brotli-decompressor"
 version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e2e4afe60d7dd600fdd3de8d0f08c2b7ec039712e3b6137ff98b7004e82de4f"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a334ef7c9e23abf0ce748e8cd309037da93e606ad52eb372e4ce327a0dcfbdfd"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -1099,6 +1120,7 @@ dependencies = [
  "chrono",
  "crab-admin-types",
  "crab-capture",
+ "crab-client-endpoint",
  "crab-composition",
  "crab-control",
  "crab-metrics",
@@ -1143,6 +1165,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-auth"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "hex",
+ "parking_lot",
+ "rand 0.8.6",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "crab-cache"
 version = "0.1.0"
 dependencies = [
@@ -1180,6 +1226,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "crab-client-endpoint"
+version = "0.1.0"
+dependencies = [
+ "local-ip-address",
+ "parking_lot",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -1240,6 +1296,7 @@ dependencies = [
  "bb8-redis",
  "chrono",
  "crab-cache",
+ "crab-client-endpoint",
  "crab-control",
  "crab-metrics",
  "crab-pipeline",
@@ -1298,10 +1355,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "brotli 7.0.0",
  "bytes",
  "chrono",
  "crab-cache",
  "crab-capture",
+ "crab-client-endpoint",
  "crab-composition",
  "crab-control",
  "crab-metrics",
@@ -1310,6 +1369,7 @@ dependencies = [
  "crab-route",
  "crab-semantic",
  "dashmap",
+ "flate2",
  "hex",
  "http",
  "indexmap 2.14.0",

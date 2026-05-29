@@ -103,6 +103,24 @@ pub trait ProxyHttp {
         false
     }
 
+    /// Upstream body will be supplied later in `request_body_filter` (CrabCache streaming defer).
+    ///
+    /// When true, the proxy must not send an empty END_STREAM DATA frame before the prepared body.
+    fn defer_upstream_request_body(&self, _session: &Session, _ctx: &Self::CTX) -> bool
+    where
+        Self::CTX: Send + Sync,
+    {
+        false
+    }
+
+    /// Prepared upstream body was already sent with END_STREAM; skip a trailing empty EOS frame.
+    fn skip_upstream_trailing_empty_eos(&self, _session: &Session, _ctx: &Self::CTX) -> bool
+    where
+        Self::CTX: Send + Sync,
+    {
+        false
+    }
+
     /// Handle the incoming request body.
     ///
     /// This function will be called every time a piece of request body is received. The `body` is

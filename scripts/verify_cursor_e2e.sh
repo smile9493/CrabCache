@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DOMAIN="${DOMAIN:-v4.wumingaicg.website}"
+DOMAIN="${DOMAIN:-your-domain.example.com}"
 API_PORT="${API_PORT:-18000}"
 CLIENT_API_KEY="${CLIENT_API_KEY:-}"
 ADMIN_KEY="${CRABCACHE_GATEWAY_ADMIN_KEY:-${CRABCACHE_ADMIN_KEY:-admin}}"

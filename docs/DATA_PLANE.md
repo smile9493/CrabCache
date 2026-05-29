@@ -35,7 +35,7 @@
 | Raw capture 复用 `Arc<Value>` | ✅ | `parsed_request_payload` / `parsed_upstream_payload` |
 | `body_quick_parse` + MiMo early exact cache | ✅ | [`body_quick_parse.rs`](../crates/crab-proxy/src/body_quick_parse.rs)；命中 exact 前可跳过 full parse；miss 后仍 parse + `prepare_mimo`；单测覆盖边界用例 |
 | 首 chunk 选 pipeline（无全量 body） | ⬜ | 仍需读满 body（`max_request_body_bytes`） |
-| `streaming_body_forward` | ⬜ | 配置预留，[`gateway.example.toml`](../config/gateway.example.toml) 标注未实现 |
+| `streaming_body_forward` | ✅ | MiMo partial read + EOS finalize；见 [STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)，默认 off |
 | MiMo 近似缓存键（sfp + msg count） | ⬜ | 精确键仍为 body SHA-256 |
 
 ### 二、SSE 流式
@@ -66,7 +66,9 @@
 | 连接池直预热（TCP+TLS，无 HTTP） | ✅ | [`connection_prewarm.rs`](../crates/crab-proxy/src/connection_prewarm.rs)；启动 + 新 `session_fingerprint` 在 `upstream_peer` |
 | `select_with_hint` 真实 weight | ✅ | [`ring.rs`](../crates/crab-route/src/ring.rs) |
 | 自适应 Ketama 权重 | ⬜ | 仅 health check 降权（Pingora LB） |
-| HTTP/2 上游多路复用 | ⬜ | 默认 `upstream_force_http1` |
+| HTTP/2 上游多路复用 | ✅ | 默认 `upstream_force_http1 = false`；`h2_ping_interval_secs` |
+| 上游响应 gzip 协商 + 解压 | ✅ | `UPSTREAM_ACCEPT_ENCODING` + `upstream_response_decompress.rs` |
+| 上游请求 gzip（可选） | ✅ | `[features] upstream_request_gzip` + `upstream_body_compress.rs`（默认关） |
 
 ### 五、可观测性
 
@@ -96,7 +98,7 @@
 | `prefix_aware_cache` | off | L0 前缀索引；MiMo 三管道**默认等效开启** |
 | `connection_prewarm` | off | 共享 `Connector` 直预热；需 fork 注入，见 PATCH.md |
 | `affinity_prompt_cache_feedback` | off | 请求末根据 `prompt_cache_*` 更新 Ketama hint |
-| `streaming_body_forward` | off | **未实现** |
+| `streaming_body_forward` | off | MiMo partial read + EOS finalize（[STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)） |
 | `delta_cache` / `wasm_filters` / `io_uring_backend` | off | P3，见 DATA_PLANE_P3 |
 
 ---

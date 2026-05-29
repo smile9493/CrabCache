@@ -83,6 +83,7 @@ fn metrics_from_core(
         tier_deltas_5m: core.tier_deltas_5m,
         latency_upstream_p99_ms: core.latency_upstream_p99_ms,
         latency_ttft_p99_ms: core.latency_ttft_p99_ms,
+        latency_prefill_p99_ms: core.latency_prefill_p99_ms,
         latency_cache_fetch_p99_ms: core.latency_cache_fetch_p99_ms,
         error_rate_5m: core.error_rate_5m,
         http_4xx_5m: core.http_4xx_5m,
@@ -2040,6 +2041,11 @@ pub fn LatencySection(metrics: MetricsSnapshot) -> impl IntoView {
             t.overview_latency_upstream(),
             metrics.latency_upstream_ms,
             metrics.latency_upstream_p99_ms,
+        ),
+        (
+            "MiMo prefill (hdr)",
+            0.0,
+            metrics.latency_prefill_p99_ms,
         ),
     ];
 

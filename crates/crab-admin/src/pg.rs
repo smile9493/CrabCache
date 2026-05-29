@@ -1311,6 +1311,11 @@ impl PgStore {
                 domain: row.get(10),
                 project_id: row.get(11),
                 upstream_latency_ms: row.get(12),
+                prefill_ms: None,
+                pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
+                    let e2e: f64 = row.get(6);
+                    (e2e - up).max(0.0)
+                }),
                 ttft_ms: row.get(13),
                 input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
                 output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
@@ -1478,6 +1483,11 @@ impl PgStore {
                     domain: row.get(10),
                     project_id: row.get(11),
                     upstream_latency_ms: row.get(12),
+                    prefill_ms: None,
+                    pre_header_ms: row.get::<_, Option<f64>>(12).map(|up: f64| {
+                        let e2e: f64 = row.get(6);
+                        (e2e - up).max(0.0)
+                    }),
                     ttft_ms: row.get(13),
                     input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
                     output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),

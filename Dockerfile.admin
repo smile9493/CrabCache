@@ -49,7 +49,7 @@ COPY --from=builder /app/crab-admin /app/crab-admin
 COPY --from=builder /app/crates/crab-dashboard/dist ./crates/crab-dashboard/dist
 
 ENV CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
-ENV CRABCACHE_ADMIN_KEY=admin
+# CRABCACHE_ADMIN_KEY must be set via environment or docker-compose; no hardcoded default.
 
 EXPOSE 3000
 

@@ -140,6 +140,11 @@ pub fn observe_request_timeline(ctx: &GatewayContext) {
     mark("cache_lookup_done", timeline.cache_lookup_done);
     mark("upstream_connect_done", timeline.upstream_connect_done);
     mark("upstream_headers_sent", timeline.upstream_headers_sent);
+    mark(
+        "upstream_response_headers",
+        timeline.upstream_response_headers,
+    );
+    mark("prefill_done", timeline.prefill_done);
     mark("upstream_body_sent", timeline.upstream_body_sent);
     mark("ttft", timeline.ttft);
     mark("upstream_body_done", timeline.upstream_body_done);

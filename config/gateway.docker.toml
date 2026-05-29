@@ -85,9 +85,10 @@ tcp_keepalive_idle_secs = 60
 tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
-# Upstream to DeepSeek: force HTTP/1.1 (default true); h2_ping only applies when force_http1 = false
-upstream_force_http1 = true
-upstream_disable_keepalive = true
+# Upstream HTTP/2 ALPN when false; h2_ping applies when force_http1 = false
+upstream_force_http1 = false
+# Keepalive reduces per-request TLS handshakes (MiMo pre-header latency).
+upstream_disable_keepalive = false
 h2_ping_interval_secs = 30
 upstream_request_timeout_secs = 300
 upstream_write_timeout_secs = 300
@@ -113,3 +114,16 @@ max_index_lines = 5000
 max_body_files = 5000
 mask_api_keys = false
 skip_paths = ["/health", "/healthz", "/ready"]
+
+[features]
+# Shared Pingora Connector TCP+TLS pre-warm on new session fingerprints (see third_party/pingora-proxy/PATCH.md).
+connection_prewarm = true
+# MiMo: partial body read → upstream_peer while client uploads; finalize at EOS.
+# Phase 1 safety fixes + defer finalize early exact cache landed; enable after gray gate below.
+streaming_body_forward = false
+streaming_body_forward_auto_disable_threshold = 3
+# Gzip upload to upstream when body >= 4096 bytes (verify MiMo accepts Content-Encoding: gzip first).
+upstream_request_gzip = false
+upstream_request_gzip_min_bytes = 4096
+# mimo_retire_prefix_messages = false
+# mimo_keep_recent_turns = 6

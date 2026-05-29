@@ -185,6 +185,6 @@ cargo test -p crab-gateway -p crab-proxy -p crab-route -p crab-cache
 
 ## 已知限制
 
-- `streaming_body_forward`（流式 body 转发）未实现 — 配置预留
+- `streaming_body_forward`（MiMo 流式 body）— 默认 off，见 [STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)
 - `proxy.rs` 已拆至 `phases/`（~566 行 + `phases/request_filter.rs` 等）；Phase 1–4 子模块（`routing_gate` 等）仍为可选后续
 - Raw capture 仍为同步通道 — logging 阶段阻塞 ~5-15ms，后续优化

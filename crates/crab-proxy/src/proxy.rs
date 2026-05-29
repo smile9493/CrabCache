@@ -117,14 +117,14 @@ impl GatewayProxy {
         ctx: &mut GatewayContext,
         body: &[u8],
         pipeline: Option<&str>,
-    ) -> Result<Arc<serde_json::Value>, ()> {
+    ) -> Result<Arc<serde_json::Value>, serde_json::Error> {
         if let Some(p) = &ctx.parsed_request_payload {
             return Ok(p.clone());
         }
         let parse_start = Instant::now();
         let parsed = match serde_json::from_slice::<serde_json::Value>(body) {
             Ok(v) => Arc::new(v),
-            Err(_) => return Err(()),
+            Err(e) => return Err(e),
         };
         let parse_elapsed = parse_start.elapsed();
         global_metrics().record_request_body_stage(
@@ -406,6 +406,15 @@ impl ProxyHttp for GatewayProxy {
         true
     }
 
+    fn defer_upstream_request_body(&self, _session: &Session, ctx: &Self::CTX) -> bool {
+        ctx.streaming_body.streaming_defer_emit_at_eos
+            || (ctx.streaming_body.active && !ctx.streaming_body.finalized)
+    }
+
+    fn skip_upstream_trailing_empty_eos(&self, _session: &Session, ctx: &Self::CTX) -> bool {
+        should_skip_upstream_trailing_empty_eos(ctx)
+    }
+
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         crate::phases::request_filter::run(self, session, ctx).await
     }
@@ -531,6 +540,11 @@ pub(crate) fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> 
     Some(truncated)
 }
 
+/// Skip Pingora's trailing empty upstream EOS after defer cache hit / suppress (see PATCH.md).
+pub fn should_skip_upstream_trailing_empty_eos(ctx: &GatewayContext) -> bool {
+    ctx.upstream.prepared_upstream_body_emitted || ctx.streaming_body.suppress_upstream
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +576,16 @@ mod tests {
         });
         ctx.stream.accumulator = Some(StreamAccumulator::new());
         assert_eq!(flush_streaming_reasoning(&mut ctx, &store), 0);
+    }
+
+    #[test]
+    fn skip_trailing_empty_eos_when_suppress_upstream() {
+        let mut ctx = GatewayContext::new("req".into());
+        assert!(!should_skip_upstream_trailing_empty_eos(&ctx));
+        ctx.streaming_body.suppress_upstream = true;
+        assert!(should_skip_upstream_trailing_empty_eos(&ctx));
+        ctx.streaming_body.suppress_upstream = false;
+        ctx.upstream.prepared_upstream_body_emitted = true;
+        assert!(should_skip_upstream_trailing_empty_eos(&ctx));
     }
 }

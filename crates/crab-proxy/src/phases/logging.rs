@@ -3,6 +3,11 @@
 //! Extracted from `proxy.rs` `ProxyHttp::logging`.
 
 use crate::context::GatewayContext;
+use crate::trace_logger::composition_debug_tx;
+use crab_composition::{
+    CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
+    extract_tools_json,
+};
 use crate::debug_agent_log;
 use crate::helper_fns::{build_capture_request_meta, sanitize_for_trace};
 use crate::metrics_helpers::{
@@ -15,7 +20,9 @@ use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_capture::affinity_kind_from_key;
 use crab_metrics::global_metrics;
 use crab_pipeline::RequestPipeline;
+use hex;
 use pingora_proxy::Session;
+use sha2::Digest;
 use tracing::{debug, info, warn};
 
 /// Run the logging phase: structured log, trace logger, raw capture, partial reasoning flush.
@@ -27,6 +34,7 @@ pub(crate) async fn run(
 ) {
     let duration = ctx.request_start.elapsed();
     let latency_ms = duration.as_millis() as u64;
+    record_request_composition(ctx);
     timeline_stamp(&mut ctx.timeline.logging_done);
     if proxy.state.features.affinity_prompt_cache_feedback {
         finalize_affinity_backend_hint(&proxy.state.affinity_backend_hints, ctx);
@@ -86,15 +94,20 @@ pub(crate) async fn run(
             request_id = %ctx.request_id,
             request_hash = %ctx.req_hash.as_ref().unwrap_or(&"missing".to_string()),
             content_length = ctx.content_length,
+            upstream_outbound_bytes = ctx.upstream_outbound_body_len,
+            upstream_status = ?ctx.upstream.http_status,
             latency_ms = latency_ms,
             model = %ctx.model,
             cache_hit = ctx.cache_tier.is_some(),
             cache_tier = ?ctx.cache_tier,
             is_streaming = ctx.is_streaming,
+            streaming_defer = ctx.streaming_body.active,
             consumer = ?sanitize_for_trace(ctx.consumer.as_deref()),
             conversation_id = ?sanitize_for_trace(ctx.conversation_id.as_deref()),
             total_tokens = ctx.tokens.total,
             upstream_key_id = ?ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+            upstream_profile = ?ctx.upstream_profile_id,
+            pipeline = ?ctx.request_pipeline,
             "Request completed"
         );
 
@@ -133,7 +146,13 @@ pub(crate) async fn run(
                     entry.prompt_cache_hit_ratio = Some(hit as f64 / (hit + miss) as f64);
                 }
                 entry.upstream_latency_ms = ctx.upstream.latency_ms;
-                entry.ttft_ms = ctx.ttft.map(|d| d.as_secs_f64() * 1000.0);
+                let (prefill_ms, sse_ttft_ms) = crate::helper_fns::request_timing_ms(ctx);
+                entry.prefill_ms = prefill_ms;
+                // Legacy trace field: time before upstream stream segment (≈ body read + upload + prefill).
+                entry.pre_header_ms = ctx.upstream.latency_ms.map(|up| {
+                    (latency_ms as f64 - up).max(0.0)
+                });
+                entry.ttft_ms = sse_ttft_ms;
                 if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
                     entry.input_tokens = Some(ctx.tokens.last_input);
                     entry.output_tokens = Some(ctx.tokens.last_output);
@@ -258,6 +277,61 @@ pub(crate) async fn run(
                 stored,
                 "Stored partial streaming reasoning before request exit"
             );
+        }
+    }
+}
+
+/// Composition trace (off hot path — see `latency_optimizations.md` optimization B).
+fn record_request_composition(ctx: &mut GatewayContext) {
+    if ctx.request_composition.is_some() {
+        return;
+    }
+    let Some(payload) = ctx.parsed_request_payload.as_ref() else {
+        return;
+    };
+    let hints = CompositionHints {
+        consumer: ctx.consumer.clone().unwrap_or_default(),
+        domain: ctx.domain.clone().unwrap_or_default(),
+        project_id: ctx.project_id.clone(),
+        pipeline: ctx
+            .request_pipeline
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_default(),
+        user_agent: None,
+        upstream_model: ctx.upstream_model.clone(),
+    };
+    let comp = extract_composition(payload, &hints);
+    global_metrics().record_composition_metrics(&comp);
+    ctx.request_composition = Some(comp);
+
+    if let Some(debug_tx) = composition_debug_tx() {
+        let request_hash = ctx.req_hash.clone().unwrap_or_else(|| {
+            let mut hasher = sha2::Sha256::new();
+            if let Some(body) = ctx.original_request_body.as_deref() {
+                hasher.update(body);
+            } else {
+                hasher.update(payload.to_string().as_bytes());
+            }
+            let h = hex::encode(hasher.finalize());
+            h[..h.len().min(16)].to_string()
+        });
+        let system_text = extract_system_text(payload, 100_000);
+        let tools_json = extract_tools_json(payload, 100_000);
+        if system_text.is_some() || tools_json.is_some() {
+            let debug_entry = CompositionDebugEntry {
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+                request_hash,
+                consumer: ctx.consumer.clone().unwrap_or_default(),
+                domain: ctx.domain.clone().unwrap_or_default(),
+                project_id: ctx.project_id.clone(),
+                model: ctx.model.clone(),
+                system_text,
+                tools_json,
+            };
+            debug_tx.send(debug_entry).ok();
         }
     }
 }

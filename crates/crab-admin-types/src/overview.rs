@@ -159,6 +159,8 @@ pub struct MetricsSnapshot {
     #[serde(default)]
     pub latency_ttft_p99_ms: f64,
     #[serde(default)]
+    pub latency_prefill_p99_ms: f64,
+    #[serde(default)]
     pub latency_cache_fetch_p99_ms: f64,
     #[serde(default)]
     pub error_rate_5m: f64,
@@ -229,6 +231,8 @@ pub struct MetricsSnapshotCore {
     pub latency_upstream_p99_ms: f64,
     #[serde(default)]
     pub latency_ttft_p99_ms: f64,
+    #[serde(default)]
+    pub latency_prefill_p99_ms: f64,
     #[serde(default)]
     pub latency_cache_fetch_p99_ms: f64,
     #[serde(default)]
@@ -366,6 +370,7 @@ mod tests {
                 tier_deltas_5m: TierDeltas5m::default(),
                 latency_upstream_p99_ms: 0.0,
                 latency_ttft_p99_ms: 0.0,
+                latency_prefill_p99_ms: 0.0,
                 latency_cache_fetch_p99_ms: 0.0,
                 error_rate_5m: 0.0,
                 http_4xx_5m: 0,

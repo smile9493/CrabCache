@@ -104,6 +104,16 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    /// Client Base URL discovery (FRP / OpenResty / observed via Pingora).
+    pub async fn get_client_endpoint(&self) -> Result<ClientEndpointView, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/client-endpoint")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn list_keys(&self) -> Result<Vec<ApiKeySpec>, ControlError> {
         let resp = self.authed(reqwest::Method::GET, "/v1/keys").send().await?;
         let resp = Self::check(resp).await?;

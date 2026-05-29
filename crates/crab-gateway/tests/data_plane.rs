@@ -279,3 +279,38 @@ async fn coalesce_exact_cache_probed_idempotent_get() {
     assert!(matches!(tier2, CacheTier::L0Moka));
     assert_eq!(got1.response_body, got2.response_body);
 }
+
+// ---------------------------------------------------------------------------
+// MiMo prefix retirement (upstream body only; cache key unchanged)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mimo_retire_prefix_shrinks_upstream_body() {
+    use crab_reasoning::prepare_mimo_request;
+
+    let mut messages = Vec::new();
+    for i in 0..20 {
+        messages.push(serde_json::json!({
+            "role": if i % 2 == 0 { "user" } else { "assistant" },
+            "content": format!("msg-{i}"),
+        }));
+    }
+    let payload = serde_json::json!({
+        "model": "mimo-v2.5-pro",
+        "messages": messages,
+    });
+    let before = serde_json::to_vec(&payload).expect("serialize");
+    let prepared = prepare_mimo_request(
+        &payload,
+        "xiaomi/mimo-v2.5-pro",
+        true,
+        6,
+    );
+    let after = serde_json::to_vec(&prepared.payload).expect("serialize upstream");
+    assert!(prepared.retired_prefix_messages > 0);
+    assert!(after.len() < before.len());
+    // L0/L1 keys hash the client body (`before`), not the trimmed upstream payload (`after`).
+    let cache_key_client = compute_cache_key(&before);
+    let cache_key_upstream = compute_cache_key(&after);
+    assert_ne!(cache_key_client, cache_key_upstream);
+}

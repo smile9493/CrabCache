@@ -1,7 +1,6 @@
 pub mod auth_gate;
 pub mod bar_chart;
 pub mod brand_logo;
-pub mod candlestick_chart;
 pub mod canvas_bar_chart;
 pub mod canvas_line_chart;
 pub mod chart;

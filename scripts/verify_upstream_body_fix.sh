@@ -9,6 +9,7 @@ cargo test -p crab-proxy upstream_ --quiet
 echo "== pingora-proxy patch present =="
 grep -q 'retry_buffer_truncated' third_party/pingora-proxy/src/proxy_h1.rs
 grep -q 'retry_buffer_truncated' third_party/pingora-proxy/src/proxy_h2.rs
+grep -q 'skip_upstream_trailing_empty_eos' third_party/pingora-proxy/src/proxy_h2.rs
 
 echo "== workspace uses patched pingora-proxy =="
 cargo tree -p crab-proxy -i pingora-proxy 2>/dev/null | head -3

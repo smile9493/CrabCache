@@ -119,6 +119,10 @@ pub struct CaptureRequestMeta {
     pub coalesce_leader: Option<bool>,
     #[serde(default)]
     pub duration_ms: u64,
+    /// Request start → upstream response headers (MiMo prefill).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<u64>,
+    /// Response headers → first upstream body chunk.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,6 +201,8 @@ pub struct RawCaptureEntry {
     pub coalesce_leader: Option<bool>,
     #[serde(default)]
     pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

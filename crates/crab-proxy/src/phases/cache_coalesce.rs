@@ -35,11 +35,6 @@ pub(crate) async fn run(
     ctx: &mut GatewayContext,
 ) -> Result<CachePhaseOutcome, pingora_core::Error> {
     let fingerprint = proxy.state.runtime.fingerprint.read().clone();
-    let cache_key_body = ctx
-        .original_request_body
-        .as_deref()
-        .expect("original_request_body set");
-
     // Observe global RPS via pingora-limits
     proxy.state.global_rate.observe(&GLOBAL_RATE_KEY, 1);
 
@@ -47,11 +42,24 @@ pub(crate) async fn run(
         proxy.state.cache_key_namespace.as_deref(),
         ctx.project_id.as_deref(),
     );
-    if let Ok(cache_key) = crab_cache::generate_namespaced_cache_key_with_fingerprint(
-        cache_key_body,
-        cache_namespace.as_deref(),
-        &fingerprint,
-    ) {
+    let cache_key_result = if let Some(payload) = ctx.parsed_request_payload.as_ref() {
+        crab_cache::generate_namespaced_cache_key_with_fingerprint_from_value(
+            payload,
+            cache_namespace.as_deref(),
+            &fingerprint,
+        )
+    } else {
+        let cache_key_body = ctx
+            .original_request_body
+            .as_deref()
+            .expect("original_request_body set");
+        crab_cache::generate_namespaced_cache_key_with_fingerprint(
+            cache_key_body,
+            cache_namespace.as_deref(),
+            &fingerprint,
+        )
+    };
+    if let Ok(cache_key) = cache_key_result {
         ctx.cache_key = Some(cache_key.clone());
 
         let may_try_l2 = ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4);

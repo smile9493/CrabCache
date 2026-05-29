@@ -7,7 +7,6 @@ mod log_management;
 mod metrics_history;
 mod metrics_store;
 mod network;
-mod openresty;
 mod overview;
 mod persist;
 mod pg;
@@ -26,7 +25,9 @@ mod update;
 mod upstream;
 mod upstream_profiles;
 
-use axum::http::{Request, StatusCode};
+use axum::body::Body;
+use axum::http::{Request, Response, StatusCode, header::HeaderValue};
+use axum::middleware::Next;
 use axum::{Json, Router, middleware, response::IntoResponse};
 use state::AppState;
 use std::path::PathBuf;
@@ -42,6 +43,22 @@ struct ServerConfig {
     listen_addr: String,
     cert_path: Option<PathBuf>,
     key_path: Option<PathBuf>,
+}
+
+async fn api_no_cache_headers(req: Request<Body>, next: Next) -> Response<Body> {
+    let is_api = req.uri().path().starts_with("/api/admin/");
+    let mut res = next.run(req).await;
+    if is_api {
+        res.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+        );
+        res.headers_mut().insert(
+            axum::http::header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        );
+    }
+    res
 }
 
 impl ServerConfig {
@@ -123,12 +140,17 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let admin_key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| "admin".to_string());
-    if admin_key == "admin" {
-        tracing::warn!(
-            "CRABCACHE_ADMIN_KEY is unset or uses the default 'admin'; set a strong key for production. \
-             Dashboard must use the same value in the Admin API Key sign-in screen."
-        );
+    let admin_key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| {
+        if cfg!(debug_assertions) {
+            tracing::warn!("CRABCACHE_ADMIN_KEY is unset; using 'admin' (debug mode only).");
+            "admin".to_string()
+        } else {
+            eprintln!("FATAL: CRABCACHE_ADMIN_KEY is not set. Refusing to start with default 'admin' key.");
+            std::process::exit(1);
+        }
+    });
+    if admin_key == "admin" && !cfg!(debug_assertions) {
+        unreachable!("release builds exit above when key is unset");
     }
 
     let config = ServerConfig::from_args();
@@ -438,6 +460,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = routes::router(state)
+        .layer(middleware::from_fn(api_no_cache_headers))
         .layer(cors)
         .layer(CompressionLayer::new())
         .fallback_service(dashboard_fallback);

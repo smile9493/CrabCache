@@ -19,6 +19,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 bb8.workspace = true
 bb8-redis.workspace = true
 crab-state.workspace = true
+crab-client-endpoint.workspace = true
 uuid.workspace = true
 
 [lints]
@@ -33,6 +34,7 @@ crab-semantic.workspace = true
 crab-reasoning.workspace = true
 crab-pipeline.workspace = true
 crab-control.workspace = true
+crab-client-endpoint.workspace = true
 crab-state.workspace = true
 axum = "0.8"
 uuid.workspace = true

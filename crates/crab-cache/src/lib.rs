@@ -17,8 +17,10 @@ pub use hit_rate_sim::{
 };
 pub use key::{
     FingerprintConfig, generate_cache_key, generate_cache_key_with_fingerprint,
-    generate_composite_cache_key, generate_composite_cache_key_from_value,
-    generate_namespaced_cache_key, generate_namespaced_cache_key_with_fingerprint,
+    generate_cache_key_with_fingerprint_from_value, generate_composite_cache_key,
+    generate_composite_cache_key_from_value, generate_namespaced_cache_key,
+    generate_namespaced_cache_key_with_fingerprint,
+    generate_namespaced_cache_key_with_fingerprint_from_value,
 };
 pub use sanitized_trace::{
     FittedParameters, SanitizedLogEntry, load_sanitized_log, save_sanitized_log,

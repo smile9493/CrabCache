@@ -537,6 +537,7 @@ impl RawCaptureLogger {
             coalesced_follower: meta.coalesced_follower,
             coalesce_leader: meta.coalesce_leader,
             duration_ms: meta.duration_ms,
+            prefill_ms: meta.prefill_ms,
             ttft_ms: meta.ttft_ms,
             upstream_latency_ms: meta.upstream_latency_ms,
         };

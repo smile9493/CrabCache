@@ -6,11 +6,13 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use crab_cache::{InvalidateScanOptions, TieredCache};
+use crab_client_endpoint::ClientEndpointSnapshot;
 use crab_control::{
     ApiKeySpec, BackendSpec, CACHE_INVALIDATE_CONFIRM_ALL, CACHE_INVALIDATE_CONFIRM_HEADER,
-    ClearReasoningCacheResponse, ConnectionRuntimeView, CreateGatewayKeyRequest,
-    CreateGatewayKeyResponse, CursorModelAliasView, CursorModelsConfigView, DomainPolicySpec,
-    DomainUsageEntry, DomainUsageResponse, ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus,
+    ClearReasoningCacheResponse, ClientEndpointView, ConnectionRuntimeView,
+    CreateGatewayKeyRequest, CreateGatewayKeyResponse, CursorModelAliasView,
+    CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse,
+    ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus,
     PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PipelineProfileView,
     PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest, PutDomainUsageRequest,
     PutTtlConfigRequest, PutUpstreamKeysRequest, PutUpstreamRelayConfigRequest,
@@ -61,6 +63,8 @@ pub struct ManagementState {
     pub upstream_key_cooldown_secs: u64,
     pub semantic_runtime: SharedSemanticRuntime,
     pub semantic_cache: Option<Arc<crab_semantic::SemanticCache>>,
+    /// Auto-discovered client Base URL (FRP / OpenResty / Pingora observed headers).
+    pub client_endpoint: Arc<RwLock<ClientEndpointSnapshot>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -110,6 +114,7 @@ pub fn router(state: ManagementState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/v1/status", get(status))
+        .route("/v1/client-endpoint", get(get_client_endpoint))
         .route("/v1/keys", get(list_keys).post(create_key))
         .route("/v1/cache/invalidate", post(invalidate_cache))
         .route("/v1/cache/invalidate/status", get(get_invalidate_status))
@@ -565,6 +570,29 @@ async fn status(
         upstream_base_url,
         upstream_model,
     }))
+}
+
+fn client_endpoint_view(snap: &ClientEndpointSnapshot) -> ClientEndpointView {
+    ClientEndpointView {
+        gateway_url: snap.gateway_url.clone(),
+        gateway_url_lan: snap.gateway_url_lan.clone(),
+        gateway_url_public: snap.gateway_url_public.clone(),
+        public_source: snap.public_source.map(|s| match s {
+            crab_client_endpoint::PublicUrlSource::Env => "env".to_string(),
+            crab_client_endpoint::PublicUrlSource::Observed => "observed".to_string(),
+            crab_client_endpoint::PublicUrlSource::Frp => "frp".to_string(),
+            crab_client_endpoint::PublicUrlSource::Openresty => "openresty".to_string(),
+        }),
+    }
+}
+
+async fn get_client_endpoint(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<ClientEndpointView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let snap = state.client_endpoint.read().clone();
+    Ok(Json(client_endpoint_view(&snap)))
 }
 
 fn upstream_relay_view(runtime: &RuntimeConfig) -> UpstreamRelayConfigView {

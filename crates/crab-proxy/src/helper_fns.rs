@@ -69,6 +69,16 @@ pub fn stable_session_log_fields(
     ("message_scope", None)
 }
 
+/// `prefill_ms`: request start → upstream response headers (MiMo prefill SLO).
+/// `sse_ttft_ms`: response headers → first upstream body chunk.
+pub fn request_timing_ms(ctx: &GatewayContext) -> (Option<f64>, Option<f64>) {
+    let prefill_ms = ctx.upstream.headers_at.map(|h| {
+        h.duration_since(ctx.request_start).as_secs_f64() * 1000.0
+    });
+    let sse_ttft_ms = ctx.ttft.map(|d| d.as_secs_f64() * 1000.0);
+    (prefill_ms, sse_ttft_ms)
+}
+
 /// Metadata for raw capture: session grouping, load balancing, and latency.
 pub fn build_capture_request_meta(
     session: &Session,
@@ -97,6 +107,7 @@ pub fn build_capture_request_meta(
         )
     });
     let affinity_kind = Some(affinity_kind_from_key(&affinity_key).to_string());
+    let (prefill_ms, sse_ttft_ms) = request_timing_ms(ctx);
 
     crab_capture::CaptureRequestMeta {
         conversation_id: ctx.conversation_id.clone(),
@@ -120,7 +131,8 @@ pub fn build_capture_request_meta(
         coalesced_follower: ctx.is_coalesced_follower,
         coalesce_leader: ctx.coalesce_guard.as_ref().map(|g| g.is_leader()),
         duration_ms,
-        ttft_ms: ctx.ttft.map(|d| d.as_millis() as u64),
+        prefill_ms: prefill_ms.map(|v| v.round() as u64),
+        ttft_ms: sse_ttft_ms.map(|v| v.round() as u64),
         upstream_latency_ms: ctx.upstream.latency_ms,
     }
 }
