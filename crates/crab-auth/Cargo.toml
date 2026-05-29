@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
@@ -19,13 +19,20 @@ base64 = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }
+wreq = { version = "6.0.0-rc.28", features = ["socks", "prefix-symbols", "json", "form", "cookies"] }
+wreq-util = "3.0.0-rc.10"
 url = "2"
 rand = "0.8"
 regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { workspace = true, features = ["test-util", "macros"] }
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[[bin]]
+name = "crab-oauth"
+path = "src/bin/crab_oauth.rs"
 
 [lints]
 workspace = true

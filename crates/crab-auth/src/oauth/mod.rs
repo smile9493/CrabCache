@@ -4,10 +4,13 @@ pub mod common;
 pub mod gemini;
 pub mod xai;
 
+pub use codex::{CodexDevicePollResult, CodexDeviceStart};
+
 use crate::types::{Provider, TokenRecord};
 use async_trait::async_trait;
 
 /// Options for interactive login
+#[derive(Default)]
 pub struct LoginOptions {
     /// If true, don't open browser, just print URL
     pub no_browser: bool,
@@ -15,9 +18,13 @@ pub struct LoginOptions {
     pub project_id: Option<String>,
     /// Optional callback port override
     pub callback_port: Option<u16>,
+    /// Use OAuth device flow instead of browser PKCE callback (Codex only)
+    pub device_mode: bool,
     /// Optional prompt function for manual URL paste
     #[allow(clippy::type_complexity)]
     pub prompt: Option<Box<dyn Fn(&str) -> String + Send + Sync>>,
+    /// Optional proxy URL for all OAuth HTTP requests (socks5://, http://, etc.)
+    pub proxy_url: Option<String>,
 }
 
 /// Error type for OAuth operations
