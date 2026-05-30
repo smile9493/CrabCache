@@ -30,6 +30,30 @@ impl GatewayProxy {
         )
     }
 
+    /// Redis session merge applies only to Chat Completions MiMo clients.
+    ///
+    /// Codex / Responses API clients carry continuity via `previous_response_id` +
+    /// [`ResponsesChainStore`]. Running session store merge on converted `messages[]` fights
+    /// that chain and causes prefix-break misalignment (not intentional turn truncation).
+    pub(crate) fn mimo_session_store_applies(ctx: &GatewayContext) -> bool {
+        ctx.request_pipeline
+            .is_some_and(Self::is_mimo_pipeline)
+            && ctx.client_wire_api == crate::context::ClientWireApi::ChatCompletions
+    }
+
+    pub(crate) fn is_codex_relay_pipeline(p: RequestPipeline) -> bool {
+        matches!(p, RequestPipeline::CodexRelay)
+    }
+
+    pub(crate) fn is_deepseek_upstream_pipeline(p: RequestPipeline) -> bool {
+        matches!(
+            p,
+            RequestPipeline::CodexDeepSeek
+                | RequestPipeline::CursorDeepSeekV4
+                | RequestPipeline::DeepSeekLight
+        )
+    }
+
     pub fn new(state: Arc<GatewayState>) -> Self {
         Self { state }
     }

@@ -37,6 +37,15 @@ pub fn resolve_openai_profile_id(profiles: &[ProfileDescriptor]) -> Option<Strin
     None
 }
 
+/// True when an explicit key/domain profile id matches the model's implied upstream family.
+pub fn explicit_profile_matches_model(profile_id: &str, model: &str) -> bool {
+    let implied = model_prefix_to_profile(model);
+    match implied {
+        "openai" => profile_id == "openai" || profile_id.eq_ignore_ascii_case("codex"),
+        other => profile_id == other,
+    }
+}
+
 pub fn resolve_upstream_profile_id(
     globals: &PipelineGlobals,
     profiles: &[ProfileDescriptor],
@@ -51,11 +60,13 @@ pub fn resolve_upstream_profile_id(
 
     if let Some(id) = ctx.key_upstream_profile.filter(|s| !s.trim().is_empty())
         && let Some(found) = pick(id)
+        && explicit_profile_matches_model(id, ctx.model)
     {
         return (found.0, found.1, true);
     }
     if let Some(id) = ctx.domain_upstream_profile.filter(|s| !s.trim().is_empty())
         && let Some(found) = pick(id)
+        && explicit_profile_matches_model(id, ctx.model)
     {
         return (found.0, found.1, true);
     }
@@ -117,7 +128,7 @@ mod tests {
         let globals =
             PipelineGlobals::with_profiles("deepseek", ["deepseek", "openai"].map(String::from));
         let ctx = PipelineRequestContext {
-            model: "gpt-4",
+            model: "deepseek-v4-pro",
             key_upstream_profile: Some("deepseek"),
             ..Default::default()
         };
@@ -125,6 +136,30 @@ mod tests {
         assert_eq!(id, "deepseek");
         assert_eq!(provider, UpstreamProvider::Deepseek);
         assert!(explicit);
+    }
+
+    #[test]
+    fn key_mimo_profile_does_not_hijack_gpt_model() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "codex".into(),
+                provider: UpstreamProvider::Openai,
+            },
+            ProfileDescriptor {
+                id: "mimo".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "gpt-5.4-mini",
+            key_upstream_profile: Some("mimo"),
+            ..Default::default()
+        };
+        let (id, provider, explicit) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "codex");
+        assert_eq!(provider, UpstreamProvider::Openai);
+        assert!(!explicit);
     }
 
     #[test]

@@ -150,23 +150,9 @@ async fn run_post_body_phases(
 
     let pipeline_globals = proxy.state.runtime.pipeline_globals();
     let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
-    // Codex CLI (`wire_api=responses`) sends gpt-5.4-mini etc. without cursor_models alias.
-    // Synthesize CodexDeepSeek routing to the default DeepSeek upstream model.
-    let profile_for_alias = proxy.state.runtime.default_profile();
-    let synthetic_codex_deepseek = ctx.client_wire_api == crate::context::ClientWireApi::Responses
-        && crab_pipeline::is_openai_or_codex_display_model(&ctx.model)
-        && model_alias_entry.is_none()
-        && key_pipeline
-            .as_deref()
-            .map(PipelineOverride::from_str)
-            != Some(PipelineOverride::CodexRelay);
-    let alias_upstream_model = model_alias_entry
-        .map(|e| e.upstream.as_str())
-        .or(synthetic_codex_deepseek.then(|| profile_for_alias.fallback_model.as_str()));
-    let model_alias_pipeline = model_alias_entry
-        .map(|e| e.pipeline)
-        .or(synthetic_codex_deepseek.then_some(PipelineOverride::CodexDeepSeek));
-    let alias_hit = model_alias_entry.is_some() || synthetic_codex_deepseek;
+    let alias_upstream_model = model_alias_entry.map(|e| e.upstream.as_str());
+    let model_alias_pipeline = model_alias_entry.map(|e| e.pipeline);
+    let alias_hit = model_alias_entry.is_some();
 
     let selection = if !skip_early_pipeline_select {
         let pipe_ctx = PipelineRequestContext {
@@ -522,6 +508,7 @@ async fn run_post_body_phases(
             }
         }
 
+        // ─── Responses wire (DeepSeek / MiMo only; Codex OAuth passthrough skips this) ───
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
             let chain_ns = crate::responses_wire::responses_chain_namespace(ctx);
             let wire_target = crate::responses_wire::responses_wire_target(ctx);
@@ -542,8 +529,8 @@ async fn run_post_body_phases(
             ctx.parsed_request_payload = Some(parsed_payload.clone());
         }
 
-        // MiMo-only: Redis session merge + turn shrink + tool sanitize (never CodexDeepSeek).
-        if GatewayProxy::is_mimo_pipeline(selection.pipeline)
+        // MiMo Chat Completions clients only — Codex Responses uses ResponsesChainStore.
+        if GatewayProxy::mimo_session_store_applies(ctx)
             && let Some(store) = &proxy.state.session_store
         {
             let cache_namespace = effective_cache_namespace(
@@ -632,7 +619,8 @@ async fn run_post_body_phases(
                 let mimo = prepare_mimo_request(
                     payload,
                     &profile_fallback,
-                    features.mimo_retire_prefix_messages,
+                    features.mimo_retire_prefix_messages
+                        && ctx.client_wire_api == crate::context::ClientWireApi::ChatCompletions,
                     features.mimo_keep_recent_turns,
                 );
                 retired_prefix = mimo.retired_prefix_messages;
@@ -702,8 +690,7 @@ async fn run_post_body_phases(
                 ));
             }
             RequestPipeline::CodexDeepSeek => {
-                // Codex CLI → DeepSeek: wire_payload already converted above (CodexDeepSeek target).
-                // Do not re-run MiMo session sanitizers or a second Responses conversion.
+                // DeepSeek upstream for Codex CLI: converted above with DeepSeek wire target.
                 let light = prepare_light_request(
                     parsed_payload.as_ref(),
                     &profile_fallback,

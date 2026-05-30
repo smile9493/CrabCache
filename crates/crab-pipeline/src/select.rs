@@ -1,5 +1,5 @@
 use crate::is_deepseek_v4_model;
-use crate::profile::resolve_upstream_profile_id;
+use crate::profile::{model_prefix_to_profile, resolve_upstream_profile_id};
 use crate::signals::{cursor_agent_signals, user_agent_suggests_cursor};
 use crate::types::{
     PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext, PipelineSelection,
@@ -29,7 +29,9 @@ pub fn select_request_pipeline(
         .or(ctx.domain_pipeline)
         .unwrap_or(PipelineOverride::Auto);
 
-    if let Some(forced) = pipeline_from_override(override_pipe, provider) {
+    if let Some(forced) = pipeline_from_override(override_pipe, provider)
+        && pipeline_override_matches_model(override_pipe, ctx.model)
+    {
         let reason = if ctx.key_pipeline == Some(override_pipe) {
             PipelineSelectionReason::KeyOverride
         } else {
@@ -60,6 +62,22 @@ pub fn select_request_pipeline(
         upstream_profile_id,
         provider,
         reason,
+    }
+}
+
+/// Key/domain pipeline override must match the model family (Codex GPT / MiMo / DeepSeek).
+fn pipeline_override_matches_model(override_pipe: PipelineOverride, model: &str) -> bool {
+    let implied = model_prefix_to_profile(model);
+    match override_pipe {
+        PipelineOverride::Auto => true,
+        PipelineOverride::MimoTokenPlanRelay | PipelineOverride::MimoPaygRelay => {
+            implied == "mimo"
+        }
+        PipelineOverride::CodexRelay => implied == "openai",
+        PipelineOverride::CodexDeepSeek
+        | PipelineOverride::CursorDeepSeekV4
+        | PipelineOverride::DeepSeekLight => implied == "deepseek",
+        PipelineOverride::GenericRelay => true,
     }
 }
 
@@ -469,5 +487,30 @@ mod tests {
         assert_eq!(sel.provider, UpstreamProvider::Codex);
         assert_eq!(sel.pipeline, RequestPipeline::CodexRelay);
         assert_eq!(sel.reason, PipelineSelectionReason::CodexProvider);
+    }
+
+    #[test]
+    fn gpt_model_ignores_key_mimo_pipeline_override() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "codex".into(),
+                provider: UpstreamProvider::Openai,
+            },
+            ProfileDescriptor {
+                id: "mimo".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "gpt-5.4-mini",
+            key_pipeline: Some(PipelineOverride::MimoTokenPlanRelay),
+            key_upstream_profile: Some("mimo"),
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "codex");
+        assert_eq!(sel.pipeline, RequestPipeline::CodexRelay);
+        assert_ne!(sel.pipeline, RequestPipeline::MimoTokenPlanRelay);
     }
 }

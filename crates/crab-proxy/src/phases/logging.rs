@@ -103,7 +103,7 @@ pub(crate) async fn run(
 
         if let Some(pipeline) = ctx.request_pipeline
             && proxy.state.features.read().mimo_session_store
-            && GatewayProxy::is_mimo_pipeline(pipeline)
+            && GatewayProxy::mimo_session_store_applies(ctx)
             && ctx.cache_tier.is_none()
             && ctx.upstream.http_status.is_none_or(|s| s < 400)
             && let (Some(store), Some(redis_key), Some(base)) = (

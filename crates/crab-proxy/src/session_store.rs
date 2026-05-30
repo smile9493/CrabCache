@@ -1,7 +1,8 @@
 //! MiMo transparent session store: Redis-backed canonical `messages[]` per stable session id.
 //!
-//! Shrinks upstream payload on append-only turns; does **not** change exact cache keys
-//! (`original_request_body` remains the client JSON).
+//! **Chat Completions MiMo clients only.** Codex / `POST /v1/responses` clients must use
+//! [`ResponsesChainStore`] (`previous_response_id`); merging here on converted `messages[]`
+//! misaligns with that chain.
 
 use bb8_redis::RedisConnectionManager;
 use crab_metrics::global_metrics;

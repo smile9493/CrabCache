@@ -528,15 +528,16 @@ pub(crate) fn run(
         }
 
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            let chain_ns = crate::responses_wire::responses_chain_namespace(ctx);
             if let Some(translator) = ctx.stream.responses_translator.as_mut() {
                 let tail = translator.flush();
                 if !tail.is_empty() {
                     *body = Some(bytes::Bytes::from(tail));
                 }
                 if translator.is_completed() {
-                    crate::responses_wire::store_responses_chain_output_for_ctx(
+                    crate::responses_wire::store_responses_chain_output(
                         &proxy.state.responses_chain_store,
-                        ctx,
+                        chain_ns,
                         translator.response_id(),
                         translator.completed_output(),
                     );
@@ -550,9 +551,9 @@ pub(crate) fn run(
                         *body = Some(bytes::Bytes::from(tail));
                     }
                     if translator.is_completed() {
-                        crate::responses_wire::store_responses_chain_output_for_ctx(
+                        crate::responses_wire::store_responses_chain_output(
                             &proxy.state.responses_chain_store,
-                            ctx,
+                            chain_ns,
                             translator.response_id(),
                             translator.completed_output(),
                         );

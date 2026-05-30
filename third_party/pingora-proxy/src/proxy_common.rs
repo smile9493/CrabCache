@@ -170,7 +170,7 @@ where
 
 /// Interval for [`try_poll_downstream_keepalive`] in the upstream/downstream duplex loop.
 pub(crate) fn downstream_stream_keepalive_interval() -> tokio::time::Interval {
-    let mut tick = interval(Duration::from_secs(5));
+    let mut tick = interval(Duration::from_secs(2));
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     tick
 }
