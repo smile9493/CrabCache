@@ -39,6 +39,10 @@ pub struct SessionStore {
     pool: bb8::Pool<RedisConnectionManager>,
 }
 
+const PERSIST_TAIL_CAP: usize = 48;
+const TAIL_ANCHOR_LEN: usize = 4;
+const LONG_SESSION_SKIP_MERGE: usize = 96;
+
 impl SessionStore {
     pub async fn new(redis_url: &str) -> anyhow::Result<Self> {
         let manager = RedisConnectionManager::new(redis_url)?;
@@ -78,7 +82,63 @@ impl SessionStore {
         }
     }
 
+    fn is_ephemeral_session_system(message: &Value) -> bool {
+        message.get("role").and_then(|r| r.as_str()) == Some("system")
+            && message
+                .get("content")
+                .and_then(|c| c.as_str())
+                .is_some_and(|s| s.contains("[crabcache]"))
+    }
+
+    fn strip_ephemeral_for_merge(messages: &[Value]) -> Vec<Value> {
+        messages
+            .iter()
+            .filter(|m| !Self::is_ephemeral_session_system(m))
+            .cloned()
+            .collect()
+    }
+
+    fn messages_match(stored: &[Value], client_slice: &[Value]) -> bool {
+        let stored = Self::strip_ephemeral_for_merge(stored);
+        let client_slice = Self::strip_ephemeral_for_merge(client_slice);
+        stored.len() == client_slice.len()
+            && stored
+                .iter()
+                .zip(client_slice.iter())
+                .all(|(a, b)| message_signature(a) == message_signature(b))
+    }
+
+    fn try_tail_anchor_merge(stored: &[Value], client: &[Value]) -> Option<Vec<Value>> {
+        let n = stored
+            .len()
+            .min(client.len())
+            .min(TAIL_ANCHOR_LEN)
+            .max(1);
+        if stored.len() < n || client.len() < n {
+            return None;
+        }
+        if Self::messages_match(&stored[stored.len() - n..], &client[client.len() - n..]) {
+            // #region agent log
+            crate::debug_log::debug_agent_log(
+                "A2",
+                "session_store.rs:try_tail_anchor_merge",
+                "tail anchor merge hit",
+                serde_json::json!({
+                    "stored_len": stored.len(),
+                    "client_len": client.len(),
+                    "anchor_len": n,
+                }),
+            );
+            // #endregion
+            return Some(client.to_vec());
+        }
+        None
+    }
+
     /// Merge stored canonical messages with client messages (append-only by message signature).
+    ///
+    /// Redis stores a capped **suffix** window; Codex sends full history from the start — try
+    /// suffix alignment when prefix merge fails.
     pub fn merge_messages(
         stored: &[Value],
         client: &[Value],
@@ -86,21 +146,55 @@ impl SessionStore {
         if stored.is_empty() {
             return Ok(client.to_vec());
         }
-        if client.len() < stored.len() {
-            return Err(SessionMergeError::PrefixBreak);
+        if client.len() >= stored.len() && Self::messages_match(stored, &client[..stored.len()]) {
+            let mut merged = stored.to_vec();
+            merged.extend_from_slice(&client[stored.len()..]);
+            return Ok(merged);
         }
-        for (stored_msg, client_msg) in stored.iter().zip(client.iter()) {
-            if message_signature(stored_msg) != message_signature(client_msg) {
-                return Err(SessionMergeError::PrefixBreak);
+        if client.len() >= stored.len() {
+            let max_offset = client.len() - stored.len();
+            for offset in (0..=max_offset).rev() {
+                if Self::messages_match(stored, &client[offset..offset + stored.len()]) {
+                    // #region agent log
+                    crate::debug_log::debug_agent_log(
+                        "A",
+                        "session_store.rs:merge_messages",
+                        "suffix merge hit",
+                        serde_json::json!({
+                            "stored_len": stored.len(),
+                            "client_len": client.len(),
+                            "suffix_offset": offset,
+                        }),
+                    );
+                    // #endregion
+                    return Ok(client.to_vec());
+                }
             }
         }
-        let mut merged = stored.to_vec();
-        merged.extend_from_slice(&client[stored.len()..]);
-        Ok(merged)
+        if let Some(merged) = Self::try_tail_anchor_merge(stored, client) {
+            return Ok(merged);
+        }
+        Err(SessionMergeError::PrefixBreak)
     }
 
     pub fn prefix_sig(messages: &[Value]) -> String {
         messages.last().map(message_signature).unwrap_or_default()
+    }
+
+    /// Shrink message history for upstream when session merge fails or payload is oversized.
+    pub fn shrink_messages_for_upstream(
+        messages: Vec<Value>,
+        retire_prefix: bool,
+        keep_recent_turns: usize,
+        max_messages: usize,
+    ) -> Vec<Value> {
+        let mut msgs = messages;
+        if retire_prefix && keep_recent_turns > 0 {
+            let (trimmed, _, _) =
+                crab_reasoning::retire_prefix_messages_by_turns(&msgs, keep_recent_turns);
+            msgs = trimmed;
+        }
+        Self::cap_messages(msgs, max_messages)
     }
 
     pub fn cap_messages(messages: Vec<Value>, max_messages: usize) -> Vec<Value> {
@@ -122,6 +216,74 @@ impl SessionStore {
         let mut out = system;
         out.extend(non_system.into_iter().skip(start));
         out
+    }
+
+    /// MiMo has ~1M context: shrink by **turn boundaries**, not byte/message caps that break tool chains.
+    pub fn prepare_mimo_upstream_messages(
+        messages: Vec<Value>,
+        keep_recent_turns: usize,
+    ) -> Vec<Value> {
+        let before = messages.len();
+        let (trimmed, _, _) =
+            crab_reasoning::retire_prefix_messages_by_turns(&messages, keep_recent_turns);
+        let mut sanitized = crate::responses_wire::sanitize_tool_message_chain(trimmed);
+        Self::truncate_oversized_tool_content(&mut sanitized, 32_768);
+        // #region agent log
+        crate::debug_log::debug_agent_log(
+            "G",
+            "session_store.rs:prepare_mimo_upstream",
+            "turn-based upstream sanitize",
+            serde_json::json!({
+                "client_len": before,
+                "upstream_len": sanitized.len(),
+                "upstream_bytes": serde_json::to_vec(&sanitized).map(|v| v.len()).unwrap_or(0),
+                "keep_recent_turns": keep_recent_turns,
+            }),
+        );
+        // #endregion
+        sanitized
+    }
+
+    fn truncate_oversized_tool_content(messages: &mut [Value], max_chars: usize) {
+        if max_chars == 0 {
+            return;
+        }
+        for msg in messages.iter_mut() {
+            if msg.get("role").and_then(|r| r.as_str()) != Some("tool") {
+                continue;
+            }
+            let Some(content) = msg.get_mut("content") else {
+                continue;
+            };
+            let Some(text) = content.as_str() else {
+                continue;
+            };
+            if text.len() <= max_chars {
+                continue;
+            }
+            let truncated = format!(
+                "{}... [crabcache: {} chars truncated for upstream]",
+                &text[..max_chars],
+                text.len().saturating_sub(max_chars)
+            );
+            *content = Value::String(truncated);
+        }
+    }
+
+    fn set_upstream_messages(
+        ctx: &mut crate::context::GatewayContext,
+        payload: &mut Arc<Value>,
+        upstream: Vec<Value>,
+    ) -> usize {
+        let upstream_bytes = serde_json::to_vec(&upstream).unwrap_or_default().len();
+        ctx.session_upstream_messages_len = Some(upstream.len());
+        let mut new_payload = (**payload).clone();
+        if let Some(obj) = new_payload.as_object_mut() {
+            obj.insert("messages".into(), Value::Array(upstream));
+        }
+        *payload = Arc::new(new_payload);
+        ctx.parsed_request_payload = Some(payload.clone());
+        upstream_bytes
     }
 
     pub fn now_unix() -> u64 {
@@ -179,7 +341,7 @@ pub fn extract_assistant_content(
 }
 
 pub async fn apply_mimo_session_store(
-    store: &SessionStore,
+    store: Arc<SessionStore>,
     features: &crate::context::FeaturesConfig,
     ctx: &mut crate::context::GatewayContext,
     payload: &mut Arc<Value>,
@@ -196,15 +358,80 @@ pub async fn apply_mimo_session_store(
         return;
     };
     let redis_key = SessionStore::redis_key(namespace, session_id);
-    let client_bytes = serde_json::to_vec(&client_messages).unwrap_or_default();
+    let _client_bytes = serde_json::to_vec(&client_messages).unwrap_or_default();
+
+    // Long Codex sessions rewrite history every turn — skip merge; shrink by turn boundary only.
+    if client_messages.len() > LONG_SESSION_SKIP_MERGE {
+        let upstream = SessionStore::prepare_mimo_upstream_messages(
+            client_messages.clone(),
+            features.mimo_keep_recent_turns,
+        );
+        let upstream_bytes = SessionStore::set_upstream_messages(ctx, payload, upstream.clone());
+        let persist_tail = SessionStore::cap_messages(client_messages.clone(), PERSIST_TAIL_CAP);
+        ctx.session_store_outcome = Some("long".into());
+        ctx.session_persist_base = Some(persist_tail.clone());
+        ctx.session_store_redis_key = Some(redis_key.clone());
+        spawn_session_persist(
+            store,
+            redis_key,
+            persist_tail,
+            None::<String>,
+            features.mimo_session_store_ttl_secs,
+            features.mimo_session_store_max_messages,
+        );
+        // #region agent log
+        crate::debug_log::debug_agent_log(
+            "C",
+            "session_store.rs:long_session",
+            "long session turn-based upstream",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "session_id": session_id,
+                "client_len": client_messages.len(),
+                "upstream_messages": upstream.len(),
+                "upstream_bytes": upstream_bytes,
+            }),
+        );
+        // #endregion
+        warn!(
+            request_id = %ctx.request_id,
+            session_id = %session_id,
+            client = client_messages.len(),
+            upstream_messages = upstream.len(),
+            upstream_bytes,
+            "session store long-session turn-based upstream"
+        );
+        return;
+    }
 
     match store.get(&redis_key).await {
         None => {
             global_metrics().record_session_store_miss();
             ctx.session_store_outcome = Some("miss".into());
             let n = client_messages.len();
-            ctx.session_persist_base = Some(client_messages);
+            ctx.session_persist_base = Some(client_messages.clone());
             ctx.session_store_redis_key = Some(redis_key);
+            if client_messages.len() > features.mimo_keep_recent_turns.saturating_mul(8) {
+                let upstream = SessionStore::prepare_mimo_upstream_messages(
+                    client_messages.clone(),
+                    features.mimo_keep_recent_turns,
+                );
+                let upstream_bytes =
+                    SessionStore::set_upstream_messages(ctx, payload, upstream.clone());
+                // #region agent log
+                crate::debug_log::debug_agent_log(
+                    "C",
+                    "session_store.rs:miss_turn_shrink",
+                    "miss turn-based upstream",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "client_len": n,
+                        "upstream_messages": upstream.len(),
+                        "upstream_bytes": upstream_bytes,
+                    }),
+                );
+                // #endregion
+            }
             debug!(
                 request_id = %ctx.request_id,
                 session_id = %session_id,
@@ -219,19 +446,23 @@ pub async fn apply_mimo_session_store(
                 Ok(merged) => {
                     let merged_len = merged.len();
                     let merged_bytes = serde_json::to_vec(&merged).unwrap_or_default();
-                    if merged_bytes.len() < client_bytes.len() {
+                    let upstream = if merged_len > LONG_SESSION_SKIP_MERGE {
+                        SessionStore::prepare_mimo_upstream_messages(
+                            merged.clone(),
+                            features.mimo_keep_recent_turns,
+                        )
+                    } else {
+                        crate::responses_wire::sanitize_tool_message_chain(merged.clone())
+                    };
+                    let upstream_bytes =
+                        SessionStore::set_upstream_messages(ctx, payload, upstream.clone());
+                    if merged_bytes.len() > upstream_bytes {
                         global_metrics().record_session_store_upstream_bytes_saved(
-                            (client_bytes.len() - merged_bytes.len()) as u64,
+                            (merged_bytes.len() - upstream_bytes) as u64,
                         );
                     }
                     global_metrics().record_session_store_hit();
                     ctx.session_store_outcome = Some("hit".into());
-                    let mut new_payload = (**payload).clone();
-                    if let Some(obj) = new_payload.as_object_mut() {
-                        obj.insert("messages".into(), Value::Array(merged.clone()));
-                    }
-                    *payload = Arc::new(new_payload);
-                    ctx.parsed_request_payload = Some(payload.clone());
                     ctx.session_persist_base = Some(merged);
                     ctx.session_store_redis_key = Some(redis_key);
                     debug!(
@@ -240,37 +471,75 @@ pub async fn apply_mimo_session_store(
                         stored = stored_len,
                         client = client_len,
                         merged = merged_len,
+                        upstream_messages = upstream.len(),
+                        upstream_bytes,
                         "session store hit"
                     );
                 }
                 Err(SessionMergeError::PrefixBreak) => {
                     global_metrics().record_session_store_prefix_break();
                     ctx.session_store_outcome = Some("break".into());
-                    ctx.session_persist_base = Some(client_messages);
-                    ctx.session_store_redis_key = Some(redis_key);
+                    let upstream = SessionStore::prepare_mimo_upstream_messages(
+                        client_messages.clone(),
+                        features.mimo_keep_recent_turns,
+                    );
+                    let persist_tail =
+                        SessionStore::cap_messages(client_messages.clone(), PERSIST_TAIL_CAP);
+                    let upstream_bytes =
+                        SessionStore::set_upstream_messages(ctx, payload, upstream.clone());
+                    ctx.session_persist_base = Some(persist_tail.clone());
+                    ctx.session_store_redis_key = Some(redis_key.clone());
+                    spawn_session_persist(
+                        store,
+                        redis_key,
+                        persist_tail,
+                        None::<String>,
+                        features.mimo_session_store_ttl_secs,
+                        features.mimo_session_store_max_messages,
+                    );
+                    // #region agent log
+                    crate::debug_log::debug_agent_log(
+                        "E",
+                        "session_store.rs:prefix_break",
+                        "prefix break tail cap upstream",
+                        serde_json::json!({
+                            "request_id": ctx.request_id,
+                            "session_id": session_id,
+                            "stored_len": stored_len,
+                            "client_len": client_len,
+                            "persist_tail_len": ctx.session_persist_base.as_ref().map(|m| m.len()),
+                            "upstream_messages": upstream.len(),
+                            "upstream_bytes": upstream_bytes,
+                        }),
+                    );
+                    // #endregion
                     warn!(
                         request_id = %ctx.request_id,
                         session_id = %session_id,
                         stored = stored_len,
                         client = client_len,
-                        "session store prefix break; using client messages"
+                        upstream_messages = upstream.len(),
+                        upstream_bytes,
+                        "session store prefix break; turn-based upstream and re-seeded client suffix"
                     );
                 }
             }
         }
     }
-    ctx.session_upstream_messages_len = ctx.session_persist_base.as_ref().map(|m| m.len());
+    ctx.session_upstream_messages_len = ctx
+        .session_upstream_messages_len
+        .or_else(|| ctx.session_persist_base.as_ref().map(|m| m.len()));
 }
 
 pub fn spawn_session_persist(
     store: Arc<SessionStore>,
     redis_key: String,
     mut base_messages: Vec<Value>,
-    assistant_content: Option<String>,
+    assistant_content: impl Into<Option<String>>,
     ttl_secs: u64,
     max_messages: usize,
 ) {
-    if let Some(content) = assistant_content.filter(|c| !c.is_empty()) {
+    if let Some(content) = assistant_content.into().filter(|c| !c.is_empty()) {
         base_messages.push(serde_json::json!({
             "role": "assistant",
             "content": content,
@@ -316,6 +585,53 @@ mod tests {
     }
 
     #[test]
+    fn merge_tail_anchor_when_prefix_differs_but_recent_tail_matches() {
+        let tail = [
+            msg("user", "c"),
+            msg("assistant", "d"),
+            msg("user", "e"),
+            msg("assistant", "f"),
+        ];
+        let mut stored = vec![msg("user", "old-prefix")];
+        stored.extend_from_slice(&tail);
+        let mut client = vec![msg("user", "new-prefix")];
+        client.extend_from_slice(&tail);
+        let merged = SessionStore::merge_messages(&stored, &client).expect("tail anchor");
+        assert_eq!(merged.len(), 5);
+    }
+
+    #[test]
+    fn merge_suffix_window_when_client_sends_full_history() {
+        let full: Vec<Value> = (0..10)
+            .map(|i| {
+                msg(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    &i.to_string(),
+                )
+            })
+            .collect();
+        let stored = full[6..].to_vec();
+        let mut client = full.clone();
+        client.push(msg("user", "new"));
+        let merged = SessionStore::merge_messages(&stored, &client).expect("suffix merge");
+        assert_eq!(merged.len(), 11);
+    }
+
+    #[test]
+    fn shrink_messages_for_upstream_applies_keep_recent_turns() {
+        let messages: Vec<Value> = (0..20)
+            .map(|i| {
+                msg(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    &i.to_string(),
+                )
+            })
+            .collect();
+        let shrunk = SessionStore::shrink_messages_for_upstream(messages, true, 3, 200);
+        assert!(shrunk.len() < 20);
+    }
+
+    #[test]
     fn cap_messages_preserves_system() {
         let messages: Vec<Value> = (0..10)
             .map(|i| {
@@ -334,6 +650,32 @@ mod tests {
                 .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
         );
         assert!(capped.len() <= 5);
+    }
+
+    #[test]
+    fn prepare_mimo_upstream_sanitizes_tool_chain() {
+        let messages = vec![
+            msg("assistant", "call"),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_orphan",
+                    "type": "function",
+                    "function": { "name": "read_file", "arguments": "{}" }
+                }]
+            }),
+            msg("user", "next"),
+        ];
+        let out = SessionStore::prepare_mimo_upstream_messages(messages, 6);
+        assert!(
+            !out.iter().any(|m| {
+                m.get("tool_calls")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| !a.is_empty())
+            }),
+            "dangling tool_calls should be stripped"
+        );
     }
 
     #[test]

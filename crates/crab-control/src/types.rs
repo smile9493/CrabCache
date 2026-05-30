@@ -400,12 +400,23 @@ pub struct PutUpstreamProfileRequest {
     pub default_weight: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_max_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamProfileKeysView {
     pub profile_id: String,
     pub keys: Vec<UpstreamKeyView>,
+}
+
+/// Admin-only export of profile key pool secrets (Management API reconciliation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileKeysExport {
+    pub profile_id: String,
+    pub keys: Vec<UpstreamKeyInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

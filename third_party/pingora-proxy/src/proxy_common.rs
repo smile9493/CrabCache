@@ -97,3 +97,80 @@ impl ResponseStateMachine {
         }
     }
 }
+
+use crate::Session;
+use crate::ProxyHttp;
+use log::debug;
+use pingora_core::prelude::*;
+use std::time::Duration;
+use tokio::time::{MissedTickBehavior, interval};
+
+/// Flush Responses wire bootstrap immediately after upstream headers (Codex prefill keepalive).
+pub(crate) async fn try_initial_downstream_response_body<SV>(
+    inner: &SV,
+    session: &mut Session,
+    ctx: &mut SV::CTX,
+) -> Result<()>
+where
+    SV: ProxyHttp + Send + Sync,
+    SV::CTX: Send + Sync,
+{
+    if session.response_written().is_none() {
+        return Ok(());
+    }
+    if let Some(bytes) = inner.initial_downstream_response_body(session, ctx).await? {
+        if session.write_response_body(Some(bytes), false).await.is_ok() {
+            debug!("early Responses wire bootstrap written after upstream headers");
+        }
+    }
+    Ok(())
+}
+
+/// Synthesize Responses completion as soon as the upstream body channel closes.
+pub(crate) async fn try_graceful_upstream_finalize<SV>(
+    inner: &SV,
+    session: &mut Session,
+    ctx: &mut SV::CTX,
+) -> Result<()>
+where
+    SV: ProxyHttp + Send + Sync,
+    SV::CTX: Send + Sync,
+{
+    if session.response_written().is_none() {
+        return Ok(());
+    }
+    if let Some(bytes) = inner.finalize_aborted_upstream_stream(session, ctx).await? {
+        if session.write_response_body(Some(bytes), true).await.is_ok() {
+            debug!("graceful Responses stream tail written on upstream close");
+        }
+    }
+    Ok(())
+}
+
+/// Push Responses wire heartbeats while upstream stalls between chunks.
+pub(crate) async fn try_poll_downstream_keepalive<SV>(
+    inner: &SV,
+    session: &mut Session,
+    ctx: &mut SV::CTX,
+) -> Result<()>
+where
+    SV: ProxyHttp + Send + Sync,
+    SV::CTX: Send + Sync,
+{
+    if session.response_written().is_none() {
+        return Ok(());
+    }
+    if let Some(bytes) = inner.poll_downstream_stream_keepalive(session, ctx).await? {
+        if session.write_response_body(Some(bytes), false).await.is_ok() {
+            debug!("Responses wire keepalive written to downstream");
+        }
+    }
+    Ok(())
+}
+
+/// Interval for [`try_poll_downstream_keepalive`] in the upstream/downstream duplex loop.
+pub(crate) fn downstream_stream_keepalive_interval() -> tokio::time::Interval {
+    let mut tick = interval(Duration::from_secs(5));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    tick
+}

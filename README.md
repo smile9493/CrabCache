@@ -192,17 +192,25 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 ```
 crab-gateway（入口 + Pingora Server + 管理 API）
- ├── crab-proxy      ProxyHttp 实现、SSE 流处理
- │   ├── crab-route      Ketama 一致性哈希路由
- │   ├── crab-cache      L0 Moka + L1 Redis 缓存
- │   ├── crab-semantic   L2 Qdrant 语义缓存
- │   ├── crab-reasoning  推理内容管理与恢复
- │   └── crab-metrics    Prometheus 指标采集
- └── crab-control    管理 API 客户端 + 共享 DTO 类型
+ ├── crab-proxy          ProxyHttp 实现、SSE 流处理
+ │   ├── crab-route          Ketama 一致性哈希路由
+ │   ├── crab-cache          L0 Moka + L1 Redis 缓存
+ │   ├── crab-semantic       L2 Qdrant 语义缓存
+ │   ├── crab-reasoning      推理内容管理与恢复
+ │   └── crab-metrics        Prometheus 指标采集
+ ├── crab-control        管理 API 客户端 + 共享 DTO 类型
+ ├── crab-pipeline       管线选择与 Cursor 模型别名
+ ├── crab-auth           OAuth 多供应商认证（Claude/Codex/Gemini）
+ ├── crab-translator     请求/响应格式翻译（供应商协议适配）
+ ├── crab-composition    请求组合体分析与指纹（JSONL Trace 捕获）
+ ├── crab-capture        请求捕获、会话亲和、结构差分分析
+ ├── crab-client-endpoint 客户端入口地址发现（LAN/FRP/OpenResty）
+ └── crab-state          控制面持久化（Redis / 内存）
 
 crab-admin（管理面板后端 - Axum HTTP 服务器）
- ├── crab-control    Gateway 管理 API 客户端
- └── crab-dashboard  Leptos WASM 前端
+ ├── crab-control        Gateway 管理 API 客户端
+ ├── crab-admin-types    共享 serde 类型（wasm-safe）
+ └── crab-dashboard      Leptos WASM 前端
 ```
 
 ---
@@ -243,6 +251,9 @@ crab-admin（管理面板后端 - Axum HTTP 服务器）
 | [持久化指南](docs/PERSISTENCE.md) | 数据存储、多实例部署与备份 |
 | [推理内容存储](docs/REASONING_STORE.md) | ReasoningStore 与稳定会话 scope 机制 |
 | [可观测性](docs/OBSERVABILITY.md) | Prometheus 指标、Dashboard、影子日志 |
+| [工程规范](docs/ENGINEERING.md) | 代码规范架构决策记录 (ADR) |
+| [运维手册](docs/OPS_RUNBOOK.md) | 常见运维操作、故障恢复流程 |
+| [数据面验收](docs/DATA_PLANE_ACCEPTANCE.md) | P0-P2 功能验收用例与检查清单 |
 
 ### 部署指南
 
@@ -410,7 +421,7 @@ GitHub Actions 流水线（详见 [`.github/workflows/ci.yml`](.github/workflows
 
 ```
 CrabCache/
-├── Cargo.toml                # Workspace 根配置（12 个 crate）
+├── Cargo.toml                # Workspace 根配置（18 个 crate）
 ├── config/
 │   └── gateway.example.toml  # 配置文件模板
 ├── crates/
@@ -424,7 +435,13 @@ CrabCache/
 │   ├── crab-metrics/         # Prometheus 指标采集
 │   ├── crab-control/         # 管理 API 客户端 + 共享类型
 │   ├── crab-state/           # 控制面持久化（Redis / 内存）
+│   ├── crab-auth/            # OAuth 多供应商认证（Claude/Codex/Gemini 等）
+│   ├── crab-translator/      # 请求/响应格式翻译（供应商协议适配）
+│   ├── crab-client-endpoint/ # 客户端入口地址发现（LAN/FRP/OpenResty）
+│   ├── crab-composition/     # 请求组合体分析与指纹（JSONL Trace 捕获）
+│   ├── crab-capture/         # 请求捕获、会话亲和、结构差分分析
 │   ├── crab-admin/           # Admin Dashboard 后端（Axum）
+│   ├── crab-admin-types/     # Admin/Dashboard 共享 serde 类型（wasm-safe）
 │   └── crab-dashboard/       # Leptos WASM 前端
 ├── docs/                     # MkDocs 文档源文件
 ├── scripts/                  # 部署与验证脚本
@@ -436,6 +453,28 @@ CrabCache/
 ```
 
 ---
+
+
+---
+
+## 对比竞品
+
+CrabCache 与其他 LLM API 网关的定位差异：
+
+| 维度 | CrabCache | one-api / new-api | LiteLLM | deepseek-cursor-proxy |
+|------|-----------|-------------|---------|----------------------|
+| **代理核心** | Pingora (Rust) | Go net/http | Python (FastAPI) | Node.js (Express) |
+| **SSE 流式** | 原生 body_filter，逐 chunk 改写 | 被动透传 | 被动透传 | 逐 chunk 改写 |
+| **缓存** | L0 Moka + L1 Redis + L2 Qdrant | 无内置缓存 | Redis 可选 | 仅 reasoning 恢复 |
+| **路由** | Ketama 一致性哈希 + 会话亲和 | 加权轮询 | 轮询 | 单节点 |
+| **推理恢复** | 内置，SQLite/Redis 双后端 | 无 | 无 | 核心功能 |
+| **可观测** | Prometheus + Dashboard + 影子日志 | 基础日志 | Langfuse 集成 | 无 |
+| **管理面板** | Leptos WASM (Rust 全栈) | React (Node 构建) | 无内置 | 无 |
+| **多供应商** | Profile 路由 + Key 池 | API Key 池 | 多 provider | 仅 DeepSeek |
+| **编译产物** | 单二进制 (~30 MB) | Go 二进制 + 前端 | Python 依赖 | Node.js 进程 |
+
+> 如果只需要一个简单的多供应商 API Key 分发器，one-api / new-api 足够。
+> 如果需要对上游流量做**缓存优化、推理恢复、精细路由控制**，CrabCache 提供更深层的数据面能力。
 
 ## 贡献
 
@@ -468,6 +507,29 @@ pre-commit install
 actionlint
 action-validator .github/workflows/*.yml .github/workflows/*.yaml
 ```
+
+---
+
+## FAQ / 排错
+
+### macOS 上 SSE 流式响应不完整？
+
+这是 [Pingora Issue #841](https://github.com/cloudflare/pingora/issues/841) - macOS 的 TCP flush 行为与 Linux 不同。生产环境必须使用 Linux。
+
+### Admin API 返回 text/html 而非 application/json？
+
+Admin Dashboard 前端的 index.html 覆盖了 API 路由。原因通常是热更新只替换了二进制而没更新 `crates/crab-dashboard/dist`。执行 `make hot-update` 重新构建并推送完整产物。
+
+### 缓存命中率比预期低？
+
+检查三点：
+1. L0-L2 缓存的是完整响应体，不是 Token 级别的 KV 缓存
+2. 真正降本依赖 L3 上游前缀缓存，看 `prompt_cache_hit_tokens` 而非网关缓存指标
+3. 检查 `CACHE_FINGERPRINT` 版本号，指纹变更会导致 L0/L1 全部失效
+
+### Redis 连接失败？
+
+默认连接 `redis://127.0.0.1:6379`。Docker Compose 服务名为 `redis`，应连接 `redis://redis:6379`。检查 `config/gateway.toml` 中 `[cache.redis]` 地址。
 
 ## 许可证
 

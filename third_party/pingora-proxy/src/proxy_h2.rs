@@ -346,6 +346,7 @@ where
         // use cache when upstream revalidates (or TODO: error)
         let mut serve_from_cache = ServeFromCache::new();
         let mut range_body_filter = proxy_cache::range_filter::RangeBodyFilter::new();
+        let mut stream_keepalive = downstream_stream_keepalive_interval();
 
         /* duplex mode
          * see the Same function for h1 for more comments
@@ -373,6 +374,13 @@ where
             // Similar logic in h1 need to reserve capacity first to avoid deadlock
             // But we don't need to do the same because the h2 client_body pipe is unbounded (never block)
             tokio::select! {
+                _ = stream_keepalive.tick(),
+                    if session.response_written().is_some()
+                        && !response_state.upstream_done()
+                        && !downstream_state.is_errored() => {
+                    try_poll_downstream_keepalive(&self.inner, session, ctx).await?;
+                },
+
                 // NOTE: cannot avoid this copy since h2 owns the buf
                 body = session.downstream_session.read_body_or_idle(downstream_state.is_done()), if downstream_state.can_poll() => {
                     debug!("downstream event");
@@ -464,6 +472,7 @@ where
                         }
 
                         let response_done = session.write_response_tasks(filtered_tasks).await?;
+                        try_initial_downstream_response_body(&self.inner, session, ctx).await?;
                         if session.was_upgraded() {
                             // it is very weird if the downstream session decides to upgrade
                             // since the client h2 session cannot, return an error on this case
@@ -472,6 +481,7 @@ where
                         response_state.maybe_set_upstream_done(response_done);
                     } else {
                         debug!("empty upstream event");
+                        try_graceful_upstream_finalize(&self.inner, session, ctx).await?;
                         response_state.maybe_set_upstream_done(true);
                     }
                 }
@@ -561,6 +571,17 @@ where
 
         let mut reuse_downstream = !downstream_state.is_errored();
         if reuse_downstream {
+            if session.response_written().is_some() {
+                if let Some(bytes) = self
+                    .inner
+                    .finalize_aborted_upstream_stream(session, ctx)
+                    .await?
+                {
+                    if session.write_response_body(Some(bytes), true).await.is_ok() {
+                        debug!("graceful Responses stream tail written before finish_body");
+                    }
+                }
+            }
             match session.as_mut().finish_body().await {
                 Ok(_) => {
                     debug!("finished sending body to downstream");
@@ -720,7 +741,18 @@ where
                 }
             }
             HttpTask::Done => Ok(task),
-            HttpTask::Failed(_) => Ok(task), // Do nothing just pass the error down
+            HttpTask::Failed(_) => {
+                if session.response_written().is_some() {
+                    if let Some(bytes) = self
+                        .inner
+                        .finalize_aborted_upstream_stream(session, ctx)
+                        .await?
+                    {
+                        return Ok(HttpTask::Body(Some(bytes), true));
+                    }
+                }
+                Ok(task)
+            }
         };
         // On end, check if the response (based on file size) can be considered cacheable again
         if let Ok(task) = res.as_ref() {

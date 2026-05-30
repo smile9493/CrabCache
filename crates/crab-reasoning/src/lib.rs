@@ -1,4 +1,5 @@
 mod backend;
+mod codex_tools;
 mod keys;
 mod normalize;
 pub mod pg_store;
@@ -8,6 +9,11 @@ mod streaming;
 mod transform;
 
 pub use backend::ReasoningBackend;
+pub use codex_tools::{
+    CODEX_FILE_TOOL_NAMES, convert_codex_custom_tool_to_chat_function,
+    default_codex_file_tool, ensure_codex_file_tools_from_context,
+    normalize_codex_tools_for_upstream,
+};
 pub use keys::{
     conversation_scope, message_signature, portable_reasoning_keys, resolve_reasoning_scope,
     scoped_reasoning_keys, tool_call_ids, tool_call_names, tool_call_signature,
@@ -16,7 +22,7 @@ pub use normalize::{
     GenericPreparedRequest, LightPreparedRequest, PreparedRequest, normalize_messages,
     normalize_mimo_model, normalize_tool_choice_for_deepseek, parse_deepseek_v4_thinking_suffix,
     prepare_generic_request, prepare_light_request, prepare_mimo_request, prepare_upstream_request,
-    strip_cursor_thinking_blocks,
+    retire_prefix_messages_by_turns, strip_cursor_thinking_blocks,
 };
 pub use store::ReasoningStore;
 pub use streaming::{

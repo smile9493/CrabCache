@@ -209,6 +209,10 @@ pub fn router(state: ManagementState) -> Router {
             get(management_profiles::get_profile_keys).put(management_profiles::put_profile_keys),
         )
         .route(
+            "/v1/upstream/profiles/{id}/keys/export",
+            get(management_profiles::export_profile_keys),
+        )
+        .route(
             "/v1/upstream/profiles/{id}/keys/{key_id}",
             patch(management_profiles::patch_profile_key)
                 .delete(management_profiles::delete_profile_key),
@@ -719,6 +723,8 @@ async fn put_upstream_relay(
             tls_sni: Some(tls_sni.clone()),
             default_weight: 1,
             proxy_url: None,
+            fallback_profile_id: None,
+            fallback_max_retries: 2,
         };
         if let Ok(profile) = crab_proxy::build_profile_runtime(
             input,

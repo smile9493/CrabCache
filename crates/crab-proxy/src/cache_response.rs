@@ -10,7 +10,6 @@ use crab_reasoning::{
     sanitize_client_completion, sanitize_client_message_content,
 };
 
-use crate::debug_log::debug_agent_log;
 
 fn cache_status_header(tier: CacheTier) -> &'static str {
     match tier {
@@ -146,21 +145,6 @@ pub async fn send_cached_response(
         let json_visible =
             completion_json_has_visible_client_content(response_body, display_reasoning);
         if !has_nonempty && !json_visible {
-            // #region agent log
-            debug_agent_log(
-                "H1",
-                "cache_response.rs:send_cached_response",
-                "refusing hollow cache hit (no client-visible content)",
-                serde_json::json!({
-                    "sse_source": sse_source,
-                    "sse_len": sse_body.len(),
-                    "response_body_len": response_body.len(),
-                    "force_regen": force_regen,
-                    "display_reasoning": display_reasoning,
-                    "has_done": has_done,
-                }),
-            );
-            // #endregion
             warn!(
                 sse_source = sse_source,
                 sse_len = sse_body.len(),
@@ -169,29 +153,6 @@ pub async fn send_cached_response(
             );
             return false;
         }
-        debug_agent_log(
-            "H1",
-            "cache_response.rs:send_cached_response",
-            "streaming cache hit SSE synthesis",
-            serde_json::json!({
-                "sse_source": sse_source,
-                "sse_len": sse_body.len(),
-                "response_body_len": response_body.len(),
-                "display_mismatch": display_mismatch,
-                "used_legacy_regen": used_legacy_regen,
-                "saved_empty_content": saved_empty_content,
-                "thinking_markup_in_body": thinking_markup_in_body,
-                "thinking_markup_in_sse": thinking_markup_in_sse,
-                "json_choices": json_choices,
-                "has_done": has_done,
-                "has_nonempty_content": has_nonempty,
-                "entry_is_stream": entry.is_stream,
-                "entry_client_display_reasoning": entry.client_display_reasoning,
-                "request_display_reasoning": display_reasoning,
-                "cache_tier": cache_tier.as_str(),
-                "model": model,
-            }),
-        );
         let Some(header) = build_sse_response_header(sse_body.len(), cache_tier) else {
             warn!("Failed to build SSE cache response header");
             return false;
@@ -207,17 +168,6 @@ pub async fn send_cached_response(
     } else {
         let json_body = sanitize_cached_json_body(response_body, display_reasoning);
         if !completion_json_has_visible_client_content(&json_body, display_reasoning) {
-            // #region agent log
-            debug_agent_log(
-                "H1",
-                "cache_response.rs:send_cached_response",
-                "refusing hollow non-stream cache hit",
-                serde_json::json!({
-                    "json_len": json_body.len(),
-                    "display_reasoning": display_reasoning,
-                }),
-            );
-            // #endregion
             warn!(
                 json_len = json_body.len(),
                 "Refusing non-stream cache hit: no client-visible content"
@@ -256,15 +206,6 @@ pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool
     let value: serde_json::Value = match serde_json::from_slice(&sanitized) {
         Ok(v) => v,
         Err(_) => {
-            debug_agent_log(
-                "H3",
-                "cache_response.rs:json_to_sse_stream",
-                "json parse failed, returning raw bytes",
-                serde_json::json!({
-                    "json_len": json_body.len(),
-                    "model": model,
-                }),
-            );
             return sanitized;
         }
     };
@@ -275,7 +216,6 @@ pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool
         .cloned()
         .unwrap_or_default();
     let usage = value.get("usage").cloned();
-    let has_usage = usage.is_some();
 
     let mut sse_output = Vec::new();
 
@@ -317,17 +257,6 @@ pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool
 
     sse_output.extend_from_slice(b"data: [DONE]\n\n");
 
-    debug_agent_log(
-        "H3",
-        "cache_response.rs:json_to_sse_stream",
-        "sse synthesized from json",
-        serde_json::json!({
-            "choices_count": choices.len(),
-            "sse_len": sse_output.len(),
-            "has_usage": has_usage,
-            "model": model,
-        }),
-    );
 
     sse_output
 }

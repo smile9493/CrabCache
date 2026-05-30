@@ -113,8 +113,10 @@ const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_leng
                     upstream_result, phase_durations_ms";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
-    let composition_raw: Option<String> = row.get(17);
-    let composition = composition_raw.and_then(|s| serde_json::from_str(&s).ok());
+    // composition is stored as jsonb in PG — read as serde_json::Value then deserialize.
+    let composition: Option<crab_composition::RequestComposition> = row
+        .get::<_, Option<serde_json::Value>>(17)
+        .and_then(|v| serde_json::from_value(v).ok());
     TraceLogEntry {
         request_hash: row.get(0),
         timestamp_ms: from_pg_bigint(row.get(1)),
@@ -129,8 +131,8 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         domain: row.get(10),
         project_id: row.get(11),
         upstream_latency_ms: row.get(12),
-        prefill_ms: row.get(35),
-        pre_header_ms: row.get(36),
+        prefill_ms: row.get(33),
+        pre_header_ms: row.get(34),
         ttft_ms: row.get(13),
         input_tokens: row.get::<_, Option<i64>>(14).map(from_pg_bigint),
         output_tokens: row.get::<_, Option<i64>>(15).map(from_pg_bigint),
@@ -164,7 +166,7 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         limit_source: row.get(45),
         cache_decision: row.get(46),
         upstream_result: row.get(47),
-        phase_durations_ms: row.get::<_, Option<String>>(48).and_then(|s| serde_json::from_str(&s).ok()),
+        phase_durations_ms: row.get::<_, Option<serde_json::Value>>(48).and_then(|v| serde_json::from_value(v).ok()),
     }
 }
 

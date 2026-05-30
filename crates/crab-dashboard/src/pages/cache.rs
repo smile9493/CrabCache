@@ -51,7 +51,7 @@ pub fn CachePage() -> impl IntoView {
 
 #[component]
 fn ConfigTab() -> impl IntoView {
-    let t = use_translations();
+    let _t = use_translations();
     let feedback: RwSignal<String> = RwSignal::new(String::new());
 
     let cache_config: RwSignal<Option<Result<CacheConfig, String>>> = RwSignal::new(None);
@@ -90,114 +90,162 @@ fn ConfigTab() -> impl IntoView {
         <div class="space-y-6">
             <Alert variant="info" message=feedback.into() />
 
-            <div class="config-grid-2">
-                // TTL config (slider version from Routing)
+            // Main configuration grid
+            <div class="cache-card-grid">
+                // TTL Configuration Card
                 {move || match cache_config.get() {
                     None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
-                        <div class="config-card glass-card text-error text-sm">{e}</div>
+                        <div class="glass-card text-error text-sm p-4">{e}</div>
                     }.into_any(),
                     Some(Ok(config)) => view! { <TtlConfigPanel config feedback /> }.into_any(),
                 }}
 
-                // Semantic config (slider + enabled toggle)
+                // Semantic Cache Configuration Card
                 {move || match semantic_config.get() {
                     None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                     Some(Err(e)) => view! {
-                        <div class="config-card glass-card text-error text-sm">{e}</div>
+                        <div class="glass-card text-error text-sm p-4">{e}</div>
                     }.into_any(),
                     Some(Ok(config)) => view! { <SemanticConfigPanel config feedback /> }.into_any(),
                 }}
 
-                // Pricing config card
-                <div class="config-card glass-card">
+                // Pricing Configuration Card
+                <div class="glass-card">
                     <PricingConfigCard />
+                </div>
+
+                // Fingerprint & Stream Cache Card
+                {move || {
+                    let reload_ops = Arc::clone(&reload_ops);
+                    match ops.get() {
+                        None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
+                        Some(Err(e)) => view! {
+                            <div class="glass-card text-error text-sm p-4">{e}</div>
+                        }.into_any(),
+                        Some(Ok(view)) => {
+                            let fp_version = RwSignal::new(view.fingerprint_version.to_string());
+                            let fp_normalize = RwSignal::new(view.fingerprint_normalize);
+                            let stream_enabled = RwSignal::new(view.stream_cache_enabled);
+
+                            view! {
+                                <FingerprintStreamCard
+                                    fp_version
+                                    fp_normalize
+                                    stream_enabled
+                                    feedback
+                                    reload_ops
+                                />
+                            }.into_any()
+                        }
+                    }
+                }}
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn FingerprintStreamCard(
+    fp_version: RwSignal<String>,
+    fp_normalize: RwSignal<bool>,
+    stream_enabled: RwSignal<bool>,
+    feedback: RwSignal<String>,
+    reload_ops: Arc<dyn Fn() + Send + Sync>,
+) -> impl IntoView {
+    let t = use_translations();
+
+    view! {
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-header-title">{t.cache_ops_fingerprint_title()}</div>
+                    <div class="card-header-desc">"Fingerprint version and stream cache settings"</div>
                 </div>
             </div>
 
-            // Fingerprint + Stream cache (from CacheOps)
-            {move || {
-                let reload_ops = Arc::clone(&reload_ops);
-                match ops.get() {
-                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
-                Some(Err(e)) => view! {
-                    <div class="glass-card text-error text-sm">{e}</div>
-                }.into_any(),
-                Some(Ok(view)) => {
-                    let fp_version = RwSignal::new(view.fingerprint_version.to_string());
-                    let fp_normalize = RwSignal::new(view.fingerprint_normalize);
-                    let stream_enabled = RwSignal::new(view.stream_cache_enabled);
+            // Fingerprint version input
+            <div class="cache-form-group">
+                <label class="cache-form-label">{t.cache_ops_fingerprint_version()}</label>
+                <input
+                    type="number"
+                    class="cache-form-input"
+                    prop:value=move || fp_version.get()
+                    on:input=move |ev| fp_version.set(event_target_value(&ev))
+                />
+            </div>
 
-                    view! {
-                        <div class="bento-grid-2">
-                            <div class="glass-card space-y-4">
-                                <h3 class="text-sm font-semibold text-theme">{t.cache_ops_fingerprint_title()}</h3>
-                                <label class="block text-xs text-theme-muted">
-                                    {t.cache_ops_fingerprint_version()}
-                                    <input
-                                        type="number"
-                                        class="input mt-1 w-full"
-                                        prop:value=move || fp_version.get()
-                                        on:input=move |ev| fp_version.set(event_target_value(&ev))
-                                    />
-                                </label>
-                                <label class="flex items-center gap-2 text-xs text-theme-secondary">
-                                    <input
-                                        type="checkbox"
-                                        prop:checked=move || fp_normalize.get()
-                                        on:change=move |ev| fp_normalize.set(event_target_checked(&ev))
-                                    />
-                                    {t.cache_ops_normalize()}
-                                </label>
-                                <button
-                                    class="btn btn-primary text-xs"
-                                    on:click=move |_| {
-                                        let version = fp_version.get().parse().unwrap_or(1);
-                                        let normalize = fp_normalize.get();
-                                        leptos::task::spawn_local(async move {
-                                            match api::update_fingerprint(&FingerprintConfigBody {
-                                                version,
-                                                normalize_content: normalize,
-                                            }).await {
-                                                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
-                                                Err(e) => feedback.try_set(e),
-                                            };
-                                        });
+            // Normalize checkbox
+            <label class="toggle-switch mt-4">
+                <input
+                    type="checkbox"
+                    class="hidden"
+                    prop:checked=move || fp_normalize.get()
+                    on:change=move |ev| fp_normalize.set(event_target_checked(&ev))
+                />
+                <div class=move || if fp_normalize.get() { "toggle-track active" } else { "toggle-track" }>
+                    <div class="toggle-thumb"></div>
+                </div>
+                <span class="toggle-label">{t.cache_ops_normalize()}</span>
+            </label>
+
+            // Stream cache toggle
+            <div class="mt-4 pt-4 border-t border-theme">
+                <label class="toggle-switch">
+                    <input
+                        type="checkbox"
+                        class="hidden"
+                        prop:checked=move || stream_enabled.get()
+                        on:change=move |ev| {
+                            let enabled = event_target_checked(&ev);
+                            stream_enabled.set(enabled);
+                            let reload_ops = Arc::clone(&reload_ops);
+                            leptos::task::spawn_local(async move {
+                                match api::update_stream_cache(&StreamCacheToggle { enabled }).await {
+                                    Ok(_) => {
+                                        feedback.try_set(t.routing_saved().to_string());
+                                        (reload_ops)();
                                     }
-                                >
-                                    {t.routing_save()}
-                                </button>
-                            </div>
+                                    Err(e) => { feedback.try_set(e); }
+                                };
+                            });
+                        }
+                    />
+                    <div class=move || if stream_enabled.get() { "toggle-track active" } else { "toggle-track" }>
+                        <div class="toggle-thumb"></div>
+                    </div>
+                    <span class="toggle-label">{t.cache_ops_stream_cache()}</span>
+                </label>
+            </div>
 
-                            <div class="glass-card space-y-4">
-                                <h3 class="text-sm font-semibold text-theme">{t.cache_ops_stream_cache()}</h3>
-                                <label class="flex items-center gap-2 text-xs text-theme-secondary">
-                                    <input
-                                        type="checkbox"
-                                        prop:checked=move || stream_enabled.get()
-                                        on:change=move |ev| {
-                                            let enabled = event_target_checked(&ev);
-                                            stream_enabled.set(enabled);
-                                            let reload_ops = Arc::clone(&reload_ops);
-                                            leptos::task::spawn_local(async move {
-                                                match api::update_stream_cache(&StreamCacheToggle { enabled }).await {
-                                                    Ok(_) => {
-                                                        feedback.try_set(t.routing_saved().to_string());
-                                                        (reload_ops)();
-                                                    }
-                                                    Err(e) => { feedback.try_set(e); }
-                                                };
-                                            });
-                                        }
-                                    />
-                                    {t.cache_ops_stream_cache()}
-                                </label>
-                            </div>
-                        </div>
-                    }.into_any()
-                }
-                }
-            }}
+            // Action bar
+            <div class="card-action-bar">
+                <span class="feedback-text">{move || feedback.get()}</span>
+                <button
+                    class="btn btn-primary text-xs"
+                    on:click=move |_| {
+                        let version = fp_version.get().parse().unwrap_or(1);
+                        let normalize = fp_normalize.get();
+                        leptos::task::spawn_local(async move {
+                            match api::update_fingerprint(&FingerprintConfigBody {
+                                version,
+                                normalize_content: normalize,
+                            }).await {
+                                Ok(_) => feedback.try_set(t.routing_saved().to_string()),
+                                Err(e) => feedback.try_set(e),
+                            };
+                        });
+                    }
+                >
+                    {t.routing_save()}
+                </button>
+            </div>
         </div>
     }
 }
@@ -249,11 +297,22 @@ fn PricingConfigCard() -> impl IntoView {
     load();
 
     view! {
-        <div class="config-card-head">
-            <h4 class="config-card-title">"Pricing"</h4>
-            <p class="config-card-desc">"Default input/output price per million tokens"</p>
+        // Card header with icon
+        <div class="card-header-with-icon">
+            <div class="card-header-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z" />
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clip-rule="evenodd" />
+                </svg>
+            </div>
+            <div class="card-header-text">
+                <div class="card-header-title">"Pricing"</div>
+                <div class="card-header-desc">"Default input/output price per million tokens"</div>
+            </div>
         </div>
-        <div class="config-card-body space-y-4">
+
+        // Price configuration
+        <div class="space-y-4">
             <ConfigRangeF64
                 label=move || format!("Input: ${:.4}/M tok", input_price.get())
                 value=input_price
@@ -268,16 +327,18 @@ fn PricingConfigCard() -> impl IntoView {
                 min_hint="$0.01" max_hint="$20.00"
                 accent="purple"
             />
-            {move || {
+        </div>
+
+        // Action bar
+        <div class="card-action-bar">
+            <span class="feedback-text">{move || {
                 let msg = feedback.get();
                 if !msg.is_empty() {
-                    view! { <p class="text-xs text-blue-400">{msg}</p> }.into_any()
+                    view! { <span class="text-xs text-blue-400">{msg}</span> }.into_any()
                 } else {
                     ().into_any()
                 }
-            }}
-        </div>
-        <div class="config-card-foot">
+            }}</span>
             <button on:click=save class="btn btn-primary text-sm">{t.routing_save()}</button>
         </div>
     }
@@ -306,11 +367,22 @@ fn TtlConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl IntoV
     };
 
     view! {
-        <div class="config-card glass-card">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.routing_cache_config_title()}</h4>
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-header-title">{t.routing_cache_config_title()}</div>
+                    <div class="card-header-desc">"Configure cache TTL for L0 and L1 layers"</div>
+                </div>
             </div>
-            <div class="config-card-body space-y-4">
+
+            // TTL configuration
+            <div class="space-y-4">
                 <ConfigRangeU64
                     label=move || format!("{}: {}s", t.routing_l0_ttl(), l0_ttl.get())
                     value=l0_ttl
@@ -330,7 +402,10 @@ fn TtlConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl IntoV
                     accent="amber"
                 />
             </div>
-            <div class="config-card-foot">
+
+            // Action bar
+            <div class="card-action-bar">
+                <span class="feedback-text">{move || feedback.get()}</span>
                 <button on:click=on_save class="btn btn-primary text-sm">{t.routing_save()}</button>
             </div>
         </div>
@@ -365,19 +440,37 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
     };
 
     view! {
-        <div class="config-card glass-card">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.routing_semantic_title()}</h4>
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M9 9a2 2 0 114 0 2 2 0 01-4 0z" />
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-header-title">{t.routing_semantic_title()}</div>
+                    <div class="card-header-desc">"Configure L2 semantic cache parameters"</div>
+                </div>
             </div>
-            <div class="config-card-body space-y-4">
-                <label class="flex items-center gap-2 text-xs text-theme-secondary">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || enabled.get()
-                        on:change=move |ev| enabled.set(event_target_checked(&ev))
-                    />
-                    {t.cache_ops_semantic_enabled()}
-                </label>
+
+            // Enable toggle
+            <label class="toggle-switch">
+                <input
+                    type="checkbox"
+                    class="hidden"
+                    prop:checked=move || enabled.get()
+                    on:change=move |ev| enabled.set(event_target_checked(&ev))
+                />
+                <div class=move || if enabled.get() { "toggle-track active" } else { "toggle-track" }>
+                    <div class="toggle-thumb"></div>
+                </div>
+                <span class="toggle-label">{t.cache_ops_semantic_enabled()}</span>
+            </label>
+
+            // Configuration parameters
+            <div class="space-y-4 mt-4">
                 <ConfigRangeF64
                     label=move || format!("{}: {:.2}", t.routing_similarity(), threshold.get())
                     value=threshold
@@ -404,23 +497,28 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
                     label=move || format!("{}: {}", "Max Concurrent Embeds", max_embeds.get())
                     value=max_embeds min=1 max=16 min_hint="1" max_hint="16" accent="violet"
                 />
-                <div class="impact-hint">
-                    <div class="text-xs text-theme-secondary mb-1">{t.routing_impact_label()}</div>
-                    <div class="text-sm text-theme">
-                        {move || {
-                            let th = threshold.get();
-                            if th > 0.95 {
-                                t.routing_impact_high()
-                            } else if th > 0.90 {
-                                t.routing_impact_balanced()
-                            } else {
-                                t.routing_impact_loose()
-                            }
-                        }}
-                    </div>
+            </div>
+
+            // Impact hint
+            <div class="semantic-impact">
+                <div class="semantic-impact-label">{t.routing_impact_label()}</div>
+                <div class="semantic-impact-value">
+                    {move || {
+                        let th = threshold.get();
+                        if th > 0.95 {
+                            t.routing_impact_high()
+                        } else if th > 0.90 {
+                            t.routing_impact_balanced()
+                        } else {
+                            t.routing_impact_loose()
+                        }
+                    }}
                 </div>
             </div>
-            <div class="config-card-foot">
+
+            // Action bar
+            <div class="card-action-bar">
+                <span class="feedback-text">{move || feedback.get()}</span>
                 <button on:click=on_save class="btn btn-primary text-sm">{t.routing_save()}</button>
             </div>
         </div>
@@ -433,7 +531,7 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
 
 #[component]
 fn RoutingTab() -> impl IntoView {
-    let t = use_translations();
+    let _t = use_translations();
     let feedback: RwSignal<String> = RwSignal::new(String::new());
     let connection_config: RwSignal<Option<Result<ConnectionConfig, String>>> = RwSignal::new(None);
     let routing_status: RwSignal<Option<Result<RoutingStatus, String>>> = RwSignal::new(None);
@@ -455,31 +553,30 @@ fn RoutingTab() -> impl IntoView {
         <div class="space-y-6">
             <Alert variant="info" message=feedback.into() />
 
-            <section class="config-section">
-                <h3 class="config-section-title">{t.routing_connection_title()}</h3>
-                {move || match connection_config.get() {
-                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
-                    Some(Err(e)) => view! {
-                        <div class="config-card glass-card text-error text-sm">{e}</div>
-                    }.into_any(),
-                    Some(Ok(config)) => view! {
-                        <ConnectionConfigPanel config feedback />
-                    }.into_any(),
-                }}
-            </section>
+            // Connection configuration card
+            {move || match connection_config.get() {
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
+                Some(Err(e)) => view! {
+                    <div class="glass-card text-error text-sm p-4">{e}</div>
+                }.into_any(),
+                Some(Ok(config)) => view! {
+                    <ConnectionConfigPanel config feedback />
+                }.into_any(),
+            }}
 
-            <section class="config-section">
-                {move || match routing_status.get() {
-                    None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
-                    Some(Err(e)) => view! {
-                        <div class="config-card glass-card text-error text-sm">{e}</div>
-                    }.into_any(),
-                    Some(Ok(status)) => view! {
+            // Backend routing cards
+            {move || match routing_status.get() {
+                None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
+                Some(Err(e)) => view! {
+                    <div class="glass-card text-error text-sm p-4">{e}</div>
+                }.into_any(),
+                Some(Ok(status)) => view! {
+                    <div class="cache-card-grid">
                         <RoutingStatusPanel status=status.clone() />
                         <BackendEditPanel status feedback />
-                    }.into_any(),
-                }}
-            </section>
+                    </div>
+                }.into_any(),
+            }}
         </div>
     }
 }
@@ -520,12 +617,22 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
     };
 
     view! {
-        <div class="config-card glass-card">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.routing_connection_title()}</h4>
-                <p class="config-card-desc">{t.routing_connection_desc()}</p>
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-card-header-title">{t.routing_connection_title()}</div>
+                    <div class="card-header-desc">{t.routing_connection_desc()}</div>
+                </div>
             </div>
-            <div class="config-card-body config-grid-form">
+
+            // Connection parameters grid
+            <div class="config-grid-form">
                 <ConfigRangeU64
                     label=move || format!("{}: {}s", t.routing_tcp_keepalive_idle(), idle.get())
                     value=idle min=10 max=300 min_hint="10s" max_hint="300s" accent="gold"
@@ -546,14 +653,38 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
                     label=move || format!("{}: {}s", t.routing_h2_ping_interval(), h2_ping.get())
                     value=h2_ping min=5 max=120 min_hint="5s" max_hint="120s" accent="gold"
                 />
-                <label class="flex items-center gap-2 text-xs text-theme-secondary col-span-2">
-                    <input type="checkbox" prop:checked=move || force_http1.get() on:change=move |ev| force_http1.set(event_target_checked(&ev)) />
-                    "Upstream Force HTTP/1.1"
+            </div>
+
+            // Toggle options
+            <div class="mt-4 space-y-3">
+                <label class="toggle-switch">
+                    <input
+                        type="checkbox"
+                        class="hidden"
+                        prop:checked=move || force_http1.get()
+                        on:change=move |ev| force_http1.set(event_target_checked(&ev))
+                    />
+                    <div class=move || if force_http1.get() { "toggle-track active" } else { "toggle-track" }>
+                        <div class="toggle-thumb"></div>
+                    </div>
+                    <span class="toggle-label">"Upstream Force HTTP/1.1"</span>
                 </label>
-                <label class="flex items-center gap-2 text-xs text-theme-secondary col-span-2">
-                    <input type="checkbox" prop:checked=move || disable_keepalive.get() on:change=move |ev| disable_keepalive.set(event_target_checked(&ev)) />
-                    "Upstream Disable Keepalive"
+                <label class="toggle-switch">
+                    <input
+                        type="checkbox"
+                        class="hidden"
+                        prop:checked=move || disable_keepalive.get()
+                        on:change=move |ev| disable_keepalive.set(event_target_checked(&ev))
+                    />
+                    <div class=move || if disable_keepalive.get() { "toggle-track active" } else { "toggle-track" }>
+                        <div class="toggle-thumb"></div>
+                    </div>
+                    <span class="toggle-label">"Upstream Disable Keepalive"</span>
                 </label>
+            </div>
+
+            // Timeout parameters
+            <div class="config-grid-form mt-4">
                 <ConfigRangeU64
                     label=move || format!("{}: {}s", "Request Timeout", req_timeout.get())
                     value=req_timeout min=10 max=600 min_hint="10s" max_hint="600s" accent="blue"
@@ -567,7 +698,10 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
                     value=conn_timeout min=5 max=120 min_hint="5s" max_hint="120s" accent="teal"
                 />
             </div>
-            <div class="config-card-foot">
+
+            // Action bar
+            <div class="card-action-bar">
+                <span class="feedback-text">{move || feedback.get()}</span>
                 <button on:click=on_save class="btn btn-primary text-sm">{t.routing_save()}</button>
             </div>
         </div>
@@ -580,44 +714,56 @@ fn RoutingStatusPanel(status: RoutingStatus) -> impl IntoView {
     let total = status.total_backends.max(1) as f64;
 
     view! {
-        <div class="config-card glass-card">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.routing_affinity_title()}</h4>
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-header-title">{t.routing_affinity_title()}</div>
+                    <div class="card-header-desc">"Backend routing status and distribution"</div>
+                </div>
             </div>
-            <div class="config-card-body space-y-5">
-                <div class="stat-pair-row">
-                    <div class="stat-pair">
-                        <div class="stat-pair-label">{t.routing_active_backends()}</div>
-                        <div class="stat-pair-value">{format!("{}", status.active_backends)}</div>
-                    </div>
-                    <div class="stat-pair">
-                        <div class="stat-pair-label">{t.routing_total_backends()}</div>
-                        <div class="stat-pair-value">{format!("{}", status.total_backends)}</div>
-                    </div>
-                </div>
-                <div>
-                    <div class="text-xs text-theme-secondary mb-3">{t.routing_distribution()}</div>
-                    <div class="space-y-2">
-                        {status.backends.into_iter().map(|backend| {
-                            let pct = backend.request_count as f64 / total * 100.0;
-                            let fill_class = if backend.healthy {
-                                "progress-bar-fill"
-                            } else {
-                                "progress-bar-fill progress-bar-fill-error"
-                            };
-                            view! {
-                                <div class="backend-row">
-                                    <span class="backend-row-name">{backend.name}</span>
-                                    <div class="flex-1 progress-bar h-2">
-                                        <div class=fill_class style=format!("width: {}%", pct.min(100.0))></div>
-                                    </div>
-                                    <span class="backend-row-count">{format!("{}", backend.request_count)}</span>
-                                    <span class="backend-row-pct">{format!("{:.0}%", pct)}</span>
-                                </div>
-                            }
-                        }).collect::<Vec<_>>()}
-                    </div>
-                </div>
+
+            // Status indicators
+            <div class="card-status">
+                <div class="card-status-dot active"></div>
+                <span class="card-status-text">
+                    {format!("{} active of {} backends", status.active_backends, status.total_backends)}
+                </span>
+            </div>
+
+            // Backend distribution
+            <div class="backend-distribution">
+                <div class="text-xs font-medium text-theme-muted mb-2">{t.routing_distribution()}</div>
+                {status.backends.into_iter().map(|backend| {
+                    let pct = backend.request_count as f64 / total * 100.0;
+                    let bar_class = if backend.healthy {
+                        "backend-bar-fill"
+                    } else {
+                        "backend-bar-fill"
+                    };
+                    let bar_style = if !backend.healthy {
+                        "background: var(--cc-error)"
+                    } else {
+                        ""
+                    };
+                    view! {
+                        <div class="backend-row">
+                            <span class="backend-name">{backend.name}</span>
+                            <div class="backend-bar">
+                                <div class=bar_class style=format!("width: {}% {}", pct.min(100.0), bar_style)></div>
+                            </div>
+                            <div class="backend-stats">
+                                <span class="backend-count">{format!("{}", backend.request_count)}</span>
+                                <span class="backend-pct">{format!("{:.0}%", pct)}</span>
+                            </div>
+                        </div>
+                    }
+                }).collect::<Vec<_>>()}
             </div>
         </div>
     }
@@ -685,15 +831,25 @@ fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl I
     };
 
     view! {
-        <div class="config-card glass-card mt-4">
-            <div class="config-card-head">
-                <h4 class="config-card-title">{t.routing_affinity_title()}</h4>
-                <p class="config-card-desc">"Edit backend endpoints"</p>
+        <div class="glass-card">
+            // Card header with icon
+            <div class="card-header-with-icon">
+                <div class="card-header-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="card-header-text">
+                    <div class="card-header-title">"Backend Endpoints"</div>
+                    <div class="card-header-desc">"Edit backend endpoints and weights"</div>
+                </div>
             </div>
-            <div class="config-card-body">
+
+            // Backend table
+            <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
-                        <tr class="text-left text-theme-secondary border-b border-theme-border">
+                        <tr class="text-left text-theme-muted border-b border-theme">
                             <th class="pb-2 pr-2 font-medium">"Name"</th>
                             <th class="pb-2 pr-2 font-medium">"Address"</th>
                             <th class="pb-2 pr-2 font-medium w-16">"Weight"</th>
@@ -704,23 +860,23 @@ fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl I
                         {move || backends.get().into_iter().enumerate().map(|(idx, (name_sig, addr_sig, weight_sig))| {
                             let remove_idx = idx;
                             view! {
-                                <tr class="border-b border-theme-border/50">
+                                <tr class="border-b border-theme/50">
                                     <td class="py-2 pr-2">
-                                        <input type="text" class="input w-full text-sm"
+                                        <input type="text" class="cache-form-input"
                                             prop:value=move || name_sig.get()
                                             on:input=move |e| name_sig.set(event_target_value(&e))
                                             placeholder="backend-1"
                                         />
                                     </td>
                                     <td class="py-2 pr-2">
-                                        <input type="text" class="input w-full text-sm font-mono"
+                                        <input type="text" class="cache-form-input font-mono"
                                             prop:value=move || addr_sig.get()
                                             on:input=move |e| addr_sig.set(event_target_value(&e))
                                             placeholder="127.0.0.1:443"
                                         />
                                     </td>
                                     <td class="py-2 pr-2">
-                                        <input type="number" class="input w-full text-sm"
+                                        <input type="number" class="cache-form-input"
                                             prop:value=move || weight_sig.get().to_string()
                                             on:input=move |e| {
                                                 if let Ok(v) = event_target_value(&e).parse::<u32>() { weight_sig.set(v); }
@@ -738,19 +894,20 @@ fn BackendEditPanel(status: RoutingStatus, feedback: RwSignal<String>) -> impl I
                         }).collect::<Vec<_>>()}
                     </tbody>
                 </table>
+            </div>
 
-                <div class="flex items-center justify-between mt-4 pt-3 border-t border-theme-border/50">
-                    <button on:click=on_add class="btn btn-secondary text-xs">"Add Backend"</button>
-                    <div class="flex items-center gap-3">
-                        {move || if !feedback.get().is_empty() {
-                            view! { <span class="text-xs text-theme-secondary">{feedback.get()}</span> }.into_any()
-                        } else {
-                            view! { <span></span> }.into_any()
-                        }}
-                        <button on:click=on_save disabled=move || saving.get() class="btn btn-primary text-sm">
-                            {t.routing_save()}
-                        </button>
-                    </div>
+            // Action bar
+            <div class="card-action-bar">
+                <button on:click=on_add class="btn btn-secondary text-xs">"Add Backend"</button>
+                <div class="flex items-center gap-3">
+                    {move || if !feedback.get().is_empty() {
+                        view! { <span class="text-xs text-theme-secondary">{feedback.get()}</span> }.into_any()
+                    } else {
+                        view! { <span></span> }.into_any()
+                    }}
+                    <button on:click=on_save disabled=move || saving.get() class="btn btn-primary text-sm">
+                        {t.routing_save()}
+                    </button>
                 </div>
             </div>
         </div>
@@ -814,33 +971,46 @@ fn CacheTierHitRateChart() -> impl IntoView {
     });
 
     view! {
-        <div class="glass-card space-y-3">
-            <div class="flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-theme">"L0 / L1 / L2 Hit Rate Trend"</h3>
-                <div class="flex gap-1">
+        <div class="cache-chart-container">
+            // Chart header with icon and controls
+            <div class="cache-chart-header">
+                <div class="card-header-with-icon mb-0 pb-0 border-b-0">
+                    <div class="card-header-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                        </svg>
+                    </div>
+                    <div class="card-header-text">
+                        <div class="card-header-title">"L0 / L1 / L2 Hit Rate Trend"</div>
+                        <div class="card-header-desc">"Per-bucket share of requests served from each cache tier"</div>
+                    </div>
+                </div>
+                <div class="cache-chart-controls">
                     <button
                         type="button"
-                        class=move || if window.get() == "1h" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        class=move || if window.get() == "1h" { "cache-chart-btn active" } else { "cache-chart-btn" }
                         on:click=move |_| window.set("1h".to_string())
                     >
                         "1h"
                     </button>
                     <button
                         type="button"
-                        class=move || if window.get() == "24h" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        class=move || if window.get() == "24h" { "cache-chart-btn active" } else { "cache-chart-btn" }
                         on:click=move |_| window.set("24h".to_string())
                     >
                         "24h"
                     </button>
                     <button
                         type="button"
-                        class=move || if window.get() == "7d" { "live-pill live-pill-active text-xs" } else { "live-pill text-xs" }
+                        class=move || if window.get() == "7d" { "cache-chart-btn active" } else { "cache-chart-btn" }
                         on:click=move |_| window.set("7d".to_string())
                     >
                         "7d"
                     </button>
                 </div>
             </div>
+
+            // Chart content
             {move || if loading.get() {
                 view! { <crate::components::skeleton::SkeletonChart /> }.into_any()
             } else {
@@ -856,9 +1026,6 @@ fn CacheTierHitRateChart() -> impl IntoView {
                     />
                 }.into_any()
             }}
-            <p class="text-[10px] text-theme-muted">
-                "Per-bucket share of requests served from each cache tier (L0 Moka / L1 Redis / L2 semantic)."
-            </p>
         </div>
     }
 }
@@ -888,31 +1055,50 @@ fn OpsTab() -> impl IntoView {
 
     view! {
         <div class="space-y-6">
+            // Chart section
             <CacheTierHitRateChart />
+
+            // Alert message
             <Alert variant="info" message=message.into() />
 
+            // Cache invalidation card
             {move || match ops.get() {
                 None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
-                    <div class="glass-card text-error text-sm">{e}</div>
+                    <div class="glass-card text-error text-sm p-4">{e}</div>
                 }.into_any(),
                 Some(Ok(view)) => {
                     let last = view.last_invalidate.clone();
                     view! {
-                        <div class="glass-card space-y-4">
-                            <h3 class="text-sm font-semibold text-theme">{t.cache_ops_invalidate_title()}</h3>
-                            <label class="block text-xs text-theme-muted">
-                                {t.cache_ops_scope()}
+                        <div class="glass-card">
+                            // Card header with icon
+                            <div class="card-header-with-icon">
+                                <div class="card-header-icon">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="card-header-text">
+                                    <div class="card-header-title">{t.cache_ops_invalidate_title()}</div>
+                                    <div class="card-header-desc">"Clear cached data by scope"</div>
+                                </div>
+                            </div>
+
+                            // Scope input
+                            <div class="cache-form-group">
+                                <label class="cache-form-label">{t.cache_ops_scope()}</label>
                                 <input
                                     type="text"
-                                    class="input mt-1 w-full font-mono"
+                                    class="cache-form-input font-mono"
                                     placeholder="all"
                                     prop:value=move || scope.get()
                                     on:input=move |ev| scope.set(event_target_value(&ev))
                                 />
-                            </label>
+                            </div>
+
+                            // Invalidate button
                             <button
-                                class="btn btn-secondary text-xs"
+                                class="btn btn-secondary text-xs mt-4"
                                 on:click=move |_| {
                                     let s = scope.get().trim().to_string();
                                     if s.is_empty() {
@@ -938,36 +1124,37 @@ fn OpsTab() -> impl IntoView {
                                 {t.cache_ops_invalidate_btn()}
                             </button>
 
-                            <div class="text-xs text-theme-muted border-t border-theme pt-3 space-y-3">
+                            // Status section
+                            <div class="mt-4 pt-4 border-t border-theme">
                                 {if view.invalidate_all_in_progress {
                                     view! {
-                                        <div class="text-warning font-medium">{t.cache_ops_invalidate_running()}</div>
+                                        <div class="card-status">
+                                            <div class="card-status-dot warning"></div>
+                                            <span class="card-status-text">{t.cache_ops_invalidate_running()}</span>
+                                        </div>
                                     }.into_any()
                                 } else {
                                     ().into_any()
                                 }}
                                 {if let Some(job) = view.invalidate_job.clone() {
                                     view! {
-                                        <div>
-                                            <div class="font-medium text-theme-secondary mb-1">{t.cache_ops_invalidate_job()}</div>
-                                            <div>{format!("{} — {}", job.scope, job.phase)}</div>
-                                            {job.error.map(|e| view! { <div class="text-error">{e}</div> })}
+                                        <div class="metric-row">
+                                            <span class="metric-label">{t.cache_ops_invalidate_job()}</span>
+                                            <span class="metric-value">{format!("{} — {}", job.scope, job.phase)}</span>
                                         </div>
                                     }.into_any()
                                 } else {
                                     ().into_any()
                                 }}
-                                <div>
-                                    <div class="font-medium text-theme-secondary mb-1">{t.cache_ops_last_invalidate()}</div>
-                                    {if let Some(li) = last {
-                                        view! {
-                                            <div>{format!("scope={} status={}", li.scope, li.status)}</div>
-                                            <div class="text-theme-muted">{format!("at={}", li.at_secs)}</div>
-                                            {li.error.map(|e| view! { <div class="text-error">{e}</div> })}
-                                        }.into_any()
-                                    } else {
-                                        view! { <div>{t.cache_ops_none()}</div> }.into_any()
-                                    }}
+                                <div class="metric-row">
+                                    <span class="metric-label">{t.cache_ops_last_invalidate()}</span>
+                                    <span class="metric-value">
+                                        {if let Some(li) = last {
+                                            format!("scope={} status={}", li.scope, li.status)
+                                        } else {
+                                            t.cache_ops_none().to_string()
+                                        }}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -975,6 +1162,7 @@ fn OpsTab() -> impl IntoView {
                 }
             }}
 
+            // Confirm all modal
             {move || show_confirm_all.get().then(|| view! {
                 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
                     <div class="glass-card max-w-md w-full space-y-4">
@@ -1038,6 +1226,7 @@ fn TraceTab() -> impl IntoView {
 
     view! {
         <div class="space-y-6">
+            // Header with refresh button
             <div class="flex items-center justify-between">
                 <p class="text-xs text-theme-muted max-w-md hidden md:block">
                     {t.trace_hours_note()}
@@ -1047,10 +1236,11 @@ fn TraceTab() -> impl IntoView {
                 </button>
             </div>
 
+            // Trace analysis content
             {move || match analysis.get() {
                 None => view! { <crate::components::skeleton::SkeletonFormCard /> }.into_any(),
                 Some(Err(e)) => view! {
-                    <div class="glass-card text-error text-sm">
+                    <div class="glass-card text-error text-sm p-4">
                         {format!("{}: {}", use_translations().trace_load_error(), e)}
                     </div>
                 }.into_any(),
@@ -1059,77 +1249,122 @@ fn TraceTab() -> impl IntoView {
                     let cluster_dist = data.cluster_distribution.clone();
                     view! {
                         <div class="space-y-6">
-                            <div class="bento-grid-4">
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_total_requests()}</div>
-                                    <div class="text-2xl font-bold text-theme font-mono">{format!("{}", data.total_requests)}</div>
+                            // Statistics grid
+                            <div class="trace-stats-grid">
+                                <div class="trace-stat-card">
+                                    <div class="trace-stat-label">{t.trace_total_requests()}</div>
+                                    <div class="trace-stat-value">{format!("{}", data.total_requests)}</div>
                                 </div>
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_unique_requests()}</div>
-                                    <div class="text-2xl font-bold text-theme font-mono">{format!("{}", data.unique_requests)}</div>
+                                <div class="trace-stat-card">
+                                    <div class="trace-stat-label">{t.trace_unique_requests()}</div>
+                                    <div class="trace-stat-value">{format!("{}", data.unique_requests)}</div>
                                 </div>
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_repeat_ratio()}</div>
-                                    <div class="text-2xl font-bold text-accent font-mono">{format!("{:.1}%", data.repeat_ratio * 100.0)}</div>
+                                <div class="trace-stat-card">
+                                    <div class="trace-stat-label">{t.trace_repeat_ratio()}</div>
+                                    <div class="trace-stat-value accent">{format!("{:.1}%", data.repeat_ratio * 100.0)}</div>
                                 </div>
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1 flex items-center gap-1">
+                                <div class="trace-stat-card">
+                                    <div class="trace-stat-label flex items-center gap-1">
                                         {t.trace_estimated_hit_rate()}
                                         <span class="cursor-help" title=t.trace_estimated_hit_rate_hint()>"?"</span>
                                     </div>
-                                    <div class="text-2xl font-bold text-green-500 font-mono">{format!("{:.1}%", data.estimated_hit_rate * 100.0)}</div>
+                                    <div class="trace-stat-value success">{format!("{:.1}%", data.estimated_hit_rate * 100.0)}</div>
                                 </div>
                             </div>
 
-                            <div class="bento-grid-3">
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_semantic_ratio()}</div>
-                                    <div class="text-lg font-semibold text-theme font-mono">{format!("{:.1}%", data.semantic_cluster_ratio * 100.0)}</div>
-                                </div>
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_zipf_alpha()}</div>
-                                    <div class="text-lg font-semibold text-theme font-mono">{format!("{:.2}", data.estimated_zipf_alpha)}</div>
-                                </div>
-                                <div class="bento-cell">
-                                    <div class="text-xs text-theme-muted mb-1">{t.trace_cache_hit_ratio()}</div>
-                                    <div class="text-lg font-semibold text-theme font-mono">{format!("{:.1}%", data.cache_hit_ratio * 100.0)}</div>
-                                </div>
-                            </div>
-
-                            <div class="bento-grid-2">
-                                <div class="bento-cell">
-                                    <h3 class="text-sm font-semibold text-theme mb-3">{t.trace_avg_metrics()}</h3>
-                                    <div class="space-y-2">
-                                        <div class="flex justify-between">
-                                            <span class="text-xs text-theme-muted">{t.trace_avg_latency()}</span>
-                                            <span class="text-sm font-mono text-theme">{format!("{:.1}ms", data.avg_latency_ms)}</span>
+                            // Secondary metrics
+                            <div class="cache-card-grid">
+                                <div class="glass-card">
+                                    <div class="card-header-with-icon">
+                                        <div class="card-header-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path d="M9 9a2 2 0 114 0 2 2 0 01-4 0z" />
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clip-rule="evenodd" />
+                                            </svg>
                                         </div>
-                                        <div class="flex justify-between">
-                                            <span class="text-xs text-theme-muted">{t.trace_avg_tokens()}</span>
-                                            <span class="text-sm font-mono text-theme">{format!("{:.0}", data.avg_prompt_tokens)}</span>
+                                        <div class="card-header-text">
+                                            <div class="card-header-title">{t.trace_semantic_ratio()}</div>
+                                            <div class="card-header-desc">"Semantic cluster distribution"</div>
                                         </div>
                                     </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">{t.trace_semantic_ratio()}</span>
+                                        <span class="metric-value">{format!("{:.1}%", data.semantic_cluster_ratio * 100.0)}</span>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">{t.trace_zipf_alpha()}</span>
+                                        <span class="metric-value">{format!("{:.2}", data.estimated_zipf_alpha)}</span>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">{t.trace_cache_hit_ratio()}</span>
+                                        <span class="metric-value">{format!("{:.1}%", data.cache_hit_ratio * 100.0)}</span>
+                                    </div>
                                 </div>
-                                <div class="bento-cell">
-                                    <h3 class="text-sm font-semibold text-theme mb-3">{t.trace_top_models()}</h3>
-                                    <div class="space-y-2">
-                                        {data.top_models.iter().map(|m| {
-                                            view! {
-                                                <div class="flex justify-between items-center">
-                                                    <span class="text-xs text-theme">{m.model.clone()}</span>
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="text-xs font-mono text-theme-muted">{format!("{}", m.count)}</span>
-                                                        <span class="text-xs font-mono text-accent">{format!("{:.1}%", m.percentage)}</span>
-                                                    </div>
-                                                </div>
-                                            }
-                                        }).collect::<Vec<_>>()}
+
+                                <div class="glass-card">
+                                    <div class="card-header-with-icon">
+                                        <div class="card-header-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                                            </svg>
+                                        </div>
+                                        <div class="card-header-text">
+                                            <div class="card-header-title">{t.trace_avg_metrics()}</div>
+                                            <div class="card-header-desc">"Average performance metrics"</div>
+                                        </div>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">{t.trace_avg_latency()}</span>
+                                        <span class="metric-value">{format!("{:.1}ms", data.avg_latency_ms)}</span>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">{t.trace_avg_tokens()}</span>
+                                        <span class="metric-value">{format!("{:.0}", data.avg_prompt_tokens)}</span>
                                     </div>
                                 </div>
                             </div>
 
+                            // Top models card
                             <div class="glass-card">
-                                <h3 class="text-sm font-semibold text-theme mb-3">{t.trace_cluster_distribution()}</h3>
+                                <div class="card-header-with-icon">
+                                    <div class="card-header-icon">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+                                        </svg>
+                                    </div>
+                                    <div class="card-header-text">
+                                        <div class="card-header-title">{t.trace_top_models()}</div>
+                                        <div class="card-header-desc">"Most frequently used models"</div>
+                                    </div>
+                                </div>
+                                <div class="space-y-2">
+                                    {data.top_models.iter().map(|m| {
+                                        view! {
+                                            <div class="metric-row">
+                                                <span class="metric-label">{m.model.clone()}</span>
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-xs font-mono text-theme-muted">{format!("{}", m.count)}</span>
+                                                    <span class="text-xs font-mono text-accent">{format!("{:.1}%", m.percentage)}</span>
+                                                </div>
+                                            </div>
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            </div>
+
+                            // Cluster distribution chart
+                            <div class="glass-card">
+                                <div class="card-header-with-icon">
+                                    <div class="card-header-icon">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                                        </svg>
+                                    </div>
+                                    <div class="card-header-text">
+                                        <div class="card-header-title">{t.trace_cluster_distribution()}</div>
+                                        <div class="card-header-desc">"Request cluster distribution"</div>
+                                    </div>
+                                </div>
                                 {if cluster_dist.is_empty() {
                                     view! { <p class="text-xs text-theme-muted">"No cluster data"</p> }.into_any()
                                 } else {
@@ -1165,9 +1400,8 @@ fn TraceTab() -> impl IntoView {
                                 }}
                             </div>
 
-                            // Zipf log-log distribution chart
+                            // Zipf distribution chart
                             {if !data.zipf_log_points.is_empty() {
-                                // Avoid StoredValue: it can panic if accessed after scope disposal.
                                 let zipf_points = std::sync::Arc::new(data.zipf_log_points.clone());
                                 let slope = data.zipf_regression_slope;
                                 let intercept = data.zipf_regression_intercept;
@@ -1187,8 +1421,20 @@ fn TraceTab() -> impl IntoView {
                                     })
                                 };
                                 view! {
-                                    <div class="dash-card p-4 space-y-3">
-                                        <h3 class="text-sm font-semibold text-theme">{t.trace_zipf_chart()}</h3>
+                                    <div class="cache-chart-container">
+                                        <div class="cache-chart-header">
+                                            <div class="card-header-with-icon mb-0 pb-0 border-b-0">
+                                                <div class="card-header-icon">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                        <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                                                    </svg>
+                                                </div>
+                                                <div class="card-header-text">
+                                                    <div class="card-header-title">{t.trace_zipf_chart()}</div>
+                                                    <div class="card-header-desc">"Zipf distribution analysis"</div>
+                                                </div>
+                                            </div>
+                                        </div>
                                         <ScatterChart
                                             points=scatter_points
                                             x_label="ln(rank)".to_string()
@@ -1197,7 +1443,7 @@ fn TraceTab() -> impl IntoView {
                                             empty_message=""
                                             fit_line=Some((slope, intercept))
                                         />
-                                        <div class="text-xs text-theme-muted font-mono">
+                                        <div class="text-xs text-theme-muted font-mono mt-2">
                                             {format!("Fit: slope = {:.2}, intercept = {:.2}", slope, intercept)}
                                         </div>
                                     </div>
@@ -1206,47 +1452,76 @@ fn TraceTab() -> impl IntoView {
                                 view! { <span></span> }.into_any()
                             }}
 
+                            // DeepSeek audit card
                             {data.deepseek_user_id.clone().map(|audit| {
                                 let ok = audit.isolation_ok;
                                 let conclusion = audit.conclusion.clone();
                                 let top_projects = audit.top_project_ids.clone();
                                 let breakdown = audit.audit_breakdown.clone();
                                 view! {
-                                    <div class="glass-card space-y-4">
-                                        <div>
-                                            <h3 class="text-sm font-semibold text-theme">{t.trace_deepseek_user_id_title()}</h3>
-                                            <p class="text-xs text-theme-muted mt-1">{t.trace_deepseek_user_id_hint()}</p>
-                                        </div>
-                                        <div class=move || if ok { "text-sm font-medium text-accent" } else { "text-sm font-medium text-warning" }>
-                                            {move || if ok { t.trace_isolation_ok() } else { t.trace_isolation_fail() }}
-                                            <span class="text-theme-muted font-normal ml-2">{conclusion.clone()}</span>
-                                        </div>
-                                        <div class="bento-grid-4">
-                                            <div class="bento-cell">
-                                                <div class="text-xs text-theme-muted mb-1">{t.trace_deepseek_requests()}</div>
-                                                <div class="text-xl font-bold font-mono text-theme">{audit.deepseek_requests}</div>
+                                    <div class="glass-card">
+                                        <div class="card-header-with-icon">
+                                            <div class="card-header-icon">
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                                </svg>
                                             </div>
-                                            <div class="bento-cell">
-                                                <div class="text-xs text-theme-muted mb-1">{t.trace_upstream_user_id_ratio()}</div>
-                                                <div class="text-xl font-bold font-mono text-theme">{format!("{:.1}%", audit.upstream_user_id_ratio * 100.0)}</div>
-                                            </div>
-                                            <div class="bento-cell">
-                                                <div class="text-xs text-theme-muted mb-1">{t.trace_missing_project_id()}</div>
-                                                <div class="text-xl font-bold font-mono text-theme">{audit.missing_project_id}</div>
-                                            </div>
-                                            <div class="bento-cell">
-                                                <div class="text-xs text-theme-muted mb-1">{t.trace_client_user_id_leaks()}</div>
-                                                <div class="text-xl font-bold font-mono text-theme">{audit.client_user_id_leaks}</div>
+                                            <div class="card-header-text">
+                                                <div class="card-header-title">{t.trace_deepseek_user_id_title()}</div>
+                                                <div class="card-header-desc">{t.trace_deepseek_user_id_hint()}</div>
                                             </div>
                                         </div>
-                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                                        // Status indicator
+                                        <div class="card-status">
+                                            <div class=move || if ok { "card-status-dot active" } else { "card-status-dot warning" }></div>
+                                            <span class="card-status-text">
+                                                {move || if ok { t.trace_isolation_ok() } else { t.trace_isolation_fail() }}
+                                                <span class="text-theme-muted font-normal ml-2">{conclusion.clone()}</span>
+                                            </span>
+                                        </div>
+
+                                        // Audit metrics
+                                        <div class="trace-stats-grid">
+                                            <div class="trace-stat-card">
+                                                <div class="trace-stat-label">{t.trace_deepseek_requests()}</div>
+                                                <div class="trace-stat-value">{audit.deepseek_requests}</div>
+                                            </div>
+                                            <div class="trace-stat-card">
+                                                <div class="trace-stat-label">{t.trace_upstream_user_id_ratio()}</div>
+                                                <div class="trace-stat-value">{format!("{:.1}%", audit.upstream_user_id_ratio * 100.0)}</div>
+                                            </div>
+                                            <div class="trace-stat-card">
+                                                <div class="trace-stat-label">{t.trace_missing_project_id()}</div>
+                                                <div class="trace-stat-value">{audit.missing_project_id}</div>
+                                            </div>
+                                            <div class="trace-stat-card">
+                                                <div class="trace-stat-label">{t.trace_client_user_id_leaks()}</div>
+                                                <div class="trace-stat-value">{audit.client_user_id_leaks}</div>
+                                            </div>
+                                        </div>
+
+                                        // Audit breakdown
+                                        <div class="cache-card-grid">
                                             <div>
                                                 <h4 class="text-xs font-semibold text-theme-muted mb-2">{t.trace_audit_injected()}</h4>
                                                 <div class="text-sm font-mono space-y-1">
-                                                    <div class="flex justify-between"><span>injected</span><span>{breakdown.injected}</span></div>
-                                                    <div class="flex justify-between"><span>absent</span><span>{breakdown.absent}</span></div>
-                                                    <div class="flex justify-between"><span>stripped_client</span><span>{breakdown.stripped_client}</span></div>
-                                                    <div class="flex justify-between"><span>mismatch</span><span>{breakdown.mismatch}</span></div>
+                                                    <div class="metric-row">
+                                                        <span class="metric-label">injected</span>
+                                                        <span class="metric-value">{breakdown.injected}</span>
+                                                    </div>
+                                                    <div class="metric-row">
+                                                        <span class="metric-label">absent</span>
+                                                        <span class="metric-value">{breakdown.absent}</span>
+                                                    </div>
+                                                    <div class="metric-row">
+                                                        <span class="metric-label">stripped_client</span>
+                                                        <span class="metric-value">{breakdown.stripped_client}</span>
+                                                    </div>
+                                                    <div class="metric-row">
+                                                        <span class="metric-label">mismatch</span>
+                                                        <span class="metric-value">{breakdown.mismatch}</span>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div>
@@ -1254,9 +1529,9 @@ fn TraceTab() -> impl IntoView {
                                                 <div class="space-y-1">
                                                     {top_projects.into_iter().map(|p| {
                                                         view! {
-                                                            <div class="flex justify-between text-xs font-mono">
-                                                                <span class="text-theme truncate pr-2">{p.project_id}</span>
-                                                                <span class="text-theme-muted">{format!("{} ({:.1}%)", p.count, p.percentage)}</span>
+                                                            <div class="metric-row">
+                                                                <span class="metric-label truncate">{p.project_id}</span>
+                                                                <span class="metric-value">{format!("{} ({:.1}%)", p.count, p.percentage)}</span>
                                                             </div>
                                                         }
                                                     }).collect_view()}

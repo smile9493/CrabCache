@@ -4,6 +4,7 @@ use crate::keys::{
 };
 use crab_metrics::global_metrics;
 use regex::Regex;
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -160,6 +161,27 @@ pub fn strip_cursor_thinking_blocks(content: &str) -> String {
     result.trim_start_matches(['\r', '\n']).to_string()
 }
 
+/// MiMo rejects tool `arguments` with trailing JSON (`unexpected content after document`).
+pub fn repair_tool_arguments_json(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "{}".to_string();
+    }
+    let mut de = serde_json::Deserializer::from_str(trimmed);
+    match Value::deserialize(&mut de) {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                obj.retain(|_, val| {
+                    !(val.as_str().is_some_and(|s| s.is_empty())
+                        || val.as_array().is_some_and(|a| a.is_empty()))
+                });
+            }
+            serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_string())
+        }
+        Err(_) => "{}".to_string(),
+    }
+}
+
 fn normalize_tool_call(tool_call: &Value) -> Value {
     let tc = tool_call.as_object().cloned().unwrap_or_default();
     let function = tc.get("function").and_then(|f| f.as_object()).cloned();
@@ -167,13 +189,14 @@ fn normalize_tool_call(tool_call: &Value) -> Value {
         let arguments = func
             .get("arguments")
             .map(|a| {
-                if a.is_string() {
+                let raw = if a.is_string() {
                     a.as_str().unwrap_or("").to_string()
                 } else {
                     serde_json::to_string(a).unwrap_or_default()
-                }
+                };
+                repair_tool_arguments_json(&raw)
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| "{}".to_string());
         let mut m = serde_json::Map::new();
         m.insert(
             "name".into(),
@@ -210,6 +233,42 @@ fn normalize_tool_call(tool_call: &Value) -> Value {
     );
     normalized.insert("function".into(), Value::Object(func_obj));
     Value::Object(normalized)
+}
+
+/// Normalize assistant `tool_calls[].function.arguments` for MiMo upstream.
+pub fn sanitize_mimo_tool_calls_in_messages(messages: Vec<Value>) -> (Vec<Value>, usize) {
+    let mut repaired = 0usize;
+    let out = messages
+        .into_iter()
+        .map(|mut msg| {
+            let Some(tcs) = msg.get("tool_calls").and_then(|tc| tc.as_array()).cloned() else {
+                return msg;
+            };
+            let normalized: Vec<Value> = tcs
+                .iter()
+                .map(|tc| {
+                    let before = tc
+                        .pointer("/function/arguments")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+                    let norm = normalize_tool_call(tc);
+                    let after = norm
+                        .pointer("/function/arguments")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+                    if before != after {
+                        repaired += 1;
+                    }
+                    norm
+                })
+                .collect();
+            if let Some(obj) = msg.as_object_mut() {
+                obj.insert("tool_calls".into(), Value::Array(normalized));
+            }
+            msg
+        })
+        .collect();
+    (out, repaired)
 }
 
 fn normalize_tool(tool: &Value) -> Value {
@@ -1110,14 +1169,13 @@ fn normalize_message_roles_in_place(map: &mut serde_json::Map<String, Value>) {
             }
         }
     }
-    // Remove non-function tools (e.g. Cursor's `namespace` type) that non-OpenAI backends reject.
-    if let Some(tools) = map.get_mut("tools").and_then(|t| t.as_array_mut()) {
-        tools.retain(|tool| {
-            tool.get("type")
-                .and_then(|t| t.as_str())
-                .map_or(true, |t| t == "function")
-        });
+    if let Some(tools) = map.get("tools").and_then(|v| v.as_array()) {
+        map.insert(
+            "tools".into(),
+            Value::Array(crate::codex_tools::normalize_codex_tools_for_upstream(tools)),
+        );
     }
+    crate::codex_tools::ensure_codex_file_tools_from_context(map);
 }
 
 #[derive(Debug, Clone)]
@@ -1195,6 +1253,8 @@ pub struct GenericPreparedRequest {
     pub model: String,
     /// Messages removed by optional prefix retirement (MiMo feature).
     pub retired_prefix_messages: usize,
+    /// Assistant tool_calls whose `function.arguments` JSON was repaired for MiMo.
+    pub tool_calls_repaired: usize,
     /// When `None`, upstream should send the original request body (no `serde_json::to_vec`).
     pub serialized_body: Option<Vec<u8>>,
 }
@@ -1228,6 +1288,9 @@ fn mimo_prepare_changes_wire_body(
         return true;
     }
     if payload.get("messages") != prepared.get("messages") {
+        return true;
+    }
+    if payload.get("tools") != prepared.get("tools") {
         return true;
     }
     false
@@ -1274,17 +1337,29 @@ pub fn prepare_mimo_request(
     let mut retired_prefix_messages = 0usize;
     if retire_prefix {
         if let Some(messages) = prepared.get("messages").and_then(|m| m.as_array()) {
-            let (trimmed, _before, _after) =
-                retire_prefix_messages_by_turns(messages, keep_recent_turns);
-            retired_prefix_messages = messages.len().saturating_sub(trimmed.len());
-            if retired_prefix_messages > 0 {
-                prepared.insert("messages".into(), Value::Array(trimmed));
+            // Session store already tail-capped upstream; avoid injecting another [crabcache] notice.
+            if messages.len() > 48 {
+                let (trimmed, _before, _after) =
+                    retire_prefix_messages_by_turns(messages, keep_recent_turns);
+                retired_prefix_messages = messages.len().saturating_sub(trimmed.len());
+                if retired_prefix_messages > 0 {
+                    prepared.insert("messages".into(), Value::Array(trimmed));
+                }
             }
         }
     }
 
+    let mut tool_calls_repaired = 0usize;
+    if let Some(messages) = prepared.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        let taken = std::mem::take(messages);
+        let (sanitized, repaired) = sanitize_mimo_tool_calls_in_messages(taken);
+        tool_calls_repaired = repaired;
+        *messages = sanitized;
+    }
+
     let payload_value = Value::Object(prepared);
     let serialized_body = if retired_prefix_messages > 0
+        || tool_calls_repaired > 0
         || mimo_prepare_changes_wire_body(payload, payload_value.as_object().expect("object"))
     {
         Some(serde_json::to_vec(&payload_value).unwrap_or_default())
@@ -1292,10 +1367,18 @@ pub fn prepare_mimo_request(
         None
     };
 
+    if tool_calls_repaired > 0 {
+        debug!(
+            tool_calls_repaired,
+            "MiMo prepare: repaired tool call arguments JSON"
+        );
+    }
+
     GenericPreparedRequest {
         payload: payload_value,
         model,
         retired_prefix_messages,
+        tool_calls_repaired,
         serialized_body,
     }
 }
@@ -1317,6 +1400,7 @@ pub fn prepare_generic_request(payload: &Value) -> GenericPreparedRequest {
         payload: payload_value,
         model,
         retired_prefix_messages: 0,
+        tool_calls_repaired: 0,
     }
 }
 
@@ -1793,6 +1877,63 @@ mod tests {
     }
 
     #[test]
+    fn prepare_mimo_request_serializes_when_tools_are_normalized() {
+        let payload = serde_json::json!({
+            "model": "xiaomi/mimo-v2.5-pro",
+            "stream": true,
+            "messages": [
+                {"role": "system", "content": "Use apply_patch to edit files."},
+                {"role": "user", "content": "hi"},
+            ],
+            "tools": [
+                {"type": "function", "name": "exec_command", "parameters": {"type": "object"}},
+                {"type": "namespace", "name": "multi_agent_v1"},
+            ],
+        });
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        assert!(
+            result.serialized_body.is_some(),
+            "tool normalization/injection must rewrite upstream body"
+        );
+        let outbound: serde_json::Value =
+            serde_json::from_slice(result.serialized_body.as_ref().unwrap()).unwrap();
+        let names: Vec<_> = outbound["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"apply_patch"));
+        assert!(names.contains(&"exec_command"));
+        assert!(!names.iter().any(|n| *n == "multi_agent_v1"));
+    }
+
+    #[test]
+    fn prepare_mimo_request_preserves_custom_apply_patch() {
+        let payload = serde_json::json!({
+            "model": "xiaomi/mimo-v2.5-pro",
+            "stream": true,
+            "messages": [
+                {"role": "system", "content": "Use apply_patch to edit files."},
+                {"role": "user", "content": "hi"},
+            ],
+            "tools": [
+                {"type": "function", "name": "exec_command", "parameters": {"type": "object"}},
+                {"type": "custom", "name": "apply_patch", "description": "patch"},
+            ],
+        });
+        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let names: Vec<_> = result.payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"exec_command"));
+        assert!(names.contains(&"apply_patch"));
+    }
+
+    #[test]
     fn prepare_mimo_request_normalizes_model() {
         let payload = serde_json::json!({
             "model": "mimo-v2.5-pro",
@@ -1821,6 +1962,38 @@ mod tests {
             result.serialized_body.is_none(),
             "expected O(1) upstream body when payload already MiMo-clean"
         );
+    }
+
+    #[test]
+    fn repair_tool_arguments_strips_trailing_json() {
+        let raw = r#"{"cmd":"ls"}{"ignored":true}"#;
+        let fixed = repair_tool_arguments_json(raw);
+        assert_eq!(fixed, r#"{"cmd":"ls"}"#);
+    }
+
+    #[test]
+    fn prepare_mimo_request_repairs_tool_call_arguments() {
+        let payload = serde_json::json!({
+            "model": "mimo-v2.5-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": r#"{"cmd":"echo hi"}{"trailing":"bad"}"#
+                    }
+                }]
+            }],
+        });
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
+        assert!(result.tool_calls_repaired >= 1);
+        let args = result.payload["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .unwrap();
+        assert_eq!(args, r#"{"cmd":"echo hi"}"#);
     }
 
     #[test]

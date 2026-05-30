@@ -7,7 +7,6 @@ use http::Uri;
 use pingora_http::RequestHeader;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::context::{ClientWireApi, GatewayContext};
@@ -192,6 +191,7 @@ pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
         }
     }
 
+    crab_reasoning::ensure_codex_file_tools_from_context(&mut out);
     Value::Object(out)
 }
 
@@ -355,7 +355,7 @@ fn function_call_arguments_to_string(value: Option<&Value>) -> String {
     }
 }
 
-fn filter_orphaned_tool_messages(messages: &[Value]) -> Vec<Value> {
+pub(crate) fn filter_orphaned_tool_messages(messages: &[Value]) -> Vec<Value> {
     let mut call_ids = std::collections::HashSet::new();
     for msg in messages {
         if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
@@ -379,6 +379,49 @@ fn filter_orphaned_tool_messages(messages: &[Value]) -> Vec<Value> {
         })
         .cloned()
         .collect()
+}
+
+/// Drop assistant `tool_calls` whose `tool_call_id` has no matching `tool` message later in the array.
+pub(crate) fn strip_dangling_assistant_tool_calls(messages: &[Value]) -> Vec<Value> {
+    let tool_ids: std::collections::HashSet<String> = messages
+        .iter()
+        .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
+        .filter_map(|m| m.get("tool_call_id").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect();
+    messages
+        .iter()
+        .cloned()
+        .map(|mut msg| {
+            if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+                return msg;
+            }
+            let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()).cloned() else {
+                return msg;
+            };
+            let kept: Vec<Value> = tcs
+                .into_iter()
+                .filter(|tc| {
+                    tc.get("id")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|id| tool_ids.contains(id))
+                })
+                .collect();
+            if kept.is_empty() {
+                if let Some(obj) = msg.as_object_mut() {
+                    obj.remove("tool_calls");
+                }
+            } else if let Some(obj) = msg.as_object_mut() {
+                obj.insert("tool_calls".into(), Value::Array(kept));
+            }
+            msg
+        })
+        .collect()
+}
+
+pub(crate) fn sanitize_tool_message_chain(messages: Vec<Value>) -> Vec<Value> {
+    let stripped = strip_dangling_assistant_tool_calls(&messages);
+    filter_orphaned_tool_messages(&stripped)
 }
 
 fn responses_content_to_chat(content: Option<&Value>, role: &str) -> Value {
@@ -459,33 +502,7 @@ fn content_is_nonempty(content: &Value) -> bool {
 }
 
 fn convert_tools_responses_to_chat(tools: &[Value]) -> Vec<Value> {
-    tools
-        .iter()
-        .filter(|tool| {
-            tool.get("type")
-                .and_then(|t| t.as_str())
-                .map_or(true, |t| !t.starts_with("tool_search"))
-        })
-        .map(|tool| {
-            if tool.get("type").and_then(|t| t.as_str()) == Some("function")
-                && tool.get("function").is_none()
-            {
-                let mut func = Map::new();
-                if let Some(name) = tool.get("name") {
-                    func.insert("name".into(), name.clone());
-                }
-                if let Some(desc) = tool.get("description") {
-                    func.insert("description".into(), desc.clone());
-                }
-                if let Some(params) = tool.get("parameters") {
-                    func.insert("parameters".into(), params.clone());
-                }
-                json!({ "type": "function", "function": Value::Object(func) })
-            } else {
-                tool.clone()
-            }
-        })
-        .collect()
+    crab_reasoning::normalize_codex_tools_for_upstream(tools)
 }
 
 /// Per-tool-call accumulator (mirrors OmniRoute `responsesTransformer.ts` state).
@@ -521,7 +538,7 @@ pub struct ChatToResponsesSseTranslator {
     last_emit_at: Option<Instant>,
 }
 
-const RESPONSES_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
+const RESPONSES_SSE_KEEPALIVE: Duration = Duration::from_secs(5);
 
 impl ChatToResponsesSseTranslator {
     pub fn new(model: &str) -> Self {
@@ -763,6 +780,13 @@ impl ChatToResponsesSseTranslator {
         if self.completed_sent {
             append_done_marker(&mut out);
         }
+        out
+    }
+
+    /// Emit idle heartbeat when upstream stalls between SSE chunks (Codex CLI timeout guard).
+    pub fn poll_keepalive(&mut self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.maybe_emit_keepalive(&mut out);
         out
     }
 
@@ -1253,7 +1277,7 @@ pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
     let mut tr = ChatToResponsesSseTranslator::new(model);
     let bootstrap = tr.bootstrap_stream();
     if !bootstrap.is_empty() {
-        ctx.stream.responses_wire_bootstrap = Some(bootstrap);
+        ctx.stream.responses_wire_bootstrap = Some(bootstrap.clone());
     }
     ctx.stream.responses_translator = Some(tr);
 }
@@ -1274,6 +1298,200 @@ pub fn prepend_responses_wire_bootstrap(
         merged.extend_from_slice(&data);
     }
     Some(Bytes::from(merged))
+}
+
+/// Flush `response.created` / `response.in_progress` immediately after upstream headers (prefill).
+pub fn take_early_responses_wire_bootstrap(ctx: &mut GatewayContext) -> Option<Vec<u8>> {
+    if !ctx.is_streaming
+        || !needs_responses_wire_translate(ctx)
+        || ctx.stream.responses_wire_bootstrap_sent
+        || ctx.upstream.http_status != Some(200)
+    {
+        return None;
+    }
+    let Some(bootstrap) = ctx.stream.responses_wire_bootstrap.take() else {
+        return None;
+    };
+    ctx.stream.responses_wire_bootstrap_sent = true;
+    ctx.stream.client_sse_body.extend_from_slice(&bootstrap);
+    tracing::info!(
+        request_id = %ctx.request_id,
+        bytes = bootstrap.len(),
+        "early Responses wire bootstrap flushed after upstream headers"
+    );
+    Some(bootstrap)
+}
+
+/// Timer-driven downstream keepalive while upstream is idle mid-stream.
+pub fn poll_responses_wire_keepalive(ctx: &mut GatewayContext) -> Option<Vec<u8>> {
+    if !ctx.is_streaming
+        || !needs_responses_wire_translate(ctx)
+        || ctx.upstream.http_status != Some(200)
+        || !ctx.stream.responses_wire_bootstrap_sent
+    {
+        return None;
+    }
+    let translator = ctx.stream.responses_translator.as_mut()?;
+    if translator.is_completed() {
+        return None;
+    }
+    let out = translator.poll_keepalive();
+    if out.is_empty() {
+        None
+    } else {
+        ctx.stream.client_sse_body.extend_from_slice(&out);
+        Some(out)
+    }
+}
+
+/// Whether this Responses stream is eligible for graceful completion synthesis.
+fn responses_stream_needs_completed_event(ctx: &GatewayContext) -> bool {
+    !crate::sse::sse_bytes_contains_event(&ctx.stream.client_sse_body, "response.completed")
+}
+
+fn upstream_ok_for_graceful_responses_finalize(ctx: &GatewayContext) -> bool {
+    match ctx.upstream.http_status {
+        Some(status) if status >= 400 => false,
+        Some(200) => true,
+        None => {
+            ctx.stream.responses_wire_bootstrap_sent
+                || !ctx.stream.client_sse_body.is_empty()
+                || ctx.stream.responses_translator.is_some()
+        }
+        Some(_) => true,
+    }
+}
+
+/// Whether we should try to append a synthetic `response.completed` (MiMo mid-stream reset, etc.).
+pub fn should_attempt_graceful_responses_finalize(ctx: &GatewayContext) -> bool {
+    ctx.is_streaming
+        && needs_responses_wire_translate(ctx)
+        && ctx.client_wire_api == ClientWireApi::Responses
+        && upstream_ok_for_graceful_responses_finalize(ctx)
+        && responses_stream_needs_completed_event(ctx)
+}
+
+/// Whether a Codex Responses stream still needs a graceful `response.completed` tail.
+pub fn should_graceful_finalize_responses_stream(ctx: &GatewayContext) -> bool {
+    should_attempt_graceful_responses_finalize(ctx)
+        && !ctx
+            .stream
+            .responses_translator
+            .as_ref()
+            .is_some_and(|t| t.is_completed())
+}
+
+fn append_synthetic_responses_completed(out: &mut Vec<u8>, ctx: &GatewayContext) {
+    let model = ctx.model.as_str();
+    let resp_id = ctx
+        .stream
+        .responses_translator
+        .as_ref()
+        .map(|t| t.response_id().to_string())
+        .unwrap_or_else(|| format!("resp_{}", uuid::Uuid::new_v4().simple()));
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "id": resp_id,
+            "object": "response",
+            "created_at": created_at,
+            "model": model,
+            "status": "completed",
+            "output": ctx.stream.responses_translator.as_ref().map(|t| t.completed_output()).unwrap_or_default(),
+            "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 },
+        }
+    });
+    if let Ok(line) = serde_json::to_string(&completed) {
+        out.extend_from_slice(format!("event: response.completed\ndata: {line}\n\n").as_bytes());
+        out.extend_from_slice(b"data: [DONE]\n\n");
+    }
+}
+
+/// Append synthetic `response.completed` (+ `[DONE]`) for an incomplete Responses SSE stream.
+pub fn synthesize_responses_completed_tail(
+    ctx: &mut GatewayContext,
+    chain_store: &ResponsesChainStore,
+) -> Option<Vec<u8>> {
+    if !should_graceful_finalize_responses_stream(ctx) {
+        return None;
+    }
+    let mut out = Vec::new();
+    append_synthetic_responses_completed(&mut out, ctx);
+    if out.is_empty() {
+        return None;
+    }
+    ctx.stream.client_sse_body.extend_from_slice(&out);
+    if let Some(translator) = ctx.stream.responses_translator.as_ref() {
+        store_responses_chain_output(
+            chain_store,
+            translator.response_id(),
+            translator.completed_output(),
+        );
+    }
+    Some(out)
+}
+
+/// Merge synthetic completion into an existing downstream body chunk (EOS body filter path).
+pub fn merge_graceful_responses_tail(
+    ctx: &mut GatewayContext,
+    chain_store: &ResponsesChainStore,
+    existing: Option<&[u8]>,
+) -> Option<Vec<u8>> {
+    let tail = synthesize_responses_completed_tail(ctx, chain_store)?;
+    let mut merged = existing.map(<[u8]>::to_vec).unwrap_or_default();
+    merged.extend_from_slice(&tail);
+    Some(merged)
+}
+
+/// Build a final Responses SSE tail when upstream aborts before Pingora EOS (MiMo mid-stream reset).
+pub fn build_graceful_responses_stream_tail(
+    ctx: &mut GatewayContext,
+    chain_store: &ResponsesChainStore,
+) -> Option<Vec<u8>> {
+    if !should_attempt_graceful_responses_finalize(ctx) {
+        return None;
+    }
+    let mut out = Vec::new();
+    if !ctx.stream.responses_wire_bootstrap_sent {
+        if ctx.stream.responses_translator.is_none() {
+            let model = ctx.model.clone();
+            arm_responses_wire_stream(ctx, &model);
+        }
+        if let Some(bootstrap) = ctx.stream.responses_wire_bootstrap.take() {
+            out.extend_from_slice(&bootstrap);
+            ctx.stream.responses_wire_bootstrap_sent = true;
+        }
+    }
+    if let Some(translator) = ctx.stream.responses_translator.as_mut() {
+        out.extend_from_slice(&translator.flush());
+        if translator.is_completed() {
+            store_responses_chain_output(
+                chain_store,
+                translator.response_id(),
+                translator.completed_output(),
+            );
+        }
+    }
+    if responses_stream_needs_completed_event(ctx)
+        && let Some(tail) = synthesize_responses_completed_tail(ctx, chain_store)
+    {
+        out.extend_from_slice(&tail);
+    }
+    if out.is_empty() {
+        None
+    } else {
+        tracing::warn!(
+            request_id = %ctx.request_id,
+            bytes = out.len(),
+            http_status = ?ctx.upstream.http_status,
+            "Upstream aborted Responses stream; synthesized completion tail"
+        );
+        Some(out)
+    }
 }
 
 fn chat_usage_to_responses(usage: &Value) -> Value {
@@ -1558,6 +1776,125 @@ mod tests {
 
         ctx.client_wire_api = ClientWireApi::Responses;
         assert!(needs_responses_wire_translate(&ctx));
+    }
+
+    #[tokio::test]
+    async fn graceful_finalize_synthesizes_response_completed() {
+        use crate::context::{ClientWireApi, GatewayContext};
+
+        let mut ctx = GatewayContext::new("req-grace".to_string());
+        ctx.is_streaming = true;
+        ctx.client_wire_api = ClientWireApi::Responses;
+        ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
+        ctx.upstream.http_status = Some(200);
+        ctx.model = "mimo-v2.5-pro".to_string();
+        let model = ctx.model.clone();
+        arm_responses_wire_stream(&mut ctx, &model);
+        ctx.stream.responses_wire_bootstrap = None;
+        ctx.stream.responses_wire_bootstrap_sent = true;
+
+        let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
+        let tail = build_graceful_responses_stream_tail(&mut ctx, store.as_ref());
+        assert!(tail.is_some(), "expected graceful tail");
+        let tail = tail.unwrap();
+        assert!(
+            crate::sse::sse_bytes_contains_event(&tail, "response.completed"),
+            "tail must contain response.completed"
+        );
+        assert!(ctx.stream.responses_translator.as_ref().is_some_and(|t| t.is_completed()));
+    }
+
+    #[tokio::test]
+    async fn graceful_finalize_when_http_status_missing_but_stream_started() {
+        use crate::context::{ClientWireApi, GatewayContext};
+
+        let mut ctx = GatewayContext::new("req-grace-missing-status".to_string());
+        ctx.is_streaming = true;
+        ctx.client_wire_api = ClientWireApi::Responses;
+        ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
+        ctx.upstream.http_status = None;
+        ctx.model = "mimo-v2.5-pro".to_string();
+        let model = ctx.model.clone();
+        arm_responses_wire_stream(&mut ctx, &model);
+        ctx.stream.responses_wire_bootstrap = None;
+        ctx.stream.responses_wire_bootstrap_sent = true;
+        ctx.stream.client_sse_body.extend_from_slice(b"event: ping\n\n");
+
+        let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
+        let tail = build_graceful_responses_stream_tail(&mut ctx, store.as_ref());
+        assert!(
+            tail.is_some(),
+            "expected graceful tail when upstream aborts before http_status is recorded"
+        );
+    }
+
+    #[test]
+    fn custom_apply_patch_survives_responses_to_chat_conversion() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "instructions": "Use apply_patch to edit files.",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "fix" }],
+            }],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "exec_command",
+                    "parameters": { "type": "object", "properties": { "cmd": { "type": "string" } } }
+                },
+                {
+                    "type": "custom",
+                    "name": "apply_patch",
+                    "description": "Apply patch freeform",
+                    "format": { "type": "grammar", "syntax": "lark", "definition": "start: x" }
+                },
+            ],
+        });
+        let chat = responses_payload_to_chat_completions(&payload);
+        let names: Vec<_> = chat["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"exec_command"));
+        assert!(names.contains(&"apply_patch"));
+    }
+
+    #[test]
+    fn instructions_inject_apply_patch_when_missing_from_client_tools() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "instructions": "Use apply_patch to edit files.",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "fix" }],
+            }],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "exec_command",
+                    "parameters": { "type": "object" }
+                },
+            ],
+        });
+        let chat = responses_payload_to_chat_completions(&payload);
+        let names: Vec<_> = chat["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"exec_command"));
+        assert!(
+            names.contains(&"apply_patch"),
+            "expected apply_patch injected from instructions"
+        );
     }
 
     #[test]

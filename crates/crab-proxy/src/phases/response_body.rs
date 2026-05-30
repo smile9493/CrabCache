@@ -10,7 +10,6 @@ use crate::cache_helpers::{
 };
 use crate::cache_response::completion_json_has_visible_client_content;
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::error_jsons::{
     format_upstream_error_for_client, format_upstream_error_sse_for_client, upstream_error_preview,
 };
@@ -152,21 +151,6 @@ pub(crate) fn run(
             preview = %preview,
             "Upstream error response body"
         );
-        // #region agent log
-        debug_agent_log(
-            "UP4B",
-            "proxy.rs:upstream_response_body_filter",
-            "upstream error body preview",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "status": status,
-                "preview": preview,
-                "has_reasoning_content_msg": has_reasoning_err,
-                "body_len": chunk.len(),
-                "end_of_stream": end_of_stream,
-            }),
-        );
-        // #endregion
         ctx.upstream.error_body_logged = true;
     }
 
@@ -219,26 +203,6 @@ pub(crate) fn run(
             return Ok(None);
         }
 
-        // #region agent log
-        if !ctx.upstream.first_body_chunk_logged {
-            ctx.upstream.first_body_chunk_logged = true;
-            debug_agent_log(
-                "UP-BODY",
-                "proxy.rs:upstream_response_body_filter",
-                "first upstream body chunk",
-                serde_json::json!({
-                    "request_id": ctx.request_id,
-                    "chunk_len": data.len(),
-                    "upstream_status": ctx.upstream.http_status,
-                    "is_streaming": ctx.is_streaming,
-                    "end_of_stream": end_of_stream,
-                    "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
-                    "pipeline": ctx.request_pipeline.map(|p| p.as_str()),
-                    "has_prepared": ctx.prepared_request.is_some(),
-                }),
-            );
-        }
-        // #endregion
         if !ctx.is_streaming {
             ctx.accumulated_body.extend_from_slice(&data);
             ctx.response_body_preview.extend_from_slice(&data);
@@ -605,59 +569,12 @@ pub(crate) fn run(
             }
         }
 
-        if crate::responses_wire::needs_responses_wire_translate(ctx)
-            && ctx.client_wire_api == crate::context::ClientWireApi::Responses
-            && !crate::sse::sse_bytes_contains_event(&ctx.stream.client_sse_body, "response.completed")
-            && !ctx
-                .stream
-                .responses_translator
-                .as_ref()
-                .is_some_and(|t| t.is_completed())
-        {
-            let model = ctx.model.as_str();
-            let resp_id = ctx
-                .stream
-                .responses_translator
-                .as_ref()
-                .map(|t| t.response_id().to_string())
-                .unwrap_or_else(|| format!("resp_{}", uuid::Uuid::new_v4().simple()));
-            let created_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            let completed = serde_json::json!({
-                "type": "response.completed",
-                "response": {
-                    "id": resp_id,
-                    "object": "response",
-                    "created_at": created_at,
-                    "model": model,
-                    "status": "completed",
-                    "output": ctx.stream.responses_translator.as_ref().map(|t| t.completed_output()).unwrap_or_default(),
-                    "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 },
-                }
-            });
-            if let Ok(line) = serde_json::to_string(&completed) {
-                let mut synthetic = format!("event: response.completed\ndata: {line}\n\n");
-                synthetic.push_str("data: [DONE]\n\n");
-                let mut merged = Vec::new();
-                if let Some(existing) = body.take() {
-                    merged.extend_from_slice(&existing);
-                }
-                merged.extend_from_slice(synthetic.as_bytes());
-                *body = Some(bytes::Bytes::from(merged));
-                if let Some(translator) = ctx.stream.responses_translator.as_ref() {
-                    crate::responses_wire::store_responses_chain_output(
-                        &proxy.state.responses_chain_store,
-                        translator.response_id(),
-                        translator.completed_output(),
-                    );
-                }
-                warn!(
-                    request_id = %ctx.request_id,
-                    "Upstream disconnected without response.completed; synthesized Responses completion"
-                );
-            }
+        if let Some(merged) = crate::responses_wire::merge_graceful_responses_tail(
+            ctx,
+            proxy.state.responses_chain_store.as_ref(),
+            body.as_ref().map(|b| b.as_ref()),
+        ) {
+            *body = Some(bytes::Bytes::from(merged));
         }
 
         // CodexRelay + Responses API: upstream SSE passes through verbatim.
@@ -831,19 +748,6 @@ pub(crate) fn run(
                         cache_key = ?ctx.cache_key,
                         "Skipping stream cache write: no client-visible content after sanitize"
                     );
-                    // #region agent log
-                    debug_agent_log(
-                        "H1",
-                        "proxy.rs:upstream_response_body_filter",
-                        "skipped hollow stream cache write",
-                        serde_json::json!({
-                            "request_id": ctx.request_id,
-                            "response_body_len": response_bytes.len(),
-                            "client_sse_len": ctx.stream.client_sse_body.len(),
-                            "display_reasoning": reasoning_cfg.display_reasoning,
-                        }),
-                    );
-                    // #endregion
                 }
 
                 if completion_json_has_visible_client_content(

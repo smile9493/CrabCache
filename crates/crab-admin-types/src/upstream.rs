@@ -31,6 +31,10 @@ pub struct PutUpstreamProfileAdminRequest {
     pub tls_sni: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_max_retries: Option<u32>,
 }
 
 /// Alias for profile key pool entries (same wire shape as [`UpstreamKeyView`]).

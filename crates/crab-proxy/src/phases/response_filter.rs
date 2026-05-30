@@ -3,7 +3,6 @@
 //! Extracted from `proxy.rs` `ProxyHttp::response_filter`.
 
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crate::upstream_response_decompress::parse_content_encoding;
@@ -44,19 +43,6 @@ pub(crate) async fn run(
     }
     global_metrics().record_http_response(status);
     global_metrics().record_upstream_response_status(status, ctx.request_pipeline.map(|p| p.as_str()));
-    // #region agent log
-    debug_agent_log(
-        "UP-SEEN",
-        "proxy.rs:response_filter",
-        "upstream response header received",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "status": status,
-            "is_streaming": ctx.is_streaming,
-            "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
-        }),
-    );
-    // #endregion
     if status >= 400 {
         // Record failures toward backend circuit breaker (NOT for 429 — connection-scoped)
         if matches!(status, 408 | 500 | 502 | 503 | 504) {
@@ -86,19 +72,6 @@ pub(crate) async fn run(
             let _ = upstream_response.insert_header(header::CONTENT_TYPE, "text/event-stream");
             let _ = upstream_response.insert_header(header::CACHE_CONTROL, "no-cache");
         }
-        // #region agent log
-        debug_agent_log(
-            "UP4",
-            "proxy.rs:response_filter",
-            "upstream non-success status",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "status": status,
-                "is_streaming": ctx.is_streaming,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-            }),
-        );
-        // #endregion
     }
     let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
     let key_id = ctx
@@ -208,6 +181,10 @@ pub(crate) async fn run(
 
     let _ = upstream_response.insert_header("x-request-id", ctx.request_id.clone());
     let _ = upstream_response.insert_header("x-cache-status", "miss");
+    if ctx.is_streaming {
+        // OpenResty/nginx: disable response buffering so Codex sees SSE keepalives immediately.
+        let _ = upstream_response.insert_header("X-Accel-Buffering", "no");
+    }
 
     // Record circuit breaker success for non-streaming responses (status < 400).
     // Streaming success is deferred to the logging phase to avoid counting

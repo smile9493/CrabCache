@@ -141,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let admin_key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| {
@@ -164,6 +165,9 @@ async fn main() -> anyhow::Result<()> {
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
     state.reconcile_upstream_from_gateway().await;
+    state.sync_profile_secrets_from_gateway().await;
+    crate::oauth_codex::prepare_auth_dir(&state).await;
+
 
     {
         let metrics_state = Arc::clone(&state);

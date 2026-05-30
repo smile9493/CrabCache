@@ -164,14 +164,18 @@ impl PersistHandle {
         if let Some(parent) = self.path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(json) = serde_json::to_string_pretty(file)
-            && let Err(e) = std::fs::write(&self.path, json)
-        {
-            tracing::warn!(path = %self.path.display(), error = %e, "Failed to write admin state");
+        let write_ok = if let Ok(json) = serde_json::to_string_pretty(file) {
+            std::fs::write(&self.path, json).is_ok()
+        } else {
+            false
+        };
+        if !write_ok {
+            tracing::warn!(path = %self.path.display(), "Failed to write admin state");
         }
     }
 
     /// Debounced save (300ms) to avoid hammering disk on rapid toggles.
+    #[allow(dead_code)]
     pub fn save_debounced(self: &Arc<Self>, file: AdminStateFile) {
         *self.debounce.lock() = Some(Instant::now());
         let handle = Arc::clone(self);

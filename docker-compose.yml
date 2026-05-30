@@ -92,6 +92,8 @@ services:
       - CRABCACHE_INFRA_CACHE_TTL_SECS=5
       # PostgreSQL (optional; set CRADMIN_PG_URL to enable)
       - CRADMIN_PG_URL=${CRADMIN_PG_URL:-}
+      # Codex OAuth credential files (default: /app/data/auths alongside admin-state.json)
+      - CRABCACHE_AUTH_DIR=${CRABCACHE_AUTH_DIR:-/app/data/auths}
     depends_on:
       gateway:
         condition: service_healthy

@@ -3,7 +3,6 @@
 //! Extracted from `proxy.rs` `ProxyHttp::logging`.
 
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::helper_fns::{build_capture_request_meta, sanitize_for_trace};
 use crate::metrics_helpers::{
     finalize_affinity_backend_hint, observe_request_timeline, timeline_stamp,
@@ -42,6 +41,23 @@ pub(crate) async fn run(
     observe_request_timeline(ctx);
 
     if let Some(e) = error {
+        // #region agent log
+        crate::debug_log::debug_agent_log(
+            "B",
+            "logging.rs:run",
+            "request failed",
+            serde_json::json!({
+                "request_id": ctx.request_id,
+                "duration_ms": latency_ms,
+                "model": ctx.model,
+                "session_store": ctx.session_store_outcome,
+                "upstream_messages_len": ctx.session_upstream_messages_len,
+                "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
+                "http_status": ctx.upstream.http_status,
+                "error": format!("{e}"),
+            }),
+        );
+        // #endregion
         warn!(
             request_id = %ctx.request_id,
             error = %e,
@@ -49,47 +65,19 @@ pub(crate) async fn run(
             model = %ctx.model,
             "Request failed"
         );
+        // Persist partial Responses chain even when the client already disconnected.
+        let graceful_tail = crate::responses_wire::build_graceful_responses_stream_tail(
+            ctx,
+            proxy.state.responses_chain_store.as_ref(),
+        );
+        let _ = graceful_tail;
         if let Some(guard) = &ctx.coalesce_guard
             && guard.is_leader()
         {
             guard.mark_failed();
         }
 
-        // #region agent log
-        debug_agent_log(
-            "F",
-            "proxy.rs:logging",
-            "upstream proxy error",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "error": e.to_string(),
-                "duration_ms": latency_ms,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-                "is_streaming": ctx.is_streaming,
-                "coalesce_leader": ctx.coalesce_guard.as_ref().map(|g| g.is_leader()),
-            }),
-        );
-        // #endregion
     } else {
-        // #region agent log
-        debug_agent_log(
-            "OK",
-            "proxy.rs:logging",
-            "request completed without proxy error",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "duration_ms": latency_ms,
-                "upstream_status": ctx.upstream.http_status,
-                "cache_tier": ctx.cache_tier.map(|t| t.as_str()),
-                "is_streaming": ctx.is_streaming,
-                "total_tokens": ctx.tokens.total,
-                "client_sse_bytes": ctx.stream.client_sse_body.len(),
-                "accumulated_body_bytes": ctx.accumulated_body.len(),
-                "has_prepared": ctx.prepared_request.is_some(),
-                "ttft_ms": ctx.ttft.map(|d| d.as_millis()),
-            }),
-        );
-        // #endregion
         info!(
             request_id = %ctx.request_id,
             request_hash = %ctx.req_hash.as_ref().unwrap_or(&"missing".to_string()),

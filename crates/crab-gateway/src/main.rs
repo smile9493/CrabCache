@@ -8,7 +8,7 @@ use crab_metrics::global_metrics;
 use crab_proxy::{
     ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy,
     GatewayState, RawCaptureLogger, RuntimeConfig, SemanticRuntimeState, SharedSemanticRuntime,
-    UpstreamUserIdLimiter, debug_agent_log,
+    UpstreamUserIdLimiter,
 };
 use crab_reasoning::ReasoningBackend;
 use crab_route::LbRouter;
@@ -258,6 +258,11 @@ fn main() -> Result<()> {
     }));
 
     std::fs::create_dir_all("./logs").ok();
+    crab_proxy::init_debug_log(
+        std::env::var("CRABCACHE_DEBUG_LOG_PATH")
+            .ok()
+            .as_deref(),
+    );
 
     let file_appender = tracing_appender::rolling::daily("./logs", "gateway.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -287,14 +292,6 @@ fn main() -> Result<()> {
 
     let (config_path, clear_reasoning_cache) = parse_cli_args();
 
-    // Initialize the debug log writer (persistent file handle + async channel).
-    // This must happen before any proxy request processing begins.
-    crab_proxy::init_debug_log(
-        std::env::var("CRABCACHE_DEBUG_LOG_PATH")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .as_deref(),
-    );
 
     let config = GatewayConfig::load(&config_path)?;
     info!(config_path = %config_path, "Configuration loaded");
@@ -351,6 +348,7 @@ fn main() -> Result<()> {
     }
     info!("Configuration validated successfully");
 
+
     let mut server = Server::new(None)?;
     server.bootstrap();
 
@@ -367,6 +365,7 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+
 
     let upstream_profiles = config.build_upstream_profile_runtimes(&rt)?;
     let default_profile_id = config.gateway.default_upstream_profile.clone();
@@ -440,7 +439,20 @@ fn main() -> Result<()> {
         None
     };
 
-    let runtime_handle = rt.handle().clone();
+    // Background async work (Responses chain Redis persist, etc.) must not use the
+    // startup current_thread runtime handle: after block_on returns, Pingora worker
+    // threads cannot drive that runtime and Handle::current() on the main thread panics.
+    let background_handle = {
+        let bg_rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("crab-bg")
+            .enable_all()
+            .build()?;
+        let handle = bg_rt.handle().clone();
+        Box::leak(Box::new(bg_rt));
+        handle
+    };
+
     let responses_chain_store = if config.features.responses_chain_redis {
         match rt.block_on(async {
             crab_proxy::ResponsesChainStore::new_tiered(
@@ -449,7 +461,7 @@ fn main() -> Result<()> {
                 &config.cache.l1_redis_url,
                 config.features.responses_chain_max_value_bytes,
                 config.features.responses_chain_max_output_items,
-                runtime_handle.clone(),
+                background_handle.clone(),
             )
             .await
         }) {
@@ -465,7 +477,7 @@ fn main() -> Result<()> {
                 crab_proxy::ResponsesChainStore::new_l0_only(
                     config.features.responses_chain_max_capacity,
                     config.features.responses_chain_ttl_secs,
-                    runtime_handle.clone(),
+                    background_handle.clone(),
                 )
             }
         }
@@ -473,9 +485,10 @@ fn main() -> Result<()> {
         crab_proxy::ResponsesChainStore::new_l0_only(
             config.features.responses_chain_max_capacity,
             config.features.responses_chain_ttl_secs,
-            runtime_handle.clone(),
+            background_handle,
         )
     };
+
 
     let semantic_cache = if config.semantic.enabled {
         let pool = EmbedderPool::load(
@@ -884,6 +897,7 @@ fn main() -> Result<()> {
         client_endpoint: client_endpoint.clone(),
     };
 
+
     let mgmt_listen_thread = mgmt_listen.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("management runtime");
@@ -893,6 +907,7 @@ fn main() -> Result<()> {
             }
         });
     });
+
 
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(
         config.limits.max_concurrent_requests,
@@ -908,56 +923,15 @@ fn main() -> Result<()> {
         let lb_router = runtime.router.read();
         lb_router.health_service()
     };
-    // #region debug-point A:state-build-start
-    debug_agent_log(
-        "A",
-        "main.rs:gateway_state_build",
-        "[DEBUG] gateway state build start",
-        serde_json::json!({
-            "request_coalesce_max_inflight": config.upstream.max_coalesce_inflight.unwrap_or(1000),
-            "request_coalesce_timeout_secs": config.upstream.coalesce_timeout_secs.unwrap_or(60),
-            "max_request_concurrency": config.limits.max_concurrent_requests,
-            "mimo_session_store": config.features.mimo_session_store,
-        }),
-    );
-    // #endregion
-    // #region debug-point B:state-build-components
-    debug_agent_log(
-        "B",
-        "main.rs:gateway_state_build",
-        "[DEBUG] building state components before Arc<GatewayState>",
-        serde_json::json!({
-            "coalescer": "begin",
-        }),
-    );
-    // #endregion
     let coalescer = {
         let max_inflight = config.upstream.max_coalesce_inflight.unwrap_or(1000);
         let timeout = config.upstream.coalesce_timeout_secs.unwrap_or(60);
         Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
     };
-    debug_agent_log(
-        "B",
-        "main.rs:gateway_state_build",
-        "[DEBUG] coalescer constructed",
-        serde_json::json!({ "ok": true }),
-    );
     let prewarm_semaphore = Arc::new(tokio::sync::Semaphore::new(4));
-    debug_agent_log(
-        "B",
-        "main.rs:gateway_state_build",
-        "[DEBUG] prewarm semaphore constructed",
-        serde_json::json!({ "permits": 4 }),
-    );
     let startup_global_rate = Arc::new(pingora_limits::rate::Rate::new(
         std::time::Duration::from_secs(1),
     ));
-    debug_agent_log(
-        "B",
-        "main.rs:gateway_state_build",
-        "[DEBUG] global rate constructed",
-        serde_json::json!({ "window_secs": 1 }),
-    );
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -998,14 +972,6 @@ fn main() -> Result<()> {
         model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default()),
         client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),
     });
-    // #region debug-point C:state-build-done
-    debug_agent_log(
-        "C",
-        "main.rs:gateway_state_build",
-        "[DEBUG] gateway state build completed",
-        serde_json::json!({ "ok": true }),
-    );
-    // #endregion
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
     {

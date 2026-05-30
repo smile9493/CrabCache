@@ -5,7 +5,6 @@
 use crate::body_quick_parse::quick_parse_request_fields;
 use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::error_jsons::{
     client_concurrency_exceeded_error_json, deepseek_user_concurrency_exceeded_error_json,
     missing_reasoning_error_json, upstream_pool_exhausted_error_details,
@@ -188,28 +187,6 @@ async fn run_post_body_phases(
             &pipe_ctx,
         );
 
-        // #region agent log
-        debug_agent_log(
-            "SEL1",
-            "proxy.rs:request_filter",
-            "pipeline/profile selection",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "model": ctx.model,
-                "alias_hit": alias_hit,
-                "alias_upstream_model": alias_upstream_model,
-                "alias_pipeline": model_alias_pipeline.map(|p| p.as_str()),
-                "key_pipeline": pipe_ctx.key_pipeline.map(|p| p.as_str()),
-                "key_upstream_profile": pipe_ctx.key_upstream_profile,
-                "domain_pipeline": pipe_ctx.domain_pipeline.map(|p| p.as_str()),
-                "domain_upstream_profile": pipe_ctx.domain_upstream_profile,
-                "selected_profile": selection.upstream_profile_id,
-                "selected_provider": selection.provider.as_str(),
-                "selected_pipeline": selection.pipeline.as_str(),
-                "selected_reason": selection.reason.as_str(),
-            }),
-        );
-        // #endregion
 
         if let Some(msg) = validate_pipeline_override(
             pipe_ctx
@@ -398,6 +375,7 @@ async fn run_post_body_phases(
     #[allow(unused_assignments)]
     let mut upstream_model_log = ctx.model.clone();
     let mut namespace_preview = String::new();
+    let mut responses_tool_audit_payload: Option<serde_json::Value> = None;
     let effective_user_id = ctx.project_id.clone();
 
     let prepare_start = Instant::now();
@@ -407,16 +385,6 @@ async fn run_post_body_phases(
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
             if !guardrail.labels.is_empty() {
-                debug_agent_log(
-                    "GR",
-                    "proxy.rs:request_filter",
-                    "guardrails evaluated",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "labels": guardrail.labels,
-                        "blocked": guardrail.blocked,
-                    }),
-                );
             }
             if guardrail.blocked {
                 let body = serde_json::json!({
@@ -526,16 +494,6 @@ async fn run_post_body_phases(
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
             if !guardrail.labels.is_empty() {
-                debug_agent_log(
-                    "GR",
-                    "proxy.rs:request_filter",
-                    "guardrails evaluated",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "labels": guardrail.labels,
-                        "blocked": guardrail.blocked,
-                    }),
-                );
             }
             if guardrail.blocked {
                 let body = serde_json::json!({
@@ -565,6 +523,7 @@ async fn run_post_body_phases(
                 &proxy.state.responses_chain_store,
             )
             .await;
+            responses_tool_audit_payload = Some(wire_payload.clone());
             parsed_payload = Arc::new(crate::responses_wire::responses_payload_to_chat_completions(
                 &wire_payload,
             ));
@@ -580,7 +539,7 @@ async fn run_post_body_phases(
             );
             let features = proxy.state.features.read().clone();
             crate::session_store::apply_mimo_session_store(
-                store,
+                store.clone(),
                 &features,
                 ctx,
                 &mut parsed_payload,
@@ -666,8 +625,46 @@ async fn run_post_body_phases(
                 retired_prefix = mimo.retired_prefix_messages;
                 ctx.retired_prefix_messages = Some(mimo.retired_prefix_messages);
                 upstream_model_log = mimo.model.clone();
-                ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload));
+                ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload.clone()));
                 ctx.new_request_body = mimo.serialized_body.map(Bytes::from);
+                let registry_audit = responses_tool_audit_payload
+                    .as_ref()
+                    .map(crate::responses_tool_registry::audit_responses_tool_registry)
+                    .unwrap_or_else(|| {
+                        crate::responses_tool_registry::audit_chat_tool_registry(payload)
+                    });
+                let mimo_audit =
+                    crate::responses_tool_registry::audit_mimo_tool_pipeline(payload, &mimo.payload);
+                crate::responses_tool_registry::log_mimo_codex_tool_registry_warnings(
+                    &ctx.request_id,
+                    &ctx.model,
+                    &registry_audit,
+                    Some(&mimo_audit),
+                );
+                // #region agent log
+                let final_body_bytes = ctx
+                    .new_request_body
+                    .as_ref()
+                    .map(|b| b.len())
+                    .unwrap_or_else(|| {
+                        serde_json::to_vec(&mimo.payload)
+                            .map(|v| v.len())
+                            .unwrap_or(0)
+                    });
+                crate::debug_log::debug_agent_log(
+                    "F",
+                    "request_filter.rs:mimo",
+                    "final upstream body after prepare_mimo",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "session_store": ctx.session_store_outcome,
+                        "upstream_messages_len": ctx.session_upstream_messages_len,
+                        "retired_prefix": mimo.retired_prefix_messages,
+                        "tool_calls_repaired": mimo.tool_calls_repaired,
+                        "final_body_bytes": final_body_bytes,
+                    }),
+                );
+                // #endregion
             }
             RequestPipeline::CodexRelay => {
                 let model = alias_upstream_model
@@ -767,40 +764,6 @@ async fn run_post_body_phases(
         "Prepared upstream request"
     );
 
-    // #region agent log
-    let req_hash_short = ctx
-        .req_hash
-        .as_deref()
-        .map(|h| h.chars().take(8).collect::<String>());
-    let payload_for_logs = ctx.parsed_request_payload.as_deref();
-    let message_count = payload_for_logs
-        .and_then(|payload| payload.get("messages"))
-        .and_then(|m| m.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    debug_agent_log(
-        "P1",
-        "proxy.rs:request_filter",
-        "reasoning prepare summary",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "req_hash": req_hash_short,
-            "message_count": message_count,
-            "last_user_fp": payload_for_logs.and_then(last_user_message_fingerprint),
-            "stable_session_kind": stable_session_kind,
-            "stable_session_prefix": stable_session_prefix,
-            "missing": missing,
-            "patched": patched,
-            "recovered": recovered,
-            "retired_prefix": retired_prefix,
-            "recovery_notice_prepared": ctx.stream.pending_recovery_notice.is_some(),
-            "strategy": reasoning_cfg.missing_reasoning_strategy,
-            "reject_missing": reject_missing,
-            "pipeline": selection.pipeline.as_str(),
-            "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
-        }),
-    );
-    // #endregion
 
     if reject_missing {
         warn!(
@@ -809,37 +772,12 @@ async fn run_post_body_phases(
             "Strict missing-reasoning mode rejected request"
         );
         let body = missing_reasoning_error_json(missing);
-        // #region agent log
-        debug_agent_log(
-            "RM",
-            "proxy.rs:request_filter",
-            "rejected missing reasoning before upstream",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "missing": missing,
-                "status": 409,
-            }),
-        );
-        // #endregion
         if !send_json_error(session, http::StatusCode::CONFLICT, &body).await {
             let _ = session.respond_error(409).await;
         }
         return Ok(true);
     }
 
-    // #region agent log
-    debug_agent_log(
-        "H-B",
-        "proxy.rs:request_filter",
-        "recovery notice gate",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "req_hash": req_hash_short,
-            "recovery_notice_prepared": ctx.stream.pending_recovery_notice.is_some(),
-            "pending_recovery_notice": ctx.stream.pending_recovery_notice.is_some(),
-        }),
-    );
-    // #endregion
 
     let new_body = ctx
         .new_request_body
@@ -859,89 +797,12 @@ async fn run_post_body_phases(
             Some(selection.pipeline.as_str()),
         );
     }
-    // #region agent log
-    if crate::is_debug_agent_log_enabled() {
-        let outbound_fp: String = {
-            let mut hasher = Sha256::new();
-            hasher.update(new_body.as_ref());
-            let h = hex::encode(hasher.finalize());
-            h[..h.len().min(8)].to_string()
-        };
-        let upstream_msg_count = ctx
-            .parsed_upstream_payload
-            .as_ref()
-            .and_then(|v| {
-                v.get("messages")
-                    .and_then(|m| m.as_array())
-                    .map(|a| a.len())
-            })
-            .unwrap_or(0);
-        debug_agent_log(
-            "H-G",
-            "proxy.rs:request_filter",
-            "upstream context size (stagnation check)",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "req_hash": req_hash_short,
-                "message_count": message_count,
-                "upstream_msg_count": upstream_msg_count,
-                "inbound_bytes": ctx.content_length,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-                "outbound_fp": outbound_fp,
-                "last_user_fp": payload_for_logs.and_then(last_user_message_fingerprint),
-                "recovered": recovered,
-                "retired_prefix": retired_prefix,
-            }),
-        );
-    }
-    // #endregion
     ctx.upstream.prepared_body_for_retry = Some(new_body.clone());
     ctx.new_request_body = Some(new_body.clone());
     ctx.upstream_body_for_capture = Some(new_body);
     ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
     if ctx.upstream.retry_buffer_truncated {
-        debug_agent_log(
-            "H4",
-            "proxy.rs:request_filter",
-            "retry buffer truncated; upstream body will use request_body_filter",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "inbound_bytes": ctx.content_length,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-            }),
-        );
     }
-    // #region agent log
-    if ctx.upstream_outbound_body_len > 50_000 {
-        debug_agent_log(
-            "E",
-            "proxy.rs:request_filter",
-            "large upstream outbound body",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "inbound_bytes": ctx.content_length,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-                "model": ctx.model,
-                "is_streaming": ctx.is_streaming,
-            }),
-        );
-    }
-    if ctx.upstream_outbound_body_len >= 256 * 1024 {
-        debug_agent_log(
-            "PB",
-            "proxy.rs:request_filter",
-            "request body performance sample",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "pipeline": selection.pipeline.as_str(),
-                "inbound_bytes": ctx.content_length,
-                "outbound_bytes": ctx.upstream_outbound_body_len,
-                "client_parse_ms": parse_elapsed.as_secs_f64() * 1000.0,
-                "prepare_ms": prepare_elapsed.as_secs_f64() * 1000.0,
-            }),
-        );
-    }
-    // #endregion
 
     // ─── Phase 4.5: Quota Preflight ──────────────────────────────────────
     // Quick profile-level health gate: if every backend in the active profile
@@ -976,6 +837,52 @@ async fn run_post_body_phases(
         }
     }
 
+    // ─── Phase 4.6: MiMo Key Binding Pre-acquire ───────────────────────────
+    // Pre-acquire the bound upstream key asynchronously. If the bound key is at
+    // capacity (inflight >= max_inflight), wait up to `mimo_key_overflow_wait_ms`
+    // before spilling to another key. This protects prefix-cache affinity for
+    // Cursor's concurrent agentic requests.
+    if ctx.upstream.key_guard.is_none()
+        && ctx.request_pipeline.map_or(false, |p| GatewayProxy::is_mimo_pipeline(p))
+    {
+        // Extract binding info while holding the features read lock, then drop it
+        // before the async await (parking_lot RwLockReadGuard is !Send).
+        let binding_info: Option<(Arc<crate::key_binding::KeyBindingStore>, String, String, u64)> = {
+            let features = proxy.state.features.read();
+            if features.mimo_key_binding {
+                proxy.state.key_binding_store.as_ref().and_then(|store| {
+                    stable_session.and_then(|sid| {
+                        store.get(sid).map(|binding| {
+                            let timeout_ms = features.mimo_key_overflow_wait_ms;
+                            (Arc::clone(store), sid.to_string(), binding.key_id, timeout_ms)
+                        })
+                    })
+                })
+            } else {
+                None
+            }
+        };
+
+        if let Some((binding_store, sid, bound_key_id, timeout_ms)) = binding_info {
+            let profile = proxy.active_upstream_profile(ctx);
+            let pool = profile.resolve_upstream_pool();
+            let timeout = std::time::Duration::from_millis(timeout_ms);
+            if let Some(guard) =
+                pool.acquire_with_binding_async(&bound_key_id, timeout).await
+            {
+                binding_store.touch(&sid);
+                ctx.upstream.key_guard = Some(guard);
+                global_metrics().record_key_binding_event("pre_acquire");
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    session_id = %sid,
+                    key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                    "MiMo key binding pre-acquired in request_filter"
+                );
+            }
+        }
+    }
+
     // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
     match crate::phases::cache_coalesce::run(proxy, session, ctx).await? {
         crate::phases::cache_coalesce::CachePhaseOutcome::Return(done) => {
@@ -988,24 +895,6 @@ async fn run_post_body_phases(
         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
         let failure = pool.diagnose_acquire_failure();
         let (body, error_code, retry_after) = upstream_pool_exhausted_error_details(failure);
-        // #region agent log
-        debug_agent_log(
-            "H-K",
-            "proxy.rs:request_filter",
-            "upstream key pool exhausted",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
-                "upstream_profile": ctx.upstream_profile_id,
-                "pool_total": pool.len(),
-                "pool_available": pool.available_count(),
-                "failure_reason": format!("{:?}", failure),
-                "error_code": error_code,
-                "retry_after_secs": retry_after,
-                "project_id_set": ctx.project_id.is_some(),
-            }),
-        );
-        // #endregion
         if !send_json_error_with_retry_after(
             session,
             http::StatusCode::SERVICE_UNAVAILABLE,
@@ -1019,21 +908,6 @@ async fn run_post_body_phases(
         return Ok(true);
     }
 
-    // #region agent log
-    debug_agent_log(
-        "H-OUT",
-        "proxy.rs:request_filter",
-        "request_filter returning false (proxy upstream)",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
-            "pipeline": ctx.request_pipeline.map(|p| p.as_str()),
-            "has_prepared": ctx.prepared_request.is_some(),
-            "new_body_len": ctx.new_request_body.as_ref().map(|b| b.len()),
-            "outbound_bytes": ctx.upstream_outbound_body_len,
-        }),
-    );
-    // #endregion
 
     // ── Connection pre-warm for new session fingerprints ──────────
     // Connection pre-warm trigger is now in upstream_peer (after Ketama selection).
@@ -1240,37 +1114,6 @@ async fn request_passthrough_handoff(
         }
         return Ok(true);
     }
-    // #region agent log
-    info!(
-        request_id = %ctx.request_id,
-        pipeline = ?ctx.request_pipeline,
-        upstream_profile = ctx.upstream_profile_id.as_deref().unwrap_or("default"),
-        pipeline_reason = ctx.pipeline_reason.map(|r| r.as_str()).unwrap_or(""),
-        client_model = %ctx.model,
-        upstream_model = ctx.upstream_model.as_deref().unwrap_or(""),
-        consumer = ctx.consumer.as_deref().unwrap_or(""),
-        prefix_len = ctx.request_passthrough.armed_prefix_len,
-        is_streaming = ctx.is_streaming,
-        "MiMo passthrough handoff armed"
-    );
-    debug_agent_log(
-        "PT-HANDOFF",
-        "request_filter.rs:request_passthrough_handoff",
-        "MiMo passthrough handoff armed — prefix relay to upstream",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "pipeline": ctx.request_pipeline,
-            "upstream_profile": ctx.upstream_profile_id,
-            "pipeline_reason": ctx.pipeline_reason,
-            "model": ctx.model,
-            "upstream_model": ctx.upstream_model,
-            "consumer": ctx.consumer,
-            "prefix_len": ctx.request_passthrough.armed_prefix_len,
-            "is_streaming": ctx.is_streaming,
-            "content_length": ctx.content_length,
-        }),
-    );
-    // #endregion
     Ok(false)
 }
 
@@ -1337,22 +1180,6 @@ pub(crate) async fn run(
         .unwrap_or("")
         .to_string();
     let provided_key = auth.strip_prefix("Bearer ").unwrap_or(&auth).to_string();
-    // #region agent log
-    debug_agent_log(
-        "AUTH1",
-        "proxy.rs:request_filter",
-        "auth header extracted",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "path": req_path,
-            "method": format!("{}", req_method),
-            "auth_present": !auth.is_empty(),
-            "is_bearer": auth.starts_with("Bearer "),
-            "provided_key_len": provided_key.len(),
-            "looks_like_sk_cc": provided_key.starts_with("sk-cc-"),
-        }),
-    );
-    // #endregion
     let conversation_id_from_header = session
         .req_header()
         .headers
@@ -1453,24 +1280,6 @@ pub(crate) async fn run(
         key_upstream_profile,
     ) = proxy.authorize_client(&provided_key, &auth);
 
-    // #region agent log
-    debug_agent_log(
-        "AUTH2",
-        "proxy.rs:request_filter",
-        "authorize_client decision",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "authorized": is_authorized,
-            "stored_key_present": proxy.state.runtime.keys.contains_key(&provided_key),
-            "legacy_match_enabled": proxy.state.runtime.legacy_api_key_as_client_auth,
-            "key_has_consumer": consumer_from_key.is_some(),
-            "key_has_domain": domain_from_key.is_some(),
-            "key_has_project_id": key_project_id.is_some(),
-            "key_has_pipeline": key_pipeline.is_some(),
-            "key_has_upstream_profile": key_upstream_profile.is_some(),
-        }),
-    );
-    // #endregion
 
     if !is_authorized {
         let _ = session.respond_error(401).await;
@@ -1522,15 +1331,6 @@ pub(crate) async fn run(
             {
                 match derive_project_id_from_client_key(&provided_key) {
                     Ok(derived) => {
-                        debug_agent_log(
-                            "H-UID",
-                            "proxy.rs:request_filter",
-                            "auto project_id from client key",
-                            serde_json::json!({
-                                "request_id": ctx.request_id,
-                                "project_id_prefix": derived.chars().take(12).collect::<String>(),
-                            }),
-                        );
                         project_id = Some(derived);
                     }
                     Err(e) => {

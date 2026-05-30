@@ -701,11 +701,11 @@ fn LiveTopConfigRow(
 ) -> impl IntoView {
     let t = use_translations();
     view! {
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div class="live-config-card">
-                <div class="live-config-card-title">{t.live_config_consumer()}</div>
+        <div class="live-toolbar">
+            <div class="live-toolbar-section">
+                <label class="live-toolbar-label">{t.live_config_consumer()}</label>
                 <select
-                    class="input text-sm font-mono"
+                    class="live-toolbar-select"
                     prop:value=move || selected_consumer.get().unwrap_or_default()
                     on:change=move |ev| {
                         let v = event_target_value(&ev);
@@ -728,44 +728,26 @@ fn LiveTopConfigRow(
                 </select>
             </div>
 
-            <div class="live-config-card md:col-span-1">
-                <div class="live-config-card-title">{t.live_config_window()}</div>
+            <div class="live-toolbar-divider"></div>
+
+            <div class="live-toolbar-section live-toolbar-grow">
+                <label class="live-toolbar-label">{t.live_config_window()}</label>
                 <LiveWindowPills window_secs=window_secs />
             </div>
 
-            <div class="live-config-card">
-                <div class="live-config-card-title">{t.live_config_refresh()}</div>
-                <div class="flex flex-col gap-2">
-                    <label class="flex items-center gap-2 text-xs text-theme-secondary">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || auto_refresh.get()
-                            on:change=move |ev| auto_refresh.set(event_target_checked(&ev))
-                            class="rounded"
-                        />
-                        {move || {
-                            let ms = poll_interval_ms(window_secs.get());
-                            format!("{} ({}s)", t.live_auto_refresh(), ms / 1000)
-                        }}
-                    </label>
-                    <span class="text-xs text-theme-muted font-mono">
-                        {move || format!("{} {}", t.overview_last_update(), last_update.get())}
-                    </span>
-                </div>
-            </div>
+            <div class="live-toolbar-divider"></div>
 
-            <div class="live-config-card">
-                <div class="live-config-card-title">{t.live_config_group_by()}</div>
-                <div class="live-window-pills">
+            <div class="live-toolbar-section">
+                <label class="live-toolbar-label">{t.live_config_group_by()}</label>
+                <div class="live-toolbar-pills">
                     {move || {
                         let items: [(LiveGroupBy, &str, &str); 3] = [
                             (LiveGroupBy::None, "group_none", t.live_group_by_all()),
                             (LiveGroupBy::Model, "group_model", t.live_group_by_model()),
                             (LiveGroupBy::CacheHit, "group_cache", t.live_group_by_cache()),
                         ];
-                        items.into_iter().map(|(val, id, label)| {
+                        items.into_iter().map(|(val, _id, label)| {
                             let label = label.to_string();
-                            let _id = id.to_string();
                             view! {
                                 <button
                                     type="button"
@@ -784,6 +766,26 @@ fn LiveTopConfigRow(
                         }).collect_view()
                     }}
                 </div>
+            </div>
+
+            <div class="live-toolbar-divider"></div>
+
+            <div class="live-toolbar-section live-toolbar-meta">
+                <label class="flex items-center gap-2 text-xs text-theme-secondary cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || auto_refresh.get()
+                        on:change=move |ev| auto_refresh.set(event_target_checked(&ev))
+                        class="rounded"
+                    />
+                    {move || {
+                        let ms = poll_interval_ms(window_secs.get());
+                        format!("{} ({}s)", t.live_auto_refresh(), ms / 1000)
+                    }}
+                </label>
+                <span class="text-[11px] text-theme-muted font-mono">
+                    {move || last_update.get()}
+                </span>
             </div>
         </div>
     }
@@ -958,21 +960,21 @@ fn LiveTrafficPanel(
                 </span>
             </div>
             <div class="p-4">
+                <div class="live-hero-metrics">
+                    <div class="live-hero-metric live-hero-metric-accent">
+                        <span class="live-hero-metric-label">{t.live_qps()}</span>
+                        <span class="live-hero-metric-value">{format!("{:.2}", qps)}</span>
+                    </div>
+                    <div class="live-hero-metric live-hero-metric-success">
+                        <span class="live-hero-metric-label">{t.live_cache_hit_pct()}</span>
+                        <span class="live-hero-metric-value">{format!("{hit_pct:.1}%")}</span>
+                    </div>
+                </div>
                 <div class="live-stat-bar">
-                    <LiveStatTile
-                        label=t.live_qps()
-                        value=format!("{:.2}", qps)
-                        variant=LiveTileVariant::Accent
-                    />
                     <LiveStatTile
                         label=t.live_requests()
                         value=format_number(s.request_count as u64)
                         variant=LiveTileVariant::Teal
-                    />
-                    <LiveStatTile
-                        label=t.live_cache_hit_pct()
-                        value=format!("{hit_pct:.1}%")
-                        variant=LiveTileVariant::Green
                     />
                     <LiveStatTile
                         label=t.live_avg_e2e()
@@ -1679,21 +1681,20 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, summary: LiveMetricsSummary, 
     }
 }
 
-/// Map a normalised ratio (0.0 ..= 1.0) to a CSS background colour string.
+/// Map a normalised ratio (0.0 ..= 1.0) to a CSS background using design tokens.
 /// Uses 7 discrete levels from green (good/low) through yellow to red (bad/high).
 /// `invert` flips the scale so that higher values are greener (e.g. Hit%).
 fn heatmap_bg(ratio: f64, invert: bool) -> &'static str {
     let r = if invert { 1.0 - ratio } else { ratio };
-    // Clamp to [0, 1]
     let r = r.clamp(0.0, 1.0);
     match (r * 6.0).round() as u8 {
-        0 => "rgba(34,197,94,0.18)", // green-500  18%
-        1 => "rgba(34,197,94,0.12)", // green-500  12%
-        2 => "rgba(234,179,8,0.12)", // yellow-500 12%
-        3 => "rgba(234,179,8,0.18)", // yellow-500 18%
-        4 => "rgba(239,68,68,0.12)", // red-500    12%
-        5 => "rgba(239,68,68,0.18)", // red-500    18%
-        _ => "rgba(239,68,68,0.25)", // red-500    25%
+        0 => "color-mix(in srgb, var(--cc-success) 20%, transparent)",
+        1 => "color-mix(in srgb, var(--cc-success) 12%, transparent)",
+        2 => "color-mix(in srgb, var(--cc-warning) 12%, transparent)",
+        3 => "color-mix(in srgb, var(--cc-warning) 20%, transparent)",
+        4 => "color-mix(in srgb, var(--cc-error) 12%, transparent)",
+        5 => "color-mix(in srgb, var(--cc-error) 20%, transparent)",
+        _ => "color-mix(in srgb, var(--cc-error) 28%, transparent)",
     }
 }
 

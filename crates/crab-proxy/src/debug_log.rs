@@ -8,7 +8,6 @@ use std::sync::mpsc;
 static DEBUG_WRITER: OnceLock<Option<mpsc::SyncSender<String>>> = OnceLock::new();
 
 /// Initialize the debug log writer. Must be called once at startup.
-/// Spawns a dedicated writer thread with a persistent file handle.
 pub fn init_debug_log(path: Option<&str>) {
     let tx = path.filter(|p| !p.is_empty()).map(|p| {
         let (tx, rx) = mpsc::sync_channel::<String>(4096);
@@ -31,7 +30,6 @@ pub fn init_debug_log(path: Option<&str>) {
     let _ = DEBUG_WRITER.set(tx);
 }
 
-/// True when `CRABCACHE_DEBUG_LOG_PATH` initialized the debug log writer.
 #[inline]
 pub fn is_debug_agent_log_enabled() -> bool {
     DEBUG_WRITER.get().is_some_and(Option::is_some)
@@ -61,5 +59,5 @@ pub fn debug_agent_log(
     {
         line["sessionId"] = serde_json::Value::String(session_id);
     }
-    let _ = tx.try_send(line.to_string()); // non-blocking, drop on full channel
+    let _ = tx.try_send(line.to_string());
 }

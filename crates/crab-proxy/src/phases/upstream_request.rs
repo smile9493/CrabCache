@@ -2,7 +2,6 @@
 //!
 //! Extracted from `proxy.rs` `upstream_request_filter` and `request_body_filter`.
 
-use crate::debug_agent_log;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crate::upstream_body::apply_prepared_upstream_body;
@@ -70,39 +69,8 @@ pub(crate) async fn run_upstream_request_filter(
             apply_upstream_request_content_encoding(upstream_request, "gzip");
         }
         smooth_upstream_client_headers(upstream_request, ctx.is_streaming);
-        // #region agent log
-        debug_agent_log(
-            "H3",
-            "proxy.rs:upstream_request_filter",
-            "upstream body framing headers normalized",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "body_len": new_body.len(),
-                "had_transfer_encoding": had_transfer_encoding,
-                "is_streaming": ctx.is_streaming,
-                "header_names": upstream_header_names(upstream_request),
-            }),
-        );
-        // #endregion
     }
 
-    // #region agent log
-    let had_auth_before = upstream_request
-        .headers
-        .get(http::header::AUTHORIZATION)
-        .is_some();
-    debug_agent_log(
-        "UPAUTH1",
-        "proxy.rs:upstream_request_filter",
-        "upstream authorization header state (before upstream key inject)",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "had_auth_header_before": had_auth_before,
-            "has_upstream_key_guard": ctx.upstream.key_guard.is_some(),
-            "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-        }),
-    );
-    // #endregion
 
     if let Some(guard) = ctx.upstream.key_guard.as_ref() {
         // Xiaomi MiMo Token Plan uses `api-key: tp-...` (not Bearer).
@@ -139,23 +107,6 @@ pub(crate) async fn run_upstream_request_filter(
     } else if crate::responses_wire::needs_responses_wire_translate(ctx) {
         crate::responses_wire::apply_responses_wire_upstream_request(upstream_request);
     }
-    // #region agent log
-    let had_auth_after = upstream_request
-        .headers
-        .get(http::header::AUTHORIZATION)
-        .is_some();
-    debug_agent_log(
-        "UPAUTH2",
-        "proxy.rs:upstream_request_filter",
-        "upstream authorization header state (after upstream key inject)",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "had_auth_header_after": had_auth_after,
-            "has_upstream_key_guard": ctx.upstream.key_guard.is_some(),
-            "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-        }),
-    );
-    // #endregion
 
     if conn_config.upstream_disable_keepalive && conn_config.upstream_force_http1 {
         ctx.upstream.connection_close = true;
@@ -303,18 +254,6 @@ pub(crate) async fn run_request_body_filter(
                 .upstream_headers_prepared_at
                 .map(|t| t.elapsed().as_millis())
                 .unwrap_or(0);
-            debug_agent_log(
-                "R1",
-                "proxy.rs:request_body_filter",
-                "upstream body send after headers",
-                serde_json::json!({
-                    "request_id": ctx.request_id,
-                    "body_len": new_body.len(),
-                    "header_to_body_ms": header_to_body_ms,
-                    "connection_close": ctx.upstream.connection_close,
-                    "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
-                }),
-            );
             debug!(
                 request_id = %ctx.request_id,
                 body_len = new_body.len(),
@@ -328,22 +267,6 @@ pub(crate) async fn run_request_body_filter(
         let force_emit = ctx.upstream.retry_buffer_truncated;
         ctx.new_request_body =
             apply_prepared_upstream_body(new_body, body, end_of_stream, force_emit);
-        // #region debug-point D:prepared-body-emit
-        debug_agent_log(
-            "D",
-            "upstream_request.rs:run_request_body_filter",
-            "[DEBUG] prepared upstream body emission decision",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "end_of_stream": end_of_stream,
-                "force_emit": force_emit,
-                "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
-                "prepared_body_now": body.as_ref().map(|b| b.len()),
-                "prepared_body_rest": ctx.new_request_body.as_ref().map(|b| b.len()),
-                "prepared_body_emitted": ctx.upstream.prepared_upstream_body_emitted,
-            }),
-        );
-        // #endregion
         if emit_now && body.as_ref().is_some_and(|b| !b.is_empty()) {
             ctx.upstream.prepared_upstream_body_emitted = true;
         }

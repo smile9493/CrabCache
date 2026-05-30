@@ -9,7 +9,7 @@ use crab_metrics::global_metrics;
 use redis::AsyncCommands;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::warn;
 
 const KEY_PREFIX: &str = "crab:responses_chain:";
 

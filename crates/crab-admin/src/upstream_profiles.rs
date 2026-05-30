@@ -53,6 +53,8 @@ pub async fn put_profile(
         tls_sni: req.tls_sni,
         default_weight: 1,
         proxy_url: req.proxy_url,
+        fallback_profile_id: req.fallback_profile_id,
+        fallback_max_retries: req.fallback_max_retries,
     };
     let view = state
         .gateway
@@ -128,6 +130,7 @@ pub async fn put_profile_keys(
         let mut map = state.upstream_profile_secrets.write();
         map.insert(id.to_string(), secrets);
     }
+
 
     // Persist key pool to PostgreSQL (Admin DB) when available.
     // Important: never hold a parking_lot lock guard across an `.await`.

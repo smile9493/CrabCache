@@ -11,6 +11,16 @@ Pingora's retry buffer is capped at 64KiB; when truncated, the proxy skipped the
 
 CrabCache `request_body_filter` injects `new_request_body` on that path.
 
+## 1c. Graceful Responses stream finalize on upstream abort (CrabCache)
+
+When MiMo/upstream closes mid-SSE, Pingora may reach `finish_body` or emit `HttpTask::Failed`
+without running CrabCache EOS synthesis. `ProxyHttp::finalize_aborted_upstream_stream` lets
+`GatewayProxy` append synthetic `response.completed` (+ chain store) before the downstream
+connection is torn down.
+
+- `src/proxy_trait.rs`: new hook default `None`
+- `src/proxy_h1.rs` / `src/proxy_h2.rs`: call hook before `finish_body`; convert `Failed` → `Body` when tail returned
+
 ## 1b. Streaming defer + trailing empty EOS (CrabCache)
 
 `ProxyHttp::defer_upstream_request_body` / `skip_upstream_trailing_empty_eos` (implemented on

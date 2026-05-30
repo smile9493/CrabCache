@@ -3,7 +3,6 @@
 use crate::connection_prewarm::spawn_direct_prewarm_if_new_session;
 use crate::context::GatewayContext;
 use crate::context::BackendRouteStrategy;
-use crate::debug_agent_log;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crab_metrics::global_metrics;
@@ -32,20 +31,6 @@ pub(crate) async fn run(
         ctx.upstream.host = Some(selected.tls_sni.to_string());
         let peer = proxy.create_upstream_peer(selected.addr, selected.tls_sni, ctx);
         let conn_config = proxy.state.runtime.conn_config.read().clone();
-        // #region agent log
-        debug_agent_log(
-            "H1",
-            "phases/upstream_peer",
-            "upstream peer options (models)",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "alpn": format!("{}", peer.options.alpn),
-                "force_http1": conn_config.upstream_force_http1,
-                "read_timeout_secs": conn_config.upstream_request_timeout_secs,
-                "write_timeout_secs": conn_config.upstream_write_timeout_secs,
-            }),
-        );
-        // #endregion
         return Ok(Box::new(peer));
     }
 
@@ -219,23 +204,6 @@ pub(crate) async fn run(
     }
 
     let conn_config = proxy.state.runtime.conn_config.read().clone();
-    // #region agent log
-    debug_agent_log(
-        "H1",
-        "phases/upstream_peer",
-        "upstream peer options (chat)",
-        serde_json::json!({
-            "request_id": ctx.request_id,
-            "alpn": format!("{}", peer.options.alpn),
-            "force_http1": conn_config.upstream_force_http1,
-            "disable_keepalive": conn_config.upstream_disable_keepalive,
-            "tls_curves": conn_config.upstream_tls_curves,
-            "outbound_bytes": ctx.upstream_outbound_body_len,
-            "read_timeout_secs": conn_config.upstream_request_timeout_secs,
-            "write_timeout_secs": conn_config.upstream_write_timeout_secs,
-        }),
-    );
-    // #endregion
 
     Ok(Box::new(peer))
 }

@@ -3,9 +3,10 @@ mod client_key_rate_limiter;
 pub mod backend_state;
 pub mod circuit_breaker;
 mod codex;
+pub mod debug_log;
+mod responses_tool_registry;
 mod responses_wire;
 mod context;
-mod debug_log;
 pub mod client_lockout;
 pub mod fallback_policy;
 mod error;
@@ -59,11 +60,11 @@ pub use cache_response::{
 };
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimiter};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
+pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use context::{
     BackendRouteStrategy, ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState,
     ModelPricing, PricingConfig, ReasoningConfig,
 };
-pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
 pub use guardrails::{
     GuardrailConfig, GuardrailResult, evaluate_request_guardrails, mask_pii,

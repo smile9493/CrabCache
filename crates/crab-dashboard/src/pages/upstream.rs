@@ -567,6 +567,8 @@ pub fn UpstreamPage() -> impl IntoView {
                     endpoints: endpoints.clone(),
                     tls_sni: sni,
                     proxy_url: proxy_opt,
+                    fallback_profile_id: None,
+                    fallback_max_retries: None,
                 };
                 api::put_upstream_profile(&pid, &req).await.map(|_| ())
             };
@@ -722,6 +724,8 @@ pub fn UpstreamPage() -> impl IntoView {
                 endpoints: Vec::new(),
                 tls_sni: sni,
                 proxy_url: proxy_opt,
+                fallback_profile_id: None,
+                fallback_max_retries: None,
             };
             match api::put_upstream_profile(&id, &req).await {
                 Ok(_) => {

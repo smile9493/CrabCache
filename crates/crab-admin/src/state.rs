@@ -869,7 +869,7 @@ impl AppState {
             None
         };
 
-        self.persist.save_debounced(file);
+        self.persist.save_now(&file);
 
         if let Some((
             pg,
@@ -1038,6 +1038,71 @@ impl AppState {
         }
 
         self.refresh_profile_providers().await;
+    }
+
+    /// Pull full key secrets from Gateway into Admin cache when local copies are missing or incomplete.
+    pub async fn sync_profile_secrets_from_gateway(&self) {
+        let Ok(resp) = self.gateway.list_upstream_profiles().await else {
+            return;
+        };
+        let mut any_updated = false;
+        for profile in resp.profiles {
+            let profile_id = profile.id;
+            let Ok(export) = self.gateway.export_upstream_profile_keys(&profile_id).await else {
+                continue;
+            };
+            if export.keys.is_empty() {
+                continue;
+            }
+            let current = self
+                .upstream_profile_secrets
+                .read()
+                .get(&profile_id)
+                .cloned()
+                .unwrap_or_default();
+            let needs_sync = export.keys.len() != current.len()
+                || current.iter().any(|s| s.secret.is_empty())
+                || export.keys.iter().any(|ek| {
+                    current
+                        .iter()
+                        .find(|c| c.id == ek.id)
+                        .is_none_or(|c| c.secret.is_empty())
+                });
+            if !needs_sync {
+                continue;
+            }
+            let secrets: Vec<UpstreamPoolSecret> = export
+                .keys
+                .into_iter()
+                .filter(|k| !k.secret.is_empty())
+                .map(|k| UpstreamPoolSecret {
+                    id: if k.id.is_empty() {
+                        uuid::Uuid::new_v4().to_string()
+                    } else {
+                        k.id
+                    },
+                    secret: k.secret,
+                    enabled: k.enabled,
+                    account_id: k.account_id,
+                })
+                .collect();
+            if secrets.is_empty() {
+                continue;
+            }
+            let count = secrets.len();
+            self.upstream_profile_secrets
+                .write()
+                .insert(profile_id.clone(), secrets);
+            any_updated = true;
+            tracing::info!(
+                profile_id = %profile_id,
+                count,
+                "Synced upstream profile secrets from Gateway"
+            );
+        }
+        if any_updated {
+            self.flush_persist();
+        }
     }
 
     fn replace_upstream_pool_from_views(&self, views: &[crab_control::UpstreamKeyView]) {

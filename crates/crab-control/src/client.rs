@@ -521,6 +521,22 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    /// Export full upstream key secrets for Admin-side persistence reconciliation.
+    pub async fn export_upstream_profile_keys(
+        &self,
+        id: &str,
+    ) -> Result<UpstreamProfileKeysExport, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::GET,
+                &format!("/v1/upstream/profiles/{id}/keys/export"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
     pub async fn put_upstream_profile_keys(
         &self,
         id: &str,

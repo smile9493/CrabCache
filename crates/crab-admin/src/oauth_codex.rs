@@ -3,18 +3,19 @@
 //! Provides session-managed endpoints so the Dashboard can drive the
 //! multi-step device-authorization flow without a callback server.
 
-use crate::state::AppState;
+use crate::state::{AppState, UpstreamPoolSecret};
 use crate::upstream_profiles;
-use axum::extract::{Path, State};
+use axum::extract::{Path as AxumPath, State};
 use axum::Json;
 use chrono::Utc;
 use crab_admin_types::oauth::*;
 use crab_auth::oauth::codex::CodexAuthenticator;
 use crab_auth::oauth::{ensure_fresh_codex_token, parse_codex_import_documents};
 use crab_auth::store::{FileTokenStore, TokenStore};
-use crab_auth::types::TokenRecord;
+use crab_auth::types::{Provider, TokenRecord};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Resolve the proxy_url for a profile from the gateway.
@@ -32,16 +33,144 @@ async fn resolve_profile_proxy_url(state: &AppState, profile_id: &str) -> Option
         })
 }
 
-/// Resolve the auth credential directory from env or default.
+/// Resolve directory for OAuth credential JSON files.
+/// Defaults to `{admin-state-parent}/auths` so Docker `admin_data:/app/data` persists Codex accounts.
 pub fn resolve_auth_dir() -> PathBuf {
     std::env::var("CRABCACHE_AUTH_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
+            let state_path = std::env::var("CRABCACHE_ADMIN_STATE_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("data/admin-state.json"));
+            if let Some(parent) = state_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    return parent.join("auths");
+                }
+            }
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home).join(".crabcache").join("auths")
         })
+}
+
+/// Ensure persistent auth dir exists; migrate legacy paths; rebuild missing credential stubs.
+pub async fn prepare_auth_dir(state: &AppState) {
+    let auth_dir = &state.auth_dir;
+    if tokio::fs::create_dir_all(auth_dir).await.is_err() {
+        tracing::warn!(path = %auth_dir.display(), "Failed to create Codex auth dir");
+        return;
+    }
+    let migrated = migrate_legacy_auth_dirs(auth_dir).await;
+    let profile_secrets = state.upstream_profile_secrets.read().clone();
+    let hydrated =
+        hydrate_codex_credentials_from_profile_secrets(auth_dir, &profile_secrets).await;
+    tracing::info!(
+        path = %auth_dir.display(),
+        migrated,
+        hydrated,
+        "Codex auth directory ready"
+    );
+}
+
+async fn migrate_legacy_auth_dirs(target: &Path) -> usize {
+    let mut legacy = vec![
+        PathBuf::from("/app/.crabcache/auths"),
+        PathBuf::from(".crabcache/auths"),
+    ];
+    if let Ok(home) = std::env::var("HOME") {
+        legacy.push(PathBuf::from(home).join(".crabcache").join("auths"));
+    }
+    let mut copied = 0usize;
+    for src in legacy {
+        if src == target {
+            continue;
+        }
+        let Ok(mut entries) = tokio::fs::read_dir(&src).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let dest = target.join(name);
+            if dest.exists() {
+                continue;
+            }
+            if tokio::fs::copy(&path, &dest).await.is_ok() {
+                copied += 1;
+            }
+        }
+    }
+    copied
+}
+
+/// Create minimal Codex credential files from Admin profile secrets when OAuth JSON files are missing.
+async fn hydrate_codex_credentials_from_profile_secrets(
+    auth_dir: &Path,
+    profile_secrets: &HashMap<String, Vec<UpstreamPoolSecret>>,
+) -> usize {
+    let store = FileTokenStore::new(auth_dir);
+    let existing = store.list().await.unwrap_or_default();
+    let known_accounts: HashSet<String> = existing
+        .iter()
+        .filter_map(|r| {
+            r.metadata
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .collect();
+    let mut created = 0usize;
+    for secrets in profile_secrets.values() {
+        for s in secrets {
+            if s.secret.is_empty() {
+                continue;
+            }
+            let account_id = if s.account_id.trim().is_empty() {
+                format!("key-{}", s.id)
+            } else {
+                s.account_id.trim().to_string()
+            };
+            if known_accounts.contains(&account_id) {
+                continue;
+            }
+            let id = format!("codex-{account_id}").replace(['/', '\\', ':'], "_");
+            if existing.iter().any(|r| r.id == id) {
+                continue;
+            }
+            let mut metadata = HashMap::new();
+            metadata.insert(
+                "account_id".to_string(),
+                serde_json::Value::String(account_id.clone()),
+            );
+            metadata.insert(
+                "hydrated_from".to_string(),
+                serde_json::Value::String("profile_secrets".to_string()),
+            );
+            let record = TokenRecord {
+                id,
+                provider: Provider::Codex,
+                access_token: s.secret.clone(),
+                refresh_token: None,
+                id_token: None,
+                email: Some(account_id.clone()),
+                expired_at: None,
+                last_refresh: None,
+                disabled: false,
+                metadata,
+                file_path: None,
+            };
+            if store.save(&record).await.is_ok() {
+                created += 1;
+            }
+        }
+    }
+    created
 }
 
 /// Save credential (refresh if needed) and upsert into profile key pool.
@@ -67,6 +196,7 @@ async fn import_codex_record_to_profile(
             format!("Failed to save credential: {e}"),
         )
     })?;
+
 
     let account_id = fresh
         .metadata
@@ -137,7 +267,7 @@ impl CodexPkceSession {
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/pkce/start`
 pub async fn start_pkce_login(
     State(state): State<Arc<AppState>>,
-    Path(profile_id): Path<String>,
+    AxumPath(profile_id): AxumPath<String>,
 ) -> Result<Json<CodexPkceStartResponse>, (axum::http::StatusCode, String)> {
     let (verifier, _challenge, state_param, auth_url) =
         crab_auth::oauth::codex::start_pkce_login();
@@ -297,7 +427,7 @@ pub async fn start_pkce_login(
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/pkce/exchange`
 pub async fn exchange_pkce(
     State(state): State<Arc<AppState>>,
-    Path((profile_id, session_id_str)): Path<(String, String)>,
+    AxumPath((profile_id, session_id_str)): AxumPath<(String, String)>,
     Json(req): Json<CodexPkceExchangeRequest>,
 ) -> Result<Json<CodexPkceExchangeResponse>, (axum::http::StatusCode, String)> {
     let session_id = Uuid::parse_str(&session_id_str).map_err(|_| {
@@ -390,7 +520,7 @@ pub async fn exchange_pkce(
 /// GET `/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id`
 pub async fn poll_pkce_status(
     State(state): State<Arc<AppState>>,
-    Path((profile_id, session_id_str)): Path<(String, String)>,
+    AxumPath((profile_id, session_id_str)): AxumPath<(String, String)>,
 ) -> Result<Json<CodexPkceExchangeResponse>, (axum::http::StatusCode, String)> {
     let session_id = Uuid::parse_str(&session_id_str).map_err(|_| {
         (
@@ -419,7 +549,7 @@ pub async fn poll_pkce_status(
 /// DELETE `/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id`
 pub async fn cancel_pkce_login(
     State(state): State<Arc<AppState>>,
-    Path((profile_id, session_id_str)): Path<(String, String)>,
+    AxumPath((profile_id, session_id_str)): AxumPath<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let session_id = Uuid::parse_str(&session_id_str).map_err(|_| {
         (
@@ -512,7 +642,7 @@ impl CodexDeviceSession {
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/device/start`
 pub async fn start_device_login(
     State(state): State<Arc<AppState>>,
-    Path(profile_id): Path<String>,
+    AxumPath(profile_id): AxumPath<String>,
 ) -> Result<Json<CodexDeviceStartResponse>, (axum::http::StatusCode, String)> {
     let start = CodexAuthenticator::start_device_usercode()
         .await
@@ -550,7 +680,7 @@ pub async fn start_device_login(
 /// GET `/api/admin/upstream/profiles/:id/oauth/codex/device/:session_id`
 pub async fn poll_device_status(
     State(state): State<Arc<AppState>>,
-    Path((profile_id, session_id_str)): Path<(String, String)>,
+    AxumPath((profile_id, session_id_str)): AxumPath<(String, String)>,
 ) -> Result<Json<CodexDeviceStatusResponse>, (axum::http::StatusCode, String)> {
     let session_id = Uuid::parse_str(&session_id_str).map_err(|_| {
         (
@@ -672,7 +802,7 @@ pub async fn poll_device_status(
 /// DELETE `/api/admin/upstream/profiles/:id/oauth/codex/device/:session_id`
 pub async fn cancel_device_login(
     State(state): State<Arc<AppState>>,
-    Path((profile_id, session_id_str)): Path<(String, String)>,
+    AxumPath((profile_id, session_id_str)): AxumPath<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let session_id = Uuid::parse_str(&session_id_str).map_err(|_| {
         (
@@ -728,13 +858,14 @@ pub async fn list_codex_credentials(
         })
         .collect();
 
+
     Ok(Json(CodexCredentialListResponse { credentials }))
 }
 
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/import`
 pub async fn import_codex_credential(
     State(state): State<Arc<AppState>>,
-    Path(profile_id): Path<String>,
+    AxumPath(profile_id): AxumPath<String>,
     Json(req): Json<CodexImportRequest>,
 ) -> Result<Json<CodexImportResponse>, (axum::http::StatusCode, String)> {
     let store = FileTokenStore::new(&state.auth_dir);
@@ -758,7 +889,7 @@ pub async fn import_codex_credential(
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/import/bulk`
 pub async fn import_codex_bulk(
     State(state): State<Arc<AppState>>,
-    Path(profile_id): Path<String>,
+    AxumPath(profile_id): AxumPath<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<CodexBulkImportResponse>, (axum::http::StatusCode, String)> {
     let records = parse_codex_import_documents(&body).map_err(|e| {
@@ -767,6 +898,7 @@ pub async fn import_codex_bulk(
             format!("Invalid import JSON: {e}"),
         )
     })?;
+
 
     let mut imported = Vec::new();
     let mut errors = Vec::new();
@@ -796,6 +928,7 @@ pub async fn import_codex_bulk(
             format!("All imports failed: {}", errors[0].error),
         ));
     }
+
 
     Ok(Json(CodexBulkImportResponse {
         profile_id,

@@ -10,9 +10,10 @@ use axum::{
 use crab_control::{
     CircuitBreakerView, ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest,
     ProfileRoutingBackendView, ProfileRoutingView, PutUpstreamProfileKeysRequest,
-    PutUpstreamProfileRequest, RoutingKeyPoolSummary, UpstreamKeyModelsEntry,
-    UpstreamKeyView, UpstreamKeysPutMode, UpstreamProfileKeysModelsView,
-    UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
+    PutUpstreamProfileRequest, RoutingKeyPoolSummary, UpstreamKeyInput,
+    UpstreamKeyModelsEntry, UpstreamKeyView, UpstreamKeysPutMode,
+    UpstreamProfileKeysExport, UpstreamProfileKeysModelsView, UpstreamProfileKeysView,
+    UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
     parse_upstream_base_url, validate_upstream_key,
 };
 use crab_proxy::{
@@ -436,6 +437,8 @@ pub async fn put_upstream_profile(
         tls_sni: req.tls_sni.clone(),
         default_weight: req.default_weight.max(1),
         proxy_url: req.proxy_url.clone(),
+        fallback_profile_id: None,
+        fallback_max_retries: 2,
     };
 
     // Resolve key specs with fallback to existing/default/legacy pools instead of passing empty.
@@ -534,6 +537,35 @@ pub async fn get_profile_keys(
     }))
 }
 
+/// GET `/v1/upstream/profiles/{id}/keys/export` — admin-only secret export for persistence reconciliation.
+pub async fn export_profile_keys(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<UpstreamProfileKeysExport>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let id = id.trim();
+    let profile = state
+        .runtime
+        .profile(id)
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
+    let pool = profile.resolve_upstream_pool();
+    let keys: Vec<UpstreamKeyInput> = pool
+        .to_specs()
+        .into_iter()
+        .map(|s| UpstreamKeyInput {
+            id: s.id,
+            secret: s.secret,
+            enabled: s.enabled,
+            account_id: s.account_id,
+        })
+        .collect();
+    Ok(Json(UpstreamProfileKeysExport {
+        profile_id: id.to_string(),
+        keys,
+    }))
+}
+
 pub async fn put_profile_keys(
     State(state): State<ManagementState>,
     headers: HeaderMap,
@@ -568,12 +600,13 @@ pub async fn put_profile_keys(
             supported_models: Vec::new(),
         })
         .collect();
+    let persist_mode = req.mode;
     let profile = state
         .runtime
         .profile(id)
         .expect("profile existence verified above");
     let current = profile.resolve_upstream_pool();
-    let new_pool = match req.mode {
+    let new_pool = match persist_mode {
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
         UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
     };

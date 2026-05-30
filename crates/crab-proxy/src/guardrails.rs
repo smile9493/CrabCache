@@ -1,5 +1,4 @@
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::proxy::GatewayProxy;
 use http::HeaderMap;
 use pingora_proxy::Session;
@@ -289,16 +288,6 @@ pub async fn maybe_handle_cursor_bypass(
     if cursor_models.synthetic_models_enabled && !cursor_models.aliases.is_empty() {
         let body = crab_pipeline::synthetic_models_list_json(&cursor_models);
         let body_str = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
-        debug_agent_log(
-            "BYPASS",
-            "proxy.rs:request_filter",
-            "cursor model-list bypass",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "synthetic_models_enabled": cursor_models.synthetic_models_enabled,
-                "alias_count": cursor_models.aliases.len(),
-            }),
-        );
         return Ok(crate::send_helpers::send_json_ok(session, body_str.as_bytes()).await);
     }
     Ok(false)

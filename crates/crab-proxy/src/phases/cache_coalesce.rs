@@ -5,7 +5,6 @@
 use crate::cache_helpers::cache_entry_matches_stream_mode;
 use crate::cache_response::send_cached_response;
 use crate::context::GatewayContext;
-use crate::debug_agent_log;
 use crate::error_jsons::coalesce_leader_failed_error_json;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
@@ -93,27 +92,6 @@ pub(crate) async fn run(
                     tier = ?tier,
                     "Cache hit, returning cached response"
                 );
-                // #region agent log
-                let req_hash_short = ctx
-                    .req_hash
-                    .as_deref()
-                    .map(|h| h.chars().take(8).collect::<String>());
-                debug_agent_log(
-                    "H4",
-                    "proxy.rs:request_filter",
-                    "exact cache hit before send_cached_response",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "req_hash": req_hash_short,
-                        "tier": tier.as_str(),
-                        "is_streaming": ctx.is_streaming,
-                        "entry_is_stream": entry.is_stream,
-                        "response_body_len": entry.response_body.len(),
-                        "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
-                        "elapsed_ms": ctx.request_start.elapsed().as_millis(),
-                    }),
-                );
-                // #endregion
 
                 let sent_ok = send_cached_response(
                     session,
@@ -125,19 +103,6 @@ pub(crate) async fn run(
                 )
                 .await;
 
-                // #region agent log
-                debug_agent_log(
-                    "H5",
-                    "proxy.rs:request_filter",
-                    "send_cached_response result",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "req_hash": req_hash_short,
-                        "sent_ok": sent_ok,
-                        "tier": tier.as_str(),
-                    }),
-                );
-                // #endregion
 
                 if sent_ok {
                     ctx.cache_tier = Some(tier);
@@ -178,32 +143,7 @@ pub(crate) async fn run(
                     tier = ?tier,
                     "Hollow cache entry (no client-visible content); treating as miss"
                 );
-                // #region agent log
-                debug_agent_log(
-                    "H1",
-                    "proxy.rs:request_filter",
-                    "hollow cache fallthrough to upstream",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "req_hash": req_hash_short,
-                        "tier": tier.as_str(),
-                    }),
-                );
-                // #endregion
             } else {
-                // #region agent log
-                debug_agent_log(
-                    "H2",
-                    "proxy.rs:request_filter",
-                    "cache hit stream mode mismatch",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "is_streaming": ctx.is_streaming,
-                        "entry_is_stream": entry.is_stream,
-                        "tier": tier.as_str(),
-                    }),
-                );
-                // #endregion
                 debug!(
                     request_id = %ctx.request_id,
                     cache_key = %cache_key,
@@ -267,21 +207,6 @@ pub(crate) async fn run(
 
         match proxy.state.coalescer.acquire(&cache_key).await {
             Ok(guard) => {
-                // #region agent log
-                let cache_key_short: String = cache_key.chars().take(8).collect();
-                debug_agent_log(
-                    "H-E",
-                    "proxy.rs:request_filter",
-                    "coalesce acquire",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
-                        "is_leader": guard.is_leader(),
-                        "leader_failed": guard.leader_failed(),
-                        "cache_key_prefix": cache_key_short,
-                    }),
-                );
-                // #endregion
                 if !guard.is_leader() {
                     ctx.is_coalesced_follower = true;
 
@@ -305,20 +230,6 @@ pub(crate) async fn run(
                             );
                             global_metrics().record_coalesce_follower("hit");
 
-                            // #region agent log
-                            debug_agent_log(
-                                "H-A",
-                                "proxy.rs:request_filter",
-                                "coalesce follower cache replay",
-                                serde_json::json!({
-                                    "request_id": ctx.request_id,
-                                    "req_hash": ctx.req_hash.as_deref().map(|h| h.chars().take(8).collect::<String>()),
-                                    "tier": tier.as_str(),
-                                    "response_body_len": entry.response_body.len(),
-                                    "sse_body_len": entry.sse_body.as_ref().map(|s| s.len()),
-                                }),
-                            );
-                            // #endregion
 
                             let sent_ok = send_cached_response(
                                 session,
@@ -402,17 +313,6 @@ pub(crate) async fn run(
                         }
                         return Ok(CachePhaseOutcome::Return(true));
                     } else {
-                        // #region agent log
-                        debug_agent_log(
-                            "H-F",
-                            "proxy.rs:request_filter",
-                            "follower no cache entry, falling through to upstream",
-                            serde_json::json!({
-                                "request_id": ctx.request_id,
-                                "elapsed_since_start_ms": ctx.request_start.elapsed().as_millis(),
-                            }),
-                        );
-                        // #endregion
                         warn!(
                             request_id = %ctx.request_id,
                             cache_key = %cache_key,

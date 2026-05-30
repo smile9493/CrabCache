@@ -752,14 +752,15 @@ mod tests {
     #[test]
     fn explicit_account_id_is_preserved() {
         let pool = UpstreamKeyPool::new(
-            vec![UpstreamKeySpec {
-                id: "my-key".into(),
-                secret: "sk-something".into(),
-                enabled: true,
-                account_id: "my-custom-account".into(),
-                supported_models: Vec::new(),
-            }],
-            60,
+            vec![
+                UpstreamKeySpec {
+                    id: "my-key".into(),
+                    secret: "sk-something".into(),
+                    enabled: true,
+                    account_id: "my-custom-account".into(),
+                    supported_models: Vec::new(),
+                }],
+            60, 0,
         );
         let statuses = pool.list_status();
         assert_eq!(statuses[0].account_id, "my-custom-account");
@@ -769,7 +770,7 @@ mod tests {
     fn round_robin_prefers_lower_inflight() {
         let pool = UpstreamKeyPool::from_secrets(
             vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
-            60,
+            60, 0,
         );
         let g1 = pool.acquire().unwrap();
         assert_eq!(g1.key_id(), "key-1");
@@ -782,7 +783,7 @@ mod tests {
 
     #[test]
     fn cooldown_skips_key() {
-        let pool = UpstreamKeyPool::from_secrets(vec!["sk-onlykey123456".into()], 60);
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-onlykey123456".into()], 60, 0);
         pool.report_rate_limited("key-1");
         assert!(pool.acquire().is_none());
         assert_eq!(pool.available_count(), 0);
@@ -790,13 +791,13 @@ mod tests {
 
     #[test]
     fn empty_pool_returns_none() {
-        let pool = UpstreamKeyPool::new(vec![], 60);
+        let pool = UpstreamKeyPool::new(vec![], 60, 0);
         assert!(pool.acquire().is_none());
     }
 
     #[test]
     fn merge_append_dedupes_secrets() {
-        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60);
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
         let merged = UpstreamKeyPool::merge_append(
             &pool,
             vec![UpstreamKeySpec {
@@ -823,7 +824,7 @@ mod tests {
 
     #[test]
     fn bearer_secret_is_upstream_not_client_token() {
-        let pool = UpstreamKeyPool::from_secrets(vec!["sk-deepseek-upstream-secret".into()], 60);
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-deepseek-upstream-secret".into()], 60, 0);
         let guard = pool.acquire().expect("key");
         assert_eq!(guard.bearer_secret(), "sk-deepseek-upstream-secret");
         assert!(!guard.bearer_secret().starts_with("sk-cc-"));
@@ -848,7 +849,7 @@ mod tests {
                     supported_models: Vec::new(),
                 },
             ],
-            60,
+            60, 0,
         );
         let _g = pool.acquire().unwrap();
         assert!(UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-a1").is_none());
@@ -873,7 +874,7 @@ mod tests {
                     supported_models: Vec::new(),
                 },
             ],
-            60,
+            60, 0,
         );
         let g1 = pool.acquire().unwrap();
         assert_eq!(g1.key_id(), "key-a");
@@ -887,7 +888,7 @@ mod tests {
         // from_secrets now auto-assigns unique account_ids, so rotation works.
         let pool = UpstreamKeyPool::from_secrets(
             vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
-            60,
+            60, 0,
         );
         let g1 = pool.acquire().unwrap();
         assert_eq!(g1.key_id(), "key-1");
@@ -903,7 +904,7 @@ mod tests {
 
     #[test]
     fn diagnose_empty_pool() {
-        let pool = UpstreamKeyPool::new(vec![], 60);
+        let pool = UpstreamKeyPool::new(vec![], 60, 0);
         assert_eq!(pool.diagnose_acquire_failure(), PoolAcquireFailure::Empty);
     }
 
@@ -926,7 +927,7 @@ mod tests {
                     supported_models: Vec::new(),
                 },
             ],
-            60,
+            60, 0,
         );
         assert_eq!(
             pool.diagnose_acquire_failure(),
@@ -936,7 +937,7 @@ mod tests {
 
     #[test]
     fn diagnose_all_in_cooldown() {
-        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 120);
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 120, 0);
         pool.report_rate_limited("key-1");
         let failure = pool.diagnose_acquire_failure();
         match failure {
@@ -966,7 +967,7 @@ mod tests {
                     supported_models: Vec::new(),
                 },
             ],
-            60,
+            60, 0,
         );
         pool.report_rate_limited("k2");
         // One disabled, one in cooldown → AllInCooldown (all enabled keys are cooling down).
@@ -980,7 +981,7 @@ mod tests {
 
     #[test]
     fn merge_append_dedupes_ids() {
-        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60);
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
         let merged = UpstreamKeyPool::merge_append(
             &pool,
             vec![
@@ -1022,7 +1023,7 @@ mod tests {
     fn remove_key_drops_slot() {
         let pool = UpstreamKeyPool::from_secrets(
             vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
-            60,
+            60, 0,
         );
         let updated = UpstreamKeyPool::remove_key(&pool, "key-1").expect("removed");
         assert_eq!(updated.len(), 1);
@@ -1049,7 +1050,7 @@ mod tests {
                     supported_models: Vec::new(),
                 },
             ],
-            60,
+            60, 0,
         );
         assert_eq!(pool.len(), 2);
         let ids: Vec<String> = pool.list_status().into_iter().map(|s| s.id).collect();

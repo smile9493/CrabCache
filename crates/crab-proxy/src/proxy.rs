@@ -6,7 +6,6 @@ use crate::cache_helpers::{
 use crate::cache_response::send_cached_response;
 use crate::connection_helpers::apply_connection_options;
 use crate::context::{GatewayContext, GatewayState, ReasoningConfig};
-use crate::debug_agent_log;
 use crate::metrics_helpers::timeline_stamp;
 use crate::runtime::RuntimeConfig;
 use crab_metrics::{CacheTier, global_metrics};
@@ -326,39 +325,11 @@ impl GatewayProxy {
                         "Codex upstream key selected for model"
                     );
                 }
-                // #region agent log
-                debug_agent_log(
-                    "UPKEY1",
-                    "proxy.rs:try_acquire_upstream_key",
-                    "acquired upstream key guard",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "upstream_profile": ctx.upstream_profile_id,
-                        "pool_total": total,
-                        "pool_available_before": available_before,
-                        "pool_available_after": pool.available_count(),
-                        "key_id": ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                    }),
-                );
-                // #endregion
                 true
             }
             None => {
                 global_metrics().record_rejected("upstream_key_exhausted");
                 global_metrics().record_rejection_by_source("upstream");
-                // #region agent log
-                debug_agent_log(
-                    "UPKEY2",
-                    "proxy.rs:try_acquire_upstream_key",
-                    "failed to acquire upstream key guard",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "upstream_profile": ctx.upstream_profile_id,
-                        "pool_total": total,
-                        "pool_available": available_before,
-                    }),
-                );
-                // #endregion
                 false
             }
         }
@@ -605,6 +576,47 @@ impl ProxyHttp for GatewayProxy {
         ctx: &mut Self::CTX,
     ) {
         crate::phases::logging::run(self, session, error, ctx).await
+    }
+
+    /// Synthesize `response.completed` when MiMo/upstream aborts mid-stream (before Pingora EOS).
+    async fn finalize_aborted_upstream_stream(
+        &self,
+        session: &Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>> {
+        if session.response_written().is_none() {
+            return Ok(None);
+        }
+        Ok(
+            crate::responses_wire::build_graceful_responses_stream_tail(
+                ctx,
+                self.state.responses_chain_store.as_ref(),
+            )
+            .map(bytes::Bytes::from),
+        )
+    }
+
+    /// Prefill keepalive: send Responses bootstrap right after upstream 200 headers.
+    async fn initial_downstream_response_body(
+        &self,
+        _session: &Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>> {
+        Ok(
+            crate::responses_wire::take_early_responses_wire_bootstrap(ctx)
+                .map(bytes::Bytes::from),
+        )
+    }
+
+    /// Idle upstream: push `response.in_progress` heartbeats so Codex does not drop the SSE socket.
+    async fn poll_downstream_stream_keepalive(
+        &self,
+        _session: &Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>> {
+        Ok(
+            crate::responses_wire::poll_responses_wire_keepalive(ctx).map(bytes::Bytes::from),
+        )
     }
 }
 

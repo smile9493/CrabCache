@@ -130,6 +130,42 @@ pub trait ProxyHttp {
         session.is_body_done()
     }
 
+    /// After upstream response headers reach the client, flush prefill keepalive SSE (CrabCache).
+    async fn initial_downstream_response_body(
+        &self,
+        _session: &Session,
+        _ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        Ok(None)
+    }
+
+    /// While upstream is idle mid-stream, push Responses SSE heartbeats to the client.
+    async fn poll_downstream_stream_keepalive(
+        &self,
+        _session: &Session,
+        _ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        Ok(None)
+    }
+
+    /// When upstream aborts before a normal EOS, append a graceful Responses SSE tail (CrabCache).
+    async fn finalize_aborted_upstream_stream(
+        &self,
+        _session: &Session,
+        _ctx: &mut Self::CTX,
+    ) -> Result<Option<bytes::Bytes>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        Ok(None)
+    }
+
     /// Handle the incoming request body.
     ///
     /// This function will be called every time a piece of request body is received. The `body` is

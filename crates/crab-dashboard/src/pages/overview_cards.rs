@@ -332,6 +332,7 @@ pub fn OverviewCardGrid(
                                 // Section: Key Metrics
                                 <div id="ov-hero" class="overview-section-anchor">
                                     <div class="overview-cards-hero">
+                                    <div class="bento-h1">
                                     <OverviewMetricCard
                                         label=t.overview_health_title().to_string()
                                         headline=health_headline
@@ -348,6 +349,8 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
+                                    </div>
+                                    <div class="bento-h2">
                                     <OverviewMetricCard
                                         label=t.overview_health_upstream_keys().to_string()
                                         headline=keys_headline
@@ -365,6 +368,8 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
+                                    </div>
+                                    <div class="bento-hit">
                                     <OverviewMetricCard
                                         label=t.overview_hit_rate_5m().to_string()
                                         headline=hit_headline
@@ -395,6 +400,8 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
+                                    </div>
+                                    <div class="bento-h3">
                                     <OverviewMetricCard
                                         label=t.overview_qps_5m().to_string()
                                         headline=qps_headline
@@ -436,6 +443,8 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
+                                    </div>
+                                    <div class="bento-b1">
                                     <OverviewMetricCard
                                         label=t.overview_cost_saved_5m().to_string()
                                         headline=cost_headline
@@ -452,6 +461,8 @@ pub fn OverviewCardGrid(
                                             view! { <CostSavingsSection ops=ops_cost.clone() /> }.into_any()
                                         }
                                     />
+                                    </div>
+                                    <div class="bento-b2">
                                     <OverviewMetricCard
                                         label=t.overview_error_rate_title().to_string()
                                         headline=err_headline
@@ -500,33 +511,129 @@ pub fn OverviewCardGrid(
 
                                 // Section: Details
                                 <div id="ov-detail" class="overview-section-anchor">
+                                    <div class="overview-detail-zone">
+                                    <div class="overview-detail-zone-label">Performance</div>
                                     <div class="overview-cards-detail">
-                                    <OverviewMetricCard
-                                        label=t.overview_token_stats().to_string()
-                                        headline=token_headline
-                                        open=open_token
-                                        on_open=on_open_token
-                                        preview=move || {
-                                            let total = metrics_token.cache_hit_tokens + metrics_token.cache_miss_tokens;
-                                            let pct = if total > 0 {
-                                                metrics_token.cache_hit_tokens as f64 / total as f64 * 100.0
-                                            } else {
-                                                0.0
-                                            };
-                                            let v = Signal::derive(move || pct);
-                                            view! {
-                                                <ProgressBar label="" value=v max=100.0 />
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! {
-                                                <div class="space-y-4">
-                                                    <TokenStats metrics=metrics_token.clone() prefix=prefix_token.clone() />
-                                                    <PrefixCacheCard prefix=prefix_card.clone() />
-                                                </div>
-                                            }.into_any()
-                                        }
-                                    />
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_latency_title().to_string()
+                                            headline=latency_headline
+                                            subtitle=t.overview_latency_upstream().to_string()
+                                            open=open_latency
+                                            on_open=on_open_latency
+                                            preview=move || {
+                                                let stages = [
+                                                    metrics_latency.latency_l0_ms,
+                                                    metrics_latency.latency_l1_ms,
+                                                    metrics_latency.latency_l2_ms,
+                                                    metrics_latency.latency_upstream_ms,
+                                                ];
+                                                let max = stages.iter().copied().fold(1.0_f64, f64::max);
+                                                view! {
+                                                    <div class="flex flex-col gap-0.5 w-full">
+                                                        {stages.into_iter().enumerate().map(|(i, v)| {
+                                                            let pct = v / max * 100.0;
+                                                            let color = match i {
+                                                                0 => "var(--cc-tier-l0)",
+                                                                1 => "var(--cc-tier-l1)",
+                                                                2 => "var(--cc-tier-l2)",
+                                                                _ => "var(--cc-warning)",
+                                                            };
+                                                            view! {
+                                                                <div class="h-1 rounded-full bg-theme-tertiary overflow-hidden">
+                                                                    <div class="h-full" style=format!("width:{pct}%;background:{color}")></div>
+                                                                </div>
+                                                            }
+                                                        }).collect_view()}
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! { <LatencySection metrics=metrics_latency.clone() /> }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_token_stats().to_string()
+                                            headline=token_headline
+                                            open=open_token
+                                            on_open=on_open_token
+                                            preview=move || {
+                                                let total = metrics_token.cache_hit_tokens + metrics_token.cache_miss_tokens;
+                                                let pct = if total > 0 {
+                                                    metrics_token.cache_hit_tokens as f64 / total as f64 * 100.0
+                                                } else {
+                                                    0.0
+                                                };
+                                                let v = Signal::derive(move || pct);
+                                                view! {
+                                                    <ProgressBar label="" value=v max=100.0 />
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! {
+                                                    <div class="space-y-4">
+                                                        <TokenStats metrics=metrics_token.clone() prefix=prefix_token.clone() />
+                                                        <PrefixCacheCard prefix=prefix_card.clone() />
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_consumer_table_title().to_string()
+                                            headline=top_consumer
+                                            open=open_consumer
+                                            on_open=on_open_consumer
+                                            preview=move || {
+                                                view! {
+                                                    <HorizontalBarChart
+                                                        labels=consumer_labels
+                                                        values=consumer_values
+                                                        width=200
+                                                        height_px=48
+                                                        empty_message=t.overview_no_data()
+                                                    />
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! { <ConsumerHitTable metrics=metrics_consumer.clone() /> }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_domain_card_title().to_string()
+                                            headline=top_domain
+                                            open=open_domain
+                                            on_open=on_open_domain
+                                            preview=move || {
+                                                view! {
+                                                    <span class="text-xs font-mono text-accent">
+                                                        {t.overview_domain_hit_fmt(top_domain_hit_preview)}
+                                                    </span>
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                let cb = Callback::new(move |domain: String| {
+                                                    selected_domain.set(Some(domain));
+                                                });
+                                                view! {
+                                                    <DomainOverviewTableInline
+                                                        metrics=metrics_domain.clone()
+                                                        on_domain_click=cb
+                                                    />
+                                                }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    </div>
+                                    </div>
+                                    <div class="overview-detail-zone">
+                                    <div class="overview-detail-zone-label">Pipeline</div>
+                                    <div class="overview-cards-detail">
                                     <OverviewMetricCard
                                         label=t.overview_coalescing_title().to_string()
                                         headline=coalesce_headline
@@ -573,43 +680,6 @@ pub fn OverviewCardGrid(
                                         }
                                     />
                                     <OverviewMetricCard
-                                        label=t.overview_latency_title().to_string()
-                                        headline=latency_headline
-                                        subtitle=t.overview_latency_upstream().to_string()
-                                        open=open_latency
-                                        on_open=on_open_latency
-                                        preview=move || {
-                                            let stages = [
-                                                metrics_latency.latency_l0_ms,
-                                                metrics_latency.latency_l1_ms,
-                                                metrics_latency.latency_l2_ms,
-                                                metrics_latency.latency_upstream_ms,
-                                            ];
-                                            let max = stages.iter().copied().fold(1.0_f64, f64::max);
-                                            view! {
-                                                <div class="flex flex-col gap-0.5 w-full">
-                                                    {stages.into_iter().enumerate().map(|(i, v)| {
-                                                        let pct = v / max * 100.0;
-                                                        let color = match i {
-                                                            0 => "var(--cc-tier-l0)",
-                                                            1 => "var(--cc-tier-l1)",
-                                                            2 => "var(--cc-tier-l2)",
-                                                            _ => "var(--cc-warning)",
-                                                        };
-                                                        view! {
-                                                            <div class="h-1 rounded-full bg-theme-tertiary overflow-hidden">
-                                                                <div class="h-full" style=format!("width:{pct}%;background:{color}")></div>
-                                                            </div>
-                                                        }
-                                                    }).collect_view()}
-                                                </div>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <LatencySection metrics=metrics_latency.clone() /> }.into_any()
-                                        }
-                                    />
-                                    <OverviewMetricCard
                                         label=t.overview_ops_title().to_string()
                                         headline=ops_headline
                                         subtitle=t.overview_ops_ttft().to_string()
@@ -627,109 +697,83 @@ pub fn OverviewCardGrid(
                                             view! { <OpsMetricsRow ops=ops.clone() /> }.into_any()
                                         }
                                     />
-                                    <OverviewMetricCard
-                                        label=t.overview_consumer_table_title().to_string()
-                                        headline=top_consumer
-                                        open=open_consumer
-                                        on_open=on_open_consumer
-                                        preview=move || {
-                                            view! {
-                                                <HorizontalBarChart
-                                                    labels=consumer_labels
-                                                    values=consumer_values
-                                                    width=200
-                                                    height_px=48
-                                                    empty_message=t.overview_no_data()
-                                                />
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <ConsumerHitTable metrics=metrics_consumer.clone() /> }.into_any()
-                                        }
-                                    />
-                                    <OverviewMetricCard
-                                        label=t.overview_domain_card_title().to_string()
-                                        headline=top_domain
-                                        open=open_domain
-                                        on_open=on_open_domain
-                                        preview=move || {
-                                            view! {
-                                                <span class="text-xs font-mono text-accent">
-                                                    {t.overview_domain_hit_fmt(top_domain_hit_preview)}
-                                                </span>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            let cb = Callback::new(move |domain: String| {
-                                                selected_domain.set(Some(domain));
-                                            });
-                                            view! {
-                                                <DomainOverviewTableInline
-                                                    metrics=metrics_domain.clone()
-                                                    on_domain_click=cb
-                                                />
-                                            }.into_any()
-                                        }
-                                    />
-                                    <OverviewMetricCard
-                                        label=t.overview_prefix_cache_title().to_string()
-                                        headline=prefix_headline
-                                        open=open_prefix
-                                        on_open=on_open_prefix
-                                        preview=move || {
-                                            let total = prefix.hit_tokens + prefix.miss_tokens;
-                                            let pct = if total > 0 {
-                                                prefix.hit_tokens as f64 / total as f64 * 100.0
-                                            } else {
-                                                0.0
-                                            };
-                                            let v = Signal::derive(move || pct);
-                                            view! {
-                                                <ProgressBar label="" value=v max=100.0 />
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <PrefixCacheCard prefix=prefix.clone() /> }.into_any()
-                                        }
-                                    />
-                                    <OverviewMetricCard
-                                        label=t.overview_prefix_health_title().to_string()
-                                        headline=prefix_break_headline
-                                        subtitle=t.overview_prefix_breaks_subtitle().to_string()
-                                        open=open_prefix_health
-                                        on_open=on_open_prefix_health
-                                        preview=move || {
-                                            let warn = ops_prefix.prefix_break_total > 0;
-                                            view! {
-                                                <span class=if warn { "text-warning text-xs" } else { "text-theme-muted text-xs" }>
-                                                    {if warn {
-                                                        t.overview_prefix_breaks_detected()
-                                                    } else {
-                                                        t.overview_prefix_breaks_stable()
-                                                    }}
-                                                </span>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <PrefixHealthCard ops=ops_prefix.clone() /> }.into_any()
-                                        }
-                                    />
-                                    <OverviewMetricCard
-                                        label=t.infra_title().to_string()
-                                        headline=infra_headline
-                                        subtitle=t.sidebar_infra().to_string()
-                                        open=open_infra
-                                        on_open=on_open_infra
-                                        preview=move || {
-                                            view! {
-                                                <span class="text-xs text-theme-muted">{t.overview_card_infra_hint()}</span>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <InfraOverviewModule embedded=true /> }.into_any()
-                                        }
-                                    />
-                                </div>
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_prefix_cache_title().to_string()
+                                            headline=prefix_headline
+                                            open=open_prefix
+                                            on_open=on_open_prefix
+                                            preview=move || {
+                                                let total = prefix.hit_tokens + prefix.miss_tokens;
+                                                let pct = if total > 0 {
+                                                    prefix.hit_tokens as f64 / total as f64 * 100.0
+                                                } else {
+                                                    0.0
+                                                };
+                                                let v = Signal::derive(move || pct);
+                                                view! {
+                                                    <ProgressBar label="" value=v max=100.0 />
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! { <PrefixCacheCard prefix=prefix.clone() /> }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    </div>
+                                    </div>
+                                    <div class="overview-detail-zone">
+                                    <div class="overview-detail-zone-label">Prefix</div>
+                                    <div class="overview-cards-detail">
+                                    <div class="detail-wide">
+                                        <OverviewMetricCard
+                                            label=t.overview_prefix_health_title().to_string()
+                                            headline=prefix_break_headline
+                                            subtitle=t.overview_prefix_breaks_subtitle().to_string()
+                                            open=open_prefix_health
+                                            on_open=on_open_prefix_health
+                                            preview=move || {
+                                                let warn = ops_prefix.prefix_break_total > 0;
+                                                view! {
+                                                    <span class=if warn { "text-warning text-xs" } else { "text-theme-muted text-xs" }>
+                                                        {if warn {
+                                                            t.overview_prefix_breaks_detected()
+                                                        } else {
+                                                            t.overview_prefix_breaks_stable()
+                                                        }}
+                                                    </span>
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! { <PrefixHealthCard ops=ops_prefix.clone() /> }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    </div>
+                                    </div>
+                                    <div class="overview-detail-zone">
+                                    <div class="overview-detail-zone-label">Infrastructure</div>
+                                    <div class="overview-cards-detail">
+                                    <div class="detail-full">
+                                        <OverviewMetricCard
+                                            label=t.infra_title().to_string()
+                                            headline=infra_headline
+                                            subtitle=t.sidebar_infra().to_string()
+                                            open=open_infra
+                                            on_open=on_open_infra
+                                            preview=move || {
+                                                view! {
+                                                    <span class="text-xs text-theme-muted">{t.overview_card_infra_hint()}</span>
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! { <InfraOverviewModule embedded=true /> }.into_any()
+                                            }
+                                        />
+                                    </div>
+                                    </div>
+                                    </div>
+                                    </div>
                                 </div> // close ov-detail
                                 <DomainDetailDrawer domain=selected_domain />
                                 {move || {
