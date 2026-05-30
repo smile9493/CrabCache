@@ -972,6 +972,10 @@ body {
   max-height: 520px;
   overflow-y: auto;
 }
+/* Specificity boost: beat .glass-card { overflow: visible } (line ~1413) */
+.glass-card.live-detail-card {
+  overflow-y: auto;
+}
 /* Stat bar: compact 1-row strip below config row */
 .live-stat-bar {
   display: grid;
