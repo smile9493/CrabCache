@@ -10,6 +10,7 @@ pub mod page_visible;
 pub mod pages;
 pub mod table_density;
 pub mod theme;
+pub mod time_utils;
 pub mod types;
 pub mod view_state;
 

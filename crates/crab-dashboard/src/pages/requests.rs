@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::components::ui::*;
 use crate::locale::use_translations;
+use crate::pages::audit::AuditLogPage;
 use crate::pages::capture::CapturePage;
 use crate::pages::composition::CompositionPage;
 use crate::pages::logs::LogsPage;
@@ -16,6 +17,7 @@ pub fn RequestsPage() -> impl IntoView {
         t.tab_insights().to_string(),
         t.tab_capture().to_string(),
         t.tab_log_manage().to_string(),
+        t.tab_audit().to_string(),
     ];
 
     init_tab_from_query(
@@ -26,6 +28,7 @@ pub fn RequestsPage() -> impl IntoView {
             ("composition", 1),
             ("capture", 2),
             ("manage", 3),
+            ("audit", 4),
         ],
     );
 
@@ -37,7 +40,8 @@ pub fn RequestsPage() -> impl IntoView {
                     0 => view! { <LogsPage /> }.into_any(),
                     1 => view! { <CompositionPage /> }.into_any(),
                     2 => view! { <CapturePage /> }.into_any(),
-                    _ => view! { <LogsManagePage /> }.into_any(),
+                    3 => view! { <LogsManagePage /> }.into_any(),
+                    _ => view! { <AuditLogPage /> }.into_any(),
                 }}
             </div>
         </div>

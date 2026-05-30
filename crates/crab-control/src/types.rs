@@ -462,6 +462,70 @@ pub struct ConnectionRuntimeView {
     /// Optional TLS curve override in OpenSSL group list syntax. Empty string uses defaults.
     #[serde(default)]
     pub upstream_tls_curves: String,
+    /// Max seconds waiting for upstream response body bytes (0 = no limit).
+    #[serde(default = "default_upstream_request_timeout_secs")]
+    pub upstream_request_timeout_secs: u64,
+    /// Max seconds per write when sending large request bodies upstream.
+    #[serde(default = "default_upstream_write_timeout_secs")]
+    pub upstream_write_timeout_secs: u64,
+    /// TCP+TLS connect timeout to upstream (seconds).
+    #[serde(default = "default_upstream_connection_timeout_secs")]
+    pub upstream_connection_timeout_secs: u64,
+}
+
+fn default_upstream_request_timeout_secs() -> u64 { 300 }
+fn default_upstream_write_timeout_secs() -> u64 { 300 }
+fn default_upstream_connection_timeout_secs() -> u64 { 60 }
+
+/// Hot-reloadable features config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeaturesConfigView {
+    pub prefix_aware_cache: bool,
+    pub streaming_body_forward: bool,
+    pub connection_prewarm: bool,
+    pub affinity_prompt_cache_feedback: bool,
+    pub delta_cache: bool,
+    pub io_uring_backend: bool,
+    pub wasm_filters: bool,
+    pub mimo_context_compression: bool,
+    pub mimo_compression_threshold: usize,
+    pub upstream_request_gzip: bool,
+    pub upstream_request_gzip_min_bytes: usize,
+    pub mimo_retire_prefix_messages: bool,
+    pub mimo_keep_recent_turns: usize,
+    pub mimo_session_store: bool,
+    pub mimo_session_store_ttl_secs: u64,
+    pub mimo_session_store_max_messages: usize,
+    pub passthrough_prefix_bytes: usize,
+}
+
+/// Hot-reloadable pricing config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricingConfigView {
+    pub default_input_price_per_million: f64,
+    pub default_output_price_per_million: f64,
+    /// Keyed by model name: e.g. `{ "deepseek-chat": { "input": 0.27, "output": 1.10 } }`.
+    #[serde(default)]
+    pub model_overrides: std::collections::HashMap<String, ModelPricingView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPricingView {
+    pub input: f64,
+    pub output: f64,
+}
+
+/// Runtime limits config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LimitsConfigView {
+    /// Max chat completion request body in bytes.
+    pub max_request_body_bytes: usize,
+    /// Max concurrent in-flight chat requests.
+    pub max_concurrent_requests: usize,
+    /// Allow Legacy api_key as client Bearer auth.
+    pub legacy_api_key_as_client_auth: bool,
+    /// CORS response headers on all paths.
+    pub cors_enabled: bool,
 }
 
 /// Hot-reloadable L2 semantic cache settings (Management API).

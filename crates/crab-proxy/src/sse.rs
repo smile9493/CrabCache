@@ -11,31 +11,48 @@ impl SseEvent<'_> {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
-        if self.event == Some("error") {
-            return true;
-        }
         let data = self.data.trim();
         if data == "[DONE]" || data.len() < 10 {
             return false;
         }
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-            if val.get("error").is_some() {
-                let msg = val
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("");
-                let msg_lower = msg.to_lowercase();
-                return msg_lower.contains("rate limit")
-                    || msg_lower.contains("rate_limit")
-                    || msg_lower.contains("too many requests")
-                    || msg_lower.contains("quota")
-                    || msg_lower.contains("capacity");
+        let val: serde_json::Value = match serde_json::from_str(data) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let Some(error) = val.get("error") else {
+            return false;
+        };
+        // Check the structured `type` / `code` fields first (most reliable).
+        if let Some(err_type) = error.get("type").and_then(|t| t.as_str()) {
+            let t = err_type.to_lowercase();
+            if t.contains("rate_limit") || t == "insufficient_quota" {
+                return true;
             }
+        }
+        if let Some(code) = error.get("code").and_then(|c| c.as_str()) {
+            let c = code.to_lowercase();
+            if c.contains("rate_limit") {
+                return true;
+            }
+        }
+        // Fall back to message heuristics (narrower than before — no broad "quota"/"capacity").
+        if let Some(msg) = error.get("message").and_then(|m| m.as_str()) {
+            let m = msg.to_lowercase();
+            return m.contains("rate limit")
+                || m.contains("rate_limit")
+                || m.contains("too many requests");
         }
         false
     }
 
+    /// Extract usage data from an SSE event.
+    ///
+    /// Supports multiple upstream response formats:
+    /// - `{"usage": {"prompt_tokens": N, "completion_tokens": N, ...}}` (OpenAI legacy)
+    /// - `{"usage": {"input_tokens": N, "output_tokens": N, ...}}` (OpenAI newer / MiMo)
+    /// - Mixed: both pairs present; prefer `prompt_tokens`/`completion_tokens` if non-zero.
+    ///
+    /// Returns `None` only when no usage data is present at all (e.g. intermediate SSE chunks).
     pub fn parse_usage(&self) -> Option<UsageData> {
         if self.data.trim() == "[DONE]" {
             return None;
@@ -43,11 +60,40 @@ impl SseEvent<'_> {
 
         let value: serde_json::Value = serde_json::from_str(self.data).ok()?;
 
+        // Top-level usage object.
         let usage = value.get("usage")?;
 
+        // prompt_tokens / completion_tokens (OpenAI canonical).
+        let prompt = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let completion = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // input_tokens / output_tokens (OpenAI Responses API / MiMo).
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // Prefer canonical names; fall back to alternatives.
+        let prompt_tokens = if prompt > 0 { prompt } else { input };
+        let completion_tokens = if completion > 0 { completion } else { output };
+
+        if prompt_tokens == 0 && completion_tokens == 0 {
+            return None;
+        }
+
         Some(UsageData {
-            prompt_tokens: usage.get("prompt_tokens")?.as_u64()?,
-            completion_tokens: usage.get("completion_tokens")?.as_u64()?,
+            prompt_tokens,
+            completion_tokens,
             prompt_cache_hit_tokens: usage
                 .get("prompt_cache_hit_tokens")
                 .and_then(|v| v.as_u64())
@@ -249,5 +295,70 @@ mod tests {
             data: "[DONE]",
         };
         assert!(!event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_parse_usage_mimo_input_output_tokens() {
+        // MiMo uses input_tokens/output_tokens (OpenAI Responses API style).
+        let event = SseEvent {
+            event: None,
+            data: r#"{"usage":{"input_tokens":200,"output_tokens":80,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0}}"#,
+        };
+        let usage = event.parse_usage().unwrap();
+        assert_eq!(usage.prompt_tokens, 200);
+        assert_eq!(usage.completion_tokens, 80);
+    }
+
+    #[test]
+    fn test_parse_usage_prefers_canonical_over_alternative() {
+        // When both are present, prefer prompt_tokens/completion_tokens.
+        let event = SseEvent {
+            event: None,
+            data: r#"{"usage":{"prompt_tokens":100,"completion_tokens":50,"input_tokens":999,"output_tokens":999}}"#,
+        };
+        let usage = event.parse_usage().unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+    }
+
+    #[test]
+    fn test_parse_usage_mixed_canonical_zero_falls_back() {
+        // If prompt_tokens=0 but input_tokens>0, fall back.
+        let event = SseEvent {
+            event: None,
+            data: r#"{"usage":{"prompt_tokens":0,"completion_tokens":0,"input_tokens":150,"output_tokens":60}}"#,
+        };
+        let usage = event.parse_usage().unwrap();
+        assert_eq!(usage.prompt_tokens, 150);
+        assert_eq!(usage.completion_tokens, 60);
+    }
+
+    #[test]
+    fn test_parse_usage_no_usage_returns_none() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"choices":[{"delta":{"content":"hello"}}]}"#,
+        };
+        assert!(event.parse_usage().is_none());
+    }
+
+    #[test]
+    fn test_parse_usage_all_zeros_returns_none() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"usage":{"prompt_tokens":0,"completion_tokens":0,"input_tokens":0,"output_tokens":0}}"#,
+        };
+        assert!(event.parse_usage().is_none());
+    }
+
+    #[test]
+    fn test_parse_usage_mimo_total_only() {
+        // Some APIs only return total_tokens; no prompt/completion breakdown.
+        // Should return None since we can't determine individual counts.
+        let event = SseEvent {
+            event: None,
+            data: r#"{"usage":{"total_tokens":280}}"#,
+        };
+        assert!(event.parse_usage().is_none());
     }
 }

@@ -2,7 +2,7 @@ use crate::metrics_history::{
     domain_consumer_buckets, domain_tier_deltas_5m, domain_token_buckets,
 };
 use crate::network::NetworkInfo;
-use crate::state::{AppState, KeyMetadata};
+use crate::state::{AppState, KeyMetadata, StoredModelPricing};
 use crate::types::*;
 use axum::{
     Json, Router,
@@ -14,7 +14,7 @@ use axum::{
 };
 use crab_control::{
     CreateGatewayKeyRequest, CursorModelsConfigView, FingerprintConfigRequest,
-    InvalidateCacheRequest, PutTtlConfigRequest, constant_time_eq_str, parse_upstream_base_url,
+    InvalidateCacheRequest, ModelPricingView, PricingConfigView, PutTtlConfigRequest, constant_time_eq_str, parse_upstream_base_url,
     validate_deepseek_key,
 };
 use serde::Deserialize;
@@ -153,6 +153,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_connection_config).put(update_connection_config),
         )
         .route(
+            "/api/admin/config/limits",
+            get(get_limits_config).put(update_limits_config),
+        )
+        .route(
+            "/api/admin/cache/pricing",
+            get(get_cache_pricing_config).put(update_cache_pricing_config),
+        )
+        .route(
+            "/api/admin/config/features",
+            get(get_features_config).put(update_features_config),
+        )
+        .route(
             "/api/admin/reasoning/config",
             get(get_reasoning_config).put(put_reasoning_config),
         )
@@ -287,8 +299,30 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/capture/:request_id",
             get(crate::raw_capture::get_capture_detail),
         )
+        // ── Analytics: Model Peak Hours ──
+        .route(
+            "/api/admin/analytics/model-peak-hours",
+            get(get_model_peak_hours).delete(delete_model_peak_hour),
+        )
         // ── Audit Log ──
         .route("/api/admin/audit-log", get(get_audit_log))
+        // ── Data Plane diagnostic ──────────────────────
+        .route(
+            "/api/admin/dataplane/summary",
+            get(crate::dataplane::get_dataplane_summary),
+        )
+        .route(
+            "/api/admin/dataplane/phases",
+            get(crate::dataplane::get_dataplane_phases),
+        )
+        .route(
+            "/api/admin/dataplane/errors",
+            get(crate::dataplane::get_dataplane_errors),
+        )
+        .route(
+            "/api/admin/dataplane/slo",
+            get(crate::dataplane::get_dataplane_slo),
+        )
         // ── Infra (container / host monitoring) ──
         .route("/api/admin/infra/snapshot", get(get_infra_snapshot))
         .route("/api/admin/infra/status", get(get_infra_status))
@@ -1990,6 +2024,10 @@ async fn get_semantic_config(State(state): State<Arc<AppState>>) -> Json<Semanti
     Json(SemanticConfig {
         enabled: config.enabled,
         similarity_threshold: config.similarity_threshold as f64,
+        ttl_secs: config.ttl_secs,
+        min_query_chars: config.min_query_chars,
+        max_query_chars: config.max_query_chars,
+        max_concurrent_embeds: config.max_concurrent_embeds,
     })
 }
 
@@ -2002,10 +2040,18 @@ async fn update_semantic_config(
         config.enabled = enabled;
     }
     config.similarity_threshold = req.similarity_threshold as f32;
+    config.ttl_secs = req.ttl_secs;
+    config.min_query_chars = req.min_query_chars;
+    config.max_query_chars = req.max_query_chars;
+    config.max_concurrent_embeds = req.max_concurrent_embeds;
 
     Json(SemanticConfig {
         enabled: config.enabled,
         similarity_threshold: config.similarity_threshold as f64,
+        ttl_secs: config.ttl_secs,
+        min_query_chars: config.min_query_chars,
+        max_query_chars: config.max_query_chars,
+        max_concurrent_embeds: config.max_concurrent_embeds,
     })
 }
 
@@ -2313,6 +2359,11 @@ async fn get_log_detail(
             upstream_model: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            status_code: None,
+            error_code: None,
+            cache_decision: None,
+            upstream_result: None,
+            phase_durations_ms: None,
         }));
     }
 
@@ -2440,6 +2491,11 @@ async fn get_connection_config(State(state): State<Arc<AppState>>) -> Json<Conne
         tcp_keepalive_count: config.tcp_keepalive_count,
         idle_timeout_secs: config.idle_timeout_secs,
         h2_ping_interval_secs: config.h2_ping_interval_secs,
+        upstream_force_http1: config.upstream_force_http1,
+        upstream_disable_keepalive: config.upstream_disable_keepalive,
+        upstream_request_timeout_secs: config.upstream_request_timeout_secs,
+        upstream_write_timeout_secs: config.upstream_write_timeout_secs,
+        upstream_connection_timeout_secs: config.upstream_connection_timeout_secs,
     })
 }
 
@@ -2640,6 +2696,11 @@ async fn update_connection_config(
     config.tcp_keepalive_count = req.tcp_keepalive_count;
     config.idle_timeout_secs = req.idle_timeout_secs;
     config.h2_ping_interval_secs = req.h2_ping_interval_secs;
+    config.upstream_force_http1 = req.upstream_force_http1;
+    config.upstream_disable_keepalive = req.upstream_disable_keepalive;
+    config.upstream_request_timeout_secs = req.upstream_request_timeout_secs;
+    config.upstream_write_timeout_secs = req.upstream_write_timeout_secs;
+    config.upstream_connection_timeout_secs = req.upstream_connection_timeout_secs;
 
     Json(ConnectionConfig {
         tcp_keepalive_idle_secs: config.tcp_keepalive_idle_secs,
@@ -2647,6 +2708,139 @@ async fn update_connection_config(
         tcp_keepalive_count: config.tcp_keepalive_count,
         idle_timeout_secs: config.idle_timeout_secs,
         h2_ping_interval_secs: config.h2_ping_interval_secs,
+        upstream_force_http1: config.upstream_force_http1,
+        upstream_disable_keepalive: config.upstream_disable_keepalive,
+        upstream_request_timeout_secs: config.upstream_request_timeout_secs,
+        upstream_write_timeout_secs: config.upstream_write_timeout_secs,
+        upstream_connection_timeout_secs: config.upstream_connection_timeout_secs,
+    })
+}
+
+async fn get_limits_config(State(state): State<Arc<AppState>>) -> Json<LimitsConfig> {
+    let config = state.limits_config.read().clone();
+    Json(LimitsConfig {
+        max_request_body_bytes: config.max_request_body_bytes,
+        max_concurrent_requests: config.max_concurrent_requests,
+        legacy_api_key_as_client_auth: config.legacy_api_key_as_client_auth,
+        cors_enabled: config.cors_enabled,
+    })
+}
+
+async fn update_limits_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LimitsConfig>,
+) -> Json<LimitsConfig> {
+    let mut config = state.limits_config.write();
+    config.max_request_body_bytes = req.max_request_body_bytes;
+    config.max_concurrent_requests = req.max_concurrent_requests;
+    config.legacy_api_key_as_client_auth = req.legacy_api_key_as_client_auth;
+    config.cors_enabled = req.cors_enabled;
+    state.flush_persist();
+    Json(LimitsConfig {
+        max_request_body_bytes: config.max_request_body_bytes,
+        max_concurrent_requests: config.max_concurrent_requests,
+        legacy_api_key_as_client_auth: config.legacy_api_key_as_client_auth,
+        cors_enabled: config.cors_enabled,
+    })
+}
+
+async fn get_cache_pricing_config(State(state): State<Arc<AppState>>) -> Json<PricingConfigView> {
+    let p = state.pricing_config.read().clone();
+    Json(PricingConfigView {
+        default_input_price_per_million: p.default_input_price_per_million,
+        default_output_price_per_million: p.default_output_price_per_million,
+        model_overrides: p.model_overrides.into_iter().map(|(k, v)| {
+            (k, ModelPricingView { input: v.input, output: v.output })
+        }).collect(),
+    })
+}
+
+async fn update_cache_pricing_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PricingConfigView>,
+) -> Json<PricingConfigView> {
+    let mut p = state.pricing_config.write();
+    p.default_input_price_per_million = req.default_input_price_per_million;
+    p.default_output_price_per_million = req.default_output_price_per_million;
+    p.model_overrides = req.model_overrides.into_iter().map(|(k, v)| {
+        (k, StoredModelPricing { input: v.input, output: v.output })
+    }).collect();
+    state.flush_persist();
+    let p2 = p.clone();
+    Json(PricingConfigView {
+        default_input_price_per_million: p2.default_input_price_per_million,
+        default_output_price_per_million: p2.default_output_price_per_million,
+        model_overrides: p2.model_overrides.into_iter().map(|(k, v)| {
+            (k, ModelPricingView { input: v.input, output: v.output })
+        }).collect(),
+    })
+}
+
+async fn get_features_config(State(state): State<Arc<AppState>>) -> Json<FeaturesConfigView> {
+    let f = state.features_config.read().clone();
+    Json(FeaturesConfigView {
+        prefix_aware_cache: f.prefix_aware_cache,
+        streaming_body_forward: f.streaming_body_forward,
+        connection_prewarm: f.connection_prewarm,
+        affinity_prompt_cache_feedback: f.affinity_prompt_cache_feedback,
+        delta_cache: f.delta_cache,
+        io_uring_backend: f.io_uring_backend,
+        wasm_filters: f.wasm_filters,
+        mimo_context_compression: f.mimo_context_compression,
+        mimo_compression_threshold: f.mimo_compression_threshold,
+        upstream_request_gzip: f.upstream_request_gzip,
+        upstream_request_gzip_min_bytes: f.upstream_request_gzip_min_bytes,
+        mimo_retire_prefix_messages: f.mimo_retire_prefix_messages,
+        mimo_keep_recent_turns: f.mimo_keep_recent_turns,
+        mimo_session_store: f.mimo_session_store,
+        mimo_session_store_ttl_secs: f.mimo_session_store_ttl_secs,
+        mimo_session_store_max_messages: f.mimo_session_store_max_messages,
+        passthrough_prefix_bytes: f.passthrough_prefix_bytes,
+    })
+}
+
+async fn update_features_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FeaturesConfigView>,
+) -> Json<FeaturesConfigView> {
+    let mut f = state.features_config.write();
+    f.prefix_aware_cache = req.prefix_aware_cache;
+    f.streaming_body_forward = req.streaming_body_forward;
+    f.connection_prewarm = req.connection_prewarm;
+    f.affinity_prompt_cache_feedback = req.affinity_prompt_cache_feedback;
+    f.delta_cache = req.delta_cache;
+    f.io_uring_backend = req.io_uring_backend;
+    f.wasm_filters = req.wasm_filters;
+    f.mimo_context_compression = req.mimo_context_compression;
+    f.mimo_compression_threshold = req.mimo_compression_threshold;
+    f.upstream_request_gzip = req.upstream_request_gzip;
+    f.upstream_request_gzip_min_bytes = req.upstream_request_gzip_min_bytes;
+    f.mimo_retire_prefix_messages = req.mimo_retire_prefix_messages;
+    f.mimo_keep_recent_turns = req.mimo_keep_recent_turns;
+    f.mimo_session_store = req.mimo_session_store;
+    f.mimo_session_store_ttl_secs = req.mimo_session_store_ttl_secs;
+    f.mimo_session_store_max_messages = req.mimo_session_store_max_messages;
+    f.passthrough_prefix_bytes = req.passthrough_prefix_bytes;
+    state.flush_persist();
+    let f2 = f.clone();
+    Json(FeaturesConfigView {
+        prefix_aware_cache: f2.prefix_aware_cache,
+        streaming_body_forward: f2.streaming_body_forward,
+        connection_prewarm: f2.connection_prewarm,
+        affinity_prompt_cache_feedback: f2.affinity_prompt_cache_feedback,
+        delta_cache: f2.delta_cache,
+        io_uring_backend: f2.io_uring_backend,
+        wasm_filters: f2.wasm_filters,
+        mimo_context_compression: f2.mimo_context_compression,
+        mimo_compression_threshold: f2.mimo_compression_threshold,
+        upstream_request_gzip: f2.upstream_request_gzip,
+        upstream_request_gzip_min_bytes: f2.upstream_request_gzip_min_bytes,
+        mimo_retire_prefix_messages: f2.mimo_retire_prefix_messages,
+        mimo_keep_recent_turns: f2.mimo_keep_recent_turns,
+        mimo_session_store: f2.mimo_session_store,
+        mimo_session_store_ttl_secs: f2.mimo_session_store_ttl_secs,
+        mimo_session_store_max_messages: f2.mimo_session_store_max_messages,
+        passthrough_prefix_bytes: f2.passthrough_prefix_bytes,
     })
 }
 
@@ -3764,6 +3958,105 @@ async fn audit_log(
             .insert_audit_log(action, "admin", target, detail.as_ref(), None)
             .await;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Analytics: Model Peak Hours
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PeakHoursQuery {
+    #[serde(default = "default_peak_days")]
+    days: u32,
+}
+
+fn default_peak_days() -> u32 {
+    7
+}
+
+async fn get_model_peak_hours(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<PeakHoursQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let since_ms = now_ms - (query.days as i64 * 86_400_000);
+
+    let rows = pg
+        .query_model_peak_hours(since_ms)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut models_set = std::collections::BTreeSet::new();
+    let data: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(model, bucket, count, inp, out)| {
+            models_set.insert(model.clone());
+            serde_json::json!({
+                "model": model,
+                "hour_bucket": bucket,
+                "request_count": count,
+                "input_tokens": inp,
+                "output_tokens": out,
+            })
+        })
+        .collect();
+
+    let last_agg = pg
+        .peak_hours_watermark()
+        .await
+        .ok()
+        .flatten()
+        .map(|ms| {
+            chrono::DateTime::from_timestamp_millis(ms)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default()
+        });
+
+    Ok(Json(serde_json::json!({
+        "models": models_set.into_iter().collect::<Vec<_>>(),
+        "data": data,
+        "last_aggregated_at": last_agg,
+    })))
+}
+
+#[derive(Deserialize)]
+struct DeletePeakHourQuery {
+    model: String,
+    #[serde(default)]
+    hour_bucket: i64,
+}
+
+async fn delete_model_peak_hour(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<DeletePeakHourQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let deleted = pg
+        .delete_model_peak_hours(&query.model, query.hour_bucket)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    audit_log(
+        &state,
+        "peak_hours.delete",
+        Some(&format!("model={}, bucket={}", query.model, query.hour_bucket)),
+        None,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
 #[derive(Deserialize)]

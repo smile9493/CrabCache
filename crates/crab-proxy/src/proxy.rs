@@ -187,7 +187,7 @@ impl GatewayProxy {
             &ctx.model,
             Some(tier),
         );
-        let cost = self.state.pricing.cost_saved_usd(
+        let cost = self.state.pricing.read().cost_saved_usd(
             &ctx.model,
             entry.usage.prompt_tokens,
             entry.usage.completion_tokens,
@@ -259,6 +259,7 @@ impl GatewayProxy {
             }
             None => {
                 global_metrics().record_rejected("upstream_key_exhausted");
+                global_metrics().record_rejection_by_source("upstream");
                 // #region agent log
                 debug_agent_log(
                     "UPKEY2",
@@ -394,7 +395,7 @@ impl GatewayProxy {
                 &ctx.model,
                 Some(CacheTier::L2Semantic),
             );
-            let cost = self.state.pricing.cost_saved_usd(
+            let cost = self.state.pricing.read().cost_saved_usd(
                 &ctx.model,
                 entry.usage.prompt_tokens,
                 entry.usage.completion_tokens,

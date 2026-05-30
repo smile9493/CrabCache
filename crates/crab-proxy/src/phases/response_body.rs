@@ -185,40 +185,26 @@ pub(crate) fn run(
             }
 
             // Detect rate-limit errors embedded in SSE data chunks.
-            // Must run before the mutable borrow of stream_pipeline below.
+            // Only cooldown the key — do NOT acquire a new key because the upstream
+            // connection is already established and a new key cannot be used mid-stream.
             if !ctx.upstream.sse_rate_limited {
                 let sse_events = parse_sse_chunk(&data);
                 let rate_limited = sse_events.iter().any(|e| e.is_rate_limit_error());
                 if rate_limited {
                     ctx.upstream.sse_rate_limited = true;
-                    let old_key_id = ctx
-                        .upstream
-                        .key_guard
-                        .as_ref()
-                        .map(|g| g.key_id().to_string());
-                    if let Some(ref key_id) = old_key_id {
+                    if let Some(guard) = ctx.upstream.key_guard.as_ref() {
+                        let key_id = guard.key_id().to_string();
                         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
-                        pool.report_rate_limited(key_id);
+                        pool.report_rate_limited(&key_id);
                         crab_metrics::global_metrics()
-                            .record_upstream_key_request(key_id, "rate_limited");
-                        let account_id = ctx.upstream.key_guard.as_ref().and_then(|g| {
-                            pool.list_status()
-                                .into_iter()
-                                .find(|s| s.id == g.key_id())
-                                .map(|s| s.account_id)
-                        });
-                        if let Some(new_guard) =
-                            pool.acquire_excluding_account(account_id.as_deref())
-                        {
-                            ctx.upstream.key_guard = Some(new_guard);
-                            crab_metrics::global_metrics()
-                                .record_upstream_key_retry("sse_rate_limited_rotate");
-                        }
+                            .record_upstream_key_request(&key_id, "rate_limited");
+                        crab_metrics::global_metrics()
+                            .record_upstream_key_retry("sse_cooldown_only");
                         warn!(
                             request_id = %ctx.request_id,
                             key_id = key_id,
                             model = %ctx.model,
-                            "SSE stream contains rate-limit error from upstream; key cooled down"
+                            "SSE stream contains rate-limit error from upstream; key cooled down (no mid-stream rotation)"
                         );
                     }
                 }
@@ -244,9 +230,9 @@ pub(crate) fn run(
                             .as_deref()
                             .map(crab_capture::affinity_kind_from_key),
                         &proxy.state.runtime,
-                        &proxy.state.pricing,
+                        &proxy.state.pricing.read(),
                     );
-                    if proxy.state.features.affinity_prompt_cache_feedback {
+                    if proxy.state.features.read().affinity_prompt_cache_feedback {
                         accumulate_affinity_prompt_cache_usage(
                             ctx,
                             usage.prompt_cache_hit_tokens,
@@ -340,15 +326,27 @@ pub(crate) fn run(
 
         if let Ok(body_value) = serde_json::from_slice::<serde_json::Value>(&client_body) {
             if let Some(usage) = body_value.get("usage") {
+                // Support both OpenAI canonical (prompt_tokens/completion_tokens)
+                // and newer format (input_tokens/output_tokens) used by MiMo and others.
+                let prompt = usage
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let completion = usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let input = usage
+                    .get("input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let output = usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let usage_data = UsageData {
-                    prompt_tokens: usage
-                        .get("prompt_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    completion_tokens: usage
-                        .get("completion_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
+                    prompt_tokens: if prompt > 0 { prompt } else { input },
+                    completion_tokens: if completion > 0 { completion } else { output },
                     prompt_cache_hit_tokens: usage
                         .get("prompt_cache_hit_tokens")
                         .and_then(|v| v.as_u64())
@@ -374,7 +372,7 @@ pub(crate) fn run(
                         .as_deref()
                         .map(crab_capture::affinity_kind_from_key),
                     &proxy.state.runtime,
-                    &proxy.state.pricing,
+                    &proxy.state.pricing.read(),
                 );
                 if proxy.state.features.affinity_prompt_cache_feedback {
                     accumulate_affinity_prompt_cache_usage(
@@ -386,6 +384,7 @@ pub(crate) fn run(
             }
 
             if let Some(cache_key) = &ctx.cache_key {
+                let cache_write_start = std::time::Instant::now();
                 let ttl_secs = proxy
                     .state
                     .tiered_cache
@@ -410,6 +409,10 @@ pub(crate) fn run(
                 );
 
                 timeline_stamp(&mut ctx.timeline.cache_write_done);
+                global_metrics().record_cache_write_latency(
+                    "l0_l1",
+                    cache_write_start.elapsed(),
+                );
                 let tiered_cache = proxy.state.tiered_cache.clone();
                 let cache_key = cache_key.clone();
                 let model = ctx.model.clone();
@@ -484,6 +487,36 @@ pub(crate) fn run(
         // Populate upstream_body_for_capture so Raw Capture gets the upstream body.
         if ctx.request_passthrough.armed_prefix_len > 0 && ctx.upstream_body_for_capture.is_none() {
             ctx.upstream_body_for_capture = Some(bytes::Bytes::from(ctx.accumulated_body.clone()));
+        }
+
+        // Fallback: if no usage was captured during streaming (e.g. MiMo upstream sends
+        // usage in a format missed by per-chunk parsing), scan the full accumulated SSE
+        // body one final time before giving up.
+        if ctx.tokens.last_input == 0 && ctx.tokens.last_output == 0 {
+            let events = crate::sse::parse_sse_chunk(&ctx.accumulated_body);
+            for event in &events {
+                if let Some(usage) = event.parse_usage() {
+                    ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
+                    ctx.tokens.last_input = usage.prompt_tokens;
+                    ctx.tokens.last_output = usage.completion_tokens;
+                    ctx.tokens.last_prompt_cache_hit = usage.prompt_cache_hit_tokens;
+                    ctx.tokens.last_prompt_cache_miss = usage.prompt_cache_miss_tokens;
+                    record_usage_metrics(
+                        &usage,
+                        &ctx.model,
+                        ctx.consumer.as_deref(),
+                        ctx.domain.as_deref(),
+                        ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                        ctx.upstream
+                            .affinity_key
+                            .as_deref()
+                            .map(crab_capture::affinity_kind_from_key),
+                        &proxy.state.runtime,
+                        &proxy.state.pricing.read(),
+                    );
+                    break;
+                }
+            }
         }
 
         if let Some(headers_at) = ctx.upstream.headers_at {

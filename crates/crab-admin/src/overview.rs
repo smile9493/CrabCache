@@ -290,6 +290,10 @@ pub async fn build_overview_core(state: &Arc<AppState>) -> Result<OverviewCore, 
     let semantic = SemanticConfig {
         enabled: semantic_cfg.enabled,
         similarity_threshold: semantic_cfg.similarity_threshold as f64,
+        min_query_chars: semantic_cfg.min_query_chars,
+        max_query_chars: semantic_cfg.max_query_chars,
+        max_concurrent_embeds: semantic_cfg.max_concurrent_embeds,
+        ttl_secs: semantic_cfg.ttl_secs,
     };
 
     let mut ops = scrape_ops_metrics(&body, &state.metrics_history.read(), now);
@@ -381,6 +385,10 @@ pub async fn build_overview(state: &Arc<AppState>) -> Result<OverviewBundle, Str
     let semantic = SemanticConfig {
         enabled: semantic_cfg.enabled,
         similarity_threshold: semantic_cfg.similarity_threshold as f64,
+        min_query_chars: semantic_cfg.min_query_chars,
+        max_query_chars: semantic_cfg.max_query_chars,
+        max_concurrent_embeds: semantic_cfg.max_concurrent_embeds,
+        ttl_secs: semantic_cfg.ttl_secs,
     };
 
     let mut ops = scrape_ops_metrics(&body, &state.metrics_history.read(), now);

@@ -97,6 +97,12 @@ impl Translations {
             Locale::EnUS => "Log Mgmt",
         }
     }
+    pub fn tab_audit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "审计日志",
+            Locale::EnUS => "Audit Log",
+        }
+    }
     pub fn capture_empty(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "暂无捕获记录",
@@ -2211,6 +2217,18 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "无法获取 GitHub 版本信息",
             Locale::EnUS => "Unable to fetch GitHub release info",
+        }
+    }
+    pub fn system_limits_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运行时限制",
+            Locale::EnUS => "Runtime Limits",
+        }
+    }
+    pub fn system_limits_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "请求体大小、并发和兼容性选项",
+            Locale::EnUS => "Request body size, concurrency & compatibility options",
         }
     }
     pub fn pipeline_mode_label(self) -> &'static str {

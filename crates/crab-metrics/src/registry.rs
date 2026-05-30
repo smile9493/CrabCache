@@ -105,6 +105,18 @@ pub struct GatewayMetrics {
     pub session_store_prefix_break_total: IntCounter,
     pub session_store_upstream_bytes_saved: IntCounter,
     pub request_passthrough_total: IntCounter,
+    /// Cache write latency per tier (L0/L1).
+    pub cache_write_latency: HistogramVec,
+    /// Upstream response HTTP status class breakdown by pipeline.
+    pub upstream_response_status: IntCounterVec,
+    /// Coalescing leader election outcomes.
+    pub coalesce_leader: IntCounterVec,
+    /// Coalescing follower outcomes (hit, timeout, fallthrough).
+    pub coalesce_follower: IntCounterVec,
+    /// Trace log write status by sink and result.
+    pub trace_write_total: IntCounterVec,
+    /// Rejection count by source classification.
+    pub rejection_by_source: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -506,6 +518,57 @@ impl GatewayMetrics {
             "MiMo direct request passthrough handoffs (prefix sniff + chunk relay)",
         )?;
 
+        let cache_write_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_cache_write_latency_seconds",
+                "Cache write latency in seconds",
+            )
+            .buckets(vec![
+                0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+            ]),
+            &["tier"],
+        )?;
+
+        let upstream_response_status = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_response_status_total",
+                "Upstream HTTP response status class by pipeline",
+            ),
+            &["status_class", "pipeline"],
+        )?;
+
+        let coalesce_leader = IntCounterVec::new(
+            Opts::new(
+                "gateway_coalesce_leader_total",
+                "Coalescing leader election outcomes",
+            ),
+            &["outcome"],
+        )?;
+
+        let coalesce_follower = IntCounterVec::new(
+            Opts::new(
+                "gateway_coalesce_follower_total",
+                "Coalescing follower results (hit, timeout, fallthrough)",
+            ),
+            &["outcome"],
+        )?;
+
+        let trace_write_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_trace_write_total",
+                "Trace log write status by sink and result",
+            ),
+            &["sink", "result"],
+        )?;
+
+        let rejection_by_source = IntCounterVec::new(
+            Opts::new(
+                "gateway_rejection_by_source_total",
+                "Request rejections by source classification",
+            ),
+            &["source"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -561,6 +624,12 @@ impl GatewayMetrics {
             session_store_prefix_break_total,
             session_store_upstream_bytes_saved,
             request_passthrough_total,
+            cache_write_latency,
+            upstream_response_status,
+            coalesce_leader,
+            coalesce_follower,
+            trace_write_total,
+            rejection_by_source,
         })
     }
 
@@ -619,6 +688,12 @@ impl GatewayMetrics {
         registry.register(Box::new(self.session_store_prefix_break_total.clone()))?;
         registry.register(Box::new(self.session_store_upstream_bytes_saved.clone()))?;
         registry.register(Box::new(self.request_passthrough_total.clone()))?;
+        registry.register(Box::new(self.cache_write_latency.clone()))?;
+        registry.register(Box::new(self.upstream_response_status.clone()))?;
+        registry.register(Box::new(self.coalesce_leader.clone()))?;
+        registry.register(Box::new(self.coalesce_follower.clone()))?;
+        registry.register(Box::new(self.trace_write_total.clone()))?;
+        registry.register(Box::new(self.rejection_by_source.clone()))?;
         Ok(())
     }
 
@@ -640,6 +715,53 @@ impl GatewayMetrics {
 
     pub fn record_request_passthrough_total(&self) {
         self.request_passthrough_total.inc();
+    }
+
+    // ── Cache write latency ────────────────────────────────────────────
+
+    pub fn record_cache_write_latency(&self, tier: &str, duration: std::time::Duration) {
+        self.cache_write_latency
+            .with_label_values(&[tier])
+            .observe(duration.as_secs_f64());
+    }
+
+    // ── Upstream response status ───────────────────────────────────────
+
+    pub fn record_upstream_response_status(&self, status: u16, pipeline: Option<&str>) {
+        let class = match status / 100 {
+            2 => "2xx",
+            3 => "3xx",
+            4 => "4xx",
+            _ => "5xx",
+        };
+        let pipeline = pipeline.unwrap_or("unknown");
+        self.upstream_response_status
+            .with_label_values(&[class, pipeline])
+            .inc();
+    }
+
+    // ── Coalescing leader / follower ────────────────────────────────────
+
+    pub fn record_coalesce_leader(&self, outcome: &str) {
+        self.coalesce_leader.with_label_values(&[outcome]).inc();
+    }
+
+    pub fn record_coalesce_follower(&self, outcome: &str) {
+        self.coalesce_follower.with_label_values(&[outcome]).inc();
+    }
+
+    // ── Trace write status ──────────────────────────────────────────────
+
+    pub fn record_trace_write(&self, sink: &str, result: &str) {
+        self.trace_write_total
+            .with_label_values(&[sink, result])
+            .inc();
+    }
+
+    // ── Rejection by source ─────────────────────────────────────────────
+
+    pub fn record_rejection_by_source(&self, source: &str) {
+        self.rejection_by_source.with_label_values(&[source]).inc();
     }
 
     pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {

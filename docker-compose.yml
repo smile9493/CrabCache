@@ -36,8 +36,6 @@ services:
       - ./config/gateway.docker.toml:/app/config/gateway.toml:ro
       - gateway_data:/app/data
       - gateway_logs:/app/logs
-      # Optional debug NDJSON (uncomment while diagnosing):
-      - ./.cursor:/app/.cursor
     depends_on:
       redis:
         condition: service_healthy
@@ -56,6 +54,7 @@ services:
       - CRABCACHE_DEBUG_LOG_PATH=${CRABCACHE_DEBUG_LOG_PATH:-}
       - CRABCACHE_DEBUG_RUN_ID=${CRABCACHE_DEBUG_RUN_ID:-}
     restart: unless-stopped
+    stop_grace_period: 30s
 
   admin:
     profiles:
@@ -82,7 +81,8 @@ services:
       - CRABCACHE_GATEWAY_CLIENT_LAN_HOST=${CRABCACHE_GATEWAY_CLIENT_LAN_HOST:-}
       - CRABCACHE_OPENRESTY_CONF_DIR=/host/openresty/conf.d
       # Optional override: CRABCACHE_GATEWAY_OPENRESTY_BASE_URL=https://domain:18000
-      - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-admin}
+      # Production: override CRABCACHE_ADMIN_KEY in .env (do NOT use default in production).
+      - CRABCACHE_ADMIN_KEY=${CRABCACHE_ADMIN_KEY:-change-me-in-production}
       - CRABCACHE_UPSTREAM_KEYS=${CRABCACHE_UPSTREAM_KEYS:-}
       - CRABCACHE_API_KEY=${CRABCACHE_API_KEY:-}
       # Raw capture directory (must match gateway [raw_capture].dir)
@@ -104,6 +104,7 @@ services:
       retries: 3
       start_period: 25s
     restart: unless-stopped
+    stop_grace_period: 30s
 
   postgres:
     profiles:
@@ -144,7 +145,7 @@ services:
   qdrant:
     profiles:
       - semantic
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.12.1
     container_name: crabcache-qdrant
     expose:
       - "6333"
@@ -153,6 +154,12 @@ services:
       - qdrant_data:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

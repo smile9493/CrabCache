@@ -118,6 +118,24 @@ pub struct TraceLogEntry {
     pub request_passthrough: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,
+    /// Upstream HTTP response status code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    /// Structured error code for diagnosis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// Source of a rate-limit rejection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_source: Option<String>,
+    /// Cache decision reason: "hit", "miss", "skip_stream_cache", etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_decision: Option<String>,
+    /// Upstream call result classification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_result: Option<String>,
+    /// Per-phase durations (ms) keyed by phase name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_durations_ms: Option<serde_json::Value>,
 }
 
 impl TraceLogEntry {
@@ -257,6 +275,11 @@ pub fn trace_entry_to_request_detail(e: &TraceLogEntry) -> crab_admin_types::Req
         upstream_model: e.upstream_model.clone(),
         request_passthrough: e.request_passthrough,
         request_passthrough_prefix_len: e.request_passthrough_prefix_len,
+        status_code: e.status_code,
+        error_code: e.error_code.clone(),
+        cache_decision: e.cache_decision.clone(),
+        upstream_result: e.upstream_result.clone(),
+        phase_durations_ms: e.phase_durations_ms.clone(),
     }
 }
 

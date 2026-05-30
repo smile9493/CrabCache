@@ -107,7 +107,9 @@ const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_leng
                     prefill_ms, pre_header_ms,
                     affinity_key, affinity_kind, backend_name,
                     session_fingerprint, is_coalesced, client_key_id,
-                    request_passthrough, request_passthrough_prefix_len";
+                    request_passthrough, request_passthrough_prefix_len,
+                    status_code, error_code, limit_source, cache_decision,
+                    upstream_result, phase_durations_ms";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
     let composition_raw: Option<String> = row.get(17);
@@ -156,6 +158,12 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         upstream_outbound_bytes: row.get::<_, Option<i32>>(32).map(|v| v as usize),
         request_passthrough: row.get(41),
         request_passthrough_prefix_len: row.get::<_, Option<i32>>(42).map(|v| v as usize),
+        status_code: row.get::<_, Option<i32>>(43).map(|v| v as u16),
+        error_code: row.get(44),
+        limit_source: row.get(45),
+        cache_decision: row.get(46),
+        upstream_result: row.get(47),
+        phase_durations_ms: row.get::<_, Option<String>>(48).and_then(|s| serde_json::from_str(&s).ok()),
     }
 }
 
@@ -467,6 +475,12 @@ impl PgStore {
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_key_id TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS request_passthrough BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS request_passthrough_prefix_len INTEGER",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS status_code INTEGER",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS error_code TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS limit_source TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS cache_decision TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS upstream_result TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS phase_durations_ms JSONB",
         ] {
             client.execute(stmt, &[]).await?;
         }
@@ -598,6 +612,28 @@ impl PgStore {
         client
             .execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log (action, timestamp DESC)",
+                &[],
+            )
+            .await?;
+
+        // Phase: model peak hours aggregation table.
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS model_peak_hours (
+                    model         TEXT NOT NULL,
+                    hour_bucket   BIGINT NOT NULL,
+                    request_count BIGINT NOT NULL DEFAULT 0,
+                    input_tokens  BIGINT NOT NULL DEFAULT 0,
+                    output_tokens BIGINT NOT NULL DEFAULT 0,
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (model, hour_bucket)
+                )",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_peak_hours_model ON model_peak_hours (model, hour_bucket DESC)",
                 &[],
             )
             .await?;
@@ -1307,11 +1343,13 @@ impl PgStore {
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
                      session_fingerprint, is_coalesced, client_key_id,
-                     request_passthrough, request_passthrough_prefix_len)
+                     request_passthrough, request_passthrough_prefix_len,
+                     status_code, error_code, limit_source, cache_decision,
+                     upstream_result, phase_durations_ms)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43)
+                         $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -1369,6 +1407,12 @@ impl PgStore {
                     &e.client_key_id,
                     &e.request_passthrough,
                     &e.request_passthrough_prefix_len.map(|v| v as i32),
+                    &e.status_code.map(|v| v as i32),
+                    &e.error_code,
+                    &e.limit_source,
+                    &e.cache_decision,
+                    &e.upstream_result,
+                    &e.phase_durations_ms.as_ref().map(serde_json::to_string).transpose().context("serialize phase_durations_ms")?,
                 ],
             )
             .await?;
@@ -1613,6 +1657,41 @@ impl PgStore {
             )
             .await?;
         Ok(count)
+    }
+
+    /// Query top errors from trace_logs since a timestamp (for dataplane error attribution).
+    pub async fn query_top_errors_since(
+        &self,
+        since_ms: u64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let client = self.pool().get().await?;
+        let rows = client
+            .query(
+                "SELECT error_code, status_code, upstream_result, COUNT(*) as cnt
+                 FROM trace_logs
+                 WHERE timestamp_ms >= $1
+                   AND (error_code IS NOT NULL OR status_code >= 400)
+                 GROUP BY error_code, status_code, upstream_result
+                 ORDER BY cnt DESC
+                 LIMIT 10",
+                &[&(since_ms as i64)],
+            )
+            .await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let error_code: Option<String> = row.get(0);
+            let status_code: Option<i32> = row.get(1);
+            let upstream_result: Option<String> = row.get(2);
+            let count: i64 = row.get(3);
+            results.push(serde_json::json!({
+                "error_code": error_code,
+                "status_code": status_code,
+                "upstream_result": upstream_result,
+                "count": count,
+            }));
+        }
+        Ok(results)
     }
 
     /// Count total requests and cache hits in a time window (for trace summary).
@@ -2118,6 +2197,144 @@ impl PgStore {
                     r.get::<_, Option<String>>(4),
                     r.get::<_, Option<String>>(5),
                     r.get::<_, Option<String>>(6),
+                )
+            })
+            .collect())
+    }
+
+    // -----------------------------------------------------------------------
+    // model_peak_hours CRUD
+    // -----------------------------------------------------------------------
+
+    /// Upsert aggregated peak-hour rows (batch).
+    /// Each tuple: (model, hour_bucket_ms, request_count, input_tokens, output_tokens).
+    pub async fn upsert_model_peak_hours(
+        &self,
+        rows: &[(String, i64, i64, i64, i64)],
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let client = self.pool.get().await?;
+        let stmt = client
+            .prepare_cached(
+                "INSERT INTO model_peak_hours (model, hour_bucket, request_count, input_tokens, output_tokens)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (model, hour_bucket) DO UPDATE SET
+                     request_count = EXCLUDED.request_count,
+                     input_tokens  = EXCLUDED.input_tokens,
+                     output_tokens = EXCLUDED.output_tokens,
+                     updated_at    = now()",
+            )
+            .await?;
+        for (model, bucket, count, inp, out) in rows {
+            client
+                .execute(&stmt, &[model, bucket, count, inp, out])
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Query model_peak_hours for a given time range.
+    /// Returns (model, hour_bucket_ms, request_count, input_tokens, output_tokens).
+    pub async fn query_model_peak_hours(
+        &self,
+        since_ms: i64,
+    ) -> Result<Vec<(String, i64, i64, i64, i64)>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT model, hour_bucket, request_count, input_tokens, output_tokens
+                 FROM model_peak_hours
+                 WHERE hour_bucket >= $1
+                 ORDER BY model, hour_bucket",
+                &[&since_ms],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get(0),
+                    r.get(1),
+                    r.get(2),
+                    r.get(3),
+                    r.get(4),
+                )
+            })
+            .collect())
+    }
+
+    /// Delete model peak hour data.
+    /// If `hour_bucket` is 0, deletes all data for the given model.
+    pub async fn delete_model_peak_hours(
+        &self,
+        model: &str,
+        hour_bucket: i64,
+    ) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = if hour_bucket == 0 {
+            client
+                .execute(
+                    "DELETE FROM model_peak_hours WHERE model = $1",
+                    &[&model],
+                )
+                .await?
+        } else {
+            client
+                .execute(
+                    "DELETE FROM model_peak_hours WHERE model = $1 AND hour_bucket = $2",
+                    &[&model, &hour_bucket],
+                )
+                .await?
+        };
+        Ok(count)
+    }
+
+    /// Get the latest hour_bucket watermark for incremental aggregation.
+    pub async fn peak_hours_watermark(&self) -> Result<Option<i64>> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "SELECT COALESCE(MAX(hour_bucket), 0) FROM model_peak_hours",
+                &[],
+            )
+            .await?;
+        let v: i64 = row.get(0);
+        Ok(if v == 0 { None } else { Some(v) })
+    }
+
+    /// Aggregate trace_logs into hourly buckets for model peak hours.
+    /// Returns rows of (model, hour_bucket_ms, request_count, input_tokens, output_tokens).
+    pub async fn aggregate_trace_logs_for_peak_hours(
+        &self,
+        since_ms: i64,
+    ) -> Result<Vec<(String, i64, i64, i64, i64)>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT
+                     model,
+                     (timestamp_ms / 3600000) * 3600000 AS hour_bucket,
+                     COUNT(*)                          AS request_count,
+                     COALESCE(SUM(COALESCE(input_tokens, 0)), 0)  AS input_tokens,
+                     COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS output_tokens
+                 FROM trace_logs
+                 WHERE timestamp_ms >= $1
+                 GROUP BY model, hour_bucket
+                 ORDER BY model, hour_bucket",
+                &[&since_ms],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, String>(0),
+                    r.get::<_, i64>(1),
+                    r.get::<_, i64>(2),
+                    r.get::<_, i64>(3),
+                    r.get::<_, i64>(4),
                 )
             })
             .collect())

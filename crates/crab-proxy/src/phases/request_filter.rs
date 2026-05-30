@@ -355,7 +355,7 @@ async fn run_post_body_phases(
             );
             crate::session_store::apply_mimo_session_store(
                 store,
-                &proxy.state.features,
+                &proxy.state.features.read(),
                 ctx,
                 &mut parsed_payload,
                 stable_session,
@@ -441,7 +441,7 @@ async fn run_post_body_phases(
                 ));
             }
             RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
-                let features = &proxy.state.features;
+                let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
                     payload,
                     &profile_fallback,

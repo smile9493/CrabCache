@@ -2,7 +2,7 @@ use leptos::prelude::*;
 
 use crate::api;
 use crate::locale::use_translations;
-use crate::pages::overview::format_number;
+use crate::time_utils::format_number;
 use crate::types::{DomainDetailBundle, DomainPolicy};
 
 #[component]

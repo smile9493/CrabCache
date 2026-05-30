@@ -30,6 +30,8 @@ COPY crates/crab-state/Cargo.toml crates/crab-state/Cargo.toml
 COPY crates/crab-composition/Cargo.toml crates/crab-composition/Cargo.toml
 COPY crates/crab-admin-types/Cargo.toml crates/crab-admin-types/Cargo.toml
 COPY crates/crab-capture/Cargo.toml crates/crab-capture/Cargo.toml
+COPY crates/crab-client-endpoint/Cargo.toml crates/crab-client-endpoint/Cargo.toml
+COPY crates/crab-auth/Cargo.toml crates/crab-auth/Cargo.toml
 COPY crates/crab-admin/Cargo.toml crates/crab-admin/Cargo.toml
 COPY crates/crab-dashboard/Cargo.toml crates/crab-dashboard/Cargo.toml
 
@@ -46,6 +48,9 @@ RUN mkdir -p crates/crab-metrics/src && echo "" > crates/crab-metrics/src/lib.rs
     mkdir -p crates/crab-composition/src && echo "" > crates/crab-composition/src/lib.rs && \
     mkdir -p crates/crab-admin-types/src && echo "" > crates/crab-admin-types/src/lib.rs && \
     mkdir -p crates/crab-capture/src && echo "" > crates/crab-capture/src/lib.rs && \
+    mkdir -p crates/crab-client-endpoint/src && echo "" > crates/crab-client-endpoint/src/lib.rs && \
+    mkdir -p crates/crab-auth/src && echo "" > crates/crab-auth/src/lib.rs && \
+    mkdir -p crates/crab-auth/src/bin && echo "fn main() {}" > crates/crab-auth/src/bin/crab_oauth.rs && \
     mkdir -p crates/crab-admin/src && echo "fn main() {}" > crates/crab-admin/src/main.rs && \
     mkdir -p crates/crab-dashboard/src && echo "" > crates/crab-dashboard/src/lib.rs
 
@@ -68,6 +73,8 @@ COPY crates/crab-state/src crates/crab-state/src
 COPY crates/crab-composition/src crates/crab-composition/src
 COPY crates/crab-admin-types/src crates/crab-admin-types/src
 COPY crates/crab-capture/src crates/crab-capture/src
+COPY crates/crab-client-endpoint/src crates/crab-client-endpoint/src
+COPY crates/crab-auth/src crates/crab-auth/src
 COPY config config
 
 # Final build with cache mount — only recompiles changed crates
@@ -77,13 +84,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo tree -p crab-proxy -i pingora-proxy | head -5 \
     && cp /app/target/release/crab-gateway /app/crab-gateway
 
-FROM ubuntu:latest
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3t64 \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r crabcache && useradd -r -g crabcache -s /bin/false crabcache
 
 WORKDIR /app
 
@@ -92,6 +101,10 @@ RUN mkdir -p /app/data /app/logs /app/config
 COPY --from=builder /app/crab-gateway /app/crab-gateway
 COPY config/gateway.docker.toml /app/config/gateway.toml
 
+RUN chown -R crabcache:crabcache /app
+
 EXPOSE 8080 9080 9090
+
+USER crabcache
 
 CMD ["/app/crab-gateway", "/app/config/gateway.toml"]

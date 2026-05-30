@@ -69,6 +69,16 @@ pub struct RequestDetail {
     pub request_passthrough: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_durations_ms: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

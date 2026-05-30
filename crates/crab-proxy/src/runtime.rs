@@ -46,7 +46,7 @@ pub struct RuntimeConfig {
     pub default_upstream_profile_id: RwLock<String>,
     pub pipeline_globals: RwLock<PipelineGlobals>,
     /// When true, tokens in `legacy_client_tokens` may authenticate as clients.
-    pub legacy_api_key_as_client_auth: bool,
+    pub legacy_api_key_as_client_auth: AtomicBool,
     /// When true and the client key has no `project_id`, derive one from `sk-cc-*` (see `tenant::derive_project_id_from_client_key`).
     pub auto_project_id_from_client_key: bool,
     pub legacy_client_tokens: HashSet<String>,
@@ -85,7 +85,7 @@ impl RuntimeConfig {
             upstream_profiles: RwLock::new(upstream_profiles),
             default_upstream_profile_id: RwLock::new(default_upstream_profile_id),
             pipeline_globals: RwLock::new(pipeline_globals),
-            legacy_api_key_as_client_auth,
+            legacy_api_key_as_client_auth: AtomicBool::new(legacy_api_key_as_client_auth),
             auto_project_id_from_client_key,
             legacy_client_tokens,
             domain_policies: Arc::new(RwLock::new(IndexMap::new())),
@@ -178,7 +178,7 @@ impl RuntimeConfig {
     }
 
     pub fn is_legacy_client_token(&self, token: &str, full_auth: &str) -> bool {
-        if !self.legacy_api_key_as_client_auth {
+        if !self.legacy_api_key_as_client_auth.load(Ordering::Relaxed) {
             return false;
         }
         self.legacy_client_tokens.contains(token)

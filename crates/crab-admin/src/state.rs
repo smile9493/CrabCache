@@ -77,6 +77,9 @@ pub struct AppState {
     pub cache_config: RwLock<StoredCacheConfig>,
     pub semantic_config: RwLock<StoredSemanticConfig>,
     pub connection_config: RwLock<StoredConnectionConfig>,
+    pub limits_config: RwLock<StoredLimitsConfig>,
+    pub pricing_config: RwLock<StoredPricingConfig>,
+    pub features_config: RwLock<StoredFeaturesConfig>,
     pub reasoning_config: RwLock<ReasoningConfig>,
     pub upstream_config: RwLock<StoredUpstreamConfig>,
     pub models: RwLock<StoredModelList>,
@@ -223,6 +226,9 @@ pub struct StoredSemanticConfig {
     pub similarity_threshold: f32,
     pub ttl_secs: u64,
     pub collection_size: u64,
+    pub min_query_chars: usize,
+    pub max_query_chars: usize,
+    pub max_concurrent_embeds: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -253,13 +259,90 @@ impl Default for StoredUpstreamConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredConnectionConfig {
     pub tcp_keepalive_idle_secs: u64,
     pub tcp_keepalive_interval_secs: u64,
     pub tcp_keepalive_count: usize,
     pub idle_timeout_secs: u64,
     pub h2_ping_interval_secs: u64,
+    #[serde(default)]
+    pub upstream_force_http1: bool,
+    #[serde(default)]
+    pub upstream_disable_keepalive: bool,
+    #[serde(default)]
+    pub upstream_request_timeout_secs: u64,
+    #[serde(default)]
+    pub upstream_write_timeout_secs: u64,
+    #[serde(default)]
+    pub upstream_connection_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredLimitsConfig {
+    pub max_request_body_bytes: usize,
+    pub max_concurrent_requests: usize,
+    pub legacy_api_key_as_client_auth: bool,
+    pub cors_enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredPricingConfig {
+    pub default_input_price_per_million: f64,
+    pub default_output_price_per_million: f64,
+    #[serde(default)]
+    pub model_overrides: std::collections::HashMap<String, StoredModelPricing>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredModelPricing {
+    pub input: f64,
+    pub output: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredFeaturesConfig {
+    pub prefix_aware_cache: bool,
+    pub streaming_body_forward: bool,
+    pub connection_prewarm: bool,
+    pub affinity_prompt_cache_feedback: bool,
+    pub delta_cache: bool,
+    pub io_uring_backend: bool,
+    pub wasm_filters: bool,
+    pub mimo_context_compression: bool,
+    pub mimo_compression_threshold: usize,
+    pub upstream_request_gzip: bool,
+    pub upstream_request_gzip_min_bytes: usize,
+    pub mimo_retire_prefix_messages: bool,
+    pub mimo_keep_recent_turns: usize,
+    pub mimo_session_store: bool,
+    pub mimo_session_store_ttl_secs: u64,
+    pub mimo_session_store_max_messages: usize,
+    pub passthrough_prefix_bytes: usize,
+}
+
+impl Default for StoredFeaturesConfig {
+    fn default() -> Self {
+        Self {
+            prefix_aware_cache: false,
+            streaming_body_forward: false,
+            connection_prewarm: false,
+            affinity_prompt_cache_feedback: false,
+            delta_cache: false,
+            io_uring_backend: false,
+            wasm_filters: false,
+            mimo_context_compression: false,
+            mimo_compression_threshold: 6,
+            upstream_request_gzip: false,
+            upstream_request_gzip_min_bytes: 4096,
+            mimo_retire_prefix_messages: false,
+            mimo_keep_recent_turns: 6,
+            mimo_session_store: false,
+            mimo_session_store_ttl_secs: 86400,
+            mimo_session_store_max_messages: 200,
+            passthrough_prefix_bytes: 1024,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -473,6 +556,9 @@ impl AppState {
                 similarity_threshold: 0.95,
                 ttl_secs: 86400,
                 collection_size: 0,
+                min_query_chars: 32,
+                max_query_chars: 8192,
+                max_concurrent_embeds: 4,
             }),
             connection_config: RwLock::new(StoredConnectionConfig {
                 tcp_keepalive_idle_secs: 60,
@@ -480,7 +566,24 @@ impl AppState {
                 tcp_keepalive_count: 3,
                 idle_timeout_secs: 90,
                 h2_ping_interval_secs: 30,
+                upstream_force_http1: false,
+                upstream_disable_keepalive: false,
+                upstream_request_timeout_secs: 300,
+                upstream_write_timeout_secs: 300,
+                upstream_connection_timeout_secs: 60,
             }),
+            limits_config: RwLock::new(StoredLimitsConfig {
+                max_request_body_bytes: 1024 * 1024,
+                max_concurrent_requests: 512,
+                legacy_api_key_as_client_auth: false,
+                cors_enabled: false,
+            }),
+            pricing_config: RwLock::new(StoredPricingConfig {
+                default_input_price_per_million: 0.55,
+                default_output_price_per_million: 2.19,
+                model_overrides: std::collections::HashMap::new(),
+            }),
+            features_config: RwLock::new(StoredFeaturesConfig::default()),
             reasoning_config: RwLock::new(ReasoningConfig {
                 thinking_mode: "auto".to_string(),
                 reasoning_effort: "medium".to_string(),

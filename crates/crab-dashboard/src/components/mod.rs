@@ -11,6 +11,7 @@ pub mod chart_preview_card;
 pub mod overview_card;
 pub mod confirm;
 pub mod donut_chart;
+pub mod peak_hours_heatmap;
 pub mod gateway_health;
 pub mod histogram_chart;
 pub mod horizontal_bar_chart;

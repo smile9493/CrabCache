@@ -21,7 +21,7 @@ pub fn path_eligible(path: &str, method: &http::Method) -> bool {
 }
 
 pub fn feature_enabled(proxy: &GatewayProxy) -> bool {
-    proxy.state.features.streaming_body_forward
+    proxy.state.features.read().streaming_body_forward
 }
 
 pub fn pipeline_eligible(pipeline: RequestPipeline) -> bool {

@@ -1,0 +1,170 @@
+# CrabCache 告警规则
+#
+# 用于 Prometheus 或 VictoriaMetrics 的告警配置。
+# 标签 `severity: warning` / `critical` 可按需调整接收组。
+#
+# 相关文档：OBSERVABILITY.md, OPS_RUNBOOK.md, docs/
+
+groups:
+  - name: crabcache_dataplane
+    interval: 30s
+    rules:
+
+      # ── 缓存命中率 ──────────────────────────────────────────────
+      - alert: LowCacheHitRate
+        expr: |
+          rate(gateway_cache_requests_total{tier=~"L0|L1", result="hit"}[5m])
+          /
+          (rate(gateway_cache_requests_total{tier=~"L0|L1"}[5m]) > 0)
+          < 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low cache hit rate ({{ $value | humanizePercentage }})"
+          description: >
+            L0+L1 hit rate dropped below 50% over the last 5 minutes.
+            Check trace logs for body uniqueness and upstream prefix cache health.
+
+      # ── 端到端延迟（P95 phase latency） ──────────────────────────
+      - alert: HighPhaseLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(gateway_request_phase_latency_seconds_bucket[5m])) by (le, phase)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Phase {{ $labels.phase }} P95 > 5s"
+          description: >
+            Phase {{ $labels.phase }} P95 latency is {{ $value | humanizeDuration }}.
+            Check Data Plane dashboard for bottlenecks.
+
+      - alert: HighCacheWriteLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(gateway_cache_write_latency_seconds_bucket[5m])) by (le, tier)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cache write P95 > 100ms (tier={{ $labels.tier }})"
+          description: >
+            Cache write latency for tier {{ $labels.tier }} is {{ $value | humanizeDuration }}.
+            Check Redis connection / Moka backpressure.
+
+      # ── 上游错误率 ──────────────────────────────────────────────
+      - alert: HighUpstreamErrorRate
+        expr: |
+          sum(rate(gateway_upstream_response_status_total{status_class=~"4xx|5xx"}[5m]))
+          /
+          (sum(rate(gateway_upstream_response_status_total[5m])) > 0)
+          > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Upstream error rate {{ $value | humanizePercentage }}"
+          description: >
+            Upstream returned 4xx/5xx for >10% of requests.
+            Check upstream provider health and key rotation status.
+
+      - alert: HighUpstream5xxRate
+        expr: |
+          rate(gateway_upstream_response_status_total{status_class="5xx"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High upstream 5xx rate ({{ $value | humanizePercentage }})"
+          description: >
+            Upstream 5xx responses >5%. Likely provider outage or connectivity issue.
+
+      # ── 拒绝 / 限流 ──────────────────────────────────────────────
+      - alert: HighRejectionRate
+        expr: |
+          rate(gateway_rejected_requests_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rejection rate ({{ $value | humanize }} /s)"
+          description: >
+            Requests being rejected at >1/s. Check `gateway_rejection_by_source_total`
+            and `gateway_rejected_requests_total` to identify the reason.
+
+      - alert: UpstreamKeyExhausted
+        expr: |
+          rate(gateway_rejected_requests_total{reason="upstream_key_exhausted"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Upstream API keys exhausted"
+          description: >
+            No usable upstream key available. Add more keys or check key rotation.
+
+      # ── 合并 Coalescing ─────────────────────────────────────────
+      - alert: CoalesceFollowerFailures
+        expr: |
+          rate(gateway_coalesce_follower_total{outcome="fallthrough"}[5m])
+          /
+          (rate(gateway_coalesce_follower_total[5m]) > 0)
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Coalesce follower fallthrough >50%"
+          description: >
+            High rate of coalesce followers falling through (leader may
+            have timed out before completion).
+
+      # ── Trace 写入 ──────────────────────────────────────────────
+      - alert: TraceWriteFailures
+        expr: |
+          rate(gateway_trace_write_total{result="failure"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trace log write failures"
+          description: >
+            Trace log entries failing to write. Check disk space and
+            JSONL path permissions.
+
+      # ── 系统 ─────────────────────────────────────────────────────
+      - alert: GatewayDown
+        expr: up{job="crabcache-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway is down"
+          description: "CrabCache gateway process is unreachable."
+
+      - alert: HighRejectionByClient
+        expr: |
+          rate(gateway_rejection_by_source_total{source="client"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High client-side rejection rate"
+          description: >
+            Client requests being rejected at >5/s. May indicate
+            overload, quota limits, or auth failures.
+
+      - alert: HighRejectionByUpstream
+        expr: |
+          rate(gateway_rejection_by_source_total{source="upstream"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Upstream rejection active"
+          description: >
+            Upstream-side rejections detected (key exhausted, pool empty).
+            Immediate attention required.

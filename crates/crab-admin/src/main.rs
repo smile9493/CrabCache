@@ -1,4 +1,5 @@
 mod composition;
+mod dataplane;
 mod domain_usage_sync;
 mod infra;
 mod key_usage_sync;
@@ -9,6 +10,7 @@ mod metrics_store;
 mod network;
 mod oauth_codex;
 mod overview;
+mod peak_hours_aggregator;
 mod persist;
 mod pg;
 mod pg_sync;
@@ -279,6 +281,13 @@ async fn main() -> anyhow::Result<()> {
             history_secs = crate::infra::history::sample_interval_secs(),
             "Infra background collector started"
         );
+    }
+
+    // Peak hours aggregator: aggregate trace_logs into model_peak_hours every 5 min.
+    if state.has_pg() {
+        let agg_state = Arc::clone(&state);
+        tokio::spawn(crate::peak_hours_aggregator::run(agg_state));
+        info!("Model peak hours aggregator started");
     }
 
     if std::env::var("CRABCACHE_MODEL_SYNC_INTERVAL_SECS")

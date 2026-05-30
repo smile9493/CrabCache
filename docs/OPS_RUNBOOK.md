@@ -2,7 +2,7 @@
 
 本文档将 **Trace / 网关日志 / Prometheus** 中常见现象，映射到 **数据面（proxy 热路径）**、**控制面 / Admin**、**运维配置** 三条责任轨。避免把「内测低命中率」或「MiMo 429」误判为「数据面 P2 未做完」。
 
-**相关文档**：[运行时日志结论（压缩版）](RUNTIME_LOG_FINDINGS.md) · [数据面实现状态](DATA_PLANE.md) · [数据面优化展望](../数据面优化.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md)
+**相关文档**：[运行时日志结论（压缩版）](RUNTIME_LOG_FINDINGS.md) · [数据面实现状态](DATA_PLANE.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md)
 
 ---
 
@@ -109,7 +109,7 @@
 
 | 项 | 轨道 | 说明 |
 |----|------|------|
-| 每上游 Key 最大 in-flight | 产品/网关 | 防止单 Key 被 Cursor 打穿；矩阵见 [数据面优化 §运行时](../数据面优化.md#运行时分析对照与遗漏项) |
+| 每上游 Key 最大 in-flight | 产品/网关 | 防止单 Key 被 Cursor 打穿；矩阵见 [DATA_PLANE.md §运行时分析对照](DATA_PLANE.md#运行时分析对照2026-05-内测) |
 | 429/503 `limit_source` JSON | 控制面 | `gateway_client_rpm` / `mimo_upstream_429` / `upstream_pool_cooldown` / `coalesce_leader_failed` |
 | Coalescing Leader 失败策略 | 产品 | 快速 503+Retry-After vs 排队（现：Follower 不重试上游） |
 | 上游连续 429 熔断 | 网关 | 短时拒新请求，保护 Key 冷却 |
@@ -138,10 +138,50 @@ gateway_request_phase_latency_seconds
 
 网关日志关键词：`upstream rate limited`、`cooldown_only`、`Coalesce follower`、`trace line truncated`。
 
----
+---    
 
 ## 7. 维护约定
 
 - 新事故复盘：在本文件 **§1** 增补一行样本表，并在 [DATA_PLANE.md](DATA_PLANE.md) 对照表同步。  
 - 数据面代码变更：仍只改 [DATA_PLANE.md](DATA_PLANE.md) 状态表，不单独改优先级矩阵。  
-- Cursor 限流文案：以 [CURSOR_SETUP.md](CURSOR_SETUP.md) 为准（DeepSeek vs MiMo Profile 分节）。
+- Cursor 限流文案：以 [CURSOR_SETUP.md](CURSOR_SETUP.md) 为准（DeepSeek vs MiMo Profile 分节）。  
+
+---
+
+## 8. Data Plane 诊断指南
+
+### 8.1 瓶颈定位流
+
+1. 打开 Dashboard → **Data Plane** 页面（`/dataplane`）。
+2. **SLO 卡片**检查：
+   - `Cache Hit Rate` < 60% → 详查 Trace 页 24h 影子日志（参考 §4）。
+   - `P95 E2E Latency` > 5000ms → 查看 **Phase 延迟表**，确认瓶颈在 `upstream_*`（上游支配）还是 `cache_lookup_done`、`json_parse_done`。
+   - `Error Rate` > 5% → 查看 **错误归因**面板，区分 client 与 upstream。
+3. **Phase 延迟表**：
+   - `cache_lookup_done` P99 > 50ms → L2 语义查询延迟异常，检查 Qdrant 负载。
+   - `upstream_body_done` P95 >> 其他阶段 → 上游推理耗时支配端到端延迟，非网关瓶颈。
+   - `cache_write_done` 高 → 检查 Redis 写入延迟。
+
+### 8.2 新指标速查
+
+| 指标 | 排障用途 |
+|------|----------|
+| `gateway_cache_write_latency_seconds` | 检测 L0/L1 写入慢 |
+| `gateway_upstream_response_status_total` | 上游错误率（按 pipeline 分组） |
+| `gateway_coalesce_leader_total` | Coalescing Leader 选举是否正常 |
+| `gateway_coalesce_follower_total` | Follower 去向分布（hit/fallthrough） |
+| `gateway_trace_write_total` | Trace 日志写入是否丢行 |
+| `gateway_rejection_by_source_total` | 拒绝来自 client 还是 upstream |
+
+### 8.3 Trace 新字段排障
+
+- `phase_durations_ms`：对比 Dashboard 各阶段基准值；若某一阶段持续偏高，说明该阶段代码或服务有性能退化。
+- `cache_decision`：`skip_coalesced` 表示请求被合并；`miss` 需结合 `limit_source` 确认是否因限流未查缓存。
+- `error_code` + `upstream_result`：直接定位上游错误类型。
+
+---
+
+## 9. 新增参考
+
+- [OBSERVABILITY.md](OBSERVABILITY.md) — Data Plane 诊断完整指标与 API 文档
+- Dashboard → `/dataplane` — 实时 Data Plane 视图

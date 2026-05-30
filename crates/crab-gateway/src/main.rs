@@ -25,7 +25,7 @@ use pingora_proxy::http_proxy;
 use prometheus::Registry;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -822,6 +822,11 @@ fn main() -> Result<()> {
         upstream_key_cooldown_secs: config.upstream_key_cooldown_secs(),
         semantic_runtime: semantic_runtime.clone(),
         semantic_cache: semantic_cache.clone(),
+        cors_enabled: cors_enabled_state.clone(),
+        max_request_body_bytes: max_request_body_bytes_state.clone(),
+        max_concurrent_requests: config.limits.max_concurrent_requests,
+        pricing: pricing_shared.clone(),
+        features: features_shared.clone(),
         client_endpoint: client_endpoint.clone(),
     };
 
@@ -899,6 +904,10 @@ fn main() -> Result<()> {
         "[DEBUG] global rate constructed",
         serde_json::json!({ "window_secs": 1 }),
     );
+    let cors_enabled_state = Arc::new(AtomicBool::new(config.gateway.cors_enabled));
+    let max_request_body_bytes_state = Arc::new(AtomicUsize::new(config.limits.max_request_body_bytes));
+    let pricing_shared = Arc::new(parking_lot::RwLock::new(config.cache.pricing.clone().unwrap_or_default()));
+    let features_shared = Arc::new(parking_lot::RwLock::new(config.features.clone()));
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -907,18 +916,18 @@ fn main() -> Result<()> {
         coalescer,
         reasoning_store,
         reasoning_config: reasoning_config_shared,
-        cors_enabled: config.gateway.cors_enabled,
+        cors_enabled: cors_enabled_state.clone(),
         trace_logger,
         raw_capture_logger,
         cache_key_namespace: config.cache.cache_key_namespace.clone(),
-        pricing: config.cache.pricing.clone().unwrap_or_default(),
+        pricing: pricing_shared.clone(),
         max_sse_cache_bytes: config.cache.max_sse_cache_bytes,
-        max_request_body_bytes: config.limits.max_request_body_bytes,
+        max_request_body_bytes: max_request_body_bytes_state.clone(),
         request_semaphore,
         client_key_limiter,
         client_key_rate_limiter,
         deepseek_user_id_limiter,
-        features: config.features.clone(),
+        features: features_shared.clone(),
         seen_session_fingerprints: moka::sync::Cache::builder()
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))

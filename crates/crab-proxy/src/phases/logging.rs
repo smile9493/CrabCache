@@ -36,7 +36,7 @@ pub(crate) async fn run(
     let latency_ms = duration.as_millis() as u64;
     record_request_composition(ctx);
     timeline_stamp(&mut ctx.timeline.logging_done);
-    if proxy.state.features.affinity_prompt_cache_feedback {
+    if proxy.state.features.read().affinity_prompt_cache_feedback {
         finalize_affinity_backend_hint(&proxy.state.affinity_backend_hints, ctx);
     }
     observe_request_timeline(ctx);
@@ -112,7 +112,7 @@ pub(crate) async fn run(
         );
 
         if let Some(pipeline) = ctx.request_pipeline
-            && proxy.state.features.mimo_session_store
+            && proxy.state.features.read().mimo_session_store
             && GatewayProxy::is_mimo_pipeline(pipeline)
             && ctx.cache_tier.is_none()
             && ctx.upstream.http_status.is_none_or(|s| s < 400)
@@ -132,8 +132,8 @@ pub(crate) async fn run(
                 redis_key,
                 base,
                 assistant,
-                proxy.state.features.mimo_session_store_ttl_secs,
-                proxy.state.features.mimo_session_store_max_messages,
+                proxy.state.features.read().mimo_session_store_ttl_secs,
+                proxy.state.features.read().mimo_session_store_max_messages,
             );
         }
 
@@ -241,6 +241,55 @@ pub(crate) async fn run(
                     .as_ref()
                     .map(|g| g.key_id().to_string());
                 entry.session_fingerprint = ctx.session_fingerprint.clone();
+                // ── New diagnostic trace fields ──────────────────────────
+                entry.status_code = ctx.upstream.http_status;
+                // Determine error_code from upstream status and context
+                let error_code = if let Some(status) = ctx.upstream.http_status {
+                    match status {
+                        429 if ctx.upstream.key_guard.is_some() => Some("rate_limited".to_string()),
+                        s if s >= 500 => Some("upstream_error".to_string()),
+                        s if s >= 400 => Some("upstream_client_error".to_string()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                entry.error_code = error_code;
+                // limit_source: derive from upstream status and context
+                entry.limit_source = if ctx.upstream.http_status == Some(429) {
+                    Some("upstream_rate_limit".to_string())
+                } else {
+                    None
+                };
+                // cache_decision: summarize the cache outcome
+                let cache_decision = if ctx.cache_tier.is_some() {
+                    "hit"
+                } else if ctx.is_coalesced_follower {
+                    "skip_coalesced"
+                } else if ctx.request_pipeline == Some(crab_pipeline::RequestPipeline::MimoTokenPlanRelay) && ctx.request_passthrough.armed_prefix_len > 0  {
+                    "skip_passthrough"
+                } else {
+                    "miss"
+                };
+                entry.cache_decision = Some(cache_decision.to_string());
+                // upstream_result: classify upstream response
+                entry.upstream_result = ctx.upstream.http_status.map(|status| {
+                    match status {
+                        200..=299 => "success",
+                        429 => "429_rate_limited",
+                        401 => "401_unauthorized",
+                        s if s >= 500 => "5xx_error",
+                        s if s >= 400 => "4xx_error",
+                        _ => "unknown",
+                    }.to_string()
+                });
+                // phase_durations_ms: compute from timeline watermarks
+                if let Some(phases) = crate::trace_logger::compute_phase_durations(
+                    &ctx.request_start,
+                    &ctx.timeline,
+                ) {
+                    entry.phase_durations_ms = Some(phases);
+                }
                 if let Some(backend) = &ctx.upstream.backend_name {
                     let result = if ctx.upstream.http_status.is_some_and(|s| s >= 400) {
                         "error"

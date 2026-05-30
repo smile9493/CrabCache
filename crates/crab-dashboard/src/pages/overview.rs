@@ -12,6 +12,7 @@ use crate::components::skeleton::SkeletonOverview;
 use crate::components::sparkline::Sparkline;
 use crate::locale::use_translations;
 use crate::page_visible::page_visible;
+use crate::time_utils::{format_number, now_hms_string};
 use crate::types::TimeSeriesPoint;
 use crate::types::{
     GatewayHealth, MetricsSnapshot, MetricsSnapshotCore, OverviewCore, OverviewOpsMetrics,
@@ -20,16 +21,6 @@ use crate::types::{
 use crate::view_state;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-fn now_hms_string() -> String {
-    let d = js_sys::Date::new_0();
-    format!(
-        "{:02}:{:02}:{:02}",
-        d.get_hours(),
-        d.get_minutes(),
-        d.get_seconds()
-    )
-}
 
 fn metrics_from_core(
     core: &MetricsSnapshotCore,
@@ -98,6 +89,11 @@ pub fn OverviewPage() -> impl IntoView {
     let vs = view_state::load_view_state();
     let overview_core: RwSignal<Option<Result<OverviewCore, String>>> = RwSignal::new(None);
     let trace_summary: RwSignal<Option<TraceSummary>> = RwSignal::new(None);
+    let peak_hours_data: RwSignal<crate::types::ModelPeakHoursResponse> = RwSignal::new(crate::types::ModelPeakHoursResponse {
+        models: vec![],
+        data: vec![],
+        last_aggregated_at: None,
+    });
     let ts_points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
     let ts_window = RwSignal::new(vs.ts_window.clone().unwrap_or_else(|| "1h".to_string()));
     let auto_refresh = RwSignal::new(vs.auto_refresh.unwrap_or(true));
@@ -159,16 +155,13 @@ pub fn OverviewPage() -> impl IntoView {
                         *dirty.borrow_mut() = false;
                     }
                     if *active.borrow() {
-                        let state = raf_state_inner.clone();
-                        let next_closure = wasm_bindgen::closure::Closure::once(move || {
-                            if let Some(func) = state.borrow().as_ref() {
-                                let _ = web_sys::window().unwrap().request_animation_frame(func);
-                            }
-                        });
-                        let next_js = next_closure.into_js_value();
-                        let _ = web_sys::window()
-                            .unwrap()
-                            .request_animation_frame(next_js.unchecked_ref());
+                        // Self-reschedule: re-register the same persistent closure
+                        // instead of allocating a new Closure::once every frame.
+                        if let Some(func) = raf_state_inner.borrow().as_ref() {
+                            let _ = web_sys::window()
+                                .unwrap()
+                                .request_animation_frame(func);
+                        }
                     }
                 };
 
@@ -177,6 +170,9 @@ pub fn OverviewPage() -> impl IntoView {
                 let func: js_sys::Function = closure.into_js_value().into();
                 *raf_state.borrow_mut() = Some(func);
             }
+
+            // Exponential backoff for SSE reconnection attempts.
+            let mut retry_delay_ms = 1_000;
 
             loop {
                 if !alive.load(Ordering::Relaxed) {
@@ -190,12 +186,14 @@ pub fn OverviewPage() -> impl IntoView {
                         }
                         sse_active.try_set(false);
                         *active.borrow_mut() = false;
-                        gloo_timers::future::TimeoutFuture::new(5_000).await;
+                        gloo_timers::future::TimeoutFuture::new(retry_delay_ms).await;
+                        retry_delay_ms = (retry_delay_ms * 2).min(30_000);
                         continue;
                     }
                 };
                 sse_active.try_set(true);
                 *active.borrow_mut() = true;
+                retry_delay_ms = 1_000;
 
                 // Kick off the rAF loop if not already running.
                 if let Some(func) = raf_state.borrow().as_ref() {
@@ -264,7 +262,8 @@ pub fn OverviewPage() -> impl IntoView {
                 sse_active.try_set(false);
                 *active.borrow_mut() = false;
                 es.close();
-                gloo_timers::future::TimeoutFuture::new(3_000).await;
+                gloo_timers::future::TimeoutFuture::new(retry_delay_ms).await;
+                retry_delay_ms = (retry_delay_ms * 2).min(30_000);
             }
         });
     }
@@ -320,7 +319,9 @@ pub fn OverviewPage() -> impl IntoView {
                     }
                 }
             }
-            is_loading.try_set(false);
+            if load_generation.try_get() == Some(request_id) {
+                is_loading.try_set(false);
+            }
         });
     });
 
@@ -339,6 +340,22 @@ pub fn OverviewPage() -> impl IntoView {
             }
         });
     });
+
+    {
+        let ph = peak_hours_data;
+        let alive_ph = Arc::clone(&alive);
+        leptos::task::spawn_local(async move {
+            loop {
+                if !alive_ph.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Ok(resp) = api::fetch_model_peak_hours(7).await {
+                    ph.set(resp);
+                }
+                TimeoutFuture::new(300_000).await;
+            }
+        });
+    }
 
     let alive_for_ts = Arc::clone(&alive);
     let load_timeseries: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
@@ -541,6 +558,7 @@ pub fn OverviewPage() -> impl IntoView {
                     <OverviewContent
                         overview_core
                         trace_summary
+                        peak_hours_data
                         ts_points
                         ts_window
                     />
@@ -557,6 +575,7 @@ pub fn OverviewPage() -> impl IntoView {
 fn OverviewContent(
     overview_core: RwSignal<Option<Result<OverviewCore, String>>>,
     trace_summary: RwSignal<Option<TraceSummary>>,
+    peak_hours_data: RwSignal<crate::types::ModelPeakHoursResponse>,
     ts_points: RwSignal<Vec<TimeSeriesPoint>>,
     ts_window: RwSignal<String>,
 ) -> impl IntoView {
@@ -637,6 +656,7 @@ fn OverviewContent(
                 ts_points=ts_points
                 ts_window=ts_window
                 selected_domain=selected_domain
+                peak_hours_data=peak_hours_data
             />
 
             <ObservabilityFooter />
@@ -1069,16 +1089,6 @@ fn format_uptime_display(uptime_secs: u64, uptime_hours: u64) -> String {
         return format!("{hours}h");
     }
     format!("{uptime_hours}h")
-}
-
-pub fn format_number(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        format!("{}", n)
-    }
 }
 
 #[component]

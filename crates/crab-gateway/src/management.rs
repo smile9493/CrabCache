@@ -12,8 +12,9 @@ use crab_control::{
     ClearReasoningCacheResponse, ClientEndpointView, ConnectionRuntimeView,
     CreateGatewayKeyRequest, CreateGatewayKeyResponse, CursorModelAliasView,
     CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse, ErrorResponse,
-    GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
+    GATEWAY_ADMIN_KEY_HEADER,     GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
     PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
+    LimitsConfigView, ModelPricingView, PricingConfigView, FeaturesConfigView,
     PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
     RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
@@ -24,16 +25,16 @@ use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
 };
 use crab_proxy::{
-    ClientKeyLimiter, DomainPolicy, ReasoningConfig, RuntimeConfig, StoredKey, UpstreamKeyPool,
-    UpstreamKeySpec,
+    ClientKeyLimiter, DomainPolicy, FeaturesConfig, ModelPricing, PricingConfig, ReasoningConfig,
+    RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
 };
 use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -62,6 +63,11 @@ pub struct ManagementState {
     pub upstream_key_cooldown_secs: u64,
     pub semantic_runtime: SharedSemanticRuntime,
     pub semantic_cache: Option<Arc<crab_semantic::SemanticCache>>,
+    pub cors_enabled: Arc<AtomicBool>,
+    pub max_request_body_bytes: Arc<AtomicUsize>,
+    pub max_concurrent_requests: usize,
+    pub pricing: Arc<parking_lot::RwLock<PricingConfig>>,
+    pub features: Arc<parking_lot::RwLock<FeaturesConfig>>,
     /// Auto-discovered client Base URL (FRP / OpenResty / Pingora observed headers).
     pub client_endpoint: Arc<RwLock<ClientEndpointSnapshot>>,
 }
@@ -158,6 +164,18 @@ pub fn router(state: ManagementState) -> Router {
         .route(
             "/v1/runtime/connection",
             get(get_connection_runtime).put(put_connection_runtime),
+        )
+        .route(
+            "/v1/config/limits",
+            get(get_limits_config).put(put_limits_config),
+        )
+        .route(
+            "/v1/config/pricing",
+            get(get_pricing_config).put(put_pricing_config),
+        )
+        .route(
+            "/v1/config/features",
+            get(get_features_config).put(put_features_config),
         )
         .route(
             "/v1/cursor/models",
@@ -1376,6 +1394,9 @@ fn connection_runtime_view(conn: &crab_proxy::ConnectionConfig) -> ConnectionRun
         upstream_force_http1: conn.upstream_force_http1,
         upstream_disable_keepalive: conn.upstream_disable_keepalive,
         upstream_tls_curves: conn.upstream_tls_curves.clone(),
+        upstream_request_timeout_secs: conn.upstream_request_timeout_secs.unwrap_or(300),
+        upstream_write_timeout_secs: conn.upstream_write_timeout_secs.unwrap_or(300),
+        upstream_connection_timeout_secs: conn.upstream_connection_timeout_secs.unwrap_or(60),
     }
 }
 
@@ -1403,6 +1424,9 @@ async fn put_connection_runtime(
     conn.upstream_force_http1 = req.upstream_force_http1;
     conn.upstream_disable_keepalive = req.upstream_disable_keepalive;
     conn.upstream_tls_curves = req.upstream_tls_curves.clone();
+    conn.upstream_request_timeout_secs = Some(req.upstream_request_timeout_secs);
+    conn.upstream_write_timeout_secs = Some(req.upstream_write_timeout_secs);
+    conn.upstream_connection_timeout_secs = Some(req.upstream_connection_timeout_secs);
     *state.runtime.conn_config.write() = Arc::new(conn);
     Ok(Json(req))
 }
@@ -1414,6 +1438,128 @@ fn semantic_runtime_view(state: &SemanticRuntimeState) -> SemanticRuntimeView {
         min_query_chars: state.gate.min_query_chars,
         max_query_chars: state.gate.max_query_chars,
         embed_only_on_exact_miss: state.gate.embed_only_on_exact_miss,
+    }
+}
+
+async fn get_limits_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<LimitsConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(LimitsConfigView {
+        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
+        max_concurrent_requests: state.max_concurrent_requests,
+        legacy_api_key_as_client_auth: state.runtime.legacy_api_key_as_client_auth.load(Ordering::Relaxed),
+        cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
+    }))
+}
+
+async fn put_limits_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<LimitsConfigView>,
+) -> Result<Json<LimitsConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    state.max_request_body_bytes.store(req.max_request_body_bytes, Ordering::Relaxed);
+    state.cors_enabled.store(req.cors_enabled, Ordering::Relaxed);
+    state.runtime.legacy_api_key_as_client_auth.store(req.legacy_api_key_as_client_auth, Ordering::Relaxed);
+    Ok(Json(LimitsConfigView {
+        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
+        max_concurrent_requests: state.max_concurrent_requests,
+        legacy_api_key_as_client_auth: state.runtime.legacy_api_key_as_client_auth.load(Ordering::Relaxed),
+        cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
+    }))
+}
+
+async fn get_pricing_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<PricingConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let pricing = state.pricing.read();
+    Ok(Json(pricing_view(&pricing)))
+}
+
+async fn put_pricing_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PricingConfigView>,
+) -> Result<Json<PricingConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let mut pricing = state.pricing.write();
+    pricing.default_input_price_per_million = req.default_input_price_per_million;
+    pricing.default_output_price_per_million = req.default_output_price_per_million;
+    pricing.model_overrides = req.model_overrides.into_iter().map(|(k, v)| {
+        (k, crab_proxy::ModelPricing { input: v.input, output: v.output })
+    }).collect();
+    Ok(Json(pricing_view(&pricing)))
+}
+
+fn pricing_view(p: &PricingConfig) -> PricingConfigView {
+    PricingConfigView {
+        default_input_price_per_million: p.default_input_price_per_million,
+        default_output_price_per_million: p.default_output_price_per_million,
+        model_overrides: p.model_overrides.iter().map(|(k, v)| {
+            (k.clone(), ModelPricingView { input: v.input, output: v.output })
+        }).collect(),
+    }
+}
+
+async fn get_features_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<FeaturesConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let f = state.features.read();
+    Ok(Json(features_view(&f)))
+}
+
+async fn put_features_config(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<FeaturesConfigView>,
+) -> Result<Json<FeaturesConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let mut f = state.features.write();
+    f.prefix_aware_cache = req.prefix_aware_cache;
+    f.streaming_body_forward = req.streaming_body_forward;
+    f.connection_prewarm = req.connection_prewarm;
+    f.affinity_prompt_cache_feedback = req.affinity_prompt_cache_feedback;
+    f.delta_cache = req.delta_cache;
+    f.io_uring_backend = req.io_uring_backend;
+    f.wasm_filters = req.wasm_filters;
+    f.mimo_context_compression = req.mimo_context_compression;
+    f.mimo_compression_threshold = req.mimo_compression_threshold;
+    f.upstream_request_gzip = req.upstream_request_gzip;
+    f.upstream_request_gzip_min_bytes = req.upstream_request_gzip_min_bytes;
+    f.mimo_retire_prefix_messages = req.mimo_retire_prefix_messages;
+    f.mimo_keep_recent_turns = req.mimo_keep_recent_turns;
+    f.mimo_session_store = req.mimo_session_store;
+    f.mimo_session_store_ttl_secs = req.mimo_session_store_ttl_secs;
+    f.mimo_session_store_max_messages = req.mimo_session_store_max_messages;
+    f.passthrough_prefix_bytes = req.passthrough_prefix_bytes;
+    Ok(Json(features_view(&f)))
+}
+
+fn features_view(f: &FeaturesConfig) -> FeaturesConfigView {
+    FeaturesConfigView {
+        prefix_aware_cache: f.prefix_aware_cache,
+        streaming_body_forward: f.streaming_body_forward,
+        connection_prewarm: f.connection_prewarm,
+        affinity_prompt_cache_feedback: f.affinity_prompt_cache_feedback,
+        delta_cache: f.delta_cache,
+        io_uring_backend: f.io_uring_backend,
+        wasm_filters: f.wasm_filters,
+        mimo_context_compression: f.mimo_context_compression,
+        mimo_compression_threshold: f.mimo_compression_threshold,
+        upstream_request_gzip: f.upstream_request_gzip,
+        upstream_request_gzip_min_bytes: f.upstream_request_gzip_min_bytes,
+        mimo_retire_prefix_messages: f.mimo_retire_prefix_messages,
+        mimo_keep_recent_turns: f.mimo_keep_recent_turns,
+        mimo_session_store: f.mimo_session_store,
+        mimo_session_store_ttl_secs: f.mimo_session_store_ttl_secs,
+        mimo_session_store_max_messages: f.mimo_session_store_max_messages,
+        passthrough_prefix_bytes: f.passthrough_prefix_bytes,
     }
 }
 

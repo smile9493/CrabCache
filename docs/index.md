@@ -11,7 +11,7 @@
 | [数据面实现状态](DATA_PLANE.md) | P0–P2 交付对照、feature 开关、运行时分析对照 |
 | [运维与事故处置](OPS_RUNBOOK.md) | 内测 Trace 结论、P0 清单、非数据面遗漏 |
 | [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) | MiMo/DeepSeek 双线路径灰度验收清单 + Prometheus 核对 |
-| [数据面优化展望](../数据面优化.md) | 六维改进论证、优先级矩阵、proxy 拆分附录 |
+| [数据面优化展望](DATA_PLANE.md#数据面-roi-排序与优先级) | 六维改进论证、优先级矩阵、proxy 拆分附录 |
 | [数据面 P3 实验](DATA_PLANE_P3.md) | 差分缓存、WASM、io_uring 设计与回滚 |
 
 ### 🚀 入门指南

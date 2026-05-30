@@ -154,7 +154,7 @@ pub(crate) async fn run(
                         &ctx.model,
                         Some(tier),
                     );
-                    let cost = proxy.state.pricing.cost_saved_usd(
+                    let cost = proxy.state.pricing.read().cost_saved_usd(
                         &ctx.model,
                         entry.usage.prompt_tokens,
                         entry.usage.completion_tokens,
@@ -216,7 +216,7 @@ pub(crate) async fn run(
 
         // ── Prefix-aware L0 lookup ───────────────────────────────
         // Enabled by feature flag, and default-on for MiMo relay pipelines.
-        let prefix_aware_enabled = proxy.state.features.prefix_aware_cache
+        let prefix_aware_enabled = proxy.state.features.read().prefix_aware_cache
             || ctx
                 .request_pipeline
                 .is_some_and(GatewayProxy::is_mimo_pipeline);
@@ -303,6 +303,7 @@ pub(crate) async fn run(
                                 tier = ?tier,
                                 "Follower found cached response after leader completed"
                             );
+                            global_metrics().record_coalesce_follower("hit");
 
                             // #region agent log
                             debug_agent_log(
@@ -353,7 +354,7 @@ pub(crate) async fn run(
                                     &ctx.model,
                                     Some(tier),
                                 );
-                                let cost = proxy.state.pricing.cost_saved_usd(
+                                let cost = proxy.state.pricing.read().cost_saved_usd(
                                     &ctx.model,
                                     entry.usage.prompt_tokens,
                                     entry.usage.completion_tokens,
@@ -417,13 +418,16 @@ pub(crate) async fn run(
                             cache_key = %cache_key,
                             "Follower did not find cached response, falling through to upstream"
                         );
+                        global_metrics().record_coalesce_follower("fallthrough");
                     }
                 } else {
                     ctx.coalesce_guard = Some(guard);
+                    global_metrics().record_coalesce_leader("elected");
                 }
             }
             Err(CoalesceError::CapacityExceeded) => {
                 global_metrics().record_rejected("coalesce_capacity");
+                global_metrics().record_rejection_by_source("client");
                 let _ = session.respond_error(503).await;
                 return Ok(CachePhaseOutcome::Return(true));
             }

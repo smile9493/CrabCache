@@ -12,9 +12,11 @@ use crate::pages::domains::{DomainDetailDrawer, DomainOverviewTableInline};
 use crate::pages::overview::{
     CacheHitSection, CoalescingCard, ConsumerHitTable, CostSavingsSection, LatencySection,
     OpsMetricsRow, PrefixCacheCard, PrefixHealthCard, SemanticCacheCard, TimeSeriesChart,
-    TokenStats, TraceCompareBanner, UpstreamKeyStrip, format_number, OverviewHealthStrip,
+    TokenStats, TraceCompareBanner, UpstreamKeyStrip, OverviewHealthStrip,
 };
 use crate::api;
+use crate::components::peak_hours_heatmap::PeakHoursHeatmap;
+use crate::time_utils::format_number;
 use crate::pages::overview_analytics::{infra_container_headline, InfraOverviewModule};
 use crate::types::{
     GatewayHealth, MetricsSnapshot, OverviewOpsMetrics, OverviewSuggestion, PrefixCacheMetricsSnapshot,
@@ -98,6 +100,7 @@ pub fn OverviewCardGrid(
     ts_points: RwSignal<Vec<TimeSeriesPoint>>,
     ts_window: RwSignal<String>,
     selected_domain: RwSignal<Option<String>>,
+    #[prop(optional)] peak_hours_data: Option<RwSignal<crate::types::ModelPeakHoursResponse>>,
 ) -> impl IntoView {
     let t = use_translations();
 
@@ -666,6 +669,31 @@ pub fn OverviewCardGrid(
                                     />
                                 </div>
                                 <DomainDetailDrawer domain=selected_domain />
+                                {move || {
+                                    if let Some(ph) = peak_hours_data {
+                                        let resp = ph.get();
+                                        if !resp.models.is_empty() {
+                                            let data_sig = Signal::derive(move || ph.get().data);
+                                            let models_sig = Signal::derive(move || ph.get().models);
+                                            let on_del = Callback::new(move |(model, bucket): (String, i64)| {
+                                                leptos::task::spawn_local(async move {
+                                                    if api::delete_model_peak_hour(&model, bucket).await.is_ok() {
+                                                        if let Ok(resp) = api::fetch_model_peak_hours(7).await {
+                                                            ph.set(resp);
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                            view! {
+                                                <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
+                                            }.into_any()
+                                        } else {
+                                            ().into_any()
+                                        }
+                                    } else {
+                                        ().into_any()
+                                    }
+                                }}
                             </>
                         }.into_any()
                     }

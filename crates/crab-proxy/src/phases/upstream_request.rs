@@ -49,7 +49,7 @@ pub(crate) async fn run_upstream_request_filter(
         }
         upstream_request.set_send_end_stream(false);
     } else if ctx.new_request_body.is_some() {
-        let features = &proxy.state.features;
+        let features = proxy.state.features.read();
         let raw = ctx.new_request_body.as_ref().unwrap();
         let (payload, gzipped) = maybe_gzip_request_body(
             raw,

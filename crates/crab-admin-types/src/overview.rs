@@ -40,6 +40,14 @@ pub struct SemanticConfig {
     pub enabled: bool,
     #[serde(default)]
     pub similarity_threshold: f64,
+    #[serde(default)]
+    pub ttl_secs: u64,
+    #[serde(default)]
+    pub min_query_chars: usize,
+    #[serde(default)]
+    pub max_query_chars: usize,
+    #[serde(default)]
+    pub max_concurrent_embeds: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

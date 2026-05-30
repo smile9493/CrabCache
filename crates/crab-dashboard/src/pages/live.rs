@@ -5,7 +5,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
@@ -21,6 +20,7 @@ use crate::components::session_drilldown_panel::SessionDrilldownPanel;
 use crate::components::skeleton::SkeletonLive;
 use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
+use crate::time_utils::{format_number, now_hms_string};
 use crate::types::{
     KeyConcurrencyResponse, KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse,
     LiveMetricsSeries, LiveMetricsSummary, ProfileRoutingView, SERIES_COLORS,
@@ -42,16 +42,6 @@ impl LiveGroupBy {
             LiveGroupBy::CacheHit => &["cache_hit"],
         }
     }
-}
-
-fn now_hms_string() -> String {
-    let d = js_sys::Date::new_0();
-    format!(
-        "{:02}:{:02}:{:02}",
-        d.get_hours(),
-        d.get_minutes(),
-        d.get_seconds()
-    )
 }
 
 const MAX_CHART_POINTS: usize = 240;
@@ -94,18 +84,17 @@ fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucke
     if buckets.len() <= MAX_CHART_POINTS {
         return buckets.to_vec();
     }
-    let step = (buckets.len() as f64 / MAX_CHART_POINTS as f64).ceil() as usize;
-    let mut sampled: Vec<LiveMetricsBucket> =
-        buckets.iter().step_by(step.max(1)).cloned().collect();
-    if let Some(last) = buckets.last().cloned()
-        && sampled
-            .last()
-            .map(|x| x.timestamp_ms != last.timestamp_ms)
-            .unwrap_or(true)
-    {
-        sampled.push(last);
-    }
-    sampled
+    // Use LTTB downsampling on request_count to preserve visual peaks.
+    let pairs: Vec<(f64, f64)> = buckets
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (i as f64, b.request_count as f64))
+        .collect();
+    let downsampled = crate::components::chart::core::downsample_lttb(&pairs, MAX_CHART_POINTS);
+    downsampled
+        .iter()
+        .map(|(idx, _)| buckets[idx.round() as usize].clone())
+        .collect()
 }
 
 fn window_label(window_secs: u32, t: Translations) -> &'static str {
@@ -126,16 +115,6 @@ fn cache_hit_pct(data: &LiveMetricsResponse) -> f64 {
         hits as f64 / total as f64 * 100.0
     } else {
         0.0
-    }
-}
-
-fn format_number(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        format!("{}", n)
     }
 }
 
@@ -348,16 +327,11 @@ pub fn LivePage() -> impl IntoView {
                 *live_dirty.lock().expect("live_dirty lock poisoned") = false;
             }
             if live_active.load(Ordering::Relaxed) {
-                let state = live_raf_state_inner.clone();
-                let next = wasm_bindgen::closure::Closure::once(move || {
-                    if let Some(func) = state.borrow().as_ref() {
-                        let _ = web_sys::window().unwrap().request_animation_frame(func);
-                    }
-                });
-                let next_js = next.into_js_value();
-                let _ = web_sys::window()
-                    .unwrap()
-                    .request_animation_frame(next_js.unchecked_ref());
+                // Self-reschedule: re-register the same persistent closure
+                // instead of allocating a new Closure::once every frame.
+                if let Some(func) = live_raf_state_inner.borrow().as_ref() {
+                    let _ = web_sys::window().unwrap().request_animation_frame(func);
+                }
             }
         };
         let closure = wasm_bindgen::closure::Closure::wrap(Box::new(flush) as Box<dyn FnMut()>);
@@ -373,9 +347,9 @@ pub fn LivePage() -> impl IntoView {
     let live_buffer_for_loader = Arc::clone(&live_buffer);
     let live_dirty_for_loader = Arc::clone(&live_dirty);
     let alive_for_loader = Arc::clone(&alive);
-    let load_live_fn: Rc<RefCell<dyn FnMut()>> = {
+    let load_live_fn: Arc<Mutex<dyn FnMut() + Send>> = {
         let consumers = consumers;
-        Rc::new(RefCell::new(move || {
+        Arc::new(Mutex::new(move || {
             let alive = Arc::clone(&alive_for_loader);
             if !alive.load(Ordering::Relaxed) {
                 return;
@@ -491,7 +465,7 @@ pub fn LivePage() -> impl IntoView {
         move |_| {
             let _ = selected_consumer.get();
             let _ = window_secs.get();
-            ll.borrow_mut()();
+            ll.lock().expect("load_live_fn lock")();
         }
     });
 
@@ -523,6 +497,7 @@ pub fn LivePage() -> impl IntoView {
     leptos::task::spawn_local({
         let ll = load_live_fn.clone();
         async move {
+            let mut routing_tick: u8 = 0;
             loop {
                 let interval = poll_interval_ms(window_secs.try_get_untracked().unwrap_or(12 * 3600));
                 TimeoutFuture::new(interval).await;
@@ -533,8 +508,14 @@ pub fn LivePage() -> impl IntoView {
                     && selected_consumer.try_get_untracked().flatten().is_some()
                     && page_visible()
                 {
-                    ll.borrow_mut()();
-                    load_routing();
+                    ll.lock().expect("load_live_fn lock")();
+                    // Routing data (backends, key pool, circuit breakers) changes
+                    // far less frequently than live metrics. Only refresh every
+                    // 5th poll cycle to reduce backend load.
+                    routing_tick = routing_tick.wrapping_add(1);
+                    if routing_tick % 5 == 0 {
+                        load_routing();
+                    }
                 }
             }
         }
@@ -543,6 +524,9 @@ pub fn LivePage() -> impl IntoView {
     {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::prelude::*;
+        // SAFETY: WASM is single-threaded; `js_sys::Function` is `Send + Sync` in
+        // practice because all operations happen on the main thread inside the
+        // same agent. This wrapper is only used to store the function in `on_cleanup`.
         struct SendSyncFn(js_sys::Function);
         unsafe impl Send for SendSyncFn {}
         unsafe impl Sync for SendSyncFn {}
@@ -557,7 +541,7 @@ pub fn LivePage() -> impl IntoView {
                 && auto_refresh.try_get_untracked() == Some(true)
                 && selected_consumer.try_get_untracked().flatten().is_some()
             {
-                ll.borrow_mut()();
+                ll.lock().expect("load_live_fn lock")();
             }
         }) as Box<dyn FnMut()>);
         let vis_cb_fn: js_sys::Function = vis_cb.into_js_value().unchecked_into();
@@ -579,6 +563,8 @@ pub fn LivePage() -> impl IntoView {
         live_active.store(false, Ordering::Relaxed);
     });
 
+    let refresh_fn = load_live_fn.clone();
+
     view! {
         <div class="page-content space-y-5">
             <PageHeader
@@ -596,49 +582,7 @@ pub fn LivePage() -> impl IntoView {
                     </span>
                 </button>
                 <button on:click=move |_| {
-                    if !alive.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let Some(consumer) = selected_consumer.try_get().flatten() else {
-                        live_data.try_set(None);
-                        return;
-                    };
-                    load_generation.try_update(|g| *g += 1);
-                    let request_id = load_generation.try_get().unwrap_or(0);
-                    let window = window_secs.try_get().unwrap_or(12 * 3600);
-                    let gb = group_by.try_get().unwrap_or(LiveGroupBy::None).as_slice().to_vec();
-                    let buf = Arc::clone(&live_buffer);
-                    let dirty = Arc::clone(&live_dirty);
-                    let consumers = consumers;
-                    let alive = Arc::clone(&alive);
-                    leptos::task::spawn_local(async move {
-                        let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
-                        match api::fetch_live_metrics_v2(&consumer, window, &gb_refs, "", "").await {
-                            Ok(data) => {
-                                if !alive.load(Ordering::Relaxed) || load_generation.try_get() != Some(request_id) {
-                                    return;
-                                }
-                                if !data.available_consumers.is_empty() {
-                                    consumers.try_set(data.available_consumers.clone());
-                                    if selected_consumer.try_get_untracked().flatten().is_none()
-                                        && let Some(first) = data.available_consumers.first()
-                                    {
-                                        selected_consumer.try_set(Some(first.clone()));
-                                    }
-                                }
-                                buf.lock().expect("live_buffer lock poisoned").replace(Ok(data));
-                                *dirty.lock().expect("live_dirty lock poisoned") = true;
-                            }
-                            Err(e) => {
-                                if !alive.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                if load_generation.try_get() == Some(request_id) {
-                                    live_data.try_set(Some(Err(e)));
-                                }
-                            }
-                        }
-                    });
+                    refresh_fn.lock().expect("load_live_fn lock")();
                 } class="btn btn-secondary text-xs">
                     {move || t.overview_refresh()}
                 </button>

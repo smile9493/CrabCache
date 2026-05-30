@@ -1,15 +1,23 @@
-FROM ubuntu:latest
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
+RUN groupadd -r crabcache && useradd -r -g crabcache -s /bin/false crabcache
+
 WORKDIR /app
+
+RUN mkdir -p /app/data /app/logs
 
 COPY crab-admin/crab-admin /app/crab-admin
 COPY crab-admin/dashboard/ /app/crates/crab-dashboard/dist/
 
+RUN chown -R crabcache:crabcache /app
+
 ENV CRABCACHE_GATEWAY_CONTROL_URL=http://gateway:9080
-ENV CRABCACHE_ADMIN_KEY=admin
+# CRABCACHE_ADMIN_KEY must be set via environment or docker-compose; no hardcoded default.
 
 EXPOSE 3000
+
+USER crabcache
 
 CMD ["/app/crab-admin", "--listen", "0.0.0.0:3000"]

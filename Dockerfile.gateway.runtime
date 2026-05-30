@@ -1,10 +1,12 @@
-FROM ubuntu:latest
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3t64 \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r crabcache && useradd -r -g crabcache -s /bin/false crabcache
 
 WORKDIR /app
 
@@ -13,6 +15,10 @@ RUN mkdir -p /app/data /app/logs /app/config
 COPY crab-gateway /app/crab-gateway
 COPY config/gateway.docker.toml /app/config/gateway.toml
 
+RUN chown -R crabcache:crabcache /app
+
 EXPOSE 8080 9080 9090
+
+USER crabcache
 
 CMD ["/app/crab-gateway", "/app/config/gateway.toml"]

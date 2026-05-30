@@ -78,7 +78,7 @@ pub(crate) async fn run(
     let profile = proxy.active_upstream_profile(ctx);
     let router = &profile.router;
 
-    let preferred_backend = if proxy.state.features.affinity_prompt_cache_feedback {
+    let preferred_backend = if proxy.state.features.read().affinity_prompt_cache_feedback {
         ctx.upstream
             .affinity_key
             .as_deref()
@@ -115,7 +115,7 @@ pub(crate) async fn run(
     let peer = proxy.create_upstream_peer(backend_addr, &backend_tls_sni, ctx);
 
     // Trigger direct pool pre-warm for new session fingerprints (same peer options as upstream).
-    if proxy.state.features.connection_prewarm {
+    if proxy.state.features.read().connection_prewarm {
         if let Some(sfp) = ctx.session_fingerprint.as_deref() {
             spawn_direct_prewarm_if_new_session(
                 &proxy.state.upstream_connector.read().clone(),

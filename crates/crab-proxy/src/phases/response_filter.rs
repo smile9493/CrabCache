@@ -9,6 +9,7 @@ use crate::proxy::GatewayProxy;
 use crate::upstream_response_decompress::parse_content_encoding;
 use crab_metrics::global_metrics;
 use http::header;
+use pingora_core::ErrorType;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use tracing::warn;
@@ -31,6 +32,7 @@ pub(crate) async fn run(
         }
     }
     global_metrics().record_http_response(status);
+    global_metrics().record_upstream_response_status(status, ctx.request_pipeline.map(|p| p.as_str()));
     // #region agent log
     debug_agent_log(
         "UP-SEEN",
@@ -115,8 +117,32 @@ pub(crate) async fn run(
                         })
                         .as_deref(),
                 ) {
+                    let new_key_id = new_guard.key_id().to_string();
                     ctx.upstream.key_guard = Some(new_guard);
                     global_metrics().record_upstream_key_retry("rate_limited_rotate");
+
+                    // Restore prepared body so request_body_filter can re-emit it on retry.
+                    ctx.new_request_body = ctx.upstream.prepared_body_for_retry.clone();
+                    // The >= 400 block may have set error_passthrough; clear it for retry.
+                    ctx.upstream.error_passthrough = false;
+
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        new_key_id = %new_key_id,
+                        "retrying 429 with new upstream key"
+                    );
+
+                    // Return a retryable error — Pingora's retry loop will re-run
+                    // upstream_peer → upstream_request_filter → request_body_filter
+                    // → response_filter with a fresh upstream connection.
+                    let mut e = pingora_core::Error::create(
+                        ErrorType::HTTPStatus(429),
+                        pingora_core::ErrorSource::Upstream,
+                        Some("upstream rate limited, retrying with new key".into()),
+                        None,
+                    );
+                    e.set_retry(true);
+                    return Err(e);
                 } else {
                     global_metrics().record_upstream_key_retry("cooldown_only");
                 }

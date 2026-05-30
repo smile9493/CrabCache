@@ -107,6 +107,11 @@ fn ConfigTab() -> impl IntoView {
                     }.into_any(),
                     Some(Ok(config)) => view! { <SemanticConfigPanel config feedback /> }.into_any(),
                 }}
+
+                // Pricing config card
+                <div class="config-card glass-card">
+                    <PricingConfigCard />
+                </div>
             </div>
 
             // Fingerprint + Stream cache (from CacheOps)
@@ -197,6 +202,87 @@ fn ConfigTab() -> impl IntoView {
 }
 
 #[component]
+fn PricingConfigCard() -> impl IntoView {
+    let t = use_translations();
+    let feedback: RwSignal<String> = RwSignal::new(String::new());
+    let data: RwSignal<Option<PricingConfigView>> = RwSignal::new(None);
+
+    let input_price = RwSignal::new(0.55f64);
+    let output_price = RwSignal::new(2.19f64);
+
+    let load = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_cache_pricing_config().await {
+                Ok(p) => {
+                    input_price.set(p.default_input_price_per_million);
+                    output_price.set(p.default_output_price_per_million);
+                    data.set(Some(p));
+                }
+                Err(e) => feedback.set(e),
+            }
+        });
+    };
+
+    let save = move |_| {
+        leptos::task::spawn_local(async move {
+            let base = data.get().unwrap_or(PricingConfigView {
+                default_input_price_per_million: 0.55,
+                default_output_price_per_million: 2.19,
+                model_overrides: vec![],
+            });
+            let req = PricingConfigView {
+                default_input_price_per_million: input_price.get(),
+                default_output_price_per_million: output_price.get(),
+                model_overrides: base.model_overrides,
+            };
+            match api::update_cache_pricing_config(&req).await {
+                Ok(p) => {
+                    data.set(Some(p));
+                    feedback.set(t.routing_saved().to_string());
+                }
+                Err(e) => feedback.set(e),
+            }
+        });
+    };
+
+    load();
+
+    view! {
+        <div class="config-card-head">
+            <h4 class="config-card-title">"Pricing"</h4>
+            <p class="config-card-desc">"Default input/output price per million tokens"</p>
+        </div>
+        <div class="config-card-body space-y-4">
+            <ConfigRangeF64
+                label=move || format!("Input: ${:.4}/M tok", input_price.get())
+                value=input_price
+                min=0.01 max=10.0 step=0.01
+                min_hint="$0.01" max_hint="$10.00"
+                accent="blue"
+            />
+            <ConfigRangeF64
+                label=move || format!("Output: ${:.4}/M tok", output_price.get())
+                value=output_price
+                min=0.01 max=20.0 step=0.01
+                min_hint="$0.01" max_hint="$20.00"
+                accent="purple"
+            />
+            {move || {
+                let msg = feedback.get();
+                if !msg.is_empty() {
+                    view! { <p class="text-xs text-blue-400">{msg}</p> }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
+        </div>
+        <div class="config-card-foot">
+            <button on:click=save class="btn btn-primary text-sm">{t.routing_save()}</button>
+        </div>
+    }
+}
+
+#[component]
 fn TtlConfigPanel(config: CacheConfig, feedback: RwSignal<String>) -> impl IntoView {
     let t = use_translations();
     let l0_ttl = RwSignal::new(config.l0_ttl_secs);
@@ -255,11 +341,19 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
     let t = use_translations();
     let enabled = RwSignal::new(config.enabled);
     let threshold = RwSignal::new(config.similarity_threshold);
+    let ttl = RwSignal::new(config.ttl_secs);
+    let min_chars = RwSignal::new(config.min_query_chars as u64);
+    let max_chars = RwSignal::new(config.max_query_chars as u64);
+    let max_embeds = RwSignal::new(config.max_concurrent_embeds as u64);
 
     let on_save = move |_| {
         let req = UpdateSemanticConfigRequest {
             enabled: Some(enabled.get()),
             similarity_threshold: threshold.get(),
+            ttl_secs: ttl.get(),
+            min_query_chars: min_chars.get() as usize,
+            max_query_chars: max_chars.get() as usize,
+            max_concurrent_embeds: max_embeds.get() as usize,
         };
         leptos::task::spawn_local(async move {
             match api::update_semantic_config(&req).await {
@@ -292,6 +386,22 @@ fn SemanticConfigPanel(config: SemanticConfig, feedback: RwSignal<String>) -> im
                     min_hint=t.routing_loose()
                     max_hint=t.routing_strict()
                     accent="violet"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}s", "TTL", ttl.get())
+                    value=ttl min=60 max=2592000 min_hint="60s" max_hint="30d" accent="violet"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}", "Min Query Chars", min_chars.get())
+                    value=min_chars min=8 max=256 min_hint="8" max_hint="256" accent="violet"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}", "Max Query Chars", max_chars.get())
+                    value=max_chars min=512 max=16384 min_hint="512" max_hint="16384" accent="violet"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}", "Max Concurrent Embeds", max_embeds.get())
+                    value=max_embeds min=1 max=16 min_hint="1" max_hint="16" accent="violet"
                 />
                 <div class="impact-hint">
                     <div class="text-xs text-theme-secondary mb-1">{t.routing_impact_label()}</div>
@@ -381,6 +491,11 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
     let count = RwSignal::new(config.tcp_keepalive_count as u64);
     let timeout = RwSignal::new(config.idle_timeout_secs);
     let h2_ping = RwSignal::new(config.h2_ping_interval_secs);
+    let force_http1 = RwSignal::new(config.upstream_force_http1);
+    let disable_keepalive = RwSignal::new(config.upstream_disable_keepalive);
+    let req_timeout = RwSignal::new(config.upstream_request_timeout_secs);
+    let write_timeout = RwSignal::new(config.upstream_write_timeout_secs);
+    let conn_timeout = RwSignal::new(config.upstream_connection_timeout_secs);
 
     let on_save = move |_| {
         let req = crate::types::UpdateConnectionConfigRequest {
@@ -389,6 +504,11 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
             tcp_keepalive_count: count.get() as usize,
             idle_timeout_secs: timeout.get(),
             h2_ping_interval_secs: h2_ping.get(),
+            upstream_force_http1: force_http1.get(),
+            upstream_disable_keepalive: disable_keepalive.get(),
+            upstream_request_timeout_secs: req_timeout.get(),
+            upstream_write_timeout_secs: write_timeout.get(),
+            upstream_connection_timeout_secs: conn_timeout.get(),
         };
         leptos::task::spawn_local(async move {
             match api::update_connection_config(&req).await {
@@ -424,6 +544,26 @@ fn ConnectionConfigPanel(config: ConnectionConfig, feedback: RwSignal<String>) -
                 <ConfigRangeU64
                     label=move || format!("{}: {}s", t.routing_h2_ping_interval(), h2_ping.get())
                     value=h2_ping min=5 max=120 min_hint="5s" max_hint="120s" accent="gold"
+                />
+                <label class="flex items-center gap-2 text-xs text-theme-secondary col-span-2">
+                    <input type="checkbox" prop:checked=move || force_http1.get() on:change=move |ev| force_http1.set(event_target_checked(&ev)) />
+                    "Upstream Force HTTP/1.1"
+                </label>
+                <label class="flex items-center gap-2 text-xs text-theme-secondary col-span-2">
+                    <input type="checkbox" prop:checked=move || disable_keepalive.get() on:change=move |ev| disable_keepalive.set(event_target_checked(&ev)) />
+                    "Upstream Disable Keepalive"
+                </label>
+                <ConfigRangeU64
+                    label=move || format!("{}: {}s", "Request Timeout", req_timeout.get())
+                    value=req_timeout min=10 max=600 min_hint="10s" max_hint="600s" accent="blue"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}s", "Write Timeout", write_timeout.get())
+                    value=write_timeout min=10 max=600 min_hint="10s" max_hint="600s" accent="cyan"
+                />
+                <ConfigRangeU64
+                    label=move || format!("{}: {}s", "Connection Timeout", conn_timeout.get())
+                    value=conn_timeout min=5 max=120 min_hint="5s" max_hint="120s" accent="teal"
                 />
             </div>
             <div class="config-card-foot">

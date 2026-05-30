@@ -1,6 +1,6 @@
 # 数据面实现状态（P0–P3）
 
-本文档是 [数据面优化.md](../数据面优化.md) 的**交付对照表**：说明哪些建议已落地、哪些仍为展望、与正式文档/代码的权威行为差异。
+本文档是数据面优化的**交付对照表**：说明哪些建议已落地、哪些仍为展望、与正式文档/代码的权威行为差异。
 
 **最后对齐提交**：`69057bf`（P2 验收 + 测试收尾）；此前 `48082e1`、`fff766f`、`1f9ed97`。
 
@@ -10,7 +10,7 @@
 
 | 文档 | 用途 |
 |------|------|
-| [数据面优化.md](../数据面优化.md) | 完整改进展望、优先级矩阵、附录（拆分建议） |
+| [数据面优化展望](#数据面-roi-排序与优先级) | 完整改进展望、优先级矩阵、proxy 拆分附录 |
 | [DATA_PLANE_P3.md](./DATA_PLANE_P3.md) | P3 实验项设计与回滚（差分缓存、WASM、io_uring） |
 | [OBSERVABILITY.md](./OBSERVABILITY.md) | Prometheus / Admin / 阶段耗时指标 |
 | [DEEPSEEK_PREFIX_CACHE.md](./DEEPSEEK_PREFIX_CACHE.md) | L3 上游前缀缓存 + **L0 prefix 索引** |
@@ -76,6 +76,13 @@
 |----|------|-------------|
 | `gateway_request_phase_latency_seconds` | ✅ | `body_read_start` … `logging_done` |
 | `record_request_body_stage` | ✅ | `json_parse_client` / `prepare_upstream_body` 等 |
+| 新数据面指标（6 个） | ✅ | `cache_write_latency`、`upstream_response_status`、`coalesce_leader`、`coalesce_follower`、`trace_write_total`、`rejection_by_source`；见 [OBSERVABILITY.md](OBSERVABILITY.md#data-plane-诊断) |
+| SanitizedLogEntry 新字段（6 个） | ✅ | `status_code`、`error_code`、`limit_source`、`cache_decision`、`upstream_result`、`phase_durations_ms` |
+| PG trace_logs 新列（6 个） | ✅ | 迁移在 `run_migrations()` 自动执行 |
+| Data Plane Admin API（4 个端点） | ✅ | `GET /api/admin/dataplane/summary\|phases\|errors\|slo` |
+| Dashboard Data Plane 页面 | ✅ | `/dataplane` 路由 + SLO 卡片 + 阶段表 + 错误归因 |
+| 错误归因 | ✅ | PG `query_top_errors_since` + Prometheus 拒绝来源聚合 |
+| RequestDetail 新字段 | ✅ | `status_code`、`error_code`、`cache_decision`、`upstream_result`、`phase_durations_ms` |
 | Raw capture 异步化 / logging &lt;1ms | ⬜ | 仍为 writer 线程 + 同步通道 |
 | OpenTelemetry | ⬜ | 仅 `x-request-id` |
 
@@ -104,7 +111,7 @@
 
 ---
 
-## 与《数据面优化.md》的差异（必读）
+## 与原始数据面优化展望的差异（必读）
 
 以下段落若以展望原文为准会**误解现网行为**，以本表与代码为准：
 
@@ -184,4 +191,4 @@
 - 数据面行为变更：更新 **本文件** + `CLAUDE.md` / `gateway.example.toml` / 相关指标段（`OBSERVABILITY.md`）。
 - 生产事故复盘：更新 **[OPS_RUNBOOK.md](./OPS_RUNBOOK.md)** §1 样本表与本节对照表。
 - P3 实现启动时：在 `DATA_PLANE_P3.md` 增加「实现状态」小节，并将上表对应行改为 🟡/✅。
-- 《数据面优化.md》保留为**愿景与论证**；勿单独改其优先级表而不改本文件。
+- 原始数据面优化展望保留为**愿景与论证**；勿单独改其优先级表而不改本文件。

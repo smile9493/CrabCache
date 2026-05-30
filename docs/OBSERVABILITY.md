@@ -568,6 +568,45 @@ Admin Dashboard 的「基础设施」页面显示与网关同 `docker-compose` �
 
 ### 部署要求
 
+## Data Plane 诊断
+
+Data Plane 诊断页面 (`/dataplane`) 提供聚焦数据面性能的实时视图，从 Prometheus 和 PG trace_logs 聚合。
+
+### 新增 Prometheus 指标
+
+| 指标 | 类型 | 标签 | 描述 |
+|------|------|------|------|
+| `gateway_cache_write_latency_seconds` | Histogram | `{tier}` | L0/L1 缓存写入准备延迟 |
+| `gateway_upstream_response_status_total` | Counter | `{status_class,pipeline}` | 上游 HTTP 响应状态（2xx/3xx/4xx/5xx） |
+| `gateway_coalesce_leader_total` | Counter | `{outcome}` | Request Coalescing Leader 选举结果 |
+| `gateway_coalesce_follower_total` | Counter | `{outcome}` | Request Coalescing Follower 去向（hit/fallthrough/timeout） |
+| `gateway_trace_write_total` | Counter | `{sink,result}` | 追踪日志写入状态（JSONL/PG，成功/失败） |
+| `gateway_rejection_by_source_total` | Counter | `{source}` | 按来源分类的拒绝计数（client/upstream） |
+
+### 新增 Trace 字段
+
+`trace.jsonl` 中每条记录新增 6 个可选字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `status_code` | int | 上游 HTTP 返回码 |
+| `error_code` | string | 结构化错误标识（`rate_limited`、`upstream_error` 等） |
+| `limit_source` | string | 限流来源（`upstream_rate_limit`） |
+| `cache_decision` | string | 缓存决策理由（`hit`、`miss`、`skip_coalesced`、`skip_passthrough`） |
+| `upstream_result` | string | 上游结果分类（`success`、`429_rate_limited`、`401_unauthorized` 等） |
+| `phase_durations_ms` | json | 每阶段耗时（ms），如 `{"body_read_done": 12.3, "cache_lookup_done": 0.8, ...}` |
+
+### Data Plane Admin API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/admin/dataplane/summary` | SLO 摘要：命中率、P95 延迟、错误率、节省成本 |
+| `GET` | `/api/admin/dataplane/phases` | 各阶段 P50/P95/P99 延迟（ms） |
+| `GET` | `/api/admin/dataplane/errors` | 错误归因：拒绝原因、错误来源、PG 错误明细 |
+| `GET` | `/api/admin/dataplane/slo` | SLO 合规：采样数、QPS、指标新鲜度 |
+
+### H3 部署要求
+
 - Admin 容器必须挂载 `docker.sock`（只读）：
   ```yaml
   volumes:

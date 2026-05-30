@@ -313,6 +313,32 @@ pub async fn fetch_overview_trace() -> Result<crate::types::TraceSummary, String
     fetch_json(&format!("{}/overview/trace", API_BASE)).await
 }
 
+pub async fn fetch_model_peak_hours(days: u32) -> Result<crate::types::ModelPeakHoursResponse, String> {
+    fetch_json(&format!("{}/analytics/model-peak-hours?days={}", API_BASE, days)).await
+}
+
+pub async fn delete_model_peak_hour(model: &str, hour_bucket: i64) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/analytics/model-peak-hours?model={}&hour_bucket={}",
+        API_BASE,
+        urlencoding::encode(model),
+        hour_bucket
+    );
+    let (builder, epoch) = apply_admin_auth(Request::delete(&url));
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.ok() {
+        return Err(http_error(resp, epoch).await);
+    }
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))
+}
+
 pub async fn fetch_domains() -> Result<Vec<DomainMetricsBucket>, String> {
     fetch_json(&format!("{}/domains", API_BASE)).await
 }
@@ -509,6 +535,30 @@ pub async fn update_connection_config(
     req: &UpdateConnectionConfigRequest,
 ) -> Result<ConnectionConfig, String> {
     put_json(&format!("{}/connection/config", API_BASE), req).await
+}
+
+pub async fn fetch_limits_config() -> Result<LimitsConfig, String> {
+    fetch_json(&format!("{}/config/limits", API_BASE)).await
+}
+
+pub async fn update_limits_config(req: &LimitsConfig) -> Result<LimitsConfig, String> {
+    put_json(&format!("{}/config/limits", API_BASE), req).await
+}
+
+pub async fn fetch_cache_pricing_config() -> Result<PricingConfigView, String> {
+    fetch_json(&format!("{}/cache/pricing", API_BASE)).await
+}
+
+pub async fn update_cache_pricing_config(req: &PricingConfigView) -> Result<PricingConfigView, String> {
+    put_json(&format!("{}/cache/pricing", API_BASE), req).await
+}
+
+pub async fn fetch_features_config() -> Result<FeaturesConfigView, String> {
+    fetch_json(&format!("{}/config/features", API_BASE)).await
+}
+
+pub async fn update_features_config(req: &FeaturesConfigView) -> Result<FeaturesConfigView, String> {
+    put_json(&format!("{}/config/features", API_BASE), req).await
 }
 
 pub async fn fetch_upstream_config() -> Result<UpstreamConfig, String> {
@@ -1085,6 +1135,33 @@ pub async fn update_retention_policy(
     policy: &crate::types::RetentionPolicy,
 ) -> Result<crate::types::RetentionPolicy, String> {
     put_json(&format!("{API_BASE}/logs/retention"), policy).await
+}
+
+// ── Audit Log ──
+
+/// The backend returns `{ entries: [...] }`. We unwrap and return the inner Vec.
+pub async fn fetch_audit_logs<T: for<'de> serde::Deserialize<'de>>(
+    limit: i64,
+    offset: i64,
+    action: Option<String>,
+) -> Result<Vec<T>, String> {
+    let mut url = format!("{API_BASE}/audit-log?limit={limit}&offset={offset}");
+    if let Some(a) = action {
+        url.push_str(&format!("&action={}", a));
+    }
+    let resp: serde_json::Value = fetch_json(&url).await?;
+    let entries = resp
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "audit-log response missing 'entries'".to_string())?;
+    let mut result = Vec::with_capacity(entries.len());
+    for entry in entries {
+        result.push(
+            serde_json::from_value(entry.clone())
+                .map_err(|e| format!("audit entry parse error: {}", e))?,
+        );
+    }
+    Ok(result)
 }
 
 // ── SSE Connection ──────────────────────────────────────────────────────

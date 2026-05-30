@@ -9,3 +9,14 @@ services:
       - "127.0.0.1:8080:8080"
       # Omit 9090 on public hosts or bind locally only:
       - "127.0.0.1:9090:9090"
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"

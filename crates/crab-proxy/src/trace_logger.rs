@@ -111,6 +111,30 @@ pub struct SanitizedLogEntry {
     /// Number of prefix bytes captured at passthrough arm time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,
+    /// Upstream HTTP response status code (200, 429, 500, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    /// Structured error code for diagnosis: "client_concurrency_exceeded",
+    /// "upstream_key_exhausted", "invalid_json", etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// Source of a rate-limit rejection:
+    /// "client_concurrency", "upstream_key_exhausted", "domain_quota", "overloaded".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_source: Option<String>,
+    /// Cache decision reason: "hit", "miss", "skip_stream_cache", "skip_reasoning",
+    /// "skip_coalesced", "prefix_warmup_only".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_decision: Option<String>,
+    /// Upstream call result classification:
+    /// "success", "429_rate_limited", "5xx_error", "timeout", "connection_closed".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_result: Option<String>,
+    /// Per-phase durations (ms) from request start, keyed by phase name:
+    /// {"body_read_done": 1.2, "json_parse_done": 3.4, ...}.
+    /// Only populated when timeline watermarks are set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_durations_ms: Option<serde_json::Value>,
 }
 
 impl SanitizedLogEntry {
@@ -209,6 +233,12 @@ impl SanitizedLogEntry {
             client_key_id: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            status_code: None,
+            error_code: None,
+            limit_source: None,
+            cache_decision: None,
+            upstream_result: None,
+            phase_durations_ms: None,
         }
     }
 }
@@ -571,6 +601,44 @@ impl TraceLogger {
     pub fn debug_sender(&self) -> Option<mpsc::Sender<CompositionDebugEntry>> {
         self.debug_sender.clone()
     }
+}
+
+/// Compute per-phase durations (ms from request start) as a JSON object.
+/// Only includes phases whose timestamp is set.
+pub fn compute_phase_durations(
+    request_start: &std::time::Instant,
+    timeline: &crate::context::RequestTimeline,
+) -> Option<serde_json::Value> {
+    let start = *request_start;
+    let mut map = serde_json::Map::new();
+    let mut any = false;
+
+    let check = |name: &str, ts: Option<std::time::Instant>, map: &mut serde_json::Map<String, serde_json::Value>, any: &mut bool| {
+        if let Some(t) = ts {
+            let ms = t.duration_since(start).as_secs_f64() * 1000.0;
+            map.insert(name.to_string(), serde_json::Value::Number(
+                serde_json::Number::from_f64(ms).unwrap_or(serde_json::Number::from(0))
+            ));
+            *any = true;
+        }
+    };
+
+    check("body_read_start", timeline.body_read_start, &mut map, &mut any);
+    check("body_read_done", timeline.body_read_done, &mut map, &mut any);
+    check("json_parse_done", timeline.json_parse_done, &mut map, &mut any);
+    check("pipeline_select_done", timeline.pipeline_select_done, &mut map, &mut any);
+    check("cache_lookup_done", timeline.cache_lookup_done, &mut map, &mut any);
+    check("upstream_connect_done", timeline.upstream_connect_done, &mut map, &mut any);
+    check("upstream_headers_sent", timeline.upstream_headers_sent, &mut map, &mut any);
+    check("upstream_body_sent", timeline.upstream_body_sent, &mut map, &mut any);
+    check("upstream_response_headers", timeline.upstream_response_headers, &mut map, &mut any);
+    check("ttft", timeline.ttft, &mut map, &mut any);
+    check("prefill_done", timeline.prefill_done, &mut map, &mut any);
+    check("upstream_body_done", timeline.upstream_body_done, &mut map, &mut any);
+    check("cache_write_done", timeline.cache_write_done, &mut map, &mut any);
+    check("logging_done", timeline.logging_done, &mut map, &mut any);
+
+    if any { Some(serde_json::Value::Object(map)) } else { None }
 }
 
 #[cfg(test)]

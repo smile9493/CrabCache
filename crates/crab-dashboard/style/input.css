@@ -886,6 +886,130 @@ body {
   grid-column: 1 / -1;
 }
 
+/* ── Peak Hours Heatmap ────────────────────────────────────────────────── */
+.peak-hours-container {
+  background: var(--cc-bg-secondary, var(--cc-bg));
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-top: 1rem;
+}
+.peak-hours-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.peak-hours-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--cc-text);
+  margin: 0;
+}
+.peak-hours-actions { display: flex; gap: 0.5rem; }
+.peak-hours-model-tabs {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.peak-hours-tab {
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.peak-hours-tab:hover {
+  border-color: var(--cc-accent);
+  color: var(--cc-text);
+}
+.peak-hours-tab.active {
+  background: var(--cc-accent);
+  border-color: var(--cc-accent);
+  color: #fff;
+}
+.peak-hours-stats {
+  font-size: 0.78rem;
+  color: var(--cc-text-muted);
+  margin-bottom: 0.5rem;
+}
+.peak-hours-grid-wrapper {
+  display: flex;
+  gap: 0.25rem;
+}
+.peak-hours-hour-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 1.5rem; /* align with grid below day headers */
+}
+.peak-hours-hour-label {
+  height: 20px;
+  line-height: 20px;
+  font-size: 0.6rem;
+  color: var(--cc-text-muted);
+  text-align: right;
+  padding-right: 4px;
+  width: 22px;
+}
+.peak-hours-grid {
+  flex: 1;
+  min-width: 0;
+}
+.peak-hours-day-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+.peak-hours-day-header {
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--cc-text-muted);
+  font-weight: 500;
+}
+.peak-hours-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+.peak-hours-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  min-height: 20px;
+  cursor: pointer;
+  transition: outline 0.1s ease, transform 0.1s ease;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+}
+.peak-hours-cell:hover,
+.peak-hours-cell.hovered {
+  outline-color: var(--cc-accent);
+  transform: scale(1.15);
+  z-index: 1;
+  position: relative;
+}
+.peak-hours-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+  font-size: 0.65rem;
+  color: var(--cc-text-muted);
+}
+.peak-hours-legend-cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+/* ── end Peak Hours ──────────────────────────────────────────────────────── */
+
 /* Session drill-down floating panel (Live page) */
 .session-drilldown-host--hidden {
   display: none;

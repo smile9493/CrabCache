@@ -6,6 +6,7 @@ use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::pages::pipeline::PipelinePage;
 use crate::pages::reasoning::ReasoningPage;
+use crate::pages::features::FeaturesTab;
 use crate::types::{SystemUpdateResult, SystemVersion, UpdateCheckResult};
 
 #[component]
@@ -17,7 +18,18 @@ pub fn SystemPage() -> impl IntoView {
         t.tab_general().to_string(),
         t.tab_pipeline().to_string(),
         t.tab_reasoning().to_string(),
+        t.tab_features().to_string(),
     ];
+
+    init_tab_from_query(
+        active_tab,
+        &[
+            ("general", 0),
+            ("pipeline", 1),
+            ("reasoning", 2),
+            ("features", 3),
+        ],
+    );
 
     view! {
         <div class="page-content space-y-4">
@@ -26,7 +38,8 @@ pub fn SystemPage() -> impl IntoView {
             {move || match active_tab.get() {
                 0 => view! { <GeneralTab /> }.into_any(),
                 1 => view! { <PipelinePage /> }.into_any(),
-                _ => view! { <ReasoningPage /> }.into_any(),
+                2 => view! { <ReasoningPage /> }.into_any(),
+                _ => view! { <FeaturesTab /> }.into_any(),
             }}
         </div>
     }
@@ -338,5 +351,111 @@ fn GeneralTab() -> impl IntoView {
                 }
             }}
         </div>
+
+        // ── Limits section ──
+        <div class="card mt-6">
+            <div class="card-header">
+                <h3 class="text-sm font-semibold">{t.system_limits_title()}</h3>
+                <p class="text-xs text-theme-secondary">{t.system_limits_desc()}</p>
+            </div>
+            <div class="card-body space-y-4">
+                <LimitsForm />
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn LimitsForm() -> impl IntoView {
+    let t = use_translations();
+    let feedback: RwSignal<String> = RwSignal::new(String::new());
+    let loaded = RwSignal::new(false);
+    let cfg: RwSignal<Option<LimitsConfig>> = RwSignal::new(None);
+
+    let max_body = RwSignal::new(1_048_576u64);
+    let max_conc = RwSignal::new(512u64);
+    let legacy_auth = RwSignal::new(false);
+    let cors = RwSignal::new(false);
+
+    let load = move || {
+        leptos::task::spawn_local(async move {
+            match api::fetch_limits_config().await {
+                Ok(c) => {
+                    max_body.set(c.max_request_body_bytes as u64);
+                    max_conc.set(c.max_concurrent_requests as u64);
+                    legacy_auth.set(c.legacy_api_key_as_client_auth);
+                    cors.set(c.cors_enabled);
+                    cfg.set(Some(c));
+                    loaded.set(true);
+                }
+                Err(e) => feedback.set(e),
+            }
+        });
+    };
+
+    let save = move |_| {
+        leptos::task::spawn_local(async move {
+            let req = LimitsConfig {
+                max_request_body_bytes: max_body.get() as usize,
+                max_concurrent_requests: max_conc.get() as usize,
+                legacy_api_key_as_client_auth: legacy_auth.get(),
+                cors_enabled: cors.get(),
+            };
+            match api::update_limits_config(&req).await {
+                Ok(c) => {
+                    cfg.set(Some(c));
+                    feedback.set(t.routing_saved().to_string());
+                }
+                Err(e) => feedback.set(e),
+            }
+        });
+    };
+
+    load();
+
+    view! {
+        {move || {
+            if !loaded.get() {
+                return view! { <p class="text-xs text-theme-secondary">Loading...</p> }.into_any();
+            }
+            view! {
+                <ConfigRangeU64
+                    label=move || format!("{}: {}", "Max Request Body", max_body.get())
+                    value=max_body
+                    min=65536
+                    max=10_485_760
+                    min_hint="64KB"
+                    max_hint="10MB"
+                    accent="blue"
+                />
+                <div class="flex items-center justify-between py-2">
+                    <span class="text-xs text-theme-secondary">"Max Concurrent Requests"</span>
+                    <span class="text-sm font-mono">{move || max_conc.get()}</span>
+                </div>
+                <label class="flex items-center gap-2 text-xs text-theme-secondary">
+                    <input type="checkbox"
+                        prop:checked=move || legacy_auth.get()
+                        on:change=move |ev| legacy_auth.set(event_target_checked(&ev))
+                    />
+                    "Legacy API Key as Client Auth"
+                </label>
+                <label class="flex items-center gap-2 text-xs text-theme-secondary">
+                    <input type="checkbox"
+                        prop:checked=move || cors.get()
+                        on:change=move |ev| cors.set(event_target_checked(&ev))
+                    />
+                    "CORS Enabled"
+                </label>
+                {move || {
+                    let msg = feedback.get();
+                    if !msg.is_empty() {
+                        view! { <p class="text-xs text-blue-400">{msg}</p> }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }}
+                <button on:click=save class="btn btn-primary text-sm">{t.routing_save()}</button>
+            }.into_any()
+        }}
     }
 }

@@ -225,7 +225,7 @@ crab-admin（管理面板后端 - Axum HTTP 服务器）
 |------|------|
 | [数据面实现状态](docs/DATA_PLANE.md) | P0–P2 交付对照、feature 开关、验收要点 |
 | [数据面 P3 实验](docs/DATA_PLANE_P3.md) | 差分缓存、WASM、io_uring 设计 |
-| [数据面优化展望](数据面优化.md) | 完整论证与优先级矩阵（仓库根目录） |
+| [数据面优化展望](docs/DATA_PLANE.md#数据面-roi-排序与优先级) | 完整论证与优先级矩阵 |
 
 ### 供应商集成
 
