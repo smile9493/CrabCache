@@ -238,12 +238,26 @@ use crate::types::{RequestDetail, RequestLog};
 
 /// Derive waterfall stages from a request log + detail.
 ///
-/// Only `Upstream` and `TTFT` are taken from the API; `Gateway` is estimated
-/// as `max(0, latency_ms - upstream - ttft)`. This is NOT distributed tracing.
+/// When `detail.phase_durations_ms` is present (from distributed trace), it parses
+/// the absolute-phase timestamps and computes delta durations between consecutive
+/// checkpoints. This yields a granular breakdown (Body Read, Parse JSON, Route Select,
+/// Cache Lookup, Upstream Connect, etc.).
+///
+/// Falls back to the coarse Gateway / Upstream / TTFT estimation when no detailed
+/// phase data is available.
 pub fn waterfall_stages_from_log(
     summary: &RequestLog,
     detail: &RequestDetail,
 ) -> Vec<WaterfallStage> {
+    // ── Prefer detailed phase_durations_ms if present ──────────────────
+    if let Some(ref phases_val) = detail.phase_durations_ms {
+        let stages = waterfall_stages_from_phases(phases_val, summary.latency_ms as f64);
+        if !stages.is_empty() {
+            return stages;
+        }
+    }
+
+    // ── Fallback: coarse Gateway / Upstream / TTFT estimation ──────────
     let total = summary.latency_ms as f64;
     let upstream = detail.upstream_latency_ms.unwrap_or(0.0);
     let ttft = detail.ttft_ms.unwrap_or(0.0);
@@ -271,6 +285,114 @@ pub fn waterfall_stages_from_log(
         });
     }
     stages
+}
+
+/// Build detailed waterfall stages from the `phase_durations_ms` JSON object.
+///
+/// The JSON object maps phase checkpoint names (e.g. `body_read_done`,
+/// `json_parse_done`, `upstream_response_headers`) to their absolute
+/// milliseconds-from-request-start values. Entries are sorted by time and
+/// consecutive deltas produce individual `WaterfallStage`s.
+fn waterfall_stages_from_phases(
+    phases_val: &serde_json::Value,
+    total_latency_ms: f64,
+) -> Vec<WaterfallStage> {
+    let obj = match phases_val.as_object() {
+        Some(o) if !o.is_empty() => o,
+        _ => return Vec::new(),
+    };
+
+    // Collect (checkpoint_name, absolute_ms) and sort by value.
+    let mut entries: Vec<(&str, f64)> = Vec::with_capacity(obj.len());
+    for (name, val) in obj {
+        if let Some(ms) = val.as_f64() {
+            entries.push((name.as_str(), ms));
+        }
+    }
+    if entries.len() < 2 {
+        return Vec::new();
+    }
+    entries.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Known checkpoint labels for display (strip _start/_done/_sent suffixes).
+    let mut stages: Vec<WaterfallStage> = Vec::with_capacity(entries.len());
+    let mut prev_ms = entries[0].1;
+
+    for i in 1..entries.len() {
+        let (name, ms) = entries[i];
+        if ms <= prev_ms {
+            continue;
+        }
+        let delta = ms - prev_ms;
+        // Skip noise (sub-10μs) unless it's a meaningful phase like cache_write or logging.
+        if delta < 0.01 && !name.contains("cache_write") && !name.contains("logging") {
+            prev_ms = ms;
+            continue;
+        }
+        let label = phase_label(name);
+        stages.push(WaterfallStage {
+            label,
+            duration_ms: delta,
+        });
+        prev_ms = ms;
+    }
+
+    // If total latency is significantly larger than our last logged phase, add unaccounted.
+    if !stages.is_empty() {
+        let last_phase_ms = entries.last().map(|e| e.1).unwrap_or(0.0);
+        let unaccounted = (total_latency_ms - last_phase_ms).max(0.0);
+        if unaccounted > 1.0 {
+            stages.push(WaterfallStage {
+                label: "Remainder".to_string(),
+                duration_ms: unaccounted,
+            });
+        }
+    }
+
+    stages
+}
+
+/// Map internal phase checkpoint names to human-readable labels.
+fn phase_label(name: &str) -> String {
+    match name {
+        // body_read_start → body_read_done
+        "body_read_done" => "Body Read".into(),
+        "json_parse_done" => "Parse JSON".into(),
+        "pipeline_select_done" => "Route Select".into(),
+        "cache_lookup_done" => "Cache Lookup".into(),
+        "upstream_connect_done" => "Upstream Connect".into(),
+        "upstream_headers_sent" => "TLS Handshake".into(),
+        "upstream_body_sent" => "Send Request".into(),
+        "upstream_response_headers" => "Wait First Byte".into(),
+        "ttft" => "TTFT".into(),
+        "prefill_done" => "Prefill".into(),
+        "upstream_body_done" => "Response Body".into(),
+        "cache_write_done" => "Cache Write".into(),
+        "logging_done" => "Logging".into(),
+        // Fallback
+        s => {
+            // Strip common suffixes for readability
+            let s = s
+                .strip_suffix("_done")
+                .or_else(|| s.strip_suffix("_start"))
+                .or_else(|| s.strip_suffix("_sent"))
+                .unwrap_or(s);
+            // Convert snake_case to Title Case
+            let mut out = String::with_capacity(s.len());
+            let mut capitalize = true;
+            for ch in s.chars() {
+                if ch == '_' {
+                    capitalize = true;
+                } else if capitalize {
+                    out.push(ch.to_ascii_uppercase());
+                    capitalize = false;
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        }
+    }
 }
 
 /// Points used for mini trend lines (prefers daily, then hourly buckets).

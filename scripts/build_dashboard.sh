@@ -49,4 +49,57 @@ else
   echo "Warning: no _bg.wasm found in dist/"
 fi
 
+python3 - <<'PY'
+import hashlib
+import json
+import subprocess
+import time
+from pathlib import Path
+
+dist = Path("dist")
+tracked_suffixes = {".html", ".js", ".wasm", ".css"}
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+asset_hashes = {}
+for path in sorted(dist.iterdir()):
+    if path.is_file() and path.suffix in tracked_suffixes:
+        asset_hashes[path.name] = sha256_file(path)
+
+aggregate = hashlib.sha256()
+for name, digest in asset_hashes.items():
+    aggregate.update(name.encode("utf-8"))
+    aggregate.update(b"\0")
+    aggregate.update(digest.encode("ascii"))
+    aggregate.update(b"\0")
+
+build_info = {
+    "git_commit": git_commit(),
+    "built_at_unix": int(time.time()),
+    "asset_hashes": asset_hashes,
+    "dashboard_dist_hash": aggregate.hexdigest(),
+}
+
+(dist / "build-info.json").write_text(
+    json.dumps(build_info, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+print(f"Dashboard build info: {build_info['dashboard_dist_hash']}")
+PY
+
 echo "Dashboard built to crates/crab-dashboard/dist/"

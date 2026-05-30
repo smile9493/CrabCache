@@ -101,6 +101,7 @@ pub fn OverviewCardGrid(
     ts_window: RwSignal<String>,
     selected_domain: RwSignal<Option<String>>,
     #[prop(optional)] peak_hours_data: Option<RwSignal<crate::types::ModelPeakHoursResponse>>,
+    #[prop(optional)] peak_hours_error: Option<RwSignal<Option<String>>>,
 ) -> impl IntoView {
     let t = use_translations();
 
@@ -670,9 +671,35 @@ pub fn OverviewCardGrid(
                                 </div>
                                 <DomainDetailDrawer domain=selected_domain />
                                 {move || {
-                                    if let Some(ph) = peak_hours_data {
+                                    if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {
                                         let resp = ph.get();
-                                        if !resp.models.is_empty() {
+                                        if let Some(err) = ph_err.get() {
+                                            view! {
+                                                <div class="peak-hours-container">
+                                                    <div class="peak-hours-header">
+                                                        <h3 class="peak-hours-title">"Model Peak Hours"</h3>
+                                                    </div>
+                                                    <p class="text-sm text-theme-muted">
+                                                        {if err.contains("PG not available") || err.contains("503") {
+                                                            "PostgreSQL 未连接，请在 Admin 配置 CRADMIN_PG_URL 后重启。".to_string()
+                                                        } else {
+                                                            format!("加载失败: {err}")
+                                                        }}
+                                                    </p>
+                                                </div>
+                                            }.into_any()
+                                        } else if resp.models.is_empty() {
+                                            view! {
+                                                <div class="peak-hours-container">
+                                                    <div class="peak-hours-header">
+                                                        <h3 class="peak-hours-title">"Model Peak Hours"</h3>
+                                                    </div>
+                                                    <p class="text-sm text-theme-muted">
+                                                        "暂无高峰期数据，后台每 5 分钟从 trace 日志聚合，请稍候。"
+                                                    </p>
+                                                </div>
+                                            }.into_any()
+                                        } else {
                                             let data_sig = Signal::derive(move || ph.get().data);
                                             let models_sig = Signal::derive(move || ph.get().models);
                                             let on_del = Callback::new(move |(model, bucket): (String, i64)| {
@@ -687,8 +714,6 @@ pub fn OverviewCardGrid(
                                             view! {
                                                 <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
                                             }.into_any()
-                                        } else {
-                                            ().into_any()
                                         }
                                     } else {
                                         ().into_any()

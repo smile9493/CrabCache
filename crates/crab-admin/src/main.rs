@@ -201,53 +201,18 @@ async fn main() -> anyhow::Result<()> {
         let retry_state = Arc::clone(&state);
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 let pending = retry_state.pg_pending_config.read().clone();
                 let Some((url, pool_size, migrate)) = pending else {
-                    break; // PG connected or never configured
+                    break;
                 };
-                match crate::pg::PgStore::new(&url, pool_size).await {
-                    Ok(pg) => {
-                        info!("PostgreSQL connection established on retry");
-                        if migrate {
-                            if let Ok(true) =
-                                pg.maybe_import_from_json(&retry_state.persist.load()).await
-                            {
-                                info!("JSON state imported into PostgreSQL (retry)");
-                            }
-                        }
-                        // Hydrate metrics from PG.
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
-                        if let Ok(snaps) = pg.load_metric_snapshots_since(cutoff).await {
-                            let sqlite_count = retry_state.metrics_history.read().sample_count();
-                            if snaps.len() > sqlite_count {
-                                let mut hist = retry_state.metrics_history.write();
-                                *hist = crate::metrics_history::MetricsHistory::new();
-                                for s in &snaps {
-                                    hist.append(s.clone());
-                                }
-                                info!(
-                                    hydrated = hist.sample_count(),
-                                    "Metrics history restored from PostgreSQL (retry)"
-                                );
-                            }
-                        }
-                        *retry_state.pg_store.write() = Some(pg);
-                        *retry_state.pg_pending_config.write() = None;
-                        info!("PostgreSQL fully initialized (retry successful)");
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::debug!(error = %e, "PG retry failed; will try again in 30s");
-                    }
+                if AppState::try_connect_pg(&retry_state, &url, pool_size, migrate).await {
+                    info!("PostgreSQL fully initialized");
+                    break;
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
         });
-        info!("Background PG init retry started (every 30s)");
+        info!("Background PG init started (immediate + 30s retry)");
     }
 
     // Hydrate metrics history from SQLite if PG did not provide data.
@@ -283,8 +248,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Peak hours aggregator: aggregate trace_logs into model_peak_hours every 5 min.
-    if state.has_pg() {
+    // Peak hours aggregator: waits for PG then aggregates trace_logs every 5 min.
+    {
         let agg_state = Arc::clone(&state);
         tokio::spawn(crate::peak_hours_aggregator::run(agg_state));
         info!("Model peak hours aggregator started");

@@ -10,8 +10,9 @@ use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
     BackendEndpoint, CacheConfig, CacheOpsView, ConnectionConfig, FingerprintConfigBody,
-    InvalidateCacheBody, PutBackendsRequest, RoutingStatus, SemanticConfig, StreamCacheToggle,
-    TimeSeriesPoint, TraceAnalysis, UpdateCacheConfigRequest, UpdateSemanticConfigRequest,
+    InvalidateCacheBody, PricingConfigView, PutBackendsRequest, RoutingStatus, SemanticConfig,
+    StreamCacheToggle, TimeSeriesPoint, TraceAnalysis, UpdateCacheConfigRequest,
+    UpdateSemanticConfigRequest,
 };
 
 #[component]

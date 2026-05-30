@@ -30,6 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STAGING_DIR = ROOT / ".cargo-target" / "release"
 DASHBOARD_DIST = ROOT / "crates" / "crab-dashboard" / "dist"
+DashboardBuildInfo = dict[str, object]
 BUILD_DASHBOARD = ROOT / "scripts" / "build_dashboard.sh"
 THEME_RE = re.compile(r"theme-(?:midnight|ocean|sand|dark)")
 
@@ -126,6 +127,27 @@ def verify_dashboard_dist() -> None:
         raise RuntimeError(
             f"{index} missing expected theme-* marker; dashboard build may be incomplete"
         )
+    build_info = DASHBOARD_DIST / "build-info.json"
+    if not build_info.is_file():
+        raise FileNotFoundError(
+            f"Dashboard build info missing: {build_info} "
+            "(run scripts/build_dashboard.sh)"
+        )
+
+
+def load_dashboard_build_info() -> DashboardBuildInfo:
+    verify_dashboard_dist()
+    build_info_path = DASHBOARD_DIST / "build-info.json"
+    try:
+        info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid dashboard build info JSON: {build_info_path}: {e}") from e
+    if not isinstance(info, dict):
+        raise RuntimeError(f"Invalid dashboard build info shape: {build_info_path}")
+    dist_hash = info.get("dashboard_dist_hash")
+    if not isinstance(dist_hash, str) or not dist_hash:
+        raise RuntimeError(f"{build_info_path} missing dashboard_dist_hash")
+    return info
 
 
 def package_dashboard_dist(work_dir: Path) -> Path:
@@ -208,6 +230,57 @@ def verify_remote_admin_api_json_route(ssh_host: str) -> None:
             f"Expected application/json from profile routing API, got {content_type} (status {status})"
         )
     log(f"Admin API route OK (status={status}, content-type={content_type})")
+
+
+def verify_remote_admin_version_json(ssh_host: str) -> None:
+    proc = ssh_run(
+        ssh_host,
+        r"""curl -sS -o /tmp/crabcache-admin-version.out -w '%{http_code} %{content_type}' \
+            http://127.0.0.1:18001/api/admin/system/version""",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"Admin version probe failed on {ssh_host}: {proc.stderr or proc.stdout}")
+    tail = (proc.stdout or "").strip().split()[-2:]
+    if len(tail) != 2:
+        raise RuntimeError(f"Unexpected Admin version probe output: {proc.stdout!r}")
+    status, content_type = tail
+    if status not in {"200", "401"}:
+        raise RuntimeError(f"Unexpected Admin version status={status}")
+    if not content_type.startswith("application/json"):
+        raise RuntimeError(
+            f"Expected application/json from Admin version endpoint, got {content_type} "
+            f"(status {status})"
+        )
+    log(f"Admin version endpoint OK (status={status}, content-type={content_type})")
+
+
+def verify_remote_admin_build_info(
+    docker_host: str,
+    admin_container: str,
+    expected_dist_hash: str,
+) -> None:
+    proc = run(
+        [
+            "docker",
+            "exec",
+            admin_container,
+            "cat",
+            "/app/crates/crab-dashboard/dist/build-info.json",
+        ],
+        env=docker_env(docker_host),
+    )
+    try:
+        info = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Remote dashboard build-info.json is invalid JSON: {e}") from e
+    remote_dist_hash = info.get("dashboard_dist_hash") if isinstance(info, dict) else None
+    if remote_dist_hash != expected_dist_hash:
+        raise RuntimeError(
+            f"Dashboard dist hash mismatch host={expected_dist_hash} "
+            f"container={remote_dist_hash}"
+        )
+    log(f"Dashboard dist hash OK ({expected_dist_hash})")
 
 
 def verify_remote_admin_homepage(ssh_host: str) -> None:
@@ -348,6 +421,7 @@ def main() -> int:
     update_admin = not args.gateway_only
 
     dist_tar: Path | None = None
+    dashboard_dist_hash: str | None = None
     tmp_dir: Path | None = None
 
     try:
@@ -359,6 +433,8 @@ def main() -> int:
         if update_admin:
             if not args.skip_dashboard_build:
                 build_dashboard(False)
+            dashboard_info = load_dashboard_build_info()
+            dashboard_dist_hash = str(dashboard_info["dashboard_dist_hash"])
             tmp_dir = Path(tempfile.mkdtemp(prefix="crabcache-hot-update-"))
             dist_tar = package_dashboard_dist(tmp_dir)
         else:
@@ -380,7 +456,14 @@ def main() -> int:
         if not args.no_verify:
             wait_remote_gateway_ready(ssh_host)
             if update_admin:
+                assert dashboard_dist_hash is not None
+                verify_remote_admin_build_info(
+                    docker_host,
+                    args.admin_container,
+                    dashboard_dist_hash,
+                )
                 verify_remote_admin_homepage(ssh_host)
+                verify_remote_admin_version_json(ssh_host)
                 verify_remote_admin_api_json_route(ssh_host)
 
         log("Hot update completed successfully")
@@ -388,6 +471,8 @@ def main() -> int:
             print(f"gateway_sha256={gw_sha}")
         if update_admin:
             print(f"admin_sha256={admin_sha}")
+            if dashboard_dist_hash:
+                print(f"dashboard_dist_hash={dashboard_dist_hash}")
         return 0
 
     except (subprocess.CalledProcessError, OSError, RuntimeError, FileNotFoundError) as e:

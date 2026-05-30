@@ -1,10 +1,7 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
-use wasm_bindgen::prelude::*;
-
 use crate::api;
 use crate::components::page_header::PageHeader;
-use crate::locale::use_translations;
 
 /// Global refresh interval (seconds).
 const REFRESH_SECS: u64 = 10;
@@ -12,8 +9,6 @@ const REFRESH_SECS: u64 = 10;
 /// Data Plane diagnostics dashboard — SLO summary, phase latency, error attribution.
 #[component]
 pub fn DataPlanePage() -> impl IntoView {
-    let tt = use_translations();
-
     let summary = RwSignal::new(serde_json::Value::Null);
     let phases = RwSignal::new(serde_json::Value::Null);
     let errors = RwSignal::new(serde_json::Value::Null);
@@ -33,7 +28,7 @@ pub fn DataPlanePage() -> impl IntoView {
             let errors = errors;
             let slo = slo;
             let fetch_error = fetch_error;
-            spawn_local(async move {
+            leptos::task::spawn_local(async move {
                 // Fetch summary
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/summary").await {
                     Ok(data) => summary.set(data),
@@ -62,24 +57,23 @@ pub fn DataPlanePage() -> impl IntoView {
     fetch();
 
     // Refresh every REFRESH_SECS
-    #[allow(unused_braces)]
-    {
-        let fetch = fetch;
-        spawn_local(async move {
-            loop {
-                TimeoutFuture::new(REFRESH_SECS * 1000).await;
-                fetch();
-            }
-        });
-    }
+    let fetch = fetch;
+    leptos::task::spawn_local(async move {
+        loop {
+            TimeoutFuture::new((REFRESH_SECS * 1000) as u32).await;
+            fetch();
+        }
+    });
 
     view! {
         <div class="space-y-6 p-4 md:p-6">
-            <PageHeader title="Data Plane" subtitle="Real-time data plane observability: SLO, phase latency, error attribution" />
+            <PageHeader title=|| "Data Plane" description=|| "Real-time data plane observability: SLO, phase latency, error attribution">
+                <div />
+            </PageHeader>
 
             {move || {
                 if let Some(ref err) = fetch_error.get() {
-                    return view! { <div class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm">{ err }</div> }.into_any();
+                    return view! { <div class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm">{err.clone()}</div> }.into_any();
                 }
                 view! {}.into_any()
             }}
@@ -106,7 +100,7 @@ pub fn DataPlanePage() -> impl IntoView {
                 {move || {
                     let p = phases.get();
                     let phase_map = p.get("phases").and_then(|v| v.as_object()).cloned().unwrap_or_default();
-                    let mut phase_names: Vec<&str> = phase_map.keys().map(|k| k.as_str()).collect();
+                    let mut phase_names: Vec<String> = phase_map.keys().map(|k| k.clone()).collect();
                     phase_names.sort();
 
                     if phase_names.is_empty() {
@@ -126,7 +120,7 @@ pub fn DataPlanePage() -> impl IntoView {
                                 </thead>
                                 <tbody>
                                     {phase_names.iter().map(|name| {
-                                        let phase_data = phase_map.get(*name).and_then(|v| v.as_object());
+                                        let phase_data = phase_map.get(name).and_then(|v| v.as_object());
                                         let p50 = phase_data.and_then(|m| m.get("p50_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
                                         let p95 = phase_data.and_then(|m| m.get("p95_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
                                         let p99 = phase_data.and_then(|m| m.get("p99_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
@@ -134,7 +128,7 @@ pub fn DataPlanePage() -> impl IntoView {
 
                                         view! {
                                             <tr class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                                                <td class="py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{*name}</td>
+                                                <td class="py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{name.to_string()}</td>
                                                 <td class="text-right py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{p50}</td>
                                                 <td class="text-right py-2 px-3 font-mono text-xs text-blue-600 dark:text-blue-400 font-medium">
                                                     <div class="flex items-center justify-end gap-2">
@@ -176,7 +170,7 @@ pub fn DataPlanePage() -> impl IntoView {
 
                                     view! {
                                         <div class="flex items-center gap-2">
-                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=&reason>{&reason}</span>
+                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=reason.clone()>{reason.clone()}</span>
                                             <div class="flex-1 h-4 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
                                                 <div class="h-full bg-red-500 rounded-full" style={ format!("width: {}%", (count as f64 / pct) * 100.0) }></div>
                                             </div>
@@ -206,7 +200,7 @@ pub fn DataPlanePage() -> impl IntoView {
                                     let count = s.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
                                     view! {
                                         <div class="flex items-center gap-2">
-                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=&source>{&source}</span>
+                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=source.clone()>{source.clone()}</span>
                                             <div class="flex-1 h-4 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
                                                 <div class="h-full bg-yellow-500 rounded-full" style={ format!("width: {}%", (count as f64 / max_count as f64) * 100.0) }></div>
                                             </div>

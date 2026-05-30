@@ -22,15 +22,31 @@ fn intensity_color(ratio: f64) -> &'static str {
     }
 }
 
-/// Convert a unix-ms hour_bucket to (weekday 0-6 = Mon-Sun, hour 0-23).
+/// Convert a unix-ms hour_bucket to local-time (weekday 0-6 = Mon-Sun, hour 0-23).
 fn bucket_to_day_hour(bucket_ms: i64) -> (usize, usize) {
-    // Convert ms to seconds, then to chrono-like weekday/hour via simple math.
-    let secs = (bucket_ms / 1000) as u64;
-    // Unix epoch (1970-01-01) is a Thursday (weekday 4 in Mon=0 scheme).
-    let days_since_epoch = secs / 86400;
-    let weekday = ((days_since_epoch + 3) % 7) as usize; // +3 because epoch is Thu
-    let hour = ((secs % 86400) / 3600) as usize;
+    // Use JS Date to get local timezone weekday/hour.
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(bucket_ms as f64));
+    // JS getDay(): 0=Sun,1=Mon,...,6=Sat → convert to Mon=0,...,Sun=6
+    let weekday = ((date.get_day() + 6) % 7) as usize;
+    let hour = date.get_hours() as usize;
     (weekday, hour)
+}
+
+/// Reverse: given a local weekday (Mon=0) and hour, find matching hour_buckets in data.
+fn find_bucket_for_cell(
+    data: &[ModelPeakHourRow],
+    model: &str,
+    target_day: usize,
+    target_hour: usize,
+) -> Vec<i64> {
+    data.iter()
+        .filter(|r| r.model == model)
+        .filter(|r| {
+            let (d, h) = bucket_to_day_hour(r.hour_bucket);
+            d == target_day && h == target_hour
+        })
+        .map(|r| r.hour_bucket)
+        .collect()
 }
 
 /// Build a 7x24 matrix from peak hour rows for a given model.
@@ -201,14 +217,13 @@ pub fn PeakHoursHeatmap(
                                                     let model = cm.get_untracked();
                                                     let val = val_text.get_untracked();
                                                     if !model.is_empty() && val > 0 {
-                                                        // Calculate the hour_bucket for this cell
-                                                        let now = js_sys::Date::now() as i64;
-                                                        let now_secs = now / 1000;
-                                                        let today_weekday = ((now_secs / 86400 + 3) % 7) as usize;
-                                                        let days_back = (today_weekday + 7 - day) % 7;
-                                                        let day_start = (now_secs / 86400 - days_back as i64) * 86400;
-                                                        let bucket_ms = (day_start + hour as i64 * 3600) * 1000;
-                                                        del.run((model, bucket_ms));
+                                                        // Find actual bucket from data for this cell
+                                                        let buckets = find_bucket_for_cell(
+                                                            &data.get_untracked(), &model, day, hour,
+                                                        );
+                                                        for bucket in buckets {
+                                                            del.run((model.clone(), bucket));
+                                                        }
                                                     }
                                                 }
                                             }

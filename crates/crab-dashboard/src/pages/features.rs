@@ -32,7 +32,7 @@ pub fn FeaturesTab() -> impl IntoView {
     let upstream_gzip = RwSignal::new(false);
     let upstream_gzip_min = RwSignal::new(4096u64);
     let passthrough_bytes = RwSignal::new(1024u64);
-    let body_quick = RwSignal::new(false);
+    let _body_quick = RwSignal::new(false);
 
     // Reserved group
     let io_uring = RwSignal::new(false);

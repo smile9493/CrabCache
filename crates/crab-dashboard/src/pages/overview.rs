@@ -94,6 +94,7 @@ pub fn OverviewPage() -> impl IntoView {
         data: vec![],
         last_aggregated_at: None,
     });
+    let peak_hours_error: RwSignal<Option<String>> = RwSignal::new(None);
     let ts_points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
     let ts_window = RwSignal::new(vs.ts_window.clone().unwrap_or_else(|| "1h".to_string()));
     let auto_refresh = RwSignal::new(vs.auto_refresh.unwrap_or(true));
@@ -343,14 +344,19 @@ pub fn OverviewPage() -> impl IntoView {
 
     {
         let ph = peak_hours_data;
+        let ph_err = peak_hours_error;
         let alive_ph = Arc::clone(&alive);
         leptos::task::spawn_local(async move {
             loop {
                 if !alive_ph.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Ok(resp) = api::fetch_model_peak_hours(7).await {
-                    ph.set(resp);
+                match api::fetch_model_peak_hours(7).await {
+                    Ok(resp) => {
+                        ph.set(resp);
+                        ph_err.set(None);
+                    }
+                    Err(e) => ph_err.set(Some(e)),
                 }
                 TimeoutFuture::new(300_000).await;
             }
@@ -559,6 +565,7 @@ pub fn OverviewPage() -> impl IntoView {
                         overview_core
                         trace_summary
                         peak_hours_data
+                        peak_hours_error
                         ts_points
                         ts_window
                     />
@@ -576,6 +583,7 @@ fn OverviewContent(
     overview_core: RwSignal<Option<Result<OverviewCore, String>>>,
     trace_summary: RwSignal<Option<TraceSummary>>,
     peak_hours_data: RwSignal<crate::types::ModelPeakHoursResponse>,
+    peak_hours_error: RwSignal<Option<String>>,
     ts_points: RwSignal<Vec<TimeSeriesPoint>>,
     ts_window: RwSignal<String>,
 ) -> impl IntoView {
@@ -657,6 +665,7 @@ fn OverviewContent(
                 ts_window=ts_window
                 selected_domain=selected_domain
                 peak_hours_data=peak_hours_data
+                peak_hours_error=peak_hours_error
             />
 
             <ObservabilityFooter />

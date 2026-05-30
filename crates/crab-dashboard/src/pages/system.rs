@@ -7,7 +7,9 @@ use crate::locale::use_translations;
 use crate::pages::pipeline::PipelinePage;
 use crate::pages::reasoning::ReasoningPage;
 use crate::pages::features::FeaturesTab;
-use crate::types::{SystemUpdateResult, SystemVersion, UpdateCheckResult};
+use crate::types::{
+    LimitsConfig, SystemUpdateResult, SystemVersion, UpdateCheckResult,
+};
 
 #[component]
 pub fn SystemPage() -> impl IntoView {

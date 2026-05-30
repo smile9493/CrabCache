@@ -97,6 +97,28 @@ fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucke
         .collect()
 }
 
+/// Build heatmap rows. When grouping by model, use per-model series buckets so
+/// the model column and token columns refer to the same traffic (global buckets
+/// only expose `top_model` while tokens are summed across all models).
+fn heatmap_buckets(data: &LiveMetricsResponse, group_by: LiveGroupBy) -> Vec<LiveMetricsBucket> {
+    if group_by == LiveGroupBy::Model && !data.series.is_empty() {
+        let mut rows: Vec<LiveMetricsBucket> = data
+            .series
+            .iter()
+            .flat_map(|s| {
+                s.buckets.iter().filter(|b| b.request_count > 0).map(|b| {
+                    let mut row = b.clone();
+                    row.top_model = s.label.clone();
+                    row
+                })
+            })
+            .collect();
+        rows.sort_by_key(|b| b.timestamp_ms);
+        return rows;
+    }
+    data.buckets.clone()
+}
+
 fn window_label(window_secs: u32, t: Translations) -> &'static str {
     WINDOW_OPTIONS
         .iter()
@@ -630,6 +652,7 @@ pub fn LivePage() -> impl IntoView {
                             }.into_any();
                         }
                         let chart_buckets = compress_chart_buckets(&data.buckets);
+                        let heatmap_rows = heatmap_buckets(&data, group_by.get());
                         let consumer_name = data.consumer.clone();
                         let window = data.window_secs;
                         view! {
@@ -644,6 +667,7 @@ pub fn LivePage() -> impl IntoView {
                             <LiveBottomRow
                                 data=data
                                 buckets=chart_buckets
+                                heatmap_buckets=heatmap_rows
                                 latency_e2e_open=latency_e2e_open
                                 latency_upstream_open=latency_upstream_open
                                 token_open=token_open
@@ -1043,6 +1067,7 @@ fn LiveTrafficPanel(
 fn LiveBottomRow(
     data: LiveMetricsResponse,
     buckets: Vec<LiveMetricsBucket>,
+    heatmap_buckets: Vec<LiveMetricsBucket>,
     latency_e2e_open: RwSignal<bool>,
     latency_upstream_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
@@ -1071,7 +1096,7 @@ fn LiveBottomRow(
                 selected_routing_key=selected_routing_key
                 routing_key_data=routing_key_data
             />
-            <LiveHeatmapTable buckets=buckets />
+            <LiveHeatmapTable buckets=heatmap_buckets />
         </div>
     }
 }

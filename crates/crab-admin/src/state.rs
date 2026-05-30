@@ -492,8 +492,6 @@ impl AppState {
 
         let persist = Arc::new(PersistHandle::new());
         let loaded = persist.load();
-        let loaded_for_pg = loaded.clone(); // clone before partial moves for PG migration
-
         // If no env-driven keys, load persisted upstream pool secrets (v4+).
         if pool_secrets.is_empty() && !loaded.upstream_pool_secrets.is_empty() {
             pool_secrets = loaded
@@ -650,55 +648,64 @@ impl AppState {
             codex_pkce_sessions: DashMap::new(),
         };
 
-        // Initialize PostgreSQL store (async) if configured.
+        // Defer PostgreSQL init to async startup (AppState::new runs inside #[tokio::main]).
         let pg_cfg = crate::pg::PgConfig::from_env();
         if pg_cfg.enabled() {
             if let Some(url) = &pg_cfg.url {
-                match tokio::runtime::Handle::current()
-                    .block_on(crate::pg::PgStore::new(url, pg_cfg.max_pool_size))
-                {
-                    Ok(pg) => {
-                        tracing::info!("PostgreSQL store initialized");
-                        // Attempt one-time JSON → PG migration.
-                        if pg_cfg.migrate_from_json {
-                            if let Ok(migrated) = tokio::runtime::Handle::current()
-                                .block_on(pg.maybe_import_from_json(&loaded_for_pg))
-                            {
-                                if migrated {
-                                    tracing::info!("JSON state imported into PostgreSQL");
-                                }
-                            }
-                        }
-                        // Hydrate metrics history from PG if it has more data than SQLite.
-                        let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
-                        if let Ok(pg_snapshots) = tokio::runtime::Handle::current()
-                            .block_on(pg.load_metric_snapshots_since(cutoff))
-                        {
-                            let sqlite_count = state.metrics_history.read().sample_count();
-                            if pg_snapshots.len() > sqlite_count {
-                                let mut hist = state.metrics_history.write();
-                                *hist = MetricsHistory::new();
-                                for s in &pg_snapshots {
-                                    hist.append(s.clone());
-                                }
-                                tracing::info!(
-                                    hydrated = hist.sample_count(),
-                                    "Metrics history restored from PostgreSQL (supersedes SQLite)"
-                                );
-                            }
-                        }
-                        *state.pg_store.write() = Some(pg);
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to initialize PostgreSQL; will retry in background");
-                        *state.pg_pending_config.write() =
-                            Some((url.clone(), pg_cfg.max_pool_size, pg_cfg.migrate_from_json));
-                    }
-                }
+                *state.pg_pending_config.write() = Some((
+                    url.clone(),
+                    pg_cfg.max_pool_size,
+                    pg_cfg.migrate_from_json,
+                ));
             }
         }
 
         state
+    }
+
+    /// Connect PostgreSQL, optionally migrate JSON state, hydrate metrics history.
+    pub async fn try_connect_pg(
+        state: &Arc<Self>,
+        url: &str,
+        pool_size: usize,
+        migrate_from_json: bool,
+    ) -> bool {
+        match crate::pg::PgStore::new(url, pool_size).await {
+            Ok(pg) => {
+                tracing::info!("PostgreSQL store initialized");
+                if migrate_from_json {
+                    if let Ok(true) = pg.maybe_import_from_json(&state.persist.load()).await {
+                        tracing::info!("JSON state imported into PostgreSQL");
+                    }
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+                if let Ok(pg_snapshots) = pg.load_metric_snapshots_since(cutoff).await {
+                    let sqlite_count = state.metrics_history.read().sample_count();
+                    if pg_snapshots.len() > sqlite_count {
+                        let mut hist = state.metrics_history.write();
+                        *hist = MetricsHistory::new();
+                        for s in &pg_snapshots {
+                            hist.append(s.clone());
+                        }
+                        tracing::info!(
+                            hydrated = hist.sample_count(),
+                            "Metrics history restored from PostgreSQL (supersedes SQLite)"
+                        );
+                    }
+                }
+                *state.pg_store.write() = Some(pg);
+                *state.pg_pending_config.write() = None;
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to initialize PostgreSQL");
+                false
+            }
+        }
     }
 
     pub async fn fetch_gateway_metrics(&self) -> Result<String, String> {

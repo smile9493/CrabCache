@@ -1,6 +1,6 @@
 //! Management API: multi-vendor upstream profiles.
 
-use base64::Engine;
+
 use axum::{
     Json,
     extract::{Path, State},

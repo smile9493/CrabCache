@@ -25,7 +25,7 @@ use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
 };
 use crab_proxy::{
-    ClientKeyLimiter, DomainPolicy, FeaturesConfig, ModelPricing, PricingConfig, ReasoningConfig,
+    ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig, ReasoningConfig,
     RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
 };
 use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};

@@ -3,6 +3,7 @@ pub mod cache;
 pub mod capture;
 pub mod composition;
 pub mod dataplane;
+pub mod features;
 pub mod domains;
 pub mod infra;
 pub mod keys;

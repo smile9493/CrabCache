@@ -18,6 +18,7 @@ use deadpool_postgres::{Config as PoolConfig, Pool, Runtime};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio_postgres::NoTls;
+use tokio_postgres::types::Json;
 use tracing::info;
 
 /// Aggregated trace analysis results from SQL queries.
@@ -1093,17 +1094,15 @@ impl PgStore {
         gateway_uptime_secs: u64,
     ) -> Result<()> {
         let client = self.pool.get().await?;
+        let sampled_at = to_pg_bigint(snapshot.sampled_at);
+        let gateway_uptime = to_pg_bigint(gateway_uptime_secs);
         let payload = serde_json::to_string(snapshot).context("serialize metrics snapshot")?;
         client
             .execute(
                 "INSERT INTO metrics_snapshots (sampled_at, gateway_uptime_secs, payload)
                  VALUES ($1, $2, $3::jsonb)
                  ON CONFLICT (sampled_at) DO NOTHING",
-                &[
-                    &to_pg_bigint(snapshot.sampled_at),
-                    &to_pg_bigint(gateway_uptime_secs),
-                    &payload,
-                ],
+                &[&sampled_at, &gateway_uptime, &payload],
             )
             .await?;
         Ok(())
@@ -1355,21 +1354,39 @@ impl PgStore {
             .await?;
 
         for e in entries {
-            let composition_json = e
-                .composition
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .context("serialize composition")?;
+            let timestamp_ms = to_pg_bigint(e.timestamp_ms);
+            let content_length = e.content_length as i32;
+            let semantic_cluster = e.semantic_cluster as i32;
+            let prompt_tokens = e.prompt_tokens as i32;
+            let composition_pg: Option<Json<serde_json::Value>> = match &e.composition {
+                Some(c) => Some(Json(
+                    serde_json::to_value(c).context("serialize composition jsonb")?,
+                )),
+                None => None,
+            };
+            let input_tokens = e.input_tokens.map(to_pg_bigint);
+            let output_tokens = e.output_tokens.map(to_pg_bigint);
+            let phase_durations_pg: Option<Json<serde_json::Value>> =
+                match &e.phase_durations_ms {
+                    Some(v) => Some(Json(
+                        serde_json::to_value(v).context("serialize phase_durations jsonb")?,
+                    )),
+                    None => None,
+                };
+            let retired_prefix_messages = e.retired_prefix_messages.map(|v| v as i32);
+            let upstream_outbound_bytes = e.upstream_outbound_bytes.map(|v| v as i32);
+            let request_passthrough_prefix_len =
+                e.request_passthrough_prefix_len.map(|v| v as i32);
+            let status_code = e.status_code.map(|v| v as i32);
             tx.execute(
                 &stmt,
                 &[
                     &e.request_hash,
-                    &to_pg_bigint(e.timestamp_ms),
-                    &(e.content_length as i32),
-                    &(e.semantic_cluster as i32),
+                    &timestamp_ms,
+                    &content_length,
+                    &semantic_cluster,
                     &e.model,
-                    &(e.prompt_tokens as i32),
+                    &prompt_tokens,
                     &e.latency_ms,
                     &e.cache_hit,
                     &e.conversation_id,
@@ -1378,13 +1395,13 @@ impl PgStore {
                     &e.project_id,
                     &e.upstream_latency_ms,
                     &e.ttft_ms,
-                    &e.input_tokens.map(to_pg_bigint),
-                    &e.output_tokens.map(to_pg_bigint),
+                    &input_tokens,
+                    &output_tokens,
                     &e.cache_tier,
-                    &composition_json,
+                    &composition_pg,
                     &e.request_messages_snapshot,
                     &e.response_preview,
-                    &e.retired_prefix_messages.map(|v| v as i32),
+                    &retired_prefix_messages,
                     &e.reasoning_strategy,
                     &e.prompt_cache_hit_ratio,
                     &e.upstream_profile_id,
@@ -1396,7 +1413,7 @@ impl PgStore {
                     &e.upstream_key_id,
                     &e.session_store,
                     &e.stable_session_kind,
-                    &e.upstream_outbound_bytes.map(|v| v as i32),
+                    &upstream_outbound_bytes,
                     &e.prefill_ms,
                     &e.pre_header_ms,
                     &e.affinity_key,
@@ -1406,13 +1423,13 @@ impl PgStore {
                     &e.is_coalesced,
                     &e.client_key_id,
                     &e.request_passthrough,
-                    &e.request_passthrough_prefix_len.map(|v| v as i32),
-                    &e.status_code.map(|v| v as i32),
+                    &request_passthrough_prefix_len,
+                    &status_code,
                     &e.error_code,
                     &e.limit_source,
                     &e.cache_decision,
                     &e.upstream_result,
-                    &e.phase_durations_ms.as_ref().map(serde_json::to_string).transpose().context("serialize phase_durations_ms")?,
+                    &phase_durations_pg,
                 ],
             )
             .await?;

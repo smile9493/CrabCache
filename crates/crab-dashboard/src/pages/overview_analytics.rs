@@ -41,7 +41,7 @@ pub fn OverviewAnalytics(
             {move || metrics_memo.get().zip(ops_memo.get()).map(|(m, ops)| view! {
                 <div class="bento-grid-2">
                     <super::overview::CoalescingCard metrics=m.clone() ops=ops.clone() />
-                    <super::overview::SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9 }) />
+                    <super::overview::SemanticCacheCard metrics=m.clone() semantic=semantic_memo.get().unwrap_or(SemanticConfig { enabled: false, similarity_threshold: 0.9, ttl_secs: 3600, min_query_chars: 10, max_query_chars: 1024, max_concurrent_embeds: 4 }) />
                 </div>
             })}
             {move || metrics_memo.get().map(|m| view! {

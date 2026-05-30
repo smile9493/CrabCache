@@ -52,7 +52,7 @@ pub async fn verify_admin_key(key: &str) -> Result<(), String> {
     }
 }
 
-async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T, String> {
+pub async fn fetch_json<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<T, String> {
     let (builder, epoch) = apply_admin_auth(Request::get(url));
     let resp = builder
         .send()

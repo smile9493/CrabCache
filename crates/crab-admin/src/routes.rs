@@ -19,8 +19,12 @@ use crab_control::{
 };
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path as FilePath;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const DASHBOARD_DIST_PATH: &str = "crates/crab-dashboard/dist";
+const DASHBOARD_BUILD_INFO_PATH: &str = "crates/crab-dashboard/dist/build-info.json";
 
 #[derive(Debug, serde::Serialize)]
 struct ErrorResponse {
@@ -382,6 +386,28 @@ async fn put_admin_key(
     Ok(Json(serde_json::json!({"success": true})))
 }
 
+fn dashboard_build_info_from_path(path: &FilePath) -> serde_json::Value {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => value,
+            Err(e) => serde_json::json!({
+                "error": format!("invalid dashboard build info: {e}")
+            }),
+        },
+        Err(e) => serde_json::json!({
+            "error": format!("dashboard build info unavailable: {e}")
+        }),
+    }
+}
+
+fn dashboard_build_info() -> serde_json::Value {
+    dashboard_build_info_from_path(FilePath::new(DASHBOARD_BUILD_INFO_PATH))
+}
+
+fn dashboard_dist_present() -> bool {
+    FilePath::new(DASHBOARD_DIST_PATH).join("index.html").is_file()
+}
+
 /// Version information including the latest GitHub release if reachable.
 async fn get_system_version(
     State(state): State<Arc<AppState>>,
@@ -410,6 +436,9 @@ async fn get_system_version(
 
     Ok(Json(serde_json::json!({
         "current_version": current_version,
+        "admin_version": current_version,
+        "dashboard_dist_present": dashboard_dist_present(),
+        "dashboard_build": dashboard_build_info(),
         "latest": latest,
     })))
 }
@@ -4172,5 +4201,57 @@ gateway_cache_fetch_latency_seconds_count{tier="L0_moka",model="m2"} 30
         );
         // (0.006 / 40) * 1000 = 0.15 ms
         assert!((avg - 0.15).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod dashboard_build_tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_nanos();
+        std::env::temp_dir().join(format!("crab-admin-{name}-{nanos}.json"))
+    }
+
+    #[test]
+    fn dashboard_build_info_reads_json() {
+        let path = temp_file("valid");
+        fs::write(&path, r#"{"dashboard_dist_hash":"abc"}"#).unwrap();
+
+        let info = super::dashboard_build_info_from_path(&path);
+        assert_eq!(info["dashboard_dist_hash"], "abc");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn dashboard_build_info_reports_missing_file() {
+        let path = temp_file("missing");
+        let info = super::dashboard_build_info_from_path(&path);
+        assert!(
+            info["error"]
+                .as_str()
+                .is_some_and(|msg| msg.contains("dashboard build info unavailable"))
+        );
+    }
+
+    #[test]
+    fn dashboard_build_info_reports_invalid_json() {
+        let path = temp_file("invalid");
+        fs::write(&path, "{").unwrap();
+
+        let info = super::dashboard_build_info_from_path(&path);
+        assert!(
+            info["error"]
+                .as_str()
+                .is_some_and(|msg| msg.contains("invalid dashboard build info"))
+        );
+
+        let _ = fs::remove_file(path);
     }
 }
