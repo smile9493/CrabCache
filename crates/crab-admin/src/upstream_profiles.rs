@@ -80,12 +80,21 @@ pub async fn get_profile_keys(
         .get_upstream_profile_keys(id)
         .await
         .map_err(|e| e.to_string())?;
+    let models_probe = crate::upstream::probe_profile_key_models_internal(state, id).await.ok();
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
         keys: view
             .keys
             .into_iter()
-            .map(upstream_key_view_from_control)
+            .map(|k| {
+                let mut mapped = upstream_key_view_from_control(k);
+                if let Some(probe) = &models_probe {
+                    if let Some(entry) = probe.keys.iter().find(|e| e.key_id == mapped.id) {
+                        mapped = crate::types::enrich_upstream_key_view(mapped, entry);
+                    }
+                }
+                mapped
+            })
             .collect(),
     })
 }
@@ -222,6 +231,50 @@ pub async fn patch_profile_key(
 
     state.flush_persist();
     Ok(upstream_key_view_from_control(view))
+}
+
+pub async fn delete_profile_key(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    key_id: &str,
+) -> Result<(), String> {
+    state
+        .gateway
+        .delete_upstream_profile_key(profile_id, key_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    {
+        let mut map = state.upstream_profile_secrets.write();
+        if let Some(pool) = map.get_mut(profile_id) {
+            pool.retain(|k| k.id != key_id);
+        }
+    }
+
+    let pg = { state.pg_store.read().clone() };
+    if let Some(pg) = pg {
+        let _guard = state.pg_write_lock.lock().await;
+        let persisted: Vec<PersistedUpstreamPoolSecret> = state
+            .upstream_profile_secrets
+            .read()
+            .get(profile_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| PersistedUpstreamPoolSecret {
+                id: s.id,
+                secret: s.secret,
+                enabled: s.enabled,
+                account_id: s.account_id,
+            })
+            .collect();
+        pg.replace_profile_secrets(profile_id, &persisted)
+            .await
+            .map_err(|e| format!("persist upstream key delete to postgres: {e}"))?;
+    }
+
+    state.flush_persist();
+    Ok(())
 }
 
 pub async fn test_profile(

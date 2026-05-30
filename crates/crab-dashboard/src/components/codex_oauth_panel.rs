@@ -84,9 +84,10 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
     let alive = Arc::new(AtomicBool::new(true));
 
     let pid_start = profile_id.clone();
+    let alive_for_start = Arc::clone(&alive);
     let on_start_device = move |_| {
         let pid = pid_start.clone();
-        let alive = Arc::clone(&alive);
+        let alive = Arc::clone(&alive_for_start);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -217,7 +218,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
             {move || {
                 let on_start = on_start_device.clone();
                 (flow_status.get() == "idle").then(|| view! {
-                    <button class="btn btn-secondary text-xs" on:click=on_start>
+                    <button class="btn btn-secondary text-xs" on:click=move |_| on_start.run(())>
                         {t.upstream_codex_oauth_start()}
                     </button>
                 })
@@ -245,7 +246,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                                 <span class="font-mono text-2xl font-bold text-accent tracking-widest select-all">
                                     {code.clone()}
                                 </span>
-                                <button class="btn btn-secondary text-xs" on:click=on_copy>
+                                <button class="btn btn-secondary text-xs" on:click=move |_| on_copy.run(())>
                                     {if copied_signal { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
                                 </button>
                             </div>
@@ -256,7 +257,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                                 <Spinner />
                                 <span class="text-xs text-theme-muted">{t.upstream_codex_oauth_polling()}</span>
                             </div>
-                            <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
+                            <button class="btn btn-secondary text-xs" on:click=move |_| on_cancel_c.run(())>
                                 {t.upstream_codex_oauth_cancel()}
                             </button>
                         </div>
@@ -334,9 +335,10 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
 
     // Start PKCE
     let pid_start_pkce = profile_id.clone();
-    let on_start_pkce = move |_| {
+    let alive_for_pkce = Arc::clone(&alive);
+    let on_start_pkce = Callback::new(move |_: ()| {
         let pid = pid_start_pkce.clone();
-        let alive = Arc::clone(&alive);
+        let alive = Arc::clone(&alive_for_pkce);
         flow_status.set("starting".to_string());
         error_msg.set(String::new());
         leptos::task::spawn_local(async move {
@@ -360,9 +362,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
-    let on_copy_url = move |_| {
+    let on_copy_url = Callback::new(move |_: ()| {
         if let Some(url) = auth_url.get() {
             crate::clipboard::copy_text(&url);
             copied.set(true);
@@ -371,11 +373,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 copied.set(false);
             });
         }
-    };
+    });
 
     // Confirm manual exchange
     let pid_confirm = profile_id.clone();
-    let on_confirm = move |_| {
+    let on_confirm = Callback::new(move |_: ()| {
         let pid = pid_confirm.clone();
         let sid = session_id.get_untracked().unwrap_or_default();
         let url = callback_input.get_untracked();
@@ -405,10 +407,10 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 }
             }
         });
-    };
+    });
 
     let pid_cancel_pkce = profile_id.clone();
-    let on_cancel_pkce = move |_| {
+    let on_cancel_pkce = Callback::new(move |_: ()| {
         let pid = pid_cancel_pkce.clone();
         let sid = session_id.get_untracked();
         leptos::task::spawn_local(async move {
@@ -421,7 +423,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         flow_status.set("idle".to_string());
         error_msg.set(String::new());
         callback_input.set(String::new());
-    };
+    });
 
     // Auto-poll loop (for "auto" mode)
     let pid_for_poll = profile_id.clone();
@@ -496,7 +498,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                 let on = on_start_pkce.clone();
                 (flow_status.get() == "idle").then(|| view! {
                     <div class="space-y-2">
-                        <button class="btn btn-secondary text-xs" on:click=on>
+                        <button class="btn btn-secondary text-xs" on:click=move |_| on.run(())>
                             {t.upstream_codex_pkce_start()}
                         </button>
                     </div>
@@ -527,7 +529,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                                    class="btn btn-secondary text-xs">
                                     {t.upstream_codex_pkce_open_browser()}
                                 </a>
-                                <button class="btn btn-secondary text-xs" on:click=on_copy>
+                                <button class="btn btn-secondary text-xs" on:click=move |_| on_copy.run(())>
                                     {if c { t.upstream_codex_oauth_copied() } else { t.upstream_codex_oauth_copy() }}
                                 </button>
                             </div>
@@ -541,11 +543,11 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                                     prop:value=callback_input
                                     on:input=move |ev| callback_input.set(event_target_value(&ev))
                                 />
-                                <button class="btn btn-primary text-xs" on:click=on_confirm_c>
-                                    {t.upstream_codex_pkce_confirm()}
+                            <button class="btn btn-primary text-xs" on:click=move |_| on_confirm_c.run(())>
+                                {t.upstream_codex_pkce_confirm()}
                                 </button>
                             </div>
-                            <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
+                            <button class="btn btn-secondary text-xs" on:click=move |_| on_cancel_c.run(())>
                                 {t.upstream_codex_oauth_cancel()}
                             </button>
                         </div>
@@ -570,7 +572,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                             <Spinner />
                             <span class="text-xs text-theme-muted">{t.upstream_codex_pkce_waiting()}</span>
                         </div>
-                        <button class="btn btn-secondary text-xs" on:click=on_cancel_c>
+                        <button class="btn btn-secondary text-xs" on:click=move |_| on_cancel_c.run(())>
                             {t.upstream_codex_oauth_cancel()}
                         </button>
                     </div>
@@ -642,9 +644,121 @@ fn CredentialList(
 ) -> impl IntoView {
     let t = use_translations();
     let pid = profile_id.clone();
+    let json_input = RwSignal::new(String::new());
+    let json_importing = RwSignal::new(false);
+    let json_status = RwSignal::new(String::new());
+
+    let reload_credentials = move || {
+        let credentials = credentials;
+        let loading = loading;
+        leptos::task::spawn_local(async move {
+            loading.set(true);
+            if let Ok(list) = api::list_codex_credentials().await {
+                credentials.set(
+                    list.credentials
+                        .into_iter()
+                        .map(|c| CredentialEntry {
+                            id: c.id,
+                            email: c.email,
+                            plan_type: c.plan_type,
+                            expired_at: c.expired_at,
+                            disabled: c.disabled,
+                        })
+                        .collect(),
+                );
+            }
+            loading.set(false);
+        });
+    };
+
+    let pid_json = profile_id.clone();
+    let on_json_import = move |_| {
+        let raw = json_input.get_untracked().trim().to_string();
+        if raw.is_empty() {
+            error_msg.set("JSON input is empty".to_string());
+            return;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                error_msg.set(format!("Invalid JSON: {e}"));
+                return;
+            }
+        };
+        let p = pid_json.clone();
+        let loc = t.locale;
+        json_importing.set(true);
+        json_status.set(String::new());
+        error_msg.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::import_codex_bulk_json(&p, &parsed).await {
+                Ok(resp) => {
+                    let refreshed = resp.imported.iter().filter(|i| i.refreshed).count();
+                    let suffix = if refreshed > 0 {
+                        match loc {
+                            crate::locale::Locale::ZhCN => "（含 refresh）",
+                            crate::locale::Locale::EnUS => " (refreshed)",
+                        }
+                    } else {
+                        ""
+                    };
+                    json_status.set(match loc {
+                        crate::locale::Locale::ZhCN => {
+                            format!("已导入 {} 个账号{}", resp.imported.len(), suffix)
+                        }
+                        crate::locale::Locale::EnUS => {
+                            format!("Imported {} account(s){}", resp.imported.len(), suffix)
+                        }
+                    });
+                    if !resp.errors.is_empty() {
+                        let err_summary: Vec<String> = resp
+                            .errors
+                            .iter()
+                            .map(|e| format!("{}: {}", e.name, e.error))
+                            .collect();
+                        error_msg.set(err_summary.join("; "));
+                    }
+                    json_input.set(String::new());
+                    crate::pages::upstream::signal_refresh_key_pool();
+                    reload_credentials();
+                }
+                Err(e) => error_msg.set(e),
+            }
+            json_importing.set(false);
+        });
+    };
 
     view! {
-        <div class="border-t border-theme/10 pt-3 mt-3">
+        <div class="border-t border-theme/10 pt-3 mt-3 space-y-3">
+            // JSON bulk import
+            <div class="space-y-2">
+                <h5 class="text-xs font-semibold text-theme">{t.upstream_codex_json_import_title()}</h5>
+                <p class="text-xs text-theme-muted">{t.upstream_codex_json_import_hint()}</p>
+                <textarea
+                    class="w-full min-h-[88px] text-xs font-mono rounded-md border border-theme/15 bg-theme/5 p-2 text-theme"
+                    prop:value=move || json_input.get()
+                    on:input=move |ev| json_input.set(event_target_value(&ev))
+                    placeholder=r#"{"accounts":[{"platform":"openai","credentials":{...}}]}"#
+                />
+                <div class="flex items-center gap-2">
+                    <button
+                        class="btn btn-secondary text-xs"
+                        disabled=move || json_importing.get()
+                        on:click=on_json_import
+                    >
+                        {move || if json_importing.get() { "..." } else { t.upstream_codex_json_import_submit() }}
+                    </button>
+                    {move || {
+                        let msg = json_status.get();
+                        (!msg.is_empty()).then(|| view! {
+                            <span class="text-xs text-accent">{msg}</span>
+                        })
+                    }}
+                </div>
+            </div>
+
+            // Saved credentials
+            <div>
             <div class="flex items-center justify-between mb-2">
                 <h5 class="text-xs font-semibold text-theme">{t.upstream_codex_oauth_credentials()}</h5>
                 {move || loading.get().then(|| view! { <Spinner /> })}
@@ -689,6 +803,7 @@ fn CredentialList(
                     view! {}.into_any()
                 }
             }}
+            </div>
         </div>
     }
 }

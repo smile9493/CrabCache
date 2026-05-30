@@ -168,6 +168,7 @@ impl PipelineSelectionReason {
 /// Static Codex model catalog (aligned with new-api `relay/channel/codex/constants.go`).
 pub const CODEX_STATIC_MODELS: &[&str] = &[
     "gpt-5",
+    "gpt-5.5",
     "gpt-5-codex",
     "gpt-5-codex-mini",
     "gpt-5.1",

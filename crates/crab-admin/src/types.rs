@@ -98,7 +98,25 @@ pub fn upstream_key_view_from_control(k: crab_control::UpstreamKeyView) -> Upstr
         enabled: k.enabled,
         inflight: k.inflight,
         cooldown_remaining_secs: k.cooldown_remaining_secs,
+        email: None,
+        plan_type: None,
+        models: Vec::new(),
+        quota: None,
     }
+}
+
+pub fn enrich_upstream_key_view(
+    mut key: UpstreamKeyView,
+    entry: &crab_control::UpstreamKeyModelsEntry,
+) -> UpstreamKeyView {
+    key.models = entry.models.clone();
+    key.email = entry.email.clone();
+    key.plan_type = entry
+        .plan_type
+        .clone()
+        .or_else(|| entry.quota.as_ref().and_then(|q| q.plan_type.clone()));
+    key.quota = entry.quota.as_ref().map(|q| key_quota_from_control(q.clone()));
+    key
 }
 
 pub fn upstream_keys_view_from_control(v: crab_control::UpstreamKeysView) -> UpstreamKeysView {
@@ -117,6 +135,11 @@ fn key_quota_from_control(q: crab_control::KeyQuotaInfo) -> KeyQuotaInfo {
         balance: q.balance,
         total_granted: q.total_granted,
         total_used: q.total_used,
+        plan_type: q.plan_type,
+        primary_used_percent: q.primary_used_percent,
+        secondary_used_percent: q.secondary_used_percent,
+        primary_reset_after_secs: q.primary_reset_after_secs,
+        secondary_reset_after_secs: q.secondary_reset_after_secs,
     }
 }
 

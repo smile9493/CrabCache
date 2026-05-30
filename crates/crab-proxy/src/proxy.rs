@@ -27,8 +27,7 @@ impl GatewayProxy {
     pub(crate) fn is_mimo_pipeline(p: RequestPipeline) -> bool {
         matches!(
             p,
-            RequestPipeline::MimoTokenPlanRelay
-                | RequestPipeline::MimoPaygRelay
+            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay
         )
     }
 
@@ -209,13 +208,38 @@ impl GatewayProxy {
         if ctx.upstream.key_guard.is_some() {
             return true;
         }
-        let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
+        let profile = self.active_upstream_profile(ctx);
+        let pool = profile.resolve_upstream_pool();
         let available_before = pool.available_count();
         let total = pool.len();
-        match pool.acquire() {
+        let canonical_model = crab_pipeline::canonicalize_client_model(&ctx.model);
+        let upstream_model = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+            crate::codex::resolve_codex_upstream_model(&canonical_model).to_string()
+        } else {
+            canonical_model
+        };
+        let guard = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+            pool.acquire_for_upstream_model(&upstream_model, true)
+                .or_else(|| pool.acquire_codex_oauth())
+                .or_else(|| pool.acquire())
+        } else {
+            pool.acquire_for_upstream_model(&upstream_model, false)
+                .or_else(|| pool.acquire())
+        };
+        match guard {
             Some(guard) => {
                 ctx.upstream.miss = true;
                 ctx.upstream.key_guard = Some(guard);
+                if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        client_model = %ctx.model,
+                        upstream_model = %upstream_model,
+                        key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                        pool_available = pool.available_count(),
+                        "Codex upstream key selected for model"
+                    );
+                }
                 // #region agent log
                 debug_agent_log(
                     "UPKEY1",

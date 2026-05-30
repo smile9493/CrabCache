@@ -256,6 +256,8 @@ pub struct UpstreamState {
     pub prepared_upstream_body_emitted: bool,
     /// Whether upstream 4xx/5xx error body was logged to debug NDJSON.
     pub error_body_logged: bool,
+    /// Upstream returned 4xx/5xx while client requested SSE — pass JSON error through.
+    pub error_passthrough: bool,
     pub sse_rate_limited: bool,
     /// Whether the first upstream body chunk was logged for debug.
     pub first_body_chunk_logged: bool,
@@ -286,6 +288,7 @@ impl Default for UpstreamState {
             retry_buffer_truncated: false,
             prepared_upstream_body_emitted: false,
             error_body_logged: false,
+            error_passthrough: false,
             sse_rate_limited: false,
             first_body_chunk_logged: false,
             response_decompress:

@@ -1,3 +1,4 @@
+use crate::validate::KeyQuotaInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -88,6 +89,32 @@ pub struct UpstreamKeyView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamKeysView {
     pub keys: Vec<UpstreamKeyView>,
+}
+
+/// Per-key upstream model catalog (Codex OAuth: `GET /backend-api/codex/models`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamKeyModelsEntry {
+    pub key_id: String,
+    #[serde(default)]
+    pub account_id: String,
+    pub enabled: bool,
+    pub ok: bool,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<KeyQuotaInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamProfileKeysModelsView {
+    pub profile_id: String,
+    pub keys: Vec<UpstreamKeyModelsEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 mod client_key_limiter;
 mod client_key_rate_limiter;
+mod codex;
 mod context;
 mod debug_log;
 mod error;
@@ -76,8 +77,8 @@ pub use trace_logger::{
     set_composition_debug_tx,
 };
 pub use upstream_pool::{
-    REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool, UpstreamKeySpec,
-    UpstreamKeyStatus, key_preview,
+    DEFAULT_UPSTREAM_ACCOUNT_ID, REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool,
+    UpstreamKeySpec, UpstreamKeyStatus, key_preview,
 };
 pub use upstream_profile::UpstreamProfileRuntime;
 pub use upstream_user_id_limiter::{

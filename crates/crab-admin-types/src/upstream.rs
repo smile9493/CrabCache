@@ -51,6 +51,14 @@ pub struct UpstreamKeyView {
     pub enabled: bool,
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<KeyQuotaInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -107,6 +115,19 @@ pub struct KeyQuotaInfo {
     pub total_granted: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_used: Option<f64>,
+    /// ChatGPT plan (`plus`, `free`, …) from WHAM / JWT.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    /// Codex primary window used % (typically 5h).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_used_percent: Option<f64>,
+    /// Codex secondary window used % (typically 7d).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_used_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reset_after_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_reset_after_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,6 +198,12 @@ pub struct ModelInfo {
     pub input_price_per_mtok: Option<f64>,
     pub output_price_per_mtok: Option<f64>,
     pub available: bool,
+    /// ChatGPT account UUIDs that expose this model (Codex multi-key pools).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub account_ids: Vec<String>,
+    /// Upstream key pool IDs that expose this model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

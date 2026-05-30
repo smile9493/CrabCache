@@ -23,6 +23,7 @@ pub mod session_drilldown_panel;
 pub mod skeleton;
 pub mod sparkline;
 pub mod sync_result;
+pub mod upstream_key_pool_cards;
 pub mod theme_switcher;
 pub mod toast;
 pub mod topnav;

@@ -4617,6 +4617,24 @@ impl Translations {
             Locale::EnUS => "Test",
         }
     }
+    pub fn upstream_pool_col_models(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "可用模型",
+            Locale::EnUS => "Models",
+        }
+    }
+    pub fn upstream_pool_quota_primary(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "5 小时窗口",
+            Locale::EnUS => "5h window",
+        }
+    }
+    pub fn upstream_pool_quota_secondary(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "7 天窗口",
+            Locale::EnUS => "7d window",
+        }
+    }
     pub fn upstream_quota_available(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "可用",
@@ -4631,8 +4649,56 @@ impl Translations {
     }
     pub fn upstream_quota_na(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "无数据",
-            Locale::EnUS => "N/A",
+            Locale::ZhCN => "无数据（加载或自动探测中）",
+            Locale::EnUS => "N/A (loading or auto-probing)",
+        }
+    }
+    pub fn upstream_pool_testing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "额度探测中…",
+            Locale::EnUS => "Probing quota…",
+        }
+    }
+    pub fn upstream_pool_test_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "探测成功",
+            Locale::EnUS => "Probe OK",
+        }
+    }
+    pub fn upstream_pool_key_disabled_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Key 已禁用，启用后可探测额度",
+            Locale::EnUS => "Key disabled — enable to probe quota",
+        }
+    }
+    pub fn upstream_pool_delete_key(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除 Key",
+            Locale::EnUS => "Delete Key",
+        }
+    }
+    pub fn upstream_pool_delete_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认删除",
+            Locale::EnUS => "Confirm Delete",
+        }
+    }
+    pub fn upstream_pool_delete_cancel(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
+        }
+    }
+    pub fn upstream_pool_auto_quota(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正在自动刷新额度…",
+            Locale::EnUS => "Auto-refreshing quotas…",
+        }
+    }
+    pub fn upstream_pool_delete_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除 Key 失败",
+            Locale::EnUS => "Failed to delete key",
         }
     }
     pub fn upstream_quota_test_failed(self) -> &'static str {

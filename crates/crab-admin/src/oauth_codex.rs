@@ -10,7 +10,9 @@ use axum::Json;
 use chrono::Utc;
 use crab_admin_types::oauth::*;
 use crab_auth::oauth::codex::CodexAuthenticator;
+use crab_auth::oauth::{ensure_fresh_codex_token, parse_codex_import_documents};
 use crab_auth::store::{FileTokenStore, TokenStore};
+use crab_auth::types::TokenRecord;
 use std::sync::Arc;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -40,6 +42,58 @@ pub fn resolve_auth_dir() -> PathBuf {
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home).join(".crabcache").join("auths")
         })
+}
+
+/// Save credential (refresh if needed) and upsert into profile key pool.
+async fn import_codex_record_to_profile(
+    state: &Arc<AppState>,
+    profile_id: &str,
+    record: TokenRecord,
+) -> Result<(String, bool, Option<String>, Option<String>), (axum::http::StatusCode, String)> {
+    let proxy_url = resolve_profile_proxy_url(state, profile_id).await;
+    let (fresh, refreshed) = ensure_fresh_codex_token(&record, proxy_url.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                format!("Token refresh failed: {e}"),
+            )
+        })?;
+
+    let store = FileTokenStore::new(&state.auth_dir);
+    let credential_id = store.save(&fresh).await.map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to save credential: {e}"),
+        )
+    })?;
+
+    let account_id = fresh
+        .metadata
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let email = fresh.email.clone();
+
+    upstream_profiles::put_profile_keys_upsert(
+        state,
+        profile_id,
+        &fresh.access_token,
+        &account_id,
+    )
+    .await?;
+
+    Ok((
+        credential_id,
+        refreshed,
+        email,
+        if account_id.is_empty() {
+            None
+        } else {
+            Some(account_id)
+        },
+    ))
 }
 
 /// Session metadata for one PKCE authorization attempt.
@@ -104,7 +158,6 @@ pub async fn start_pkce_login(
             let verifier_clone = verifier.clone();
             let redirect_uri_clone = redirect_uri.clone();
             let profile_id_clone = profile_id.clone();
-            let auth_dir = state.auth_dir.clone();
             let state_arc = state.clone();
             let proxy_for_exchange = proxy_url.clone();
 
@@ -177,34 +230,27 @@ pub async fn start_pkce_login(
                     .await
                     {
                         Ok(record) => {
-                            let email = record.email.clone();
-                            let account_id = record
-                                .metadata
-                                .get("account_id")
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
-
-                            // Save credential.
-                            let store = FileTokenStore::new(&auth_dir);
-                            let credential_id = store.save(&record).await.ok();
-
-                            // Append to key pool.
-                            let auth_id = account_id
-                                .clone()
-                                .unwrap_or_else(|| email.clone().unwrap_or_default());
-                            let _ = upstream_profiles::put_profile_keys_append(
+                            match import_codex_record_to_profile(
                                 &state_arc,
                                 &profile_id_clone,
-                                &record.access_token,
-                                &auth_id,
+                                record,
                             )
-                            .await;
-
-                            if let Some(mut entry) = sessions.get_mut(&sid) {
-                                entry.status = "completed".to_string();
-                                entry.credential_id = credential_id;
-                                entry.email = email;
-                                entry.account_id = account_id;
+                            .await
+                            {
+                                Ok((credential_id, _refreshed, email, account_id)) => {
+                                    if let Some(mut entry) = sessions.get_mut(&sid) {
+                                        entry.status = "completed".to_string();
+                                        entry.credential_id = Some(credential_id);
+                                        entry.email = email;
+                                        entry.account_id = account_id;
+                                    }
+                                }
+                                Err((_, err)) => {
+                                    if let Some(mut entry) = sessions.get_mut(&sid) {
+                                        entry.status = "failed".to_string();
+                                        entry.error = Some(err);
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -322,33 +368,8 @@ pub async fn exchange_pkce(
         )
     })?;
 
-    let email = record.email.clone();
-    let account_id = record
-        .metadata
-        .get("account_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // Save credential.
-    let store = FileTokenStore::new(&state.auth_dir);
-    let credential_id = store.save(&record).await.map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to save credential: {e}"),
-        )
-    })?;
-
-    // Append to key pool.
-    let auth_id = account_id
-        .clone()
-        .unwrap_or_else(|| email.clone().unwrap_or_default());
-    upstream_profiles::put_profile_keys_append(
-        &state,
-        &profile_id,
-        &record.access_token,
-        &auth_id,
-    )
-    .await?;
+    let (credential_id, _refreshed, email, account_id) =
+        import_codex_record_to_profile(&state, &profile_id, record).await?;
 
     if let Some(mut entry) = state.codex_pkce_sessions.get_mut(&session_id) {
         entry.status = "completed".to_string();
@@ -566,12 +587,12 @@ pub async fn poll_device_status(
     drop(entry);
 
     let proxy_url = resolve_profile_proxy_url(&state, &profile_id).await;
-    let token_url = std::env::var("CRABCACHE_OAUTH_CODEX_TOKEN_URL")
-        .unwrap_or_else(|_| "https://auth.openai.com/oauth/token".to_string());
+    let device_poll_url = crab_auth::oauth::codex::codex_device_token_endpoint();
+    let oauth_token_url = crab_auth::oauth::codex::codex_oauth_token_endpoint();
 
-    // Single poll
+    // Single poll — device auth uses JSON on the deviceauth/token endpoint.
     match CodexAuthenticator::poll_device_once_with_url_and_proxy(
-        &token_url,
+        &device_poll_url,
         &device_auth_id,
         &user_code,
         proxy_url.as_deref(),
@@ -595,10 +616,10 @@ pub async fn poll_device_status(
             }
         }
         crab_auth::oauth::CodexDevicePollResult::Ready { body } => {
-            // Complete the exchange
+            // Complete the exchange on the OAuth token endpoint (form-urlencoded).
             let record =
                 CodexAuthenticator::complete_device_from_poll_with_url_and_proxy(
-                    &token_url,
+                    &oauth_token_url,
                     &body,
                     proxy_url.as_deref(),
                 )
@@ -610,34 +631,8 @@ pub async fn poll_device_status(
                     )
                 })?;
 
-            let email = record.email.clone();
-            let account_id = record
-                .metadata
-                .get("account_id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            // Save credential to auth directory
-            let store = FileTokenStore::new(&state.auth_dir);
-            let credential_id = store.save(&record).await.map_err(|e| {
-                (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to save credential: {e}"),
-                )
-            })?;
-
-            // Append access_token to profile key pool
-            let auth_id_for_pool = account_id
-                .clone()
-                .unwrap_or_else(|| email.clone().unwrap_or_default());
-
-            upstream_profiles::put_profile_keys_append(
-                &state,
-                &profile_id,
-                &record.access_token,
-                &auth_id_for_pool,
-            )
-            .await?;
+            let (credential_id, _refreshed, email, account_id) =
+                import_codex_record_to_profile(&state, &profile_id, record).await?;
 
             if let Some(mut entry) = state.codex_device_sessions.get_mut(&session_id) {
                 entry.status = "completed".to_string();
@@ -750,23 +745,61 @@ pub async fn import_codex_credential(
         )
     })?;
 
-    let account_id = record
-        .metadata
-        .get("account_id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_default();
-
-    upstream_profiles::put_profile_keys_append(
-        &state,
-        &profile_id,
-        &record.access_token,
-        &account_id,
-    )
-    .await?;
+    let (credential_id, refreshed, _, _) =
+        import_codex_record_to_profile(&state, &profile_id, record).await?;
 
     Ok(Json(CodexImportResponse {
-        credential_id: req.credential_id,
+        credential_id,
         profile_id,
+        refreshed,
+    }))
+}
+
+/// POST `/api/admin/upstream/profiles/:id/oauth/codex/import/bulk`
+pub async fn import_codex_bulk(
+    State(state): State<Arc<AppState>>,
+    Path(profile_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<CodexBulkImportResponse>, (axum::http::StatusCode, String)> {
+    let records = parse_codex_import_documents(&body).map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid import JSON: {e}"),
+        )
+    })?;
+
+    let mut imported = Vec::new();
+    let mut errors = Vec::new();
+
+    for record in records {
+        let name = record
+            .email
+            .clone()
+            .unwrap_or_else(|| record.id.clone());
+        match import_codex_record_to_profile(&state, &profile_id, record).await {
+            Ok((credential_id, refreshed, email, _)) => {
+                imported.push(CodexBulkImportItem {
+                    credential_id,
+                    email,
+                    refreshed,
+                });
+            }
+            Err((_, err)) => {
+                errors.push(CodexBulkImportError { name, error: err });
+            }
+        }
+    }
+
+    if imported.is_empty() && !errors.is_empty() {
+        return Err((
+            axum::http::StatusCode::BAD_GATEWAY,
+            format!("All imports failed: {}", errors[0].error),
+        ));
+    }
+
+    Ok(Json(CodexBulkImportResponse {
+        profile_id,
+        imported,
+        errors,
     }))
 }

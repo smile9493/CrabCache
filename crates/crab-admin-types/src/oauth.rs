@@ -61,6 +61,31 @@ pub struct CodexImportRequest {
 pub struct CodexImportResponse {
     pub credential_id: String,
     pub profile_id: String,
+    /// True when access_token was refreshed before import.
+    pub refreshed: bool,
+}
+
+/// Response item for bulk JSON import.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexBulkImportItem {
+    pub credential_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub refreshed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexBulkImportError {
+    pub name: String,
+    pub error: String,
+}
+
+/// Response to `POST .../oauth/codex/import/bulk`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexBulkImportResponse {
+    pub profile_id: String,
+    pub imported: Vec<CodexBulkImportItem>,
+    pub errors: Vec<CodexBulkImportError>,
 }
 
 // ─── PKCE flow DTOs ──────────────────────────────────────────────────────────

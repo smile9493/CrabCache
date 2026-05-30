@@ -1,6 +1,7 @@
 //! Round-robin / least-inflight pool of DeepSeek upstream API keys.
 
 use crab_metrics::global_metrics;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,12 +11,25 @@ pub const REASONING_NAMESPACE_AUTH: &str = "gateway-upstream-pool";
 /// Keys without an explicit `account_id` share this bucket (no cross-key rotation on 429).
 pub const DEFAULT_UPSTREAM_ACCOUNT_ID: &str = "default";
 
+/// JWT OAuth access token with a real ChatGPT account id (not `default` / `auto-*`).
+pub fn looks_like_codex_oauth_key(secret: &str, account_id: &str) -> bool {
+    let secret = secret.trim();
+    let account_id = account_id.trim();
+    secret.starts_with("eyJ")
+        && secret.contains('.')
+        && !account_id.is_empty()
+        && account_id != DEFAULT_UPSTREAM_ACCOUNT_ID
+        && !account_id.starts_with("auto-")
+}
+
 #[derive(Debug, Clone)]
 pub struct UpstreamKeySpec {
     pub id: String,
     pub secret: String,
     pub enabled: bool,
     pub account_id: String,
+    /// Upstream model slugs this key can serve (empty = no explicit filter).
+    pub supported_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -35,6 +49,7 @@ struct UpstreamKeySlot {
     enabled: AtomicBool,
     inflight: AtomicUsize,
     cooldown_until_ms: AtomicU64,
+    supported_models: RwLock<Arc<[String]>>,
 }
 
 pub struct UpstreamKeyPool {
@@ -99,6 +114,19 @@ pub fn key_preview(secret: &str) -> String {
     }
 }
 
+fn normalize_model_slug(model: &str) -> String {
+    model.trim().to_ascii_lowercase()
+}
+
+fn slot_supports_model(slot: &UpstreamKeySlot, upstream_model: &str) -> bool {
+    let models = slot.supported_models.read();
+    if models.is_empty() {
+        return true;
+    }
+    let want = normalize_model_slug(upstream_model);
+    models.iter().any(|m| normalize_model_slug(m) == want)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -160,6 +188,7 @@ impl UpstreamKeyPool {
                     enabled: AtomicBool::new(spec.enabled),
                     inflight: AtomicUsize::new(0),
                     cooldown_until_ms: AtomicU64::new(0),
+                    supported_models: RwLock::new(Arc::from(spec.supported_models.clone())),
                 }
             })
             .collect();
@@ -180,6 +209,7 @@ impl UpstreamKeyPool {
                 secret,
                 enabled: true,
                 account_id: String::new(),
+                supported_models: Vec::new(),
             })
             .collect();
         Self::new(specs, cooldown_secs)
@@ -275,8 +305,21 @@ impl UpstreamKeyPool {
                 } else {
                     s.account_id.to_string()
                 },
+                supported_models: s.supported_models.read().to_vec(),
             })
             .collect()
+    }
+
+    /// Update per-key upstream model catalogs (from Admin sync).
+    pub fn update_models_catalog(&self, catalog: &std::collections::HashMap<String, Vec<String>>) {
+        for slot in &self.slots {
+            if let Some(models) = catalog.get(&slot.id) {
+                let mut sorted = models.clone();
+                sorted.sort();
+                sorted.dedup();
+                *slot.supported_models.write() = Arc::from(sorted);
+            }
+        }
     }
 
     /// Return the first enabled key's full secret for admin / sync usage.
@@ -338,9 +381,13 @@ impl UpstreamKeyPool {
                 };
                 let mut inflight = 0usize;
                 let mut cooldown_until_ms = 0u64;
+                let mut supported_models: Arc<[String]> = Arc::from(spec.supported_models.clone());
                 if let Some(prev) = old.slots.iter().find(|s| s.id == id) {
                     inflight = prev.inflight.load(Ordering::Relaxed);
                     cooldown_until_ms = prev.cooldown_until_ms.load(Ordering::Relaxed);
+                    if supported_models.is_empty() {
+                        supported_models = prev.supported_models.read().clone();
+                    }
                 }
                 UpstreamKeySlot {
                     id,
@@ -349,6 +396,7 @@ impl UpstreamKeyPool {
                     enabled: AtomicBool::new(spec.enabled),
                     inflight: AtomicUsize::new(inflight),
                     cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
+                    supported_models: RwLock::new(supported_models),
                 }
             })
             .collect();
@@ -364,11 +412,71 @@ impl UpstreamKeyPool {
         self.acquire_excluding_account(None)
     }
 
+    /// Prefer JWT OAuth keys for Codex profiles (skip legacy `sk-*` placeholders).
+    pub fn acquire_codex_oauth(self: &Arc<Self>) -> Option<UpstreamKeyGuard> {
+        self.acquire_for_upstream_model("", true)
+    }
+
+    /// Select a key that can serve `upstream_model` (empty model = any).
+    /// Pass 1: keys with explicit catalog containing the model.
+    /// Pass 2: keys with empty catalog (unknown / legacy).
+    pub fn acquire_for_upstream_model(
+        self: &Arc<Self>,
+        upstream_model: &str,
+        codex_oauth_only: bool,
+    ) -> Option<UpstreamKeyGuard> {
+        let model = upstream_model.trim();
+        let explicit_only = !model.is_empty()
+            && self.slots.iter().any(|s| {
+                s.enabled.load(Ordering::Relaxed) && !s.supported_models.read().is_empty()
+            });
+        if explicit_only {
+            if let Some(guard) = self.acquire_with_model_policy(model, codex_oauth_only, true) {
+                return Some(guard);
+            }
+            return self.acquire_with_model_policy(model, codex_oauth_only, false);
+        }
+        self.acquire_excluding_account_with_filter(None, |slot| {
+            (!codex_oauth_only || looks_like_codex_oauth_key(&slot.secret, &slot.account_id))
+                && slot_supports_model(slot, model)
+        })
+    }
+
+    fn acquire_with_model_policy(
+        self: &Arc<Self>,
+        upstream_model: &str,
+        codex_oauth_only: bool,
+        require_explicit_catalog: bool,
+    ) -> Option<UpstreamKeyGuard> {
+        self.acquire_excluding_account_with_filter(None, |slot| {
+            if codex_oauth_only && !looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
+                return false;
+            }
+            if require_explicit_catalog {
+                !slot.supported_models.read().is_empty()
+                    && slot_supports_model(slot, upstream_model)
+            } else {
+                slot.supported_models.read().is_empty() || slot_supports_model(slot, upstream_model)
+            }
+        })
+    }
+
     /// Acquire a slot whose `account_id` differs from `excluded` (used after 429 on one account).
     pub fn acquire_excluding_account(
         self: &Arc<Self>,
         excluded: Option<&str>,
     ) -> Option<UpstreamKeyGuard> {
+        self.acquire_excluding_account_with_filter(excluded, |_| true)
+    }
+
+    fn acquire_excluding_account_with_filter<F>(
+        self: &Arc<Self>,
+        excluded: Option<&str>,
+        mut accept: F,
+    ) -> Option<UpstreamKeyGuard>
+    where
+        F: FnMut(&UpstreamKeySlot) -> bool,
+    {
         if self.slots.is_empty() {
             return None;
         }
@@ -392,6 +500,9 @@ impl UpstreamKeyPool {
             if let Some(ex) = excluded
                 && slot.account_id.as_ref() == ex
             {
+                continue;
+            }
+            if !accept(slot) {
                 continue;
             }
             let inflight = slot.inflight.load(Ordering::Relaxed);
@@ -459,6 +570,19 @@ impl UpstreamKeyPool {
             .find(|s| s.id == key_id)
             .map(|s| s.secret.to_string())
     }
+
+    /// Remove a key slot by id; returns a new pool or `None` if id not found.
+    pub fn remove_key(pool: &Arc<Self>, key_id: &str) -> Option<Arc<Self>> {
+        let specs: Vec<UpstreamKeySpec> = pool
+            .to_specs()
+            .into_iter()
+            .filter(|s| s.id != key_id)
+            .collect();
+        if specs.len() == pool.len() {
+            return None;
+        }
+        Some(Self::hot_replace(pool, specs))
+    }
 }
 
 #[cfg(test)]
@@ -478,8 +602,14 @@ mod tests {
         let statuses = pool.list_status();
         assert_eq!(statuses.len(), 3);
         let ids: Vec<String> = statuses.iter().map(|k| k.account_id.clone()).collect();
-        assert_ne!(ids[0], ids[1], "auto account_id for key-1 and key-2 must differ");
-        assert_ne!(ids[1], ids[2], "auto account_id for key-2 and key-3 must differ");
+        assert_ne!(
+            ids[0], ids[1],
+            "auto account_id for key-1 and key-2 must differ"
+        );
+        assert_ne!(
+            ids[1], ids[2],
+            "auto account_id for key-2 and key-3 must differ"
+        );
         for (i, aid) in ids.iter().enumerate() {
             assert!(
                 aid.starts_with("auto-"),
@@ -487,7 +617,11 @@ mod tests {
                 i + 1,
                 aid
             );
-            assert_eq!(aid.len(), 21, "auto-xxx format should be 21 chars (auto- + 16 hex)");
+            assert_eq!(
+                aid.len(),
+                21,
+                "auto-xxx format should be 21 chars (auto- + 16 hex)"
+            );
         }
     }
 
@@ -508,6 +642,7 @@ mod tests {
                 secret: "sk-something".into(),
                 enabled: true,
                 account_id: "my-custom-account".into(),
+                supported_models: Vec::new(),
             }],
             60,
         );
@@ -554,6 +689,7 @@ mod tests {
                 secret: "sk-bbbbbbbbbbbb".into(),
                 enabled: true,
                 account_id: String::new(),
+                supported_models: Vec::new(),
             }],
         );
         assert_eq!(merged.len(), 2);
@@ -564,6 +700,7 @@ mod tests {
                 secret: "sk-bbbbbbbbbbbb".into(),
                 enabled: true,
                 account_id: String::new(),
+                supported_models: Vec::new(),
             }],
         );
         assert_eq!(merged2.len(), 2);
@@ -586,12 +723,14 @@ mod tests {
                     secret: "sk-aaaaaaaaaaaa".into(),
                     enabled: true,
                     account_id: "acct-a".into(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "key-a2".into(),
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: true,
                     account_id: "acct-a".into(),
+                    supported_models: Vec::new(),
                 },
             ],
             60,
@@ -609,12 +748,14 @@ mod tests {
                     secret: "sk-aaaaaaaaaaaa".into(),
                     enabled: true,
                     account_id: "acct-a".into(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "key-b".into(),
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: true,
                     account_id: "acct-b".into(),
+                    supported_models: Vec::new(),
                 },
             ],
             60,
@@ -637,7 +778,10 @@ mod tests {
         assert_eq!(g1.key_id(), "key-1");
         drop(g1);
         let g2 = UpstreamKeyPool::rotate_after_rate_limit(&pool, "key-1");
-        assert!(g2.is_some(), "expected rotation to find key-2 with different auto account_id");
+        assert!(
+            g2.is_some(),
+            "expected rotation to find key-2 with different auto account_id"
+        );
         let g2 = g2.unwrap();
         assert_eq!(g2.key_id(), "key-2");
     }
@@ -657,12 +801,14 @@ mod tests {
                     secret: "sk-aaaaaaaaaaaa".into(),
                     enabled: false,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "k2".into(),
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: false,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
             ],
             60,
@@ -695,12 +841,14 @@ mod tests {
                     secret: "sk-aaaaaaaaaaaa".into(),
                     enabled: false,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "k2".into(),
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
             ],
             60,
@@ -726,25 +874,45 @@ mod tests {
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "key-1".into(),
                     secret: "sk-cccccccccccc".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: String::new(),
                     secret: "sk-dddddddddddd".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
             ],
         );
         assert_eq!(merged.len(), 4);
         let ids: Vec<String> = merged.list_status().into_iter().map(|s| s.id).collect();
         let unique_ids: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
-        assert_eq!(ids.len(), unique_ids.len(), "duplicate ids found: {:?}", ids);
+        assert_eq!(
+            ids.len(),
+            unique_ids.len(),
+            "duplicate ids found: {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn remove_key_drops_slot() {
+        let pool = UpstreamKeyPool::from_secrets(
+            vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
+            60,
+        );
+        let updated = UpstreamKeyPool::remove_key(&pool, "key-1").expect("removed");
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated.list_status()[0].id, "key-2");
+        assert!(UpstreamKeyPool::remove_key(&pool, "missing").is_none());
     }
 
     #[test]
@@ -756,12 +924,14 @@ mod tests {
                     secret: "sk-aaaaaaaaaaaa".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
                 UpstreamKeySpec {
                     id: "key-1".into(),
                     secret: "sk-bbbbbbbbbbbb".into(),
                     enabled: true,
                     account_id: String::new(),
+                    supported_models: Vec::new(),
                 },
             ],
             60,
@@ -769,6 +939,11 @@ mod tests {
         assert_eq!(pool.len(), 2);
         let ids: Vec<String> = pool.list_status().into_iter().map(|s| s.id).collect();
         let unique_ids: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
-        assert_eq!(ids.len(), unique_ids.len(), "duplicate ids found: {:?}", ids);
+        assert_eq!(
+            ids.len(),
+            unique_ids.len(),
+            "duplicate ids found: {:?}",
+            ids
+        );
     }
 }

@@ -556,6 +556,31 @@ impl GatewayAdminClient {
         resp.json().await.map_err(ControlError::from)
     }
 
+    pub async fn delete_upstream_profile_key(
+        &self,
+        profile_id: &str,
+        key_id: &str,
+    ) -> Result<(), ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::DELETE,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/{key_id}"),
+            )
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn delete_upstream_key(&self, key_id: &str) -> Result<(), ControlError> {
+        let resp = self
+            .authed(reqwest::Method::DELETE, &format!("/v1/upstream/keys/{key_id}"))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
     pub async fn test_upstream_profile(
         &self,
         id: &str,
@@ -585,6 +610,58 @@ impl GatewayAdminClient {
             .await?;
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_upstream_profile_keys_models(
+        &self,
+        profile_id: &str,
+    ) -> Result<UpstreamProfileKeysModelsView, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::GET,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/models"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn get_upstream_profile_key_models(
+        &self,
+        profile_id: &str,
+        key_id: &str,
+    ) -> Result<UpstreamKeyModelsEntry, ControlError> {
+        let resp = self
+            .authed(
+                reqwest::Method::GET,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/{key_id}/models"),
+            )
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
+
+    pub async fn put_upstream_profile_keys_models_catalog(
+        &self,
+        profile_id: &str,
+        catalog: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Result<(), ControlError> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            catalog: &'a std::collections::HashMap<String, Vec<String>>,
+        }
+        let resp = self
+            .authed(
+                reqwest::Method::PUT,
+                &format!("/v1/upstream/profiles/{profile_id}/keys/models-catalog"),
+            )
+            .json(&Body { catalog })
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
     }
 
     pub async fn get_profile_routing(

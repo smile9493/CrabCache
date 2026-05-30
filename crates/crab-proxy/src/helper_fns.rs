@@ -209,9 +209,6 @@ mod tests {
             ctx.req_hash.as_deref(),
             Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         );
-        assert_eq!(
-            trace_request_hash_prefix(&expected_hex),
-            expected_hex[..16]
-        );
+        assert_eq!(trace_request_hash_prefix(&expected_hex), expected_hex[..16]);
     }
 }

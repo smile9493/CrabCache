@@ -167,7 +167,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/admin/upstream/keys/:id",
-            patch(patch_upstream_key_pool),
+            patch(patch_upstream_key_pool).delete(delete_upstream_key_pool),
         )
         .route(
             "/api/admin/upstream/profiles",
@@ -183,11 +183,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/admin/upstream/profiles/:id/keys/:key_id",
-            patch(patch_upstream_profile_key),
+            patch(patch_upstream_profile_key).delete(delete_upstream_profile_key),
         )
         .route(
             "/api/admin/upstream/profiles/:id/keys/:key_id/test",
             post(post_upstream_profile_key_test),
+        )
+        .route(
+            "/api/admin/upstream/profiles/:id/keys/models",
+            get(get_upstream_profile_keys_models),
         )
         .route(
             "/api/admin/upstream/profiles/:id/test",
@@ -2457,6 +2461,8 @@ async fn get_models(
             input_price_per_mtok: m.input_price_per_mtok,
             output_price_per_mtok: m.output_price_per_mtok,
             available: m.available,
+            account_ids: m.account_ids.clone(),
+            key_ids: m.key_ids.clone(),
         })
         .collect();
     let total = models.len();
@@ -2562,6 +2568,16 @@ async fn patch_upstream_profile_key(
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))
 }
 
+async fn delete_upstream_profile_key(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, key_id)): axum::extract::Path<(String, String)>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    crate::upstream_profiles::delete_profile_key(&state, &id, &key_id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
+}
+
 async fn post_upstream_profile_test(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -2580,6 +2596,16 @@ async fn post_upstream_profile_key_test(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(result))
+}
+
+async fn get_upstream_profile_keys_models(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crab_control::UpstreamProfileKeysModelsView>, (StatusCode, String)> {
+    crate::upstream::probe_profile_key_models_internal(&state, &id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))
 }
 
 async fn get_upstream_profile_routing(
@@ -2725,6 +2751,34 @@ async fn patch_upstream_key_pool(
         .map(crate::types::upstream_key_view_from_control)
         .map(Json)
         .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))
+}
+
+async fn delete_upstream_key_pool(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state
+        .gateway
+        .delete_upstream_key(&id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| (gateway_status_code(&e), gateway_error_message(&e)))?;
+    state.replace_upstream_pool_secrets(
+        &state
+            .upstream_pool_secrets
+            .read()
+            .iter()
+            .filter(|k| k.id != id)
+            .map(|k| crab_control::UpstreamKeyInput {
+                id: k.id.clone(),
+                secret: k.secret.clone(),
+                enabled: k.enabled,
+                account_id: k.account_id.clone(),
+            })
+            .collect::<Vec<_>>(),
+    );
+    state.flush_persist();
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn build_upstream_config_view(state: &AppState) -> UpstreamConfig {
@@ -2889,7 +2943,7 @@ async fn update_upstream_config(
     *state.gateway_reachable.write() = true;
 
     let default_profile = state.default_profile_id();
-    let sync = if state.pick_sync_api_key(&default_profile).is_some() {
+    let sync: Option<crate::types::SyncResult> = if state.pick_sync_api_key(&default_profile).is_some() {
         match crate::upstream::sync_models_internal(&state, &default_profile).await {
             Ok(s) => Some(s),
             Err(e) => {

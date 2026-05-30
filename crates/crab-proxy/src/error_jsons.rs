@@ -1,5 +1,118 @@
 use crate::upstream_pool::PoolAcquireFailure;
 
+/// OpenAI Chat Completions SSE for `stream: true` clients (Cursor reads assistant deltas).
+pub fn format_openai_error_sse_for_client(error_json: &[u8], model: &str) -> Vec<u8> {
+    let parsed: serde_json::Value =
+        serde_json::from_slice(error_json).unwrap_or(serde_json::json!({}));
+    let msg = parsed
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("Upstream request failed");
+    let code = parsed
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("upstream_error");
+    let display = format!("[CrabCache] {msg} (code: {code})");
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let id = format!("chatcmpl-err-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+
+    let content_chunk = serde_json::json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": { "role": "assistant", "content": display },
+            "finish_reason": null,
+        }],
+    });
+    let finish_chunk = serde_json::json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": "stop",
+        }],
+    });
+
+    format!(
+        "data: {content_chunk}\n\ndata: {finish_chunk}\n\ndata: [DONE]\n\n"
+    )
+    .into_bytes()
+}
+
+/// Upstream body → OpenAI error JSON → SSE chunks visible in Cursor.
+pub fn format_upstream_error_sse_for_client(body: &[u8], status: u16, model: &str) -> Vec<u8> {
+    let json = format_upstream_error_for_client(body, status);
+    format_openai_error_sse_for_client(&json, model)
+}
+
+/// Rewrite upstream JSON (Codex `detail`, OpenAI `error`, etc.) into OpenAI Chat Completions error JSON.
+pub fn format_upstream_error_for_client(body: &[u8], status: u16) -> Vec<u8> {
+    let code = match status {
+        401 => "invalid_api_key",
+        403 => "permission_denied",
+        429 => "rate_limit_exceeded",
+        _ => "invalid_request_error",
+    };
+    let fallback_type = if status == 429 {
+        "rate_limit_error"
+    } else if status >= 500 {
+        "server_error"
+    } else {
+        "invalid_request_error"
+    };
+
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) {
+        if v.get("error").is_some() {
+            return body.to_vec();
+        }
+        if let Some(detail) = v.get("detail").and_then(|d| d.as_str()) {
+            return serde_json::to_vec(&serde_json::json!({
+                "error": {
+                    "message": detail,
+                    "type": fallback_type,
+                    "code": code,
+                }
+            }))
+            .unwrap_or_else(|_| body.to_vec());
+        }
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            return serde_json::to_vec(&serde_json::json!({
+                "error": {
+                    "message": msg,
+                    "type": fallback_type,
+                    "code": code,
+                }
+            }))
+            .unwrap_or_else(|_| body.to_vec());
+        }
+    }
+
+    let preview = upstream_error_preview(body);
+    if preview.is_empty() {
+        body.to_vec()
+    } else {
+        serde_json::to_vec(&serde_json::json!({
+            "error": {
+                "message": preview,
+                "type": fallback_type,
+                "code": code,
+            }
+        }))
+        .unwrap_or_else(|_| body.to_vec())
+    }
+}
+
 /// Sanitized upstream error snippet for debug logs (no secrets).
 pub fn upstream_error_preview(body: &[u8]) -> String {
     let s = String::from_utf8_lossy(body);
@@ -10,6 +123,9 @@ pub fn upstream_error_preview(body: &[u8]) -> String {
             .and_then(|m| m.as_str())
         {
             return msg.chars().take(300).collect();
+        }
+        if let Some(detail) = v.get("detail").and_then(|d| d.as_str()) {
+            return detail.chars().take(300).collect();
         }
         if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
             return msg.chars().take(300).collect();
@@ -118,6 +234,28 @@ pub fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_upstream_error_sse_includes_assistant_content() {
+        let body = br#"{"detail":"Unsupported parameter: conversation_id"}"#;
+        let out = format_upstream_error_sse_for_client(body, 400, "gpt-5.5");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("chat.completion.chunk"));
+        assert!(s.contains("Unsupported parameter"));
+        assert!(s.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn format_codex_detail_error_for_client() {
+        let body = br#"{"detail":"The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."}"#;
+        let out = format_upstream_error_for_client(body, 400);
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["error"]["type"], "invalid_request_error");
+        assert!(v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not supported"));
+    }
 
     #[test]
     fn missing_reasoning_error_json_shape() {

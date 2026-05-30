@@ -9,7 +9,7 @@ use crate::debug_agent_log;
 use crate::error_jsons::coalesce_leader_failed_error_json;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
-use crate::send_helpers::send_json_error;
+use crate::send_helpers::send_client_error;
 use crate::tenant::effective_cache_namespace;
 use crab_cache::CoalesceError;
 use crab_metrics::global_metrics;
@@ -384,7 +384,15 @@ pub(crate) async fn run(
                             "Follower: leader upstream failed, not retrying upstream"
                         );
                         let body = coalesce_leader_failed_error_json();
-                        if !send_json_error(session, http::StatusCode::BAD_GATEWAY, &body).await {
+                        if !send_client_error(
+                            session,
+                            ctx.is_streaming,
+                            http::StatusCode::BAD_GATEWAY,
+                            &body,
+                            &ctx.model,
+                        )
+                        .await
+                        {
                             let _ = session.respond_error(502).await;
                         }
                         return Ok(CachePhaseOutcome::Return(true));

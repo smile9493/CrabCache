@@ -85,7 +85,7 @@ pub fn KeysPage() -> impl IntoView {
             return;
         }
         leptos::task::spawn_local(async move {
-            let result = api::fetch_key_routing(&key_id).await;
+            let result = api::fetch_key_routing(&key_id, 300).await;
             key_routing.try_update(|m| {
                 m.insert(key_id, result);
             });
@@ -97,7 +97,7 @@ pub fn KeysPage() -> impl IntoView {
             return;
         }
         leptos::task::spawn_local(async move {
-            let result = api::fetch_key_concurrency(&key_id).await;
+            let result = api::fetch_key_concurrency(&key_id, 300).await;
             key_concurrency.try_update(|m| {
                 m.insert(key_id, result);
             });

@@ -32,6 +32,16 @@ pub struct KeyQuotaInfo {
     /// Total consumed quota.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_used: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_used_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_used_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reset_after_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_reset_after_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

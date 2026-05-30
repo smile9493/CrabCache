@@ -457,12 +457,24 @@ pub async fn patch_key(id: &str, req: &PatchKeyRequest) -> Result<ApiKey, String
 
 pub async fn fetch_key_concurrency(
     id: &str,
+    window_secs: u32,
 ) -> Result<crate::types::KeyConcurrencyResponse, String> {
-    fetch_json(&format!("{}/keys/{}/concurrency", API_BASE, id)).await
+    fetch_json(&format!(
+        "{}/keys/{}/concurrency?window_secs={}",
+        API_BASE, id, window_secs
+    ))
+    .await
 }
 
-pub async fn fetch_key_routing(id: &str) -> Result<crate::types::KeyRoutingResponse, String> {
-    fetch_json(&format!("{}/keys/{}/routing", API_BASE, id)).await
+pub async fn fetch_key_routing(
+    id: &str,
+    window_secs: u32,
+) -> Result<crate::types::KeyRoutingResponse, String> {
+    fetch_json(&format!(
+        "{}/keys/{}/routing?window_secs={}",
+        API_BASE, id, window_secs
+    ))
+    .await
 }
 
 pub async fn fetch_session_timeline(
@@ -621,6 +633,18 @@ pub async fn patch_upstream_profile_key(
         req,
     )
     .await
+}
+
+pub async fn delete_upstream_profile_key(profile_id: &str, key_id: &str) -> Result<(), String> {
+    delete_json(&format!(
+        "{}/upstream/profiles/{profile_id}/keys/{key_id}",
+        API_BASE
+    ))
+    .await
+}
+
+pub async fn delete_upstream_key(key_id: &str) -> Result<(), String> {
+    delete_json(&format!("{}/upstream/keys/{key_id}", API_BASE)).await
 }
 
 pub async fn fetch_profile_routing(profile_id: &str) -> Result<ProfileRoutingView, String> {
@@ -1115,8 +1139,8 @@ pub async fn connect_sse() -> Result<web_sys::EventSource, String> {
 // ── Codex OAuth Device Login ──
 
 use crab_admin_types::oauth::{
-    CodexCredentialListResponse, CodexDeviceStartResponse, CodexDeviceStatusResponse,
-    CodexImportRequest, CodexImportResponse,
+    CodexBulkImportResponse, CodexCredentialListResponse, CodexDeviceStartResponse,
+    CodexDeviceStatusResponse, CodexImportRequest, CodexImportResponse,
 };
 
 pub async fn start_codex_device_login(
@@ -1183,6 +1207,21 @@ pub async fn import_codex_credential(
         &CodexImportRequest {
             credential_id: credential_id.to_string(),
         },
+    )
+    .await
+}
+
+pub async fn import_codex_bulk_json(
+    profile_id: &str,
+    body: &serde_json::Value,
+) -> Result<CodexBulkImportResponse, String> {
+    post_json(
+        &format!(
+            "{}/upstream/profiles/{}/oauth/codex/import/bulk",
+            API_BASE,
+            urlencoding::encode(profile_id)
+        ),
+        body,
     )
     .await
 }

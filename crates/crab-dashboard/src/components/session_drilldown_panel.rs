@@ -94,7 +94,7 @@ pub fn SessionDrilldownPanel(open: RwSignal<bool>) -> impl IntoView {
             let _ = key_routing.try_set(None);
             let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
-                let result = api::fetch_key_routing(&key_id).await;
+                let result = api::fetch_key_routing(&key_id, 300).await;
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }

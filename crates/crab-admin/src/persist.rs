@@ -112,6 +112,10 @@ pub struct PersistedModel {
     pub input_price_per_mtok: Option<f64>,
     pub output_price_per_mtok: Option<f64>,
     pub available: bool,
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+    #[serde(default)]
+    pub key_ids: Vec<String>,
 }
 
 fn default_profile_id_persist() -> String {
@@ -296,6 +300,8 @@ impl From<&StoredModelList> for PersistedModels {
                     input_price_per_mtok: m.input_price_per_mtok,
                     output_price_per_mtok: m.output_price_per_mtok,
                     available: m.available,
+                    account_ids: m.account_ids.clone(),
+                    key_ids: m.key_ids.clone(),
                 })
                 .collect(),
             synced_at_by_profile: list.synced_at_by_profile.clone(),
@@ -327,6 +333,8 @@ impl From<PersistedModels> for StoredModelList {
                     input_price_per_mtok: m.input_price_per_mtok,
                     output_price_per_mtok: m.output_price_per_mtok,
                     available: m.available,
+                    account_ids: m.account_ids,
+                    key_ids: m.key_ids,
                 })
                 .collect(),
             synced_at_by_profile: p.synced_at_by_profile,

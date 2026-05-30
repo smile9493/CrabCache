@@ -78,10 +78,12 @@ async fn run_post_body_phases(
     let quick = quick_parse_request_fields(&full_body);
     let profile = proxy.state.runtime.default_profile();
     let fallback_model = profile.fallback_model.clone();
-    ctx.model = quick
-        .model
-        .filter(|m| !m.is_empty())
-        .unwrap_or(fallback_model);
+    ctx.model = crab_pipeline::canonicalize_client_model(
+        &quick
+            .model
+            .filter(|m| !m.is_empty())
+            .unwrap_or(fallback_model),
+    );
     ctx.is_streaming = quick.stream.unwrap_or(false);
 
     ctx.conversation_id = quick.conversation_id.or(conversation_id_from_header);
@@ -386,7 +388,8 @@ async fn run_post_body_phases(
                 retired_prefix = prepared.retired_prefix_messages;
                 upstream_model_log = prepared.upstream_model.clone();
                 namespace_preview = prepared.cache_namespace.chars().take(8).collect();
-                reject_missing = missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
+                reject_missing =
+                    missing > 0 && reasoning_cfg.missing_reasoning_strategy == "reject";
                 ctx.stream.pending_recovery_notice = prepared.recovery_notice.clone();
                 ctx.retired_prefix_messages = Some(prepared.retired_prefix_messages);
                 ctx.prepared_request = Some(prepared.clone());
@@ -419,8 +422,7 @@ async fn run_post_body_phases(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::MimoTokenPlanRelay
-            | RequestPipeline::MimoPaygRelay => {
+            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
                 let features = &proxy.state.features;
                 let mimo = prepare_mimo_request(
                     payload,
@@ -438,7 +440,15 @@ async fn run_post_body_phases(
                 let model = alias_upstream_model
                     .filter(|m| !m.is_empty())
                     .unwrap_or(ctx.model.as_str());
-                let prepared = crate::codex::prepare_codex_request(payload, model);
+                let prepared = crate::codex::prepare_codex_request(
+                    payload,
+                    model,
+                    crate::codex::CodexPrepareOptions {
+                        conversation_id: ctx.conversation_id.as_deref(),
+                        prompt_cache_key: ctx.prompt_cache_key.as_deref(),
+                        stable_session_id: stable_session,
+                    },
+                );
                 upstream_model_log = prepared.model.clone();
                 ctx.parsed_upstream_payload = Some(Arc::new(prepared.payload.clone()));
                 ctx.new_request_body = Some(Bytes::from(
@@ -747,9 +757,7 @@ async fn run_post_body_phases(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        mimo_direct_passthrough, request_passthrough_allowed_pipeline,
-    };
+    use super::{mimo_direct_passthrough, request_passthrough_allowed_pipeline};
     use crab_pipeline::RequestPipeline;
 
     #[test]
@@ -814,7 +822,7 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     let Some(model) = quick.model.filter(|m| !m.is_empty()) else {
         return false;
     };
-    ctx.model = model;
+    ctx.model = crab_pipeline::canonicalize_client_model(&model);
     ctx.is_streaming = quick.stream.unwrap_or(false);
     ctx.conversation_id = quick
         .conversation_id

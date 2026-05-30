@@ -10,9 +10,13 @@ pub fn model_prefix_to_profile(model: &str) -> &'static str {
         return "mimo";
     }
     if lower.starts_with("gpt-")
+        || lower.starts_with("gpt ")
         || lower.starts_with("o1")
         || lower.starts_with("o3")
         || lower.starts_with("chatgpt-")
+        || lower.starts_with("codex ")
+        || lower.starts_with("codex-")
+        || lower == "codex"
     {
         return "openai";
     }
@@ -20,6 +24,17 @@ pub fn model_prefix_to_profile(model: &str) -> &'static str {
         return "anthropic";
     }
     "deepseek"
+}
+
+/// Profile id for OpenAI/Codex OAuth routes (`openai` legacy id, else `codex`).
+pub fn resolve_openai_profile_id(profiles: &[ProfileDescriptor]) -> Option<String> {
+    if profiles.iter().any(|p| p.id == "openai") {
+        return Some("openai".into());
+    }
+    if profiles.iter().any(|p| p.id == "codex") {
+        return Some("codex".into());
+    }
+    None
 }
 
 pub fn resolve_upstream_profile_id(
@@ -55,7 +70,13 @@ pub fn resolve_upstream_profile_id(
     }
 
     let from_model = model_prefix_to_profile(ctx.model);
-    if let Some(found) = pick(from_model) {
+    if from_model == "openai" {
+        if let Some(openai_id) = resolve_openai_profile_id(profiles)
+            && let Some(found) = pick(&openai_id)
+        {
+            return (found.0, found.1, false);
+        }
+    } else if let Some(found) = pick(from_model) {
         return (found.0, found.1, false);
     }
 
@@ -115,6 +136,22 @@ mod tests {
         };
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles(), &ctx);
         assert_eq!(id, "openai");
+        assert_eq!(provider, UpstreamProvider::Openai);
+    }
+
+    #[test]
+    fn model_prefix_openai_resolves_codex_profile() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "codex".into(),
+            provider: UpstreamProvider::Openai,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "gpt-4o",
+            ..Default::default()
+        };
+        let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "codex");
         assert_eq!(provider, UpstreamProvider::Openai);
     }
 

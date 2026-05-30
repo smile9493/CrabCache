@@ -9,9 +9,7 @@ use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_body_compress::maybe_gzip_request_body;
 use crate::upstream_headers::{
     apply_upstream_request_content_encoding, normalize_replaced_body_headers,
-    prepare_passthrough_upstream_headers,
-    smooth_upstream_client_headers,
-    upstream_header_names,
+    prepare_passthrough_upstream_headers, smooth_upstream_client_headers, upstream_header_names,
 };
 use bytes::Bytes;
 use pingora_core::prelude::*;
@@ -20,7 +18,9 @@ use pingora_proxy::Session;
 use std::time::Instant;
 use tracing::debug;
 
+use crate::codex::apply_codex_upstream_request;
 use crate::context::GatewayContext;
+use crab_pipeline::RequestPipeline;
 
 /// Run the `upstream_request_filter` phase: inject host/id headers, normalize body framing,
 /// inject upstream API key, disable keepalive if configured.
@@ -106,6 +106,27 @@ pub(crate) async fn run_upstream_request_filter(
         } else {
             let bearer = format!("Bearer {}", secret);
             let _ = upstream_request.insert_header(http::header::AUTHORIZATION, bearer);
+        }
+    }
+
+    if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
+        let account_id = ctx
+            .upstream
+            .key_guard
+            .as_ref()
+            .map(|g| g.account_id())
+            .unwrap_or("");
+        if !account_id.is_empty() && account_id != crate::upstream_pool::DEFAULT_UPSTREAM_ACCOUNT_ID
+        {
+            let session_id = ctx
+                .parsed_upstream_payload
+                .as_ref()
+                .and_then(|p| p.get("prompt_cache_key"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or(ctx.conversation_id.as_deref())
+                .or(ctx.prompt_cache_key.as_deref());
+            apply_codex_upstream_request(upstream_request, account_id, ctx.is_streaming, session_id);
         }
     }
     // #region agent log
@@ -221,7 +242,9 @@ pub(crate) async fn run_request_body_filter(
             crate::helper_fns::passthrough_hash_update(ctx, &chunk);
             ctx.upstream_outbound_body_len += chunk.len();
             // Zero-copy capture for Raw Capture (O(1) refcount bump)
-            ctx.request_passthrough.captured_client_chunks.push(chunk.clone());
+            ctx.request_passthrough
+                .captured_client_chunks
+                .push(chunk.clone());
             if client_done {
                 timeline_stamp(&mut ctx.timeline.body_read_done);
                 timeline_stamp(&mut ctx.timeline.upstream_body_sent);
@@ -247,8 +270,7 @@ pub(crate) async fn run_request_body_filter(
     }
 
     if let Some(new_body) = ctx.new_request_body.take() {
-        let emit_now = end_of_stream
-            || ctx.upstream.retry_buffer_truncated;
+        let emit_now = end_of_stream || ctx.upstream.retry_buffer_truncated;
         if emit_now {
             timeline_stamp(&mut ctx.timeline.upstream_body_sent);
             let header_to_body_ms = ctx

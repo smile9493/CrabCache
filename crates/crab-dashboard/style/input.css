@@ -1123,6 +1123,14 @@ body {
 }
 .btn-secondary:active { transform: scale(0.98); }
 
+.btn-danger {
+  background: color-mix(in srgb, var(--cc-error, #ef4444) 90%, black);
+  color: #fff;
+  border: 1px solid transparent;
+}
+.btn-danger:hover { filter: brightness(1.05); }
+.btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
+
 .btn-ghost { background: transparent; color: var(--cc-text-muted); }
 .btn-ghost:hover { background: var(--cc-accent-muted); color: var(--cc-accent); }
 
@@ -2874,6 +2882,69 @@ body {
   .mobile-kpi-grid .metric-card {
     padding: 1.5rem 1.75rem;
   }
+}
+
+.upstream-key-pool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.875rem;
+}
+.upstream-key-card {
+  border-radius: 12px;
+  border: 1px solid var(--cc-border);
+  background: color-mix(in srgb, var(--cc-bg-elevated) 92%, transparent);
+  padding: 0.875rem 1rem;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--cc-text) 4%, transparent);
+}
+.upstream-key-card:hover {
+  border-color: color-mix(in srgb, var(--cc-accent) 35%, var(--cc-border));
+}
+.upstream-key-card-disabled {
+  opacity: 0.72;
+}
+.upstream-key-card-id {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--cc-text);
+}
+.upstream-key-model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.upstream-key-model-chip {
+  font-size: 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-accent) 10%, var(--cc-bg));
+  border: 1px solid color-mix(in srgb, var(--cc-accent) 20%, var(--cc-border));
+  color: var(--cc-text-muted);
+}
+.upstream-quota-row + .upstream-quota-row {
+  margin-top: 0.5rem;
+}
+.upstream-quota-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--cc-text) 8%, transparent);
+}
+.upstream-quota-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+.upstream-quota-fill-high {
+  background: var(--cc-success, #22c55e);
+}
+.upstream-quota-fill-medium {
+  background: var(--cc-warning, #eab308);
+}
+.upstream-quota-fill-low {
+  background: var(--cc-error, #ef4444);
 }
 
 /* Respect user preference */

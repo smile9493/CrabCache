@@ -67,6 +67,16 @@ fn token_url() -> String {
     std::env::var("CRABCACHE_OAUTH_CODEX_TOKEN_URL").unwrap_or_else(|_| TOKEN_URL.to_string())
 }
 
+/// Device-auth poll endpoint (`POST` JSON `{device_auth_id, user_code}`).
+pub fn codex_device_token_endpoint() -> String {
+    device_token_url()
+}
+
+/// OAuth token exchange endpoint (`POST` form `grant_type=authorization_code`).
+pub fn codex_oauth_token_endpoint() -> String {
+    token_url()
+}
+
 /// Claims parsed from an OIDC id_token JWT
 #[derive(Debug, Default)]
 pub struct JwtClaims {
@@ -571,13 +581,21 @@ async fn exchange_authorization_code_with_url(
     oauth_token_url: &str,
 ) -> Result<TokenRecord, AuthError> {
     let client_id = get_client_id();
-    let params = [
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("client_id", client_id.as_str()),
-        ("redirect_uri", redirect_uri),
-        ("code_verifier", code_verifier),
-    ];
+    #[derive(Serialize)]
+    struct AuthorizationCodeForm<'a> {
+        grant_type: &'a str,
+        code: &'a str,
+        client_id: &'a str,
+        redirect_uri: &'a str,
+        code_verifier: &'a str,
+    }
+    let params = AuthorizationCodeForm {
+        grant_type: "authorization_code",
+        code,
+        client_id: client_id.as_str(),
+        redirect_uri,
+        code_verifier,
+    };
 
     let req = client.post(oauth_token_url).form(&params).build()
         .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
@@ -599,20 +617,35 @@ async fn exchange_authorization_code_with_url(
     parse_token_response(&token_resp)
 }
 
-async fn refresh_once(record: &TokenRecord) -> Result<TokenRecord, AuthError> {
+/// Refresh a Codex token once (with optional profile proxy).
+pub async fn refresh_codex_token_with_proxy(
+    record: &TokenRecord,
+    proxy_url: Option<&str>,
+) -> Result<TokenRecord, AuthError> {
+    refresh_once(record, proxy_url).await
+}
+
+async fn refresh_once(record: &TokenRecord, proxy_url: Option<&str>) -> Result<TokenRecord, AuthError> {
     let refresh_token = record
         .refresh_token
         .as_ref()
         .ok_or_else(|| AuthError::OAuth("no refresh token available".into()))?;
 
-    let client = http_client::build_default_client()?;
+    let client = http_client::build_anti_detect_client(proxy_url)?;
     let client_id = get_client_id();
-    let params = [
-        ("grant_type", "refresh_token"),
-        ("client_id", client_id.as_str()),
-        ("refresh_token", refresh_token.as_str()),
-        ("scope", "openid profile email"),
-    ];
+    #[derive(Serialize)]
+    struct RefreshTokenForm<'a> {
+        grant_type: &'a str,
+        client_id: &'a str,
+        refresh_token: &'a str,
+        scope: &'a str,
+    }
+    let params = RefreshTokenForm {
+        grant_type: "refresh_token",
+        client_id: client_id.as_str(),
+        refresh_token,
+        scope: "openid profile email",
+    };
 
     let req = client.post(token_url()).form(&params).build()
         .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
@@ -696,7 +729,7 @@ impl Authenticator for CodexAuthenticator {
             if attempt > 0 {
                 tokio::time::sleep(StdDuration::from_secs(attempt as u64)).await;
             }
-            match refresh_once(&attempt_record).await {
+            match refresh_once(&attempt_record, None).await {
                 Ok(record) => {
                     refreshed = Some(record);
                     break;

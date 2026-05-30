@@ -11,7 +11,9 @@ use crate::cache_helpers::{
 use crate::cache_response::completion_json_has_visible_client_content;
 use crate::context::GatewayContext;
 use crate::debug_agent_log;
-use crate::error_jsons::upstream_error_preview;
+use crate::error_jsons::{
+    format_upstream_error_for_client, format_upstream_error_sse_for_client, upstream_error_preview,
+};
 use crate::metrics_helpers::{
     accumulate_affinity_prompt_cache_usage, record_usage_metrics, timeline_stamp,
 };
@@ -22,6 +24,7 @@ use crate::sse_pipeline::{SsePipeline, select_sse_pipeline};
 use crate::upstream_response_decompress::decompress_upstream_chunk;
 use crab_cache::UsageInfo;
 use crab_metrics::{CacheTier, LatencyKind, global_metrics};
+use crab_pipeline::RequestPipeline;
 use crab_reasoning::{rewrite_response_body, sanitize_client_completion};
 use pingora_core::prelude::*;
 use pingora_proxy::Session;
@@ -72,6 +75,22 @@ pub(crate) fn run(
         ctx.upstream.error_body_logged = true;
     }
 
+    let upstream_error = ctx.upstream.http_status.is_some_and(|s| s >= 400);
+
+    if end_of_stream
+        && upstream_error
+        && ctx.is_streaming
+        && ctx.upstream.error_passthrough
+        && body.is_none()
+        && !ctx.accumulated_body.is_empty()
+    {
+        let status = ctx.upstream.http_status.unwrap_or(500);
+        let client_body =
+            format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model);
+        *body = Some(bytes::Bytes::from(client_body));
+        return Ok(None);
+    }
+
     if let Some(mut data) = body.take() {
         if ctx.upstream.response_decompress.encoding.is_some() {
             data = match decompress_upstream_chunk(
@@ -120,6 +139,19 @@ pub(crate) fn run(
             ctx.response_body_preview.extend_from_slice(&data);
         }
 
+        if ctx.is_streaming && ctx.upstream.error_passthrough {
+            ctx.accumulated_body.extend_from_slice(&data);
+            if end_of_stream {
+                let status = ctx.upstream.http_status.unwrap_or(500);
+                let client_body =
+                    format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model);
+                *body = Some(bytes::Bytes::from(client_body));
+            } else {
+                *body = None;
+            }
+            return Ok(None);
+        }
+
         if ctx.is_streaming {
             if ctx.ttft.is_none()
                 && let Some(headers_at) = ctx.upstream.headers_at
@@ -158,16 +190,12 @@ pub(crate) fn run(
                         pool.report_rate_limited(key_id);
                         crab_metrics::global_metrics()
                             .record_upstream_key_request(key_id, "rate_limited");
-                        let account_id = ctx
-                            .upstream
-                            .key_guard
-                            .as_ref()
-                            .and_then(|g| {
-                                pool.list_status()
-                                    .into_iter()
-                                    .find(|s| s.id == g.key_id())
-                                    .map(|s| s.account_id)
-                            });
+                        let account_id = ctx.upstream.key_guard.as_ref().and_then(|g| {
+                            pool.list_status()
+                                .into_iter()
+                                .find(|s| s.id == g.key_id())
+                                .map(|s| s.account_id)
+                        });
                         if let Some(new_guard) =
                             pool.acquire_excluding_account(account_id.as_deref())
                         {
@@ -219,18 +247,31 @@ pub(crate) fn run(
             } else {
                 *body = Some(data);
             }
-        } else {
+        } else if ctx.request_pipeline != Some(RequestPipeline::CodexRelay) {
             *body = Some(data);
+        } else {
+            *body = None;
         }
     }
 
-    // Non-streaming reasoning rewrite: buffer upstream chunks; only emit rewritten body on EOS.
-    if !ctx.is_streaming && ctx.prepared_request.is_some() && !end_of_stream {
+    // Non-streaming: buffer upstream chunks until EOS (reasoning rewrite or Codex SSE assembly).
+    if !ctx.is_streaming
+        && (ctx.prepared_request.is_some()
+            || ctx.request_pipeline == Some(RequestPipeline::CodexRelay))
+        && !end_of_stream
+    {
         *body = None;
         return Ok(None);
     }
 
     if end_of_stream && !ctx.is_streaming {
+        if ctx.upstream.http_status.is_some_and(|s| s >= 400) {
+            let status = ctx.upstream.http_status.unwrap_or(500);
+            let client_body = format_upstream_error_for_client(&ctx.accumulated_body, status);
+            *body = Some(bytes::Bytes::from(client_body));
+            return Ok(None);
+        }
+
         if let Some(guard) = &ctx.coalesce_guard {
             guard.mark_completed();
         }
@@ -268,6 +309,14 @@ pub(crate) fn run(
                 }
                 None => ctx.accumulated_body.clone(),
             }
+        } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
+            let mut translator = crate::codex::CodexSseTranslator::new(
+                &ctx.model,
+                ctx.original_request_body.as_deref().map(|b| b.as_ref()),
+            );
+            translator
+                .finalize_non_stream(&ctx.accumulated_body)
+                .unwrap_or_else(|| ctx.accumulated_body.clone())
         } else {
             ctx.accumulated_body.clone()
         };
@@ -390,6 +439,13 @@ pub(crate) fn run(
                 }
             }
         }
+
+        if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
+            || ctx.prepared_request.is_some()
+        {
+            *body = Some(bytes::Bytes::from(client_body.clone()));
+            ctx.response_body_preview = client_body;
+        }
     }
 
     if end_of_stream && ctx.is_streaming {
@@ -409,11 +465,8 @@ pub(crate) fn run(
 
         // For passthrough: accumulated_body already has raw upstream SSE bytes.
         // Populate upstream_body_for_capture so Raw Capture gets the upstream body.
-        if ctx.request_passthrough.armed_prefix_len > 0
-            && ctx.upstream_body_for_capture.is_none()
-        {
-            ctx.upstream_body_for_capture =
-                Some(bytes::Bytes::from(ctx.accumulated_body.clone()));
+        if ctx.request_passthrough.armed_prefix_len > 0 && ctx.upstream_body_for_capture.is_none() {
+            ctx.upstream_body_for_capture = Some(bytes::Bytes::from(ctx.accumulated_body.clone()));
         }
 
         if let Some(headers_at) = ctx.upstream.headers_at {

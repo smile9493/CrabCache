@@ -55,6 +55,16 @@ pub(crate) async fn run(
             upstream_profile = ?ctx.upstream_profile_id,
             "Upstream returned error status"
         );
+        if ctx.is_streaming {
+            // Client asked for SSE; upstream may return JSON with Content-Length.
+            // Rewrite body as SSE in body_filter; use 200 + event-stream so Cursor surfaces the error.
+            ctx.upstream.error_passthrough = true;
+            upstream_response.status = http::StatusCode::OK;
+            let _ = upstream_response.remove_header(&header::CONTENT_LENGTH);
+            let _ = upstream_response.remove_header(&header::TRANSFER_ENCODING);
+            let _ = upstream_response.insert_header(header::CONTENT_TYPE, "text/event-stream");
+            let _ = upstream_response.insert_header(header::CACHE_CONTROL, "no-cache");
+        }
         // #region agent log
         debug_agent_log(
             "UP4",

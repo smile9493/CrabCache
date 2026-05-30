@@ -8,6 +8,7 @@ use crate::components::codex_oauth_panel::CodexOAuthPanel;
 use crate::components::routing_tab::RoutingTab;
 use crate::components::skeleton::SkeletonUpstreamProfileCard;
 use crate::components::sync_result::SyncResultCard;
+use crate::components::upstream_key_pool_cards::UpstreamKeyPoolCards;
 use crate::components::ui::*;
 
 /// Incremented by [`CodexOAuthPanel`] when a credential is imported,
@@ -243,6 +244,10 @@ pub fn UpstreamPage() -> impl IntoView {
         RwSignal::new(HashMap::new());
     let key_testing: RwSignal<HashMap<String, bool>> = RwSignal::new(HashMap::new());
     let testing_all = RwSignal::new(false);
+    let quota_auto_refreshing = RwSignal::new(false);
+    let delete_confirm_id: RwSignal<Option<String>> = RwSignal::new(None);
+    let key_deleting: RwSignal<HashMap<String, bool>> = RwSignal::new(HashMap::new());
+    let pool_delete_error = RwSignal::new(String::new());
 
     // Profile deletion state
     let show_delete_confirm = RwSignal::new(false);
@@ -251,26 +256,95 @@ pub fn UpstreamPage() -> impl IntoView {
     let default_profile_id = RwSignal::new(String::new());
     let profiles_loaded = RwSignal::new(false);
 
+    let run_key_quota_probe = {
+        let key_testing = key_testing;
+        let key_test_results = key_test_results;
+        let quota_auto_refreshing = quota_auto_refreshing;
+        let testing_all = testing_all;
+        std::sync::Arc::new(
+            move |pid: String, keys: Vec<crate::types::UpstreamKeyView>, only_missing: bool, finish_all: bool| {
+                let targets: Vec<_> = keys
+                    .into_iter()
+                    .filter(|k| k.enabled && (!only_missing || k.quota.is_none()))
+                    .collect();
+                if targets.is_empty() {
+                    if finish_all {
+                        testing_all.set(false);
+                    }
+                    return;
+                }
+                quota_auto_refreshing.set(true);
+                leptos::task::spawn_local(async move {
+                    for k in targets {
+                        key_testing.try_update(|m| m.insert(k.id.clone(), true));
+                        let result = api::test_upstream_profile_key(&pid, &k.id).await;
+                        key_testing.try_update(|m| m.insert(k.id.clone(), false));
+                        let tr = match result {
+                            Ok(r) => r,
+                            Err(e) => UpstreamTestResult {
+                                ok: false,
+                                status_code: 0,
+                                latency_ms: 0,
+                                model_count: None,
+                                error: Some(e),
+                                quota: None,
+                            },
+                        };
+                        key_test_results.try_update(|m| m.insert(k.id.clone(), tr));
+                    }
+                    quota_auto_refreshing.set(false);
+                    if finish_all {
+                        testing_all.set(false);
+                    }
+                });
+            },
+        )
+    };
+
     // API loaders
-    let load_key_pool = move |pid: String| {
-        key_pool.set(None);
-        key_test_results.set(HashMap::new());
-        key_testing.set(HashMap::new());
-        let default_id = default_profile_id.get_untracked();
-        leptos::task::spawn_local(async move {
-            let result = if pid == default_id {
-                api::fetch_upstream_keys().await
-            } else {
-                api::fetch_upstream_profile_keys(&pid)
-                    .await
-                    .map(|v| UpstreamKeysView { keys: v.keys })
-            };
-            match result {
-                Ok(v) => { key_pool.try_set(Some(Ok(v))); },
-                Err(e) => { key_pool.try_set(Some(Err(e))); },
+    let load_key_pool = {
+        let key_pool = key_pool;
+        let delete_confirm_id = delete_confirm_id;
+        let pool_delete_error = pool_delete_error;
+        let default_profile_id = default_profile_id;
+        std::sync::Arc::new(move |pid: String| {
+            key_pool.set(None);
+            delete_confirm_id.set(None);
+            pool_delete_error.set(String::new());
+            let default_id = default_profile_id.get_untracked();
+            leptos::task::spawn_local(async move {
+                let result = if pid == default_id {
+                    api::fetch_upstream_keys().await
+                } else {
+                    api::fetch_upstream_profile_keys(&pid)
+                        .await
+                        .map(|v| UpstreamKeysView { keys: v.keys })
+                };
+                match result {
+                    Ok(v) => {
+                        key_pool.try_set(Some(Ok(v)));
+                    }
+                    Err(e) => {
+                        key_pool.try_set(Some(Err(e)));
+                    }
+                }
+            });
+        })
+    };
+
+    {
+        let probe = run_key_quota_probe.clone();
+        Effect::new(move |_| {
+            if let Some(Ok(pool)) = key_pool.get() {
+                let pid = active_profile.get_untracked();
+                let prov = provider.get_untracked();
+                let b_url = base_url.get_untracked();
+                if prov == "codex" || prov == "openai" || b_url.contains("chatgpt.com") {
+                    probe.clone()(pid, pool.keys.clone(), true, false);
+                }
             }
         });
-    };
+    }
 
     let load_profile_models = move |pid: String| {
         profile_model_options.set(Vec::new());
@@ -282,66 +356,78 @@ pub fn UpstreamPage() -> impl IntoView {
         });
     };
 
-    let load_profile_data = move |pid: String| {
-        // Reset states
-        test_result.set(None);
-        test_error.set(String::new());
-        save_error.set(String::new());
-        saved.set(false);
-        sync_result.set(None);
+    let load_profile_data = {
+        let load_key_pool = load_key_pool.clone();
+        std::sync::Arc::new(move |pid: String| {
+            // Reset states
+            test_result.set(None);
+            test_error.set(String::new());
+            save_error.set(String::new());
+            saved.set(false);
+            sync_result.set(None);
 
-        let p_list = profiles.get();
-        let default_id = default_profile_id.get_untracked();
-        if pid == default_id {
-            leptos::task::spawn_local(async move {
-                match api::fetch_upstream_config().await {
-                    Ok(c) => {
-                        base_url.try_set(c.base_url.clone());
-                        model.try_set(c.model.clone());
-                        endpoints_text.try_set(c.endpoints.join("\n"));
-                        tls_sni.try_set(String::new());
-                        proxy_url.try_set(String::new());
-                        provider.try_set("deepseek".to_string());
-                        gateway_reachable.try_set(c.gateway_reachable);
-                        if let Some(ref lt) = c.last_test {
-                            test_result.try_set(Some(lt.clone()));
+            let p_list = profiles.get();
+            let default_id = default_profile_id.get_untracked();
+            if pid == default_id {
+                leptos::task::spawn_local(async move {
+                    match api::fetch_upstream_config().await {
+                        Ok(c) => {
+                            base_url.try_set(c.base_url.clone());
+                            model.try_set(c.model.clone());
+                            endpoints_text.try_set(c.endpoints.join("\n"));
+                            tls_sni.try_set(String::new());
+                            proxy_url.try_set(String::new());
+                            provider.try_set("deepseek".to_string());
+                            gateway_reachable.try_set(c.gateway_reachable);
+                            if let Some(ref lt) = c.last_test {
+                                test_result.try_set(Some(lt.clone()));
+                            }
+                        }
+                        Err(e) => {
+                            save_error.try_set(e);
                         }
                     }
-                    Err(e) => {
-                        save_error.try_set(e);
-                    }
-                }
-            });
-        } else if let Some(p) = p_list.iter().find(|p| p.id == pid) {
-            provider.set(p.provider.clone());
-            base_url.set(p.base_url.clone());
-            model.set(p.fallback_model.clone());
-            endpoints_text.set(p.endpoints.join("\n"));
-            tls_sni.set(p.tls_sni.clone());
-            proxy_url.set(p.proxy_url.clone().unwrap_or_default());
-        }
-        load_profile_models(pid.clone());
-        load_key_pool(pid);
+                });
+            } else if let Some(p) = p_list.iter().find(|p| p.id == pid) {
+                provider.set(p.provider.clone());
+                base_url.set(p.base_url.clone());
+                model.set(p.fallback_model.clone());
+                endpoints_text.set(p.endpoints.join("\n"));
+                tls_sni.set(p.tls_sni.clone());
+                proxy_url.set(p.proxy_url.clone().unwrap_or_default());
+            }
+            load_profile_models(pid.clone());
+            load_key_pool.clone()(pid);
+        })
     };
 
-    let load_profiles_and_select = move |pid: Option<String>| {
-        leptos::task::spawn_local(async move {
-            if let Ok(resp) = api::fetch_upstream_profiles().await {
-                let def = resp.default_profile_id.clone();
-                default_profile_id.try_set(def.clone());
-                profiles.try_set(resp.profiles);
-                let select = pid.unwrap_or(def);
-                active_profile.try_set(select.clone());
-                load_profile_data(select);
-            }
-            profiles_loaded.try_set(true);
-        });
+    let load_profiles_and_select = {
+        let load_profile_data = load_profile_data.clone();
+        std::sync::Arc::new(move |pid: Option<String>| {
+            let load = load_profile_data.clone();
+            leptos::task::spawn_local(async move {
+                if let Ok(resp) = api::fetch_upstream_profiles().await {
+                    let def = resp.default_profile_id.clone();
+                    default_profile_id.try_set(def.clone());
+                    profiles.try_set(resp.profiles);
+                    let select = pid.unwrap_or(def);
+                    active_profile.try_set(select.clone());
+                    load(select);
+                }
+                profiles_loaded.try_set(true);
+            });
+        })
     };
 
     // Initial load: gateway default profile (not hardcoded id)
-    load_profiles_and_select(None);
+    load_profiles_and_select.clone()(None);
 
-    let on_sync_profile_models = move |_| {
+    let probe_all_keys = run_key_quota_probe.clone();
+    let reload_key_pool = load_key_pool.clone();
+    let refresh_profiles = load_profiles_and_select.clone();
+    let open_profile = load_profile_data.clone();
+
+    let on_sync_profile_models = Callback::new(move |_| {
         let pid = active_profile.get();
         profile_models_syncing.set(true);
         save_error.set(String::new());
@@ -359,10 +445,10 @@ pub fn UpstreamPage() -> impl IntoView {
             }
             profile_models_syncing.set(false);
         });
-    };
+    });
 
     // Actions
-    let on_test = move |_| {
+    let on_test = Callback::new(move |_| {
         testing.set(true);
         test_result.set(None);
         test_error.set(String::new());
@@ -404,9 +490,11 @@ pub fn UpstreamPage() -> impl IntoView {
             }
             testing.try_set(false);
         });
-    };
+    });
 
-    let on_save = move |_| {
+    let on_save = Callback::new({
+        let refresh = refresh_profiles.clone();
+        move |_| {
         saving.set(true);
         saved.set(false);
         save_error.set(String::new());
@@ -455,6 +543,7 @@ pub fn UpstreamPage() -> impl IntoView {
             Some(proxy)
         };
         let keys_to_append_clone = keys_to_append.clone();
+        let r = refresh.clone();
 
         leptos::task::spawn_local(async move {
             let result = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
@@ -504,15 +593,16 @@ pub fn UpstreamPage() -> impl IntoView {
                         pool_secrets_text.try_set(String::new());
                     }
                     saved.try_set(true);
-                    load_profiles_and_select(Some(pid));
+                    r.clone()(Some(pid));
                 }
                 Err(e) => { save_error.try_set(e); },
             }
             saving.try_set(false);
         });
-    };
+        }
+    });
 
-    let on_save_pool = move |_| {
+    let on_save_pool = Callback::new(move |_| {
         pool_saving.set(true);
         pool_saved.set(false);
         pool_error.set(String::new());
@@ -562,21 +652,24 @@ pub fn UpstreamPage() -> impl IntoView {
             }
             pool_saving.try_set(false);
         });
-    };
+    });
 
-    let on_delete_profile = move |_| {
+    let on_delete_profile = Callback::new({
+        let refresh = refresh_profiles.clone();
+        move |_| {
         let pid = active_profile.get();
         if pid == default_profile_id.get_untracked() {
             return;
         }
         deleting.set(true);
+        let r = refresh.clone();
         leptos::task::spawn_local(async move {
             match api::delete_upstream_profile(&pid).await {
                 Ok(_) => {
                     show_delete_confirm.try_set(false);
                     drawer_profile.try_set(None);
                     drawer_creating.try_set(false);
-                    load_profiles_and_select(None);
+                    r.clone()(None);
                 }
                 Err(e) => {
                     save_error.try_set(e);
@@ -584,9 +677,12 @@ pub fn UpstreamPage() -> impl IntoView {
             }
             deleting.try_set(false);
         });
-    };
+        }
+    });
 
-    let on_create_profile = move |_| {
+    let on_create_profile = Callback::new({
+        let refresh = refresh_profiles.clone();
+        move |_| {
         let id = new_profile_id.get().trim().to_string();
         if id.is_empty() {
             save_error.set("Profile ID is required".to_string());
@@ -617,6 +713,7 @@ pub fn UpstreamPage() -> impl IntoView {
         };
 
         saving.set(true);
+        let r = refresh.clone();
         leptos::task::spawn_local(async move {
             let req = PutUpstreamProfileAdminRequest {
                 provider: prov,
@@ -632,7 +729,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     new_profile_id.try_set(String::new());
                     active_profile.try_set(id.clone());
                     drawer_profile.try_set(Some(id.clone()));
-                    load_profiles_and_select(Some(id));
+                    r.clone()(Some(id));
                 }
                 Err(e) => {
                     save_error.try_set(e);
@@ -640,7 +737,8 @@ pub fn UpstreamPage() -> impl IntoView {
             }
             saving.try_set(false);
         });
-    };
+        }
+    });
 
     view! {
         <div class="page-content space-y-6">
@@ -703,13 +801,15 @@ pub fn UpstreamPage() -> impl IntoView {
                                 views.push(view! {
                                     <div
                                         class=card_class
-                                        on:click=move |_| {
+                                        on:click={
+                                            let open = open_profile.clone();
+                                            move |_| {
                                             drawer_creating.set(false);
                                             drawer_tab.set(0);
                                             active_profile.set(pid.clone());
                                             drawer_profile.set(Some(pid.clone()));
-                                            load_profile_data(pid.clone());
-                                        }
+                                            open.clone()(pid.clone());
+                                        }}
                                     >
                                         <div class="flex items-start justify-between mb-3">
                                             <div class="flex items-center gap-2 min-w-0">
@@ -803,7 +903,12 @@ pub fn UpstreamPage() -> impl IntoView {
             // Right-side drawer overlay
             {move || {
                 let show = drawer_profile.get().is_some() || drawer_creating.get();
-                show.then(|| view! {
+                if !show {
+                    ().into_any()
+                } else {
+                let probe_fn = probe_all_keys.clone();
+                let reload_fn = reload_key_pool.clone();
+                view! {
                     <div class="upstream-drawer-backdrop" on:click=move |_| {
                         drawer_profile.set(None);
                         drawer_creating.set(false);
@@ -857,7 +962,10 @@ pub fn UpstreamPage() -> impl IntoView {
                             })}
 
                             <div class="upstream-drawer-body">
-                                {move || if drawer_creating.get() {
+                                {move || {
+                                    let probe = probe_fn.clone();
+                                    let reload = reload_fn.clone();
+                                    if drawer_creating.get() {
                                     // ---- Creation flow ----
                                     if creation_step.get() == CreationStep::PickTemplate {
                                         view! {
@@ -1004,7 +1112,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         on:click=move |_| { drawer_creating.set(false); drawer_profile.set(None); }
                                                     >"Cancel"</button>
                                                     <button type="button" class="btn btn-primary text-xs"
-                                                        on:click=on_create_profile
+                                                        on:click=move |_| on_create_profile.run(())
                                                         disabled=move || saving.get()
                                                     >"Create Profile"</button>
                                                 </div>
@@ -1058,7 +1166,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 <label class="block text-xs font-semibold text-theme-muted">{t.upstream_model_label()}</label>
                                                                 <button type="button" class="text-xs text-accent disabled:opacity-50"
                                                                     disabled=move || profile_models_syncing.get()
-                                                                    on:click=on_sync_profile_models
+                                                                    on:click=move |_| on_sync_profile_models.run(())
                                                                 >
                                                                     {move || if profile_models_syncing.get() { t.models_syncing() } else { t.models_sync_btn() }}
                                                                 </button>
@@ -1193,13 +1301,13 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         <div class="flex flex-wrap items-center gap-3">
                                                             <button
                                                                 type="button"
-                                                                on:click=on_test
+                                                                on:click=move |_| on_test.run(())
                                                                 disabled=move || testing.get()
                                                                 class="btn btn-secondary text-xs"
                                                             >
                                                                 {move || if testing.get() { t.upstream_testing() } else { t.upstream_test_btn() }}
                                                             </button>
-                                                            <button type="button" on:click=on_save disabled=move || saving.get() class="btn btn-primary text-xs">
+                                                            <button type="button" on:click=move |_| on_save.run(()) disabled=move || saving.get() class="btn btn-primary text-xs">
                                                                 {move || if saving.get() { t.upstream_saving() } else { t.upstream_save_btn() }}
                                                             </button>
                                                             {move || if saved.get() {
@@ -1235,159 +1343,108 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         Some(Ok(pool)) => {
                                                             let keys_for_all = pool.keys.clone();
                                                             let pid_for_all = drawer_profile.get().unwrap_or_default();
+                                                            let pid_for_toggle = pid_for_all.clone();
+                                                            let pid_for_test = pid_for_all.clone();
+                                                            let pid_for_delete = pid_for_all.clone();
+                                                            let probe_all = probe.clone();
+                                                            let reload_pool = reload.clone();
                                                             view! {
                                                                 <div>
-                                                                    <div class="flex items-center gap-2 mb-3">
+                                                                    <div class="flex items-center gap-2 mb-3 flex-wrap">
                                                                         <button type="button" class="btn btn-secondary text-xs"
-                                                                            disabled=move || testing_all.get()
+                                                                            disabled=move || testing_all.get() || quota_auto_refreshing.get()
                                                                             on:click={{
                                                                                 let keys = keys_for_all.clone();
                                                                                 let pid = pid_for_all.clone();
+                                                                                let probe = probe_all.clone();
                                                                                 move |_| {
-                                                                                    let keys = keys.clone();
-                                                                                    let pid = pid.clone();
                                                                                     testing_all.set(true);
-                                                                                    leptos::task::spawn_local(async move {
-                                                                                        for k in &keys {
-                                                                                            key_testing.try_update(|m| { m.insert(k.id.clone(), true); });
-                                                                                            let result = api::test_upstream_profile_key(&pid, &k.id).await;
-                                                                                            key_testing.try_update(|m| { m.insert(k.id.clone(), false); });
-                                                                                            let tr = match result {
-                                                                                                Ok(r) => r,
-                                                                                                Err(e) => UpstreamTestResult {
-                                                                                                    ok: false, status_code: 0, latency_ms: 0,
-                                                                                                    model_count: None, error: Some(e), quota: None,
-                                                                                                },
-                                                                                            };
-                                                                                            key_test_results.try_update(|m| { m.insert(k.id.clone(), tr); });
-                                                                                        }
-                                                                                        testing_all.try_set(false);
-                                                                                    });
+                                                                                    probe.clone()(pid.clone(), keys.clone(), false, true);
                                                                                 }
                                                                             }}
                                                                         >
-                                                                            {move || if testing_all.get() { t.upstream_testing_all() } else { t.upstream_test_all_quotas() }}
+                                                                            {move || if testing_all.get() || quota_auto_refreshing.get() {
+                                                                                t.upstream_testing_all()
+                                                                            } else {
+                                                                                t.upstream_test_all_quotas()
+                                                                            }}
                                                                         </button>
                                                                         <button type="button" class="text-xs text-accent cursor-pointer"
                                                                             on:click=move |_| { key_test_results.set(HashMap::new()); }
                                                                         >{t.upstream_clear_results()}</button>
+                                                                        {move || quota_auto_refreshing.get().then(|| view! {
+                                                                            <span class="text-xs text-theme-muted">{t.upstream_pool_auto_quota()}</span>
+                                                                        })}
+                                                                        {move || (!pool_delete_error.get().is_empty()).then(|| view! {
+                                                                            <span class="text-xs text-error">{pool_delete_error.get()}</span>
+                                                                        })}
                                                                     </div>
-                                                                    <div class="overflow-x-auto">
-                                                                        <table class="table text-sm">
-                                                                            <thead><tr>
-                                                                                <th>{t.upstream_pool_col_id()}</th>
-                                                                                <th>{t.upstream_pool_col_preview()}</th>
-                                                                                <th>{t.upstream_pool_col_account()}</th>
-                                                                                <th>{t.upstream_pool_col_enabled()}</th>
-                                                                                <th>{t.upstream_pool_col_quota()}</th>
-                                                                                <th>{t.upstream_pool_col_inflight()}</th>
-                                                                                <th>{t.upstream_pool_col_cooldown()}</th>
-                                                                                <th>{t.upstream_pool_col_test()}</th>
-                                                                            </tr></thead>
-                                                                            <tbody>
-                                                                                {pool.keys.iter().map(|k| {
-                                                                                    let kid = k.id.clone();
-                                                                                    let kid2 = k.id.clone();
-                                                                                    let kid3 = k.id.clone();
-                                                                                    let kid_for_test = k.id.clone();
-                                                                                    let enabled = k.enabled;
-                                                                                    let pid = drawer_profile.get().unwrap_or_default();
-                                                                                    let pid2 = pid.clone();
-                                                                                    view! {
-                                                                                        <tr>
-                                                                                            <td class="font-mono">{k.id.clone()}</td>
-                                                                                            <td class="font-mono">{k.preview.clone()}</td>
-                                                                                            <td class="font-mono text-xs">
-                                                                                                {if k.account_id.is_empty() { "default".to_string() } else { k.account_id.clone() }}
-                                                                                            </td>
-                                                                                            <td>
-                                                                                                <div class="flex items-center gap-2">
-                                                                                                    <input type="checkbox" prop:checked=enabled
-                                                                                                        on:change=move |_| {
-                                                                                                            let id = kid.clone();
-                                                                                                            let next = !enabled;
-                                                                                                            let pid = pid.clone();
-                                                                                                            leptos::task::spawn_local(async move {
-                                                                                                                let req = PatchUpstreamKeyRequest { enabled: Some(next), secret: None };
-                                                                                                                let _ = if pid == "deepseek" {
-                                                                                                                    api::patch_upstream_key(&id, &req).await
-                                                                                                                } else {
-                                                                                                                    api::patch_upstream_profile_key(&pid, &id, &req).await
-                                                                                                                };
-                                                                                                                load_key_pool(pid.clone());
-                                                                                                            });
-                                                                                                        }
-                                                                                                    />
-                                                                                                    <span class=move || if enabled { "badge badge-success text-xs" } else { "badge text-xs" }>
-                                                                                                        {if enabled { t.upstream_key_status_enabled() } else { t.upstream_key_status_disabled() }}
-                                                                                                    </span>
-                                                                                                </div>
-                                                                                            </td>
-                                                                                            <td>{move || {
-                                                                                                let results = key_test_results.get();
-                                                                                                match results.get(&kid2) {
-                                                                                                    Some(result) => match &result.quota {
-                                                                                                        Some(quota) => view! { <QuotaProgressBar quota=quota.clone() /> }.into_any(),
-                                                                                                        None => {
-                                                                                                            if result.ok {
-                                                                                                                view! { <span class="text-xs text-accent">{t.upstream_quota_available()}</span> }.into_any()
-                                                                                                            } else {
-                                                                                                                let err_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
-                                                                                                                let (label, cls) = match result.status_code {
-                                                                                                                    401 | 403 => (t.upstream_quota_auth_failed(), "text-xs text-error"),
-                                                                                                                    402 => (t.upstream_quota_exhausted(), "text-xs text-error"),
-                                                                                                                    429 => (t.upstream_quota_rate_limited(), "text-xs text-warning"),
-                                                                                                                    _ => (t.upstream_quota_test_failed(), "text-xs text-error"),
-                                                                                                                };
-                                                                                                                view! { <span class=cls title={err_msg}>{label}</span> }.into_any()
-                                                                                                            }
-                                                                                                        }
-                                                                                                    },
-                                                                                                    None => view! { <span class="text-xs text-theme-muted">"-"</span> }.into_any(),
-                                                                                                }
-                                                                                            }}</td>
-                                                                                            <td class="font-mono">{k.inflight}</td>
-                                                                                            <td class="font-mono text-xs">
-                                                                                                {if k.cooldown_remaining_secs > 0 {
-                                                                                                    view! { <span class="text-warning">{format!("{}s", k.cooldown_remaining_secs)}</span> }.into_any()
-                                                                                                } else {
-                                                                                                    view! { <span class="text-theme-muted">"-"</span> }.into_any()
-                                                                                                }}
-                                                                                            </td>
-                                                                                            <td>{move || {
-                                                                                                let is_testing = key_testing.get().get(&kid3).copied().unwrap_or(false);
-                                                                                                view! {
-                                                                                                    <button type="button" class="btn btn-secondary text-xs" disabled=is_testing
-                                                                                                        on:click={{
-                                                                                                            let kid = kid_for_test.clone();
-                                                                                                            let pid = pid2.clone();
-                                                                                                            move |_| {
-                                                                                                                let kid = kid.clone();
-                                                                                                                let pid = pid.clone();
-                                                                                                                leptos::task::spawn_local(async move {
-                                                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), true); });
-                                                                                                                    let result = api::test_upstream_profile_key(&pid, &kid).await;
-                                                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), false); });
-                                                                                                                    let tr = match result {
-                                                                                                                        Ok(r) => r,
-                                                                                                                        Err(e) => UpstreamTestResult {
-                                                                                                                            ok: false, status_code: 0, latency_ms: 0,
-                                                                                                                            model_count: None, error: Some(e), quota: None,
-                                                                                                                        },
-                                                                                                                    };
-                                                                                                                    key_test_results.try_update(|m| { m.insert(kid, tr); });
-                                                                                                                });
-                                                                                                            }
-                                                                                                        }}
-                                                                                                    >{if is_testing { "..." } else { t.upstream_pool_col_test() }}</button>
-                                                                                                }
-                                                                                            }}</td>
-                                                                                        </tr>
+                                                                    <UpstreamKeyPoolCards
+                                                                        keys=pool.keys.clone()
+                                                                        on_toggle=Callback::new({
+                                                                            let reload = reload_pool.clone();
+                                                                            move |(id, next): (String, bool)| {
+                                                                                let pid = pid_for_toggle.clone();
+                                                                                let reload = reload.clone();
+                                                                                leptos::task::spawn_local(async move {
+                                                                                    let req = PatchUpstreamKeyRequest { enabled: Some(next), secret: None };
+                                                                                    let default_id = default_profile_id.get_untracked();
+                                                                                    let _ = if pid == default_id {
+                                                                                        api::patch_upstream_key(&id, &req).await
+                                                                                    } else {
+                                                                                        api::patch_upstream_profile_key(&pid, &id, &req).await
+                                                                                    };
+                                                                                    reload.clone()(pid);
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                        on_test=Callback::new({
+                                                                            move |kid: String| {
+                                                                                let pid = pid_for_test.clone();
+                                                                                leptos::task::spawn_local(async move {
+                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), true); });
+                                                                                    let result = api::test_upstream_profile_key(&pid, &kid).await;
+                                                                                    key_testing.try_update(|m| { m.insert(kid.clone(), false); });
+                                                                                    let tr = match result {
+                                                                                        Ok(r) => r,
+                                                                                        Err(e) => UpstreamTestResult {
+                                                                                            ok: false, status_code: 0, latency_ms: 0,
+                                                                                            model_count: None, error: Some(e), quota: None,
+                                                                                        },
+                                                                                    };
+                                                                                    key_test_results.try_update(|m| { m.insert(kid, tr); });
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                        on_delete_confirm=Callback::new({
+                                                                            let reload = reload_pool.clone();
+                                                                            move |kid: String| {
+                                                                                let pid = pid_for_delete.clone();
+                                                                                let reload = reload.clone();
+                                                                                let err_prefix = t.upstream_pool_delete_error().to_string();
+                                                                                leptos::task::spawn_local(async move {
+                                                                                    key_deleting.try_update(|m| { m.insert(kid.clone(), true); });
+                                                                                    pool_delete_error.set(String::new());
+                                                                                    let default_id = default_profile_id.get_untracked();
+                                                                                    let result = if pid == default_id {
+                                                                                        api::delete_upstream_key(&kid).await
+                                                                                    } else {
+                                                                                        api::delete_upstream_profile_key(&pid, &kid).await
+                                                                                    };
+                                                                                    key_deleting.try_update(|m| { m.insert(kid.clone(), false); });
+                                                                                    delete_confirm_id.set(None);
+                                                                                    match result {
+                                                                                        Ok(()) => reload.clone()(pid),
+                                                                                        Err(e) => pool_delete_error.set(format!("{err_prefix}: {e}")),
                                                                                     }
-                                                                                }).collect_view()}
-                                                                            </tbody>
-                                                                        </table>
-                                                                    </div>
+                                                                                });
+                                                                            }
+                                                                        })
+                                                                        key_testing=key_testing.read_only()
+                                                                        key_test_results=key_test_results.read_only()
+                                                                        delete_confirm_id=delete_confirm_id
+                                                                        key_deleting=key_deleting.read_only()
+                                                                    />
                                                                 </div>
                                                             }.into_any()
                                                         },
@@ -1422,7 +1479,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             </p>
                                                         </div>
                                                         <div class="flex items-center gap-3">
-                                                            <button on:click=on_save_pool disabled=move || pool_saving.get() class="btn btn-primary text-xs">
+                                                            <button on:click=move |_| on_save_pool.run(()) disabled=move || pool_saving.get() class="btn btn-primary text-xs">
                                                                 {move || if pool_saving.get() { t.upstream_pool_saving() } else { t.upstream_pool_save_btn() }}
                                                             </button>
                                                             {move || if pool_saved.get() {
@@ -1442,11 +1499,13 @@ pub fn UpstreamPage() -> impl IntoView {
                                             view! { <RoutingTab profile_id=pid /> }.into_any()
                                         },
                                     }
+                                }
                                 }}
                             </div>
                         </div>
                     </div>
-                })
+                }.into_any()
+                }
             }}
 
             {move || sync_result.get().map(|r| view! { <SyncResultCard result=r /> })}
@@ -1465,7 +1524,7 @@ pub fn UpstreamPage() -> impl IntoView {
                             </button>
                             <button
                                 class="btn btn-primary text-xs"
-                                on:click=on_delete_profile
+                                on:click=move |_| on_delete_profile.run(())
                                 disabled=move || deleting.get()
                             >
                                 {move || if deleting.get() { "Deleting..." } else { "Delete" }}

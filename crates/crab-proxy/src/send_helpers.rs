@@ -1,6 +1,43 @@
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 
+use crate::error_jsons::format_openai_error_sse_for_client;
+
+pub(crate) async fn send_client_error(
+    session: &mut Session,
+    is_streaming: bool,
+    status: http::StatusCode,
+    error_json: &[u8],
+    model: &str,
+) -> bool {
+    if is_streaming {
+        let body = format_openai_error_sse_for_client(error_json, model);
+        let mut header = match ResponseHeader::build(http::StatusCode::OK, Some(8)) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        let _ = header.insert_header("content-type", "text/event-stream");
+        let _ = header.insert_header("cache-control", "no-cache");
+        let _ = header.insert_header("content-length", body.len().to_string());
+        let _ = header.insert_header("connection", "close");
+        if session
+            .downstream_session
+            .write_response_header(Box::new(header))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        session
+            .downstream_session
+            .write_response_body(bytes::Bytes::from(body), true)
+            .await
+            .is_ok()
+    } else {
+        send_json_error(session, status, error_json).await
+    }
+}
+
 pub(crate) async fn send_json_error_with_retry_after(
     session: &mut Session,
     status: http::StatusCode,

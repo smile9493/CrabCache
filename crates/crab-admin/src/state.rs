@@ -271,6 +271,9 @@ pub struct StoredModel {
     pub input_price_per_mtok: Option<f64>,
     pub output_price_per_mtok: Option<f64>,
     pub available: bool,
+    /// OAuth account IDs (or key ids) that can serve this model upstream.
+    pub account_ids: Vec<String>,
+    pub key_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]

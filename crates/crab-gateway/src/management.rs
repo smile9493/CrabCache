@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use crab_cache::{InvalidateScanOptions, TieredCache};
 use crab_client_endpoint::ClientEndpointSnapshot;
@@ -169,7 +169,10 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/upstream/keys",
             get(get_upstream_keys).put(put_upstream_keys),
         )
-        .route("/v1/upstream/keys/{id}", patch(patch_upstream_key))
+        .route(
+            "/v1/upstream/keys/{id}",
+            patch(patch_upstream_key).delete(delete_upstream_key),
+        )
         .route(
             "/v1/upstream/relay",
             get(get_upstream_relay).put(put_upstream_relay),
@@ -189,11 +192,24 @@ pub fn router(state: ManagementState) -> Router {
         )
         .route(
             "/v1/upstream/profiles/{id}/keys/{key_id}",
-            patch(management_profiles::patch_profile_key),
+            patch(management_profiles::patch_profile_key)
+                .delete(management_profiles::delete_profile_key),
         )
         .route(
             "/v1/upstream/profiles/{id}/keys/{key_id}/test",
             post(management_profiles::test_upstream_profile_key),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys/models",
+            get(management_profiles::get_profile_keys_models),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys/{key_id}/models",
+            get(management_profiles::get_profile_key_models),
+        )
+        .route(
+            "/v1/upstream/profiles/{id}/keys/models-catalog",
+            put(management_profiles::put_profile_keys_models_catalog),
         )
         .route(
             "/v1/upstream/profiles/{id}/test",
@@ -749,6 +765,7 @@ async fn put_upstream_keys(
             secret: k.secret,
             enabled: k.enabled,
             account_id: k.account_id,
+            supported_models: Vec::new(),
         })
         .collect();
 
@@ -881,6 +898,40 @@ async fn patch_upstream_key(
         })?;
     schedule_persist_state(&state);
     Ok(Json(view))
+}
+
+async fn delete_upstream_key(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let key_id = id.trim();
+    let default_id = state.runtime.default_upstream_profile_id();
+    let pool = state.runtime.upstream_pool();
+    let Some(new_pool) = UpstreamKeyPool::remove_key(&pool, key_id) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response());
+    };
+    state
+        .runtime
+        .replace_profile_pool(&default_id, new_pool)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        })?;
+    schedule_persist_state(&state);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {

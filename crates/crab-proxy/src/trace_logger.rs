@@ -760,12 +760,11 @@ mod tests {
         let rotated = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("trace.jsonl.")
-            });
-        assert!(rotated, "expected rotation when existing lines + new writes reach max_lines");
+            .any(|e| e.file_name().to_string_lossy().starts_with("trace.jsonl."));
+        assert!(
+            rotated,
+            "expected rotation when existing lines + new writes reach max_lines"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

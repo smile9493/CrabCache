@@ -783,6 +783,8 @@ impl PgStore {
                 input_price_per_mtok: row.get(4),
                 output_price_per_mtok: row.get(5),
                 available: row.get(6),
+                account_ids: Vec::new(),
+                key_ids: Vec::new(),
             });
         }
 
@@ -2253,6 +2255,8 @@ mod tests {
                 input_price_per_mtok: Some(0.27),
                 output_price_per_mtok: Some(1.10),
                 available: true,
+                account_ids: Vec::new(),
+                key_ids: Vec::new(),
             },
             PersistedModel {
                 profile_id: "deepseek".to_string(),
@@ -2262,6 +2266,8 @@ mod tests {
                 input_price_per_mtok: Some(0.10),
                 output_price_per_mtok: Some(0.40),
                 available: true,
+                account_ids: Vec::new(),
+                key_ids: Vec::new(),
             },
         ];
 
@@ -2282,6 +2288,8 @@ mod tests {
             input_price_per_mtok: None,
             output_price_per_mtok: None,
             available: true,
+            account_ids: Vec::new(),
+            key_ids: Vec::new(),
         }];
         pg.replace_models("deepseek", &models_v2, "2026-05-26T01:00:00Z")
             .await
@@ -2438,6 +2446,8 @@ mod tests {
                     input_price_per_mtok: None,
                     output_price_per_mtok: None,
                     available: true,
+                    account_ids: Vec::new(),
+                    key_ids: Vec::new(),
                 }],
                 synced_at_by_profile: [("deepseek".to_string(), "2026-05-26".to_string())]
                     .into_iter()

@@ -4,6 +4,7 @@
 //! and finalization logic. The proxy creates the appropriate pipeline at the start of
 //! streaming and delegates to it for each upstream chunk.
 
+mod codex;
 mod passthrough;
 mod reasoning;
 mod silent_strip;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use crate::context::GatewayContext;
 use crate::sse::UsageData;
 
+use codex::CodexTranslatePipeline;
 use passthrough::PassthroughPipeline;
 use reasoning::ReasoningRewritePipeline;
 use silent_strip::SilentStripPipeline;
@@ -60,6 +62,7 @@ pub(crate) enum StreamPipeline {
     ReasoningRewrite(Box<ReasoningRewritePipeline>),
     SilentStrip(SilentStripPipeline),
     Passthrough(PassthroughPipeline),
+    CodexTranslate(CodexTranslatePipeline),
 }
 
 impl SsePipeline for StreamPipeline {
@@ -68,6 +71,7 @@ impl SsePipeline for StreamPipeline {
             Self::ReasoningRewrite(p) => p.process_chunk(data, client_sse_body),
             Self::SilentStrip(p) => p.process_chunk(data, client_sse_body),
             Self::Passthrough(p) => p.process_chunk(data, client_sse_body),
+            Self::CodexTranslate(p) => p.process_chunk(data, client_sse_body),
         }
     }
 
@@ -76,6 +80,7 @@ impl SsePipeline for StreamPipeline {
             Self::ReasoningRewrite(p) => p.flush_remainder(client_sse_body),
             Self::SilentStrip(p) => p.flush_remainder(client_sse_body),
             Self::Passthrough(p) => p.flush_remainder(client_sse_body),
+            Self::CodexTranslate(p) => p.flush_remainder(client_sse_body),
         }
     }
 
@@ -84,6 +89,7 @@ impl SsePipeline for StreamPipeline {
             Self::ReasoningRewrite(p) => p.reasoning_finalized(),
             Self::SilentStrip(p) => p.reasoning_finalized(),
             Self::Passthrough(p) => p.reasoning_finalized(),
+            Self::CodexTranslate(p) => p.reasoning_finalized(),
         }
     }
 
@@ -92,6 +98,7 @@ impl SsePipeline for StreamPipeline {
             Self::ReasoningRewrite(p) => p.messages(),
             Self::SilentStrip(p) => p.messages(),
             Self::Passthrough(p) => p.messages(),
+            Self::CodexTranslate(p) => p.messages(),
         }
     }
 
@@ -100,6 +107,7 @@ impl SsePipeline for StreamPipeline {
             Self::ReasoningRewrite(p) => p.store_partial_reasoning(store),
             Self::SilentStrip(p) => p.store_partial_reasoning(store),
             Self::Passthrough(p) => p.store_partial_reasoning(store),
+            Self::CodexTranslate(p) => p.store_partial_reasoning(store),
         }
     }
 }
@@ -130,6 +138,11 @@ pub(crate) fn select_sse_pipeline(
                 ctx.stream.pending_recovery_notice.take(),
                 store,
             ),
+        )))
+    } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
+        Some(StreamPipeline::CodexTranslate(CodexTranslatePipeline::new(
+            &ctx.model,
+            ctx.original_request_body.clone(),
         )))
     } else if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4)
         && !ctx.cached_reasoning_config.display_reasoning
