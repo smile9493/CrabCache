@@ -11,6 +11,12 @@ impl SseEvent<'_> {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
+        // SSE `event: "error"` is a strong signal from LLM providers (DeepSeek, OpenAI)
+        // that the upstream considers this an error worth surfacing. Even without JSON data,
+        // this is safe to treat as a rate-limit hint for key cooldown purposes.
+        if self.event == Some("error") {
+            return true;
+        }
         let data = self.data.trim();
         if data == "[DONE]" || data.len() < 10 {
             return false;

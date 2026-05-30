@@ -125,6 +125,8 @@ pub(crate) async fn run(
                     ctx.new_request_body = ctx.upstream.prepared_body_for_retry.clone();
                     // The >= 400 block may have set error_passthrough; clear it for retry.
                     ctx.upstream.error_passthrough = false;
+                    // Reset state from the failed attempt so the retry logs cleanly.
+                    ctx.upstream.error_body_logged = false;
 
                     tracing::info!(
                         request_id = %ctx.request_id,
