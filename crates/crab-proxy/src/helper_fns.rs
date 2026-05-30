@@ -110,6 +110,17 @@ pub fn build_capture_request_meta(
     });
     let affinity_kind = Some(affinity_kind_from_key(&affinity_key).to_string());
     let (prefill_ms, sse_ttft_ms) = request_timing_ms(ctx);
+    let body_read_duration_ms = match (ctx.timeline.body_read_start, ctx.timeline.body_read_done) {
+        (Some(start), Some(done)) => Some(done.duration_since(start).as_secs_f64() * 1000.0),
+        _ => None,
+    };
+    let upload_bytes_per_sec = body_read_duration_ms.and_then(|ms| {
+        if ms > 0.0 {
+            Some((ctx.content_length as f64) / (ms / 1000.0))
+        } else {
+            None
+        }
+    });
 
     crab_capture::CaptureRequestMeta {
         conversation_id: ctx.conversation_id.clone(),
@@ -136,6 +147,14 @@ pub fn build_capture_request_meta(
         prefill_ms: prefill_ms.map(|v| v.round() as u64),
         ttft_ms: sse_ttft_ms.map(|v| v.round() as u64),
         upstream_latency_ms: ctx.upstream.latency_ms,
+        body_read_duration_ms,
+        upload_bytes_per_sec,
+        request_passthrough: Some(ctx.request_passthrough.armed_prefix_len > 0),
+        request_passthrough_prefix_len: if ctx.request_passthrough.armed_prefix_len > 0 {
+            Some(ctx.request_passthrough.armed_prefix_len)
+        } else {
+            None
+        },
     }
 }
 

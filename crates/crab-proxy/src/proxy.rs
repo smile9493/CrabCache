@@ -221,7 +221,6 @@ impl GatewayProxy {
         let guard = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
             pool.acquire_for_upstream_model(&upstream_model, true)
                 .or_else(|| pool.acquire_codex_oauth())
-                .or_else(|| pool.acquire())
         } else {
             pool.acquire_for_upstream_model(&upstream_model, false)
                 .or_else(|| pool.acquire())

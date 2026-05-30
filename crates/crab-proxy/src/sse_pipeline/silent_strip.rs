@@ -36,7 +36,10 @@ impl SsePipeline for SilentStripPipeline {
     }
 
     fn flush_remainder(&mut self, _client_sse_body: &mut Vec<u8>) -> FlushResult {
-        FlushResult { client_bytes: None }
+        FlushResult {
+            client_bytes: None,
+            usage: None,
+        }
     }
 
     fn reasoning_finalized(&self) -> bool {

@@ -1,4 +1,5 @@
 use crate::TraceLogger;
+use crate::backend_state::{BackendLoadRegistry, BackendPermit};
 use crate::client_key_limiter::{ClientKeyGuard, ClientKeyLimiter};
 use crate::client_key_rate_limiter::ClientKeyRateLimiter;
 use crate::raw_capture::RawCaptureLogger;
@@ -228,6 +229,41 @@ impl PricingConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendRouteStrategy {
+    Ketama,
+    P2c,
+    LeastUsed,
+    CostOptimized,
+}
+
+impl Default for BackendRouteStrategy {
+    fn default() -> Self {
+        Self::Ketama
+    }
+}
+
+impl BackendRouteStrategy {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "p2c" => Self::P2c,
+            "least_used" | "least-used" => Self::LeastUsed,
+            "cost_optimized" | "cost-optimized" | "eco" => Self::CostOptimized,
+            _ => Self::Ketama,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ketama => "ketama",
+            Self::P2c => "p2c",
+            Self::LeastUsed => "least_used",
+            Self::CostOptimized => "cost_optimized",
+        }
+    }
+}
+
 /// Token usage statistics collected during upstream response processing.
 #[derive(Debug, Default)]
 pub struct TokenStats {
@@ -268,6 +304,8 @@ pub struct UpstreamState {
     pub affinity_key: Option<String>,
     /// Backend name for circuit breaker tracking.
     pub backend_name: Option<String>,
+    /// Runtime overload classification for the selected backend.
+    pub backend_overload_state: Option<String>,
     /// TCP/TLS connect completed (`upstream_peer`); not reset at response headers.
     pub start: Option<Instant>,
     /// Upstream response headers received (`response_filter` on 2xx).
@@ -311,6 +349,7 @@ impl Default for UpstreamState {
             host: None,
             affinity_key: None,
             backend_name: None,
+            backend_overload_state: None,
             start: None,
             headers_at: None,
             latency_ms: None,
@@ -371,6 +410,8 @@ pub struct RequestPassthroughState {
     pub(crate) body_hasher: Option<sha2::Sha256>,
     /// Inbound `Content-Length` when present (passthrough content-length tracking).
     pub inbound_content_length: Option<usize>,
+    /// Extra bytes added to the outbound prefix (e.g. `stream_options` injection).
+    pub outbound_extra_bytes: usize,
 }
 
 pub struct GatewayContext {
@@ -419,6 +460,7 @@ pub struct GatewayContext {
     pub request_permit: Option<OwnedSemaphorePermit>,
     pub client_key_guard: Option<ClientKeyGuard>,
     pub deepseek_user_id_guard: Option<UpstreamUserIdGuard>,
+    pub backend_permit: Option<BackendPermit>,
     /// Serialized upstream JSON body length after reasoning prepare (for diagnostics).
     pub upstream_outbound_body_len: usize,
     /// Set in `upstream_request_filter` before Pingora writes upstream headers.
@@ -457,6 +499,8 @@ pub struct GatewayContext {
     /// Canonical messages to persist after successful upstream response.
     pub session_persist_base: Option<Vec<serde_json::Value>>,
     pub session_upstream_messages_len: Option<usize>,
+    pub guardrail_hits: Vec<String>,
+    pub guardrail_blocked: bool,
 }
 
 impl GatewayContext {
@@ -498,6 +542,7 @@ impl GatewayContext {
             request_permit: None,
             client_key_guard: None,
             deepseek_user_id_guard: None,
+            backend_permit: None,
             upstream_outbound_body_len: 0,
             upstream_headers_prepared_at: None,
             request_composition: None,
@@ -518,12 +563,14 @@ impl GatewayContext {
             session_store_redis_key: None,
             session_persist_base: None,
             session_upstream_messages_len: None,
+            guardrail_hits: Vec::new(),
+            guardrail_blocked: false,
         }
     }
 }
 
 /// Experimental feature flags — each gate is independent and default off.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FeaturesConfig {
     /// Enable prefix-aware L0 cache key (Moka prefix trie for shared message prefixes).
     #[serde(default)]
@@ -574,6 +621,62 @@ pub struct FeaturesConfig {
     /// Minimum bytes of request body prefix to trigger MiMo passthrough (overlap connect + upload).
     #[serde(default = "default_passthrough_prefix_bytes")]
     pub passthrough_prefix_bytes: usize,
+    /// Enable per-backend runtime load checks when selecting upstream peers.
+    #[serde(default)]
+    pub backend_load_aware_routing_enabled: bool,
+    /// Route policy used when choosing among healthy upstream backends.
+    #[serde(default)]
+    pub backend_route_strategy: BackendRouteStrategy,
+    /// Enable per-backend in-flight concurrency limits.
+    #[serde(default)]
+    pub backend_concurrency_limit_enabled: bool,
+    /// Default max in-flight requests per backend when backend concurrency limiting is enabled.
+    #[serde(default = "default_max_inflight_per_backend")]
+    pub default_max_inflight_per_backend: usize,
+    /// Mark a backend overloaded when observed prefill exceeds this threshold (0 disables).
+    #[serde(default = "default_backend_prefill_overload_threshold_ms")]
+    pub backend_prefill_overload_threshold_ms: u64,
+    /// Cooldown window after a backend crosses the prefill threshold.
+    #[serde(default = "default_backend_overload_cooldown_ms")]
+    pub backend_overload_cooldown_ms: u64,
+    /// Reserve switch for future pipeline overload gates.
+    #[serde(default)]
+    pub pipeline_overload_degrade_enabled: bool,
+    /// Reserve switch for future MiMo overload degradation.
+    #[serde(default)]
+    pub mimo_overload_degrade_to_generic: bool,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            prefix_aware_cache: false,
+            streaming_body_forward: false,
+            connection_prewarm: false,
+            affinity_prompt_cache_feedback: false,
+            delta_cache: false,
+            io_uring_backend: false,
+            wasm_filters: false,
+            mimo_context_compression: false,
+            mimo_compression_threshold: default_compression_threshold(),
+            upstream_request_gzip: false,
+            upstream_request_gzip_min_bytes: default_upstream_request_gzip_min_bytes(),
+            mimo_retire_prefix_messages: false,
+            mimo_keep_recent_turns: default_mimo_keep_recent_turns(),
+            mimo_session_store: false,
+            mimo_session_store_ttl_secs: default_mimo_session_store_ttl_secs(),
+            mimo_session_store_max_messages: default_mimo_session_store_max_messages(),
+            passthrough_prefix_bytes: default_passthrough_prefix_bytes(),
+            backend_load_aware_routing_enabled: false,
+            backend_route_strategy: BackendRouteStrategy::default(),
+            backend_concurrency_limit_enabled: false,
+            default_max_inflight_per_backend: default_max_inflight_per_backend(),
+            backend_prefill_overload_threshold_ms: default_backend_prefill_overload_threshold_ms(),
+            backend_overload_cooldown_ms: default_backend_overload_cooldown_ms(),
+            pipeline_overload_degrade_enabled: false,
+            mimo_overload_degrade_to_generic: false,
+        }
+    }
 }
 
 fn default_mimo_keep_recent_turns() -> usize {
@@ -590,6 +693,18 @@ fn default_mimo_session_store_max_messages() -> usize {
 
 fn default_passthrough_prefix_bytes() -> usize {
     1024
+}
+
+fn default_max_inflight_per_backend() -> usize {
+    64
+}
+
+fn default_backend_prefill_overload_threshold_ms() -> u64 {
+    30_000
+}
+
+fn default_backend_overload_cooldown_ms() -> u64 {
+    60_000
 }
 
 fn default_upstream_request_gzip_min_bytes() -> usize {
@@ -629,6 +744,8 @@ pub struct GatewayState {
     pub upstream_connector: parking_lot::RwLock<Option<Arc<Connector<()>>>>,
     /// affinity_key → backend_name when upstream prompt cache hits were observed (L3 stickiness).
     pub affinity_backend_hints: moka::sync::Cache<String, String>,
+    /// Runtime per-backend load, latency and concurrency state.
+    pub backend_load: Arc<BackendLoadRegistry>,
     /// Limits concurrent direct pool pre-warm requests.
     pub prewarm_semaphore: Arc<Semaphore>,
     /// Global RPS estimator using pingora-limits::Rate (1-second double-buffered Count-Min Sketch).

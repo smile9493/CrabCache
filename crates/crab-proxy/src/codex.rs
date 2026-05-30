@@ -12,6 +12,52 @@ pub const CODEX_RESPONSES_PATH: &str = "/backend-api/codex/responses";
 pub const CODEX_USER_AGENT: &str = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9";
 pub const CODEX_ORIGINATOR: &str = "codex_cli_rs";
 
+pub trait RequestTranslator {
+    type Prepared;
+
+    fn prepare_chat_request(
+        &self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> Self::Prepared;
+
+    fn prepare_client_responses(
+        &self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> Self::Prepared;
+}
+
+pub trait ResponseTranslator {
+    fn translate_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes>;
+    fn finalize_non_stream(&mut self, raw_sse: &[u8]) -> Option<Vec<u8>>;
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct CodexTranslator;
+
+impl CodexTranslator {
+    pub fn prepare_chat_request(
+        self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> CodexPreparedRequest {
+        <Self as RequestTranslator>::prepare_chat_request(&self, payload, upstream_model, opts)
+    }
+
+    pub fn prepare_client_responses(
+        self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> CodexPreparedRequest {
+        <Self as RequestTranslator>::prepare_client_responses(&self, payload, upstream_model, opts)
+    }
+}
+
 /// ChatGPT OAuth accounts reject legacy API slugs like `gpt-5-codex` (CLIProxyAPI uses `gpt-5.5` etc.).
 pub fn resolve_codex_upstream_model(model: &str) -> &str {
     let model = crab_pipeline::resolve_codex_display_alias(model).unwrap_or(model);
@@ -86,10 +132,7 @@ pub fn prepare_codex_request(
     upstream_model: &str,
     opts: CodexPrepareOptions<'_>,
 ) -> CodexPreparedRequest {
-    if should_passthrough_responses_input(payload) {
-        return prepare_codex_responses_passthrough(payload, upstream_model, opts);
-    }
-    prepare_codex_from_chat_messages(payload, upstream_model, opts)
+    CodexTranslator.prepare_chat_request(payload, upstream_model, opts)
 }
 
 fn should_passthrough_responses_input(payload: &Value) -> bool {
@@ -227,7 +270,7 @@ pub fn prepare_codex_client_responses(
     upstream_model: &str,
     opts: CodexPrepareOptions<'_>,
 ) -> CodexPreparedRequest {
-    prepare_codex_responses_passthrough(payload, upstream_model, opts)
+    CodexTranslator.prepare_client_responses(payload, upstream_model, opts)
 }
 
 fn prepare_codex_from_chat_messages(
@@ -342,6 +385,31 @@ fn prepare_codex_from_chat_messages(
         payload: out,
         model: upstream_model.to_string(),
         session_id,
+    }
+}
+
+impl RequestTranslator for CodexTranslator {
+    type Prepared = CodexPreparedRequest;
+
+    fn prepare_chat_request(
+        &self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> Self::Prepared {
+        if should_passthrough_responses_input(payload) {
+            return prepare_codex_responses_passthrough(payload, upstream_model, opts);
+        }
+        prepare_codex_from_chat_messages(payload, upstream_model, opts)
+    }
+
+    fn prepare_client_responses(
+        &self,
+        payload: &Value,
+        upstream_model: &str,
+        opts: CodexPrepareOptions<'_>,
+    ) -> Self::Prepared {
+        prepare_codex_responses_passthrough(payload, upstream_model, opts)
     }
 }
 
@@ -911,6 +979,55 @@ fn apply_usage(chunk: &mut Value, response: Option<&Value>) {
     }
 }
 
+/// Extract usage from raw Codex Responses API SSE (`response.completed` events).
+pub fn extract_codex_usage_from_bytes(bytes: &[u8]) -> Option<crate::sse::UsageData> {
+    use crate::sse::parse_sse_chunk;
+    for event in parse_sse_chunk(bytes) {
+        if event.data.trim() == "[DONE]" {
+            continue;
+        }
+        let value: Value = serde_json::from_str(event.data).ok()?;
+        if value.get("type").and_then(|t| t.as_str()) != Some("response.completed") {
+            continue;
+        }
+        let usage = value.pointer("/response/usage")?;
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let prompt = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let completion = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let prompt_tokens = if prompt > 0 { prompt } else { input };
+        let completion_tokens = if completion > 0 { completion } else { output };
+        if prompt_tokens == 0 && completion_tokens == 0 {
+            continue;
+        }
+        return Some(crate::sse::UsageData {
+            prompt_tokens,
+            completion_tokens,
+            prompt_cache_hit_tokens: usage
+                .get("prompt_cache_hit_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            prompt_cache_miss_tokens: usage
+                .get("prompt_cache_miss_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+        });
+    }
+    None
+}
+
 fn format_sse_chunk(value: &Value) -> Option<Bytes> {
     let json = serde_json::to_string(value).ok()?;
     Some(Bytes::from(format!("data: {json}\n\n")))
@@ -937,6 +1054,16 @@ fn restore_tool_name(name: &str, reverse: &HashMap<String, String>) -> String {
         .get(name)
         .cloned()
         .unwrap_or_else(|| name.to_string())
+}
+
+impl ResponseTranslator for CodexSseTranslator {
+    fn translate_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        CodexSseTranslator::translate_chunk(self, chunk)
+    }
+
+    fn finalize_non_stream(&mut self, raw_sse: &[u8]) -> Option<Vec<u8>> {
+        CodexSseTranslator::finalize_non_stream(self, raw_sse)
+    }
 }
 
 #[cfg(test)]
@@ -1141,5 +1268,13 @@ mod tests {
             .expect("json body");
         let body: Value = serde_json::from_slice(&out).expect("parse json");
         assert_eq!(body["choices"][0]["message"]["content"], "pong");
+    }
+
+    #[test]
+    fn extract_codex_usage_from_response_completed_sse() {
+        let sse = b"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":20}}}\n\n";
+        let usage = super::extract_codex_usage_from_bytes(sse).expect("usage");
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 20);
     }
 }

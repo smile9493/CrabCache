@@ -31,6 +31,101 @@ use pingora_proxy::Session;
 use std::time::Duration;
 use tracing::warn;
 
+fn apply_usage_to_ctx(
+    proxy: &GatewayProxy,
+    ctx: &mut GatewayContext,
+    usage: UsageData,
+) {
+    ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
+    ctx.tokens.last_input = usage.prompt_tokens;
+    ctx.tokens.last_output = usage.completion_tokens;
+    ctx.tokens.last_prompt_cache_hit = usage.prompt_cache_hit_tokens;
+    ctx.tokens.last_prompt_cache_miss = usage.prompt_cache_miss_tokens;
+    record_usage_metrics(
+        &usage,
+        &ctx.model,
+        ctx.consumer.as_deref(),
+        ctx.domain.as_deref(),
+        ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+        ctx.upstream
+            .affinity_key
+            .as_deref()
+            .map(crab_capture::affinity_kind_from_key),
+        &proxy.state.runtime,
+        &proxy.state.pricing.read(),
+    );
+    if proxy.state.features.read().affinity_prompt_cache_feedback {
+        accumulate_affinity_prompt_cache_usage(
+            ctx,
+            usage.prompt_cache_hit_tokens,
+            usage.prompt_cache_miss_tokens,
+        );
+    }
+}
+
+fn scan_eos_usage_fallback(
+    proxy: &GatewayProxy,
+    ctx: &mut GatewayContext,
+) {
+    if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
+        return;
+    }
+    let usage = crate::sse_pipeline::extract_usage_from_bytes(&ctx.stream.client_sse_body)
+        .or_else(|| {
+            if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
+                crate::codex::extract_codex_usage_from_bytes(&ctx.accumulated_body)
+            } else {
+                None
+            }
+        })
+        .or_else(|| crate::sse_pipeline::extract_usage_from_bytes(&ctx.accumulated_body));
+    if let Some(usage) = usage {
+        apply_usage_to_ctx(proxy, ctx, usage);
+    }
+}
+
+fn record_backend_latency(proxy: &GatewayProxy, ctx: &mut GatewayContext, upstream_latency: Duration) {
+    let Some(backend) = ctx.upstream.backend_name.as_deref() else {
+        return;
+    };
+    let profile = ctx.upstream_profile_id.as_deref().unwrap_or("default");
+    let pipeline = ctx.request_pipeline.map(|p| p.as_str()).unwrap_or("unknown");
+    global_metrics().record_backend_upstream_latency(
+        backend,
+        profile,
+        pipeline,
+        &ctx.model,
+        upstream_latency,
+    );
+    let prefill_ms = ctx
+        .upstream
+        .headers_at
+        .map(|h| h.duration_since(ctx.request_start).as_secs_f64() * 1000.0);
+    if let Some(ms) = prefill_ms {
+        global_metrics().record_backend_prefill_latency(
+            backend,
+            profile,
+            pipeline,
+            &ctx.model,
+            Duration::from_secs_f64(ms / 1000.0),
+        );
+    }
+    let features = proxy.state.features.read().clone();
+    let status = ctx.upstream.http_status;
+    let state = proxy.state.backend_load.observe_latency(
+        profile,
+        backend,
+        features.default_max_inflight_per_backend.max(1),
+        prefill_ms,
+        ctx.upstream.latency_ms,
+        status,
+        features.backend_prefill_overload_threshold_ms,
+        features.backend_overload_cooldown_ms,
+    );
+    global_metrics().set_backend_overload_state(profile, backend, state);
+    ctx.upstream.backend_overload_state = Some(state.to_string());
+}
+
 /// Run the `upstream_response_body_filter` phase.
 pub(crate) fn run(
     proxy: &GatewayProxy,
@@ -214,31 +309,7 @@ pub(crate) fn run(
                 ctx.accumulated_body.extend_from_slice(&data);
                 let result = pipeline.process_chunk(data, &mut ctx.stream.client_sse_body);
                 if let Some(usage) = result.usage {
-                    ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
-                    ctx.tokens.last_input = usage.prompt_tokens;
-                    ctx.tokens.last_output = usage.completion_tokens;
-                    ctx.tokens.last_prompt_cache_hit = usage.prompt_cache_hit_tokens;
-                    ctx.tokens.last_prompt_cache_miss = usage.prompt_cache_miss_tokens;
-                    record_usage_metrics(
-                        &usage,
-                        &ctx.model,
-                        ctx.consumer.as_deref(),
-                        ctx.domain.as_deref(),
-                        ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                        ctx.upstream
-                            .affinity_key
-                            .as_deref()
-                            .map(crab_capture::affinity_kind_from_key),
-                        &proxy.state.runtime,
-                        &proxy.state.pricing.read(),
-                    );
-                    if proxy.state.features.read().affinity_prompt_cache_feedback {
-                        accumulate_affinity_prompt_cache_usage(
-                            ctx,
-                            usage.prompt_cache_hit_tokens,
-                            usage.prompt_cache_miss_tokens,
-                        );
-                    }
+                    apply_usage_to_ctx(proxy, ctx, usage);
                 }
                 *body = result.client_bytes;
             } else {
@@ -285,6 +356,7 @@ pub(crate) fn run(
                 &ctx.model,
                 Some(CacheTier::Miss),
             );
+            record_backend_latency(proxy, ctx, latency);
             if let Some(kid) = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()) {
                 global_metrics().record_upstream_key_latency(kid, latency);
             }
@@ -356,31 +428,7 @@ pub(crate) fn run(
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0),
                 };
-                ctx.tokens.total += usage_data.prompt_tokens + usage_data.completion_tokens;
-                ctx.tokens.last_input = usage_data.prompt_tokens;
-                ctx.tokens.last_output = usage_data.completion_tokens;
-                ctx.tokens.last_prompt_cache_hit = usage_data.prompt_cache_hit_tokens;
-                ctx.tokens.last_prompt_cache_miss = usage_data.prompt_cache_miss_tokens;
-                record_usage_metrics(
-                    &usage_data,
-                    &ctx.model,
-                    ctx.consumer.as_deref(),
-                    ctx.domain.as_deref(),
-                    ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                    ctx.upstream
-                        .affinity_key
-                        .as_deref()
-                        .map(crab_capture::affinity_kind_from_key),
-                    &proxy.state.runtime,
-                    &proxy.state.pricing.read(),
-                );
-                if proxy.state.features.read().affinity_prompt_cache_feedback {
-                    accumulate_affinity_prompt_cache_usage(
-                        ctx,
-                        usage_data.prompt_cache_hit_tokens,
-                        usage_data.prompt_cache_miss_tokens,
-                    );
-                }
+                apply_usage_to_ctx(proxy, ctx, usage_data);
             }
 
             if let Some(cache_key) = &ctx.cache_key {
@@ -460,6 +508,8 @@ pub(crate) fn run(
             }
         }
 
+        scan_eos_usage_fallback(proxy, ctx);
+
         if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
             || ctx.prepared_request.is_some()
         {
@@ -477,6 +527,9 @@ pub(crate) fn run(
             if let Some(bytes) = flush.client_bytes {
                 *body = Some(bytes);
             }
+            if let Some(usage) = flush.usage {
+                apply_usage_to_ctx(proxy, ctx, usage);
+            }
         }
 
         if let Some(guard) = &ctx.coalesce_guard {
@@ -489,35 +542,7 @@ pub(crate) fn run(
             ctx.upstream_body_for_capture = Some(bytes::Bytes::from(ctx.accumulated_body.clone()));
         }
 
-        // Fallback: if no usage was captured during streaming (e.g. MiMo upstream sends
-        // usage in a format missed by per-chunk parsing), scan the full accumulated SSE
-        // body one final time before giving up.
-        if ctx.tokens.last_input == 0 && ctx.tokens.last_output == 0 {
-            let events = crate::sse::parse_sse_chunk(&ctx.accumulated_body);
-            for event in &events {
-                if let Some(usage) = event.parse_usage() {
-                    ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
-                    ctx.tokens.last_input = usage.prompt_tokens;
-                    ctx.tokens.last_output = usage.completion_tokens;
-                    ctx.tokens.last_prompt_cache_hit = usage.prompt_cache_hit_tokens;
-                    ctx.tokens.last_prompt_cache_miss = usage.prompt_cache_miss_tokens;
-                    record_usage_metrics(
-                        &usage,
-                        &ctx.model,
-                        ctx.consumer.as_deref(),
-                        ctx.domain.as_deref(),
-                        ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                        ctx.upstream
-                            .affinity_key
-                            .as_deref()
-                            .map(crab_capture::affinity_kind_from_key),
-                        &proxy.state.runtime,
-                        &proxy.state.pricing.read(),
-                    );
-                    break;
-                }
-            }
-        }
+        scan_eos_usage_fallback(proxy, ctx);
 
         if let Some(headers_at) = ctx.upstream.headers_at {
             let latency = headers_at.elapsed();
@@ -529,6 +554,7 @@ pub(crate) fn run(
                 &ctx.model,
                 Some(CacheTier::Miss),
             );
+            record_backend_latency(proxy, ctx, latency);
             if let Some(kid) = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()) {
                 global_metrics().record_upstream_key_latency(kid, latency);
             }

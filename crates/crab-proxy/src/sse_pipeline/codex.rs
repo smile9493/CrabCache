@@ -62,12 +62,16 @@ impl SsePipeline for CodexTranslatePipeline {
 
     fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult {
         if self.sse_remainder.is_empty() {
-            return FlushResult { client_bytes: None };
+            return FlushResult {
+                client_bytes: None,
+                usage: None,
+            };
         }
         let tail = std::mem::take(&mut self.sse_remainder);
         let result = self.process_lines(&tail, client_sse_body);
         FlushResult {
             client_bytes: result.client_bytes,
+            usage: result.usage,
         }
     }
 

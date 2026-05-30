@@ -228,6 +228,17 @@ pub(crate) async fn run(
                     .as_deref()
                     .map(|k| affinity_kind_from_key(k).to_string());
                 entry.backend_name = ctx.upstream.backend_name.clone();
+                entry.selected_backend_name = ctx.upstream.backend_name.clone();
+                entry.backend_overload_state = ctx.upstream.backend_overload_state.clone();
+                entry.backend_route_strategy = Some(
+                    proxy
+                        .state
+                        .features
+                        .read()
+                        .backend_route_strategy
+                        .as_str()
+                        .to_string(),
+                );
                 entry.is_coalesced = ctx.is_coalesced_follower;
                 entry.request_passthrough = passthrough_trace;
                 entry.request_passthrough_prefix_len = if passthrough_trace {
@@ -235,6 +246,34 @@ pub(crate) async fn run(
                 } else {
                     None
                 };
+                entry.guardrail_blocked = ctx.guardrail_blocked;
+                entry.guardrail_labels = ctx.guardrail_hits.clone();
+                entry.body_read_duration_ms = match (
+                    ctx.timeline.body_read_start,
+                    ctx.timeline.body_read_done,
+                ) {
+                    (Some(start), Some(done)) => {
+                        Some(done.duration_since(start).as_secs_f64() * 1000.0)
+                    }
+                    _ => None,
+                };
+                entry.upload_bytes_per_sec = entry.body_read_duration_ms.and_then(|ms| {
+                    if ms > 0.0 {
+                        Some((ctx.content_length as f64) / (ms / 1000.0))
+                    } else {
+                        None
+                    }
+                });
+                entry.upstream_send_duration_ms = match (
+                    ctx.timeline.upstream_headers_sent,
+                    ctx.timeline.upstream_body_sent,
+                ) {
+                    (Some(start), Some(done)) => {
+                        Some(done.duration_since(start).as_secs_f64() * 1000.0)
+                    }
+                    _ => None,
+                };
+                entry.pipeline_degraded = false;
                 entry.client_key_id = ctx
                     .upstream
                     .key_guard

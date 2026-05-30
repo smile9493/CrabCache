@@ -205,6 +205,31 @@ impl LbRouter {
         self.lb.load()
     }
 
+    /// Snapshot currently ready backends with CrabCache metadata.
+    pub fn ready_backends(&self) -> Vec<Backend> {
+        let lb = self.lb.load();
+        let pool = lb.backends();
+        pool.get_backend()
+            .iter()
+            .filter_map(|pb| {
+                if !pool.ready(pb) {
+                    return None;
+                }
+                let addr = match pb.addr {
+                    PSocketAddr::Inet(a) => a,
+                    _ => return None,
+                };
+                let meta = self.meta.get(&addr)?;
+                Some(Backend {
+                    name: meta.name.clone(),
+                    addr,
+                    weight: pb.weight as u32,
+                    tls_sni: meta.tls_sni.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// Access the `ArcSwap` handle (for `LbHealthService` registration).
     ///
     /// The health service holds this reference and automatically picks up

@@ -127,6 +127,14 @@ pub struct CaptureRequestMeta {
     pub ttft_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_latency_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_read_duration_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_bytes_per_sec: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_passthrough: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_passthrough_prefix_len: Option<usize>,
 }
 
 /// Complete raw capture entry written to disk.
@@ -207,4 +215,12 @@ pub struct RawCaptureEntry {
     pub ttft_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_latency_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_read_duration_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_bytes_per_sec: Option<f64>,
+    #[serde(default)]
+    pub request_passthrough: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_passthrough_prefix_len: Option<usize>,
 }

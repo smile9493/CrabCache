@@ -1,9 +1,11 @@
 mod client_key_limiter;
 mod client_key_rate_limiter;
+pub mod backend_state;
 mod codex;
 mod context;
 mod debug_log;
 mod error;
+mod guardrails;
 mod masking;
 mod phases;
 mod profile_build;
@@ -51,11 +53,12 @@ pub use cache_response::{
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimiter};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
-    ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState, ModelPricing, PricingConfig,
-    ReasoningConfig,
+    BackendRouteStrategy, ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState,
+    ModelPricing, PricingConfig, ReasoningConfig,
 };
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
+pub use guardrails::{GuardrailResult, evaluate_request_guardrails, maybe_handle_cursor_bypass};
 pub use profile_build::{
     ProfileBuildInput, build_profile_runtime, parse_profile_backends, resolve_profile_key_specs,
 };

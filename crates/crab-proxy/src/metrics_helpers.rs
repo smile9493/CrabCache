@@ -105,6 +105,14 @@ pub fn finalize_affinity_backend_hint(
         return;
     };
     if ctx.affinity_prompt_cache_hits > 0 {
+        if ctx
+            .upstream
+            .backend_overload_state
+            .as_deref()
+            .is_some_and(|state| state != "ready")
+        {
+            return;
+        }
         if let Some(backend) = ctx
             .upstream
             .backend_name

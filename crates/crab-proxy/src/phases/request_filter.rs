@@ -15,6 +15,7 @@ use crate::helper_fns::{
     client_session_from_authorization, fingerprint_client_key, is_models_endpoint,
     last_user_message_fingerprint, stable_session_log_fields,
 };
+use crate::{evaluate_request_guardrails, maybe_handle_cursor_bypass};
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crate::send_helpers::{
@@ -52,6 +53,10 @@ fn mimo_direct_passthrough(pipeline: RequestPipeline) -> bool {
 
 fn request_passthrough_allowed_pipeline(pipeline: RequestPipeline) -> bool {
     mimo_direct_passthrough(pipeline)
+}
+
+fn can_arm_mimo_request_passthrough(stream: Option<bool>) -> bool {
+    matches!(stream, Some(true))
 }
 
 /// Shared path after the full client body is available (normal read or streaming finalize).
@@ -195,6 +200,50 @@ async fn run_post_body_phases(
             selection.reason.as_str(),
         );
         timeline_stamp(&mut ctx.timeline.pipeline_select_done);
+        if proxy.state.features.read().pipeline_overload_degrade_enabled
+            && GatewayProxy::is_mimo_pipeline(selection.pipeline)
+        {
+            let profile = proxy.active_upstream_profile(ctx);
+            let features = proxy.state.features.read().clone();
+            let ready = profile.router.ready_backends();
+            let all_overloaded = !ready.is_empty()
+                && ready.iter().all(|b| {
+                    !proxy.state.backend_load.is_available(
+                        &profile.id,
+                        &b.name,
+                        features.default_max_inflight_per_backend.max(1),
+                        features.backend_prefill_overload_threshold_ms,
+                    )
+                });
+            if all_overloaded {
+                global_metrics().record_pipeline_backpressure(
+                    selection.pipeline.as_str(),
+                    &profile.id,
+                    "mimo_backend_overloaded",
+                );
+                global_metrics().record_rejected("mimo_backend_overloaded");
+                global_metrics().record_rejection_by_source("backend");
+                let body = serde_json::json!({
+                    "error": {
+                        "message": "MiMo upstream backends are overloaded. Retry after the backpressure window.",
+                        "type": "overloaded",
+                        "code": "mimo_backend_overloaded"
+                    }
+                });
+                let body_str = body.to_string();
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    body_str.as_bytes(),
+                    30,
+                )
+                .await
+                {
+                    let _ = session.respond_error(503).await;
+                }
+                return Ok(true);
+            }
+        }
         selection
     } else {
         let profile = proxy.active_upstream_profile(ctx);
@@ -209,6 +258,10 @@ async fn run_post_body_phases(
                 .expect("streaming defer sets pipeline_reason"),
         }
     };
+
+    if maybe_handle_cursor_bypass(proxy, session, ctx).await? {
+        return Ok(true);
+    }
 
     let reasoning_cfg_early = proxy.reasoning_config();
     let skip_early_exact = skip_early_pipeline_select;
@@ -272,6 +325,7 @@ async fn run_post_body_phases(
     ctx.stable_session_kind = Some(stable_session_kind.to_string());
 
     let direct_mimo = mimo_direct_passthrough(selection.pipeline);
+    let guardrail_payload = serde_json::from_slice::<serde_json::Value>(full_body.as_ref()).ok();
     let mut parse_elapsed = std::time::Duration::default();
     let mut reject_missing = false;
     let mut patched = 0usize;
@@ -285,10 +339,47 @@ async fn run_post_body_phases(
 
     let prepare_start = Instant::now();
     if direct_mimo {
+        if let Some(payload) = guardrail_payload.as_ref() {
+            let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
+            ctx.guardrail_hits = guardrail.labels.clone();
+            ctx.guardrail_blocked = guardrail.blocked;
+            if !guardrail.labels.is_empty() {
+                debug_agent_log(
+                    "GR",
+                    "proxy.rs:request_filter",
+                    "guardrails evaluated",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "labels": guardrail.labels,
+                        "blocked": guardrail.blocked,
+                    }),
+                );
+            }
+            if guardrail.blocked {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": guardrail.message.unwrap_or_else(|| "Request rejected by guardrails".to_string()),
+                        "type": "invalid_request_error",
+                        "code": "guardrail_blocked"
+                    }
+                });
+                let body_str = body.to_string();
+                warn!(
+                    request_id = %ctx.request_id,
+                    model = %ctx.model,
+                    "Rejecting request: guardrail block"
+                );
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
+                    let _ = session.respond_error(400).await;
+                }
+                return Ok(true);
+            }
+        }
         let body = if ctx.is_streaming {
             Bytes::from(
                 crate::phases::upstream_request::inject_stream_options_include_usage(
                     full_body.to_vec(),
+                    false,
                 ),
             )
         } else {
@@ -345,6 +436,44 @@ async fn run_post_body_phases(
             &client_ip,
             body_user_from_payload(parsed_payload.as_ref()),
         );
+        if ctx.guardrail_hits.is_empty() && !ctx.guardrail_blocked
+            && let Some(payload) = guardrail_payload.as_ref()
+        {
+            let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
+            ctx.guardrail_hits = guardrail.labels.clone();
+            ctx.guardrail_blocked = guardrail.blocked;
+            if !guardrail.labels.is_empty() {
+                debug_agent_log(
+                    "GR",
+                    "proxy.rs:request_filter",
+                    "guardrails evaluated",
+                    serde_json::json!({
+                        "request_id": ctx.request_id,
+                        "labels": guardrail.labels,
+                        "blocked": guardrail.blocked,
+                    }),
+                );
+            }
+            if guardrail.blocked {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": guardrail.message.unwrap_or_else(|| "Request rejected by guardrails".to_string()),
+                        "type": "invalid_request_error",
+                        "code": "guardrail_blocked"
+                    }
+                });
+                let body_str = body.to_string();
+                warn!(
+                    request_id = %ctx.request_id,
+                    model = %ctx.model,
+                    "Rejecting request: guardrail block"
+                );
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
+                    let _ = session.respond_error(400).await;
+                }
+                return Ok(true);
+            }
+        }
 
         if GatewayProxy::is_mimo_pipeline(selection.pipeline)
             && let Some(store) = &proxy.state.session_store
@@ -465,9 +594,11 @@ async fn run_post_body_phases(
                     stable_session_id: stable_session,
                 };
                 let prepared = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
-                    crate::codex::prepare_codex_client_responses(payload, model, opts)
+                    crate::codex::CodexTranslator::default()
+                        .prepare_client_responses(payload, model, opts)
                 } else {
-                    crate::codex::prepare_codex_request(payload, model, opts)
+                    crate::codex::CodexTranslator::default()
+                        .prepare_chat_request(payload, model, opts)
                 };
                 upstream_model_log = prepared.model.clone();
                 ctx.parsed_upstream_payload = Some(Arc::new(prepared.payload.clone()));
@@ -614,12 +745,12 @@ async fn run_post_body_phases(
         .clone()
         .unwrap_or_else(|| full_body.clone());
     ctx.upstream_outbound_body_len = new_body.len();
-    if ctx.parsed_upstream_payload.is_none() && !direct_mimo {
-        let upstream_parse_start = Instant::now();
-        ctx.parsed_upstream_payload =
-            serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
-                .ok()
-                .map(Arc::new);
+        if ctx.parsed_upstream_payload.is_none() && !direct_mimo {
+            let upstream_parse_start = Instant::now();
+            ctx.parsed_upstream_payload =
+                serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
+                    .ok()
+                    .map(Arc::new);
         global_metrics().record_request_body_stage(
             "json_parse_upstream",
             upstream_parse_start.elapsed(),
@@ -779,7 +910,10 @@ async fn run_post_body_phases(
 
 #[cfg(test)]
 mod tests {
-    use super::{mimo_direct_passthrough, request_passthrough_allowed_pipeline};
+    use super::{
+        can_arm_mimo_request_passthrough, mimo_direct_passthrough,
+        request_passthrough_allowed_pipeline,
+    };
     use crab_pipeline::RequestPipeline;
 
     #[test]
@@ -801,6 +935,13 @@ mod tests {
         assert!(!request_passthrough_allowed_pipeline(
             RequestPipeline::GenericRelay
         ));
+    }
+
+    #[test]
+    fn mimo_passthrough_requires_explicit_stream_true() {
+        assert!(can_arm_mimo_request_passthrough(Some(true)));
+        assert!(!can_arm_mimo_request_passthrough(Some(false)));
+        assert!(!can_arm_mimo_request_passthrough(None));
     }
 }
 
@@ -851,8 +992,11 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     let Some(model) = quick.model.filter(|m| !m.is_empty()) else {
         return false;
     };
+    if !can_arm_mimo_request_passthrough(quick.stream) {
+        return false;
+    }
     ctx.model = crab_pipeline::canonicalize_client_model(&model);
-    ctx.is_streaming = quick.stream.unwrap_or(false);
+    ctx.is_streaming = true;
     ctx.conversation_id = quick
         .conversation_id
         .clone()
@@ -913,17 +1057,24 @@ async fn request_passthrough_handoff(
         return Ok(true);
     }
     ctx.request_passthrough.active = true;
-    ctx.request_passthrough.armed_prefix_len = partial_body.len();
     ctx.request_passthrough.prefix_emitted = false;
     ctx.request_passthrough.finalized = false;
     ctx.request_passthrough.body_hasher = Some(Sha256::new());
     crate::helper_fns::passthrough_hash_update(ctx, &partial_body);
-    ctx.request_passthrough.buffer = partial_body;
+    ctx.original_request_body = Some(Bytes::from(partial_body.clone()));
+    let before_len = partial_body.len();
+    let outbound_prefix =
+        crate::phases::upstream_request::inject_stream_options_include_usage(partial_body, true);
+    ctx.request_passthrough.outbound_extra_bytes =
+        outbound_prefix.len().saturating_sub(before_len);
+    ctx.request_passthrough.buffer = outbound_prefix;
+    ctx.request_passthrough.armed_prefix_len = ctx.request_passthrough.buffer.len();
     ctx.upstream.retry_budget = 0;
     global_metrics().record_request_passthrough_total();
     ctx.content_length = ctx
         .request_passthrough
         .inbound_content_length
+        .map(|len| len.saturating_add(ctx.request_passthrough.outbound_extra_bytes))
         .unwrap_or(ctx.request_passthrough.buffer.len());
     ctx.upstream_outbound_body_len = 0;
     // Exact-cache is intentionally disabled on this path: we only have a 1KB+ prefix,
@@ -932,7 +1083,6 @@ async fn request_passthrough_handoff(
     // run_post_body_phases → exact cache.  A future optimisation could retroactively
     // probe the cache at passthrough EOS when the full body hash is available.
     // Store prefix body for trace logging (request_messages_snapshot will contain first 1KB+).
-    ctx.original_request_body = Some(Bytes::from(ctx.request_passthrough.buffer.clone()));
     ctx.parsed_request_payload = None;
     ctx.upstream_body_for_capture = None;
     ctx.parsed_upstream_payload = None;

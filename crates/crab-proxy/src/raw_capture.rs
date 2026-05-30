@@ -540,6 +540,10 @@ impl RawCaptureLogger {
             prefill_ms: meta.prefill_ms,
             ttft_ms: meta.ttft_ms,
             upstream_latency_ms: meta.upstream_latency_ms,
+            body_read_duration_ms: meta.body_read_duration_ms,
+            upload_bytes_per_sec: meta.upload_bytes_per_sec,
+            request_passthrough: meta.request_passthrough.unwrap_or(false),
+            request_passthrough_prefix_len: meta.request_passthrough_prefix_len,
         };
 
         let _ = self.sender.send(RawCaptureMessage {

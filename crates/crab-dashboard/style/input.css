@@ -893,6 +893,7 @@ body {
   border-radius: 12px;
   padding: 1.25rem;
   margin-top: 1rem;
+  max-width: 720px;
 }
 .peak-hours-header {
   display: flex;
@@ -948,8 +949,8 @@ body {
   padding-top: 1.5rem; /* align with grid below day headers */
 }
 .peak-hours-hour-label {
-  height: 20px;
-  line-height: 20px;
+  height: 14px;
+  line-height: 14px;
   font-size: 0.6rem;
   color: var(--cc-text-muted);
   text-align: right;
@@ -979,9 +980,8 @@ body {
   margin-bottom: 2px;
 }
 .peak-hours-cell {
-  aspect-ratio: 1;
+  height: 14px;
   border-radius: 3px;
-  min-height: 20px;
   cursor: pointer;
   transition: outline 0.1s ease, transform 0.1s ease;
   outline: 2px solid transparent;

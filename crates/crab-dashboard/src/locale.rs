@@ -1243,6 +1243,18 @@ impl Translations {
             Locale::EnUS => "Down Key",
         }
     }
+    pub fn live_heatmap_up_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游延迟",
+            Locale::EnUS => "Up Latency",
+        }
+    }
+    pub fn live_heatmap_down_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "下游延迟",
+            Locale::EnUS => "Down Latency",
+        }
+    }
     pub fn live_recent_requests(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "最近请求",
@@ -5578,6 +5590,194 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "PKCE 登录",
             Locale::EnUS => "PKCE Login",
+        }
+    }
+
+    // ── DataPlane page ──────────────────────────────────────────────
+    pub fn dataplane_page_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数据平面",
+            Locale::EnUS => "Data Plane",
+        }
+    }
+    pub fn dataplane_page_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实时数据平面可观测性：SLO、阶段延迟、错误归因",
+            Locale::EnUS => "Real-time data plane observability: SLO, phase latency, error attribution",
+        }
+    }
+    pub fn dataplane_cache_hit_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存命中率",
+            Locale::EnUS => "Cache Hit Rate",
+        }
+    }
+    pub fn dataplane_last_5min(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "近 5 分钟",
+            Locale::EnUS => "Over last 5 minutes",
+        }
+    }
+    pub fn dataplane_p95_e2e_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "P95 端到端延迟",
+            Locale::EnUS => "P95 E2E Latency",
+        }
+    }
+    pub fn dataplane_end_to_end(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "端到端",
+            Locale::EnUS => "End-to-end",
+        }
+    }
+    pub fn dataplane_error_rate(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误率",
+            Locale::EnUS => "Error Rate",
+        }
+    }
+    pub fn dataplane_5xx_of_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "5xx / 总请求",
+            Locale::EnUS => "5xx / total requests",
+        }
+    }
+    pub fn dataplane_cost_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "节省成本",
+            Locale::EnUS => "Cost Saved",
+        }
+    }
+    pub fn dataplane_cumulative_usd(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "累计 USD",
+            Locale::EnUS => "Cumulative USD",
+        }
+    }
+    pub fn dataplane_sample_count_ring(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "采样数 (Ring)",
+            Locale::EnUS => "Sample Count (Ring)",
+        }
+    }
+    pub fn dataplane_metrics_history_ring(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "指标历史环",
+            Locale::EnUS => "Metrics history ring",
+        }
+    }
+    pub fn dataplane_qps_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "QPS (5m)",
+            Locale::EnUS => "QPS (5m)",
+        }
+    }
+    pub fn dataplane_avg_qps(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "平均查询/秒",
+            Locale::EnUS => "Avg queries/sec",
+        }
+    }
+    pub fn dataplane_backend_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "后端数量",
+            Locale::EnUS => "Backend Count",
+        }
+    }
+    pub fn dataplane_active_backends(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "活跃上游后端",
+            Locale::EnUS => "Active upstream backends",
+        }
+    }
+    pub fn dataplane_phase_latency_ms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "阶段延迟 (ms)",
+            Locale::EnUS => "Phase Latency (ms)",
+        }
+    }
+    pub fn dataplane_no_phase_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无阶段延迟数据",
+            Locale::EnUS => "No phase data available.",
+        }
+    }
+    pub fn dataplane_phase(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "阶段",
+            Locale::EnUS => "Phase",
+        }
+    }
+    pub fn dataplane_p50_ms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "P50 (ms)",
+            Locale::EnUS => "P50 (ms)",
+        }
+    }
+    pub fn dataplane_p95_ms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "P95 (ms)",
+            Locale::EnUS => "P95 (ms)",
+        }
+    }
+    pub fn dataplane_p99_ms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "P99 (ms)",
+            Locale::EnUS => "P99 (ms)",
+        }
+    }
+    pub fn dataplane_rejection_reasons_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "拒绝原因 (合计)",
+            Locale::EnUS => "Rejection Reasons (total)",
+        }
+    }
+    pub fn dataplane_no_rejections(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无拒绝记录",
+            Locale::EnUS => "No rejections recorded.",
+        }
+    }
+    pub fn dataplane_error_sources_total(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误来源 (合计)",
+            Locale::EnUS => "Error Sources (total)",
+        }
+    }
+    pub fn dataplane_no_error_sources(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无错误来源记录",
+            Locale::EnUS => "No error sources recorded.",
+        }
+    }
+    pub fn dataplane_pg_trace_errors_1h(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "PG Trace 错误 (近 1h)",
+            Locale::EnUS => "PG Trace Errors (last 1h)",
+        }
+    }
+    pub fn dataplane_error_code(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误码",
+            Locale::EnUS => "Error Code",
+        }
+    }
+    pub fn dataplane_status(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态码",
+            Locale::EnUS => "Status",
+        }
+    }
+    pub fn dataplane_upstream_result(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游结果",
+            Locale::EnUS => "Upstream Result",
+        }
+    }
+    pub fn dataplane_count(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数量",
+            Locale::EnUS => "Count",
         }
     }
 }

@@ -941,6 +941,7 @@ fn main() -> Result<()> {
             .max_capacity(10_000)
             .time_to_live(std::time::Duration::from_secs(3600))
             .build(),
+        backend_load: Arc::new(crab_proxy::backend_state::BackendLoadRegistry::default()),
         prewarm_semaphore,
         global_rate: startup_global_rate,
         client_endpoint: client_endpoint.clone(),

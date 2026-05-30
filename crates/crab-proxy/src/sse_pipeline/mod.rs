@@ -35,6 +35,8 @@ pub struct ChunkResult {
 pub struct FlushResult {
     /// Final bytes from the remainder buffer.
     pub client_bytes: Option<Bytes>,
+    /// Usage extracted while draining the remainder (e.g. Codex `response.completed`).
+    pub usage: Option<UsageData>,
 }
 
 /// Trait for pipeline-specific SSE processing.

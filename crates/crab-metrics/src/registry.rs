@@ -87,6 +87,10 @@ pub struct GatewayMetrics {
     pub upstream_key_output_tokens: IntCounterVec,
     pub upstream_key_latency: HistogramVec,
     pub backend_requests: IntCounterVec,
+    pub backend_prefill_latency: HistogramVec,
+    pub backend_upstream_latency: HistogramVec,
+    pub backend_inflight: IntGaugeVec,
+    pub backend_overload_state: IntGaugeVec,
     pub request_body_stage_latency: HistogramVec,
     pub request_phase_latency: HistogramVec,
     pub request_body_stage_samples: IntCounterVec,
@@ -117,6 +121,8 @@ pub struct GatewayMetrics {
     pub trace_write_total: IntCounterVec,
     /// Rejection count by source classification.
     pub rejection_by_source: IntCounterVec,
+    /// Pipeline-level backpressure decisions.
+    pub pipeline_backpressure: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -403,6 +409,40 @@ impl GatewayMetrics {
             &["backend_name", "result"],
         )?;
 
+        let backend_prefill_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_backend_prefill_latency_seconds",
+                "Request start to upstream response headers by backend",
+            )
+            .buckets(vec![0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0]),
+            &["backend_name", "profile", "pipeline", "model"],
+        )?;
+
+        let backend_upstream_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_backend_upstream_latency_seconds",
+                "Upstream response body latency by backend",
+            )
+            .buckets(vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0]),
+            &["backend_name", "profile", "pipeline", "model"],
+        )?;
+
+        let backend_inflight = IntGaugeVec::new(
+            Opts::new(
+                "gateway_backend_inflight",
+                "In-flight requests per upstream backend and profile",
+            ),
+            &["backend_name", "profile"],
+        )?;
+
+        let backend_overload_state = IntGaugeVec::new(
+            Opts::new(
+                "gateway_backend_overload_state",
+                "Backend overload state as one-hot gauges",
+            ),
+            &["backend_name", "profile", "state"],
+        )?;
+
         let request_body_stage_latency = HistogramVec::new(
             HistogramOpts::new(
                 "gateway_request_body_stage_latency_seconds",
@@ -569,6 +609,14 @@ impl GatewayMetrics {
             &["source"],
         )?;
 
+        let pipeline_backpressure = IntCounterVec::new(
+            Opts::new(
+                "gateway_pipeline_backpressure_total",
+                "Pipeline requests rejected by overload backpressure",
+            ),
+            &["pipeline", "profile", "reason"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -607,6 +655,10 @@ impl GatewayMetrics {
             upstream_key_output_tokens,
             upstream_key_latency,
             backend_requests,
+            backend_prefill_latency,
+            backend_upstream_latency,
+            backend_inflight,
+            backend_overload_state,
             request_body_stage_latency,
             request_phase_latency,
             request_body_stage_samples,
@@ -630,6 +682,7 @@ impl GatewayMetrics {
             coalesce_follower,
             trace_write_total,
             rejection_by_source,
+            pipeline_backpressure,
         })
     }
 
@@ -671,6 +724,10 @@ impl GatewayMetrics {
         registry.register(Box::new(self.upstream_key_output_tokens.clone()))?;
         registry.register(Box::new(self.upstream_key_latency.clone()))?;
         registry.register(Box::new(self.backend_requests.clone()))?;
+        registry.register(Box::new(self.backend_prefill_latency.clone()))?;
+        registry.register(Box::new(self.backend_upstream_latency.clone()))?;
+        registry.register(Box::new(self.backend_inflight.clone()))?;
+        registry.register(Box::new(self.backend_overload_state.clone()))?;
         registry.register(Box::new(self.request_body_stage_latency.clone()))?;
         registry.register(Box::new(self.request_phase_latency.clone()))?;
         registry.register(Box::new(self.request_body_stage_samples.clone()))?;
@@ -694,6 +751,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.coalesce_follower.clone()))?;
         registry.register(Box::new(self.trace_write_total.clone()))?;
         registry.register(Box::new(self.rejection_by_source.clone()))?;
+        registry.register(Box::new(self.pipeline_backpressure.clone()))?;
         Ok(())
     }
 
@@ -762,6 +820,12 @@ impl GatewayMetrics {
 
     pub fn record_rejection_by_source(&self, source: &str) {
         self.rejection_by_source.with_label_values(&[source]).inc();
+    }
+
+    pub fn record_pipeline_backpressure(&self, pipeline: &str, profile: &str, reason: &str) {
+        self.pipeline_backpressure
+            .with_label_values(&[pipeline, profile, reason])
+            .inc();
     }
 
     pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {
@@ -1117,6 +1181,46 @@ impl GatewayMetrics {
         self.backend_requests
             .with_label_values(&[backend_name, result])
             .inc();
+    }
+
+    pub fn record_backend_prefill_latency(
+        &self,
+        backend_name: &str,
+        profile: &str,
+        pipeline: &str,
+        model: &str,
+        duration: Duration,
+    ) {
+        self.backend_prefill_latency
+            .with_label_values(&[backend_name, profile, pipeline, model])
+            .observe(duration.as_secs_f64());
+    }
+
+    pub fn record_backend_upstream_latency(
+        &self,
+        backend_name: &str,
+        profile: &str,
+        pipeline: &str,
+        model: &str,
+        duration: Duration,
+    ) {
+        self.backend_upstream_latency
+            .with_label_values(&[backend_name, profile, pipeline, model])
+            .observe(duration.as_secs_f64());
+    }
+
+    pub fn set_backend_inflight(&self, profile: &str, backend_name: &str, inflight: i64) {
+        self.backend_inflight
+            .with_label_values(&[backend_name, profile])
+            .set(inflight);
+    }
+
+    pub fn set_backend_overload_state(&self, profile: &str, backend_name: &str, state: &str) {
+        for candidate in ["ready", "inflight", "cooldown", "latency", "locked"] {
+            self.backend_overload_state
+                .with_label_values(&[backend_name, profile, candidate])
+                .set(if candidate == state { 1 } else { 0 });
+        }
     }
 
     pub fn record_request_body_stage(

@@ -24,6 +24,17 @@ pub(crate) async fn run(
     let status = upstream_response.status.as_u16();
     ctx.upstream.http_status = Some(status);
     ctx.upstream.response_decompress.reset();
+    if !ctx.is_streaming
+        && status == 200
+        && upstream_response
+            .headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("text/event-stream"))
+    {
+        // Passthrough may arm before `"stream": true` appears in the request prefix.
+        ctx.is_streaming = true;
+    }
     if let Some(ce) = upstream_response.headers.get(header::CONTENT_ENCODING) {
         if let Ok(value) = ce.to_str() {
             let parsed = parse_content_encoding(value);

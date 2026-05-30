@@ -95,9 +95,13 @@ impl SsePipeline for ReasoningRewritePipeline {
             client_sse_body.extend_from_slice(&rewritten);
             FlushResult {
                 client_bytes: Some(Bytes::from(rewritten)),
+                usage: None,
             }
         } else {
-            FlushResult { client_bytes: None }
+            FlushResult {
+                client_bytes: None,
+                usage: None,
+            }
         }
     }
 

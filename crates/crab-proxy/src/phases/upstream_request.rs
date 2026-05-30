@@ -45,7 +45,8 @@ pub(crate) async fn run_upstream_request_filter(
         // so the upstream can size the body in advance (avoids chunked transfer-encoding
         // which some upstreams may not handle well for passthrough connections).
         if let Some(len) = ctx.request_passthrough.inbound_content_length {
-            let _ = upstream_request.insert_header("content-length", len.to_string());
+            let outbound_len = len.saturating_add(ctx.request_passthrough.outbound_extra_bytes);
+            let _ = upstream_request.insert_header("content-length", outbound_len.to_string());
         }
         upstream_request.set_send_end_stream(false);
     } else if ctx.new_request_body.is_some() {
@@ -179,32 +180,30 @@ pub(crate) async fn run_upstream_request_filter(
     Ok(())
 }
 
-/// Inject `stream_options.include_usage: true` into a streaming request body so the upstream
-/// API returns token usage in the final SSE chunk. Used by MiMo direct-mimo and request-passthrough
-/// paths that relay raw client bodies without going through `prepare_upstream_request`.
-///
-/// Uses substring-based detection (memchr) instead of a full JSON parse to stay compatible
-/// with the zero-buffer passthrough design.
-pub(crate) fn inject_stream_options_include_usage(mut body: Vec<u8>) -> Vec<u8> {
+/// When `true`, inject even if `"stream": true` is not yet present in the buffer.
+/// Passthrough prefixes often omit the trailing `stream` field (large `messages` first).
+pub(crate) fn inject_stream_options_include_usage(mut body: Vec<u8>, relaxed: bool) -> Vec<u8> {
     // 1. Fast-path: bail if "stream_options" already present
     if memmem::find(&body, b"\"stream_options\"").is_some() {
         return body;
     }
-    // 2. Locate "stream": true
-    let stream_key = b"\"stream\":";
-    let Some(pos) = memmem::find(&body, stream_key) else {
-        return body;
-    };
-    let after = &body[pos + stream_key.len()..];
-    let trimmed = after
-        .iter()
-        .copied()
-        .skip_while(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
-        .collect::<Vec<_>>();
-    if !trimmed.starts_with(b"true") {
-        return body;
+    // 2. Unless relaxed (passthrough prefix), require "stream": true in the same buffer.
+    if !relaxed {
+        let stream_key = b"\"stream\":";
+        let Some(pos) = memmem::find(&body, stream_key) else {
+            return body;
+        };
+        let after = &body[pos + stream_key.len()..];
+        let trimmed = after
+            .iter()
+            .copied()
+            .skip_while(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+            .collect::<Vec<_>>();
+        if !trimmed.starts_with(b"true") {
+            return body;
+        }
     }
-    // 3. Find first '{' (skip leading whitespace) and inject after it
+    // 3. Find first '{' and inject after it
     let brace_pos = body
         .iter()
         .position(|&b| b == b'{')
@@ -238,10 +237,13 @@ pub(crate) async fn run_request_body_filter(
                 *body = None;
                 return Ok(());
             }
-            let mut prefix = std::mem::take(&mut ctx.request_passthrough.buffer);
-            if ctx.is_streaming {
-                prefix = inject_stream_options_include_usage(prefix);
+            let quick =
+                crate::body_quick_parse::quick_parse_request_fields(&ctx.request_passthrough.buffer);
+            if let Some(stream) = quick.stream {
+                ctx.is_streaming = stream;
             }
+            let prefix = std::mem::take(&mut ctx.request_passthrough.buffer);
+            // Prefix was already injected at passthrough handoff (before upstream Content-Length).
             let prefix = Bytes::from(prefix);
             ctx.request_passthrough.prefix_emitted = true;
             ctx.upstream_outbound_body_len += prefix.len();
@@ -352,4 +354,27 @@ pub(crate) async fn run_request_body_filter(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inject_stream_options_include_usage;
+
+    #[test]
+    fn inject_relaxed_inserts_before_stream_field() {
+        let body = br#"{"model":"mimo-v2.5","messages":[{"role":"user","content":"x"}]"#;
+        let out = inject_stream_options_include_usage(body.to_vec(), true);
+        let s = std::str::from_utf8(&out).unwrap();
+        assert!(s.contains("\"stream_options\":{\"include_usage\":true}"));
+    }
+
+    #[test]
+    fn inject_strict_requires_stream_true() {
+        let body = br#"{"model":"mimo-v2.5","messages":[]}"#;
+        let out = inject_stream_options_include_usage(body.to_vec(), false);
+        assert!(!std::str::from_utf8(&out).unwrap().contains("stream_options"));
+        let body = br#"{"model":"mimo-v2.5","stream":true,"messages":[]}"#;
+        let out = inject_stream_options_include_usage(body.to_vec(), false);
+        assert!(std::str::from_utf8(&out).unwrap().contains("stream_options"));
+    }
 }

@@ -96,6 +96,15 @@ pub struct SanitizedLogEntry {
     /// Selected upstream backend node name (for circuit-breaker tracking).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_name: Option<String>,
+    /// Selected upstream backend node name (explicit field for operational queries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_backend_name: Option<String>,
+    /// Backend load state at selection/logging time: ready | inflight | latency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_overload_state: Option<String>,
+    /// Route strategy chosen for this request: ketama | p2c | least_used | cost_optimized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_route_strategy: Option<String>,
     /// Session fingerprint derived from the first user message (SHA-256 prefix).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_fingerprint: Option<String>,
@@ -111,6 +120,23 @@ pub struct SanitizedLogEntry {
     /// Number of prefix bytes captured at passthrough arm time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,
+    #[serde(default)]
+    pub guardrail_blocked: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guardrail_labels: Vec<String>,
+    /// Time spent reading the downstream request body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_read_duration_ms: Option<f64>,
+    /// Downstream body read throughput in bytes per second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_bytes_per_sec: Option<f64>,
+    /// Time between upstream headers being prepared and upstream body marked sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_send_duration_ms: Option<f64>,
+    #[serde(default)]
+    pub pipeline_degraded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degrade_reason: Option<String>,
     /// Upstream HTTP response status code (200, 429, 500, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
@@ -228,11 +254,21 @@ impl SanitizedLogEntry {
             affinity_key: None,
             affinity_kind: None,
             backend_name: None,
+            selected_backend_name: None,
+            backend_overload_state: None,
+            backend_route_strategy: None,
             session_fingerprint: None,
             is_coalesced: false,
             client_key_id: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            guardrail_blocked: false,
+            guardrail_labels: Vec::new(),
+            body_read_duration_ms: None,
+            upload_bytes_per_sec: None,
+            upstream_send_duration_ms: None,
+            pipeline_degraded: false,
+            degrade_reason: None,
             status_code: None,
             error_code: None,
             limit_source: None,

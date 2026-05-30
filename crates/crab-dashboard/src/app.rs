@@ -8,7 +8,6 @@ use crate::components::toast::{ToastContainer, provide_toast};
 use crate::components::topnav::TopNav;
 use crate::locale::{provide_locale, use_translations};
 use crate::pages::cache::CachePage;
-use crate::pages::dataplane::DataPlanePage;
 use crate::pages::keys::KeysPage;
 use crate::pages::live::LivePage;
 use crate::pages::models::ModelsPage;
@@ -98,7 +97,6 @@ fn AuthenticatedShell() -> impl IntoView {
                                     <Route path=path!("/models") view=ModelsPage />
                                     <Route path=path!("/system") view=SystemPage />
                                     <Route path=path!("/cache") view=CachePage />
-                                    <Route path=path!("/dataplane") view=DataPlanePage />
                                     <Route path=path!("/requests") view=RequestsPage />
                                     <Route path=path!("/sessions") view=SessionsRedirectPage />
                                     <Route path=path!("/upstream") view=UpstreamPage />

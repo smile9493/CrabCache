@@ -1,7 +1,10 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+
 use crate::api;
 use crate::components::page_header::PageHeader;
+use crate::components::ui::MetricCard;
+use crate::locale::use_translations;
 
 /// Global refresh interval (seconds).
 const REFRESH_SECS: u64 = 10;
@@ -9,13 +12,13 @@ const REFRESH_SECS: u64 = 10;
 /// Data Plane diagnostics dashboard — SLO summary, phase latency, error attribution.
 #[component]
 pub fn DataPlanePage() -> impl IntoView {
+    let t = use_translations();
     let summary = RwSignal::new(serde_json::Value::Null);
     let phases = RwSignal::new(serde_json::Value::Null);
     let errors = RwSignal::new(serde_json::Value::Null);
     let slo = RwSignal::new(serde_json::Value::Null);
     let fetch_error = RwSignal::new(None::<String>);
 
-    // Fetch all data plane endpoints
     let fetch = {
         let summary = summary;
         let phases = phases;
@@ -29,22 +32,18 @@ pub fn DataPlanePage() -> impl IntoView {
             let slo = slo;
             let fetch_error = fetch_error;
             leptos::task::spawn_local(async move {
-                // Fetch summary
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/summary").await {
                     Ok(data) => summary.set(data),
                     Err(e) => fetch_error.set(Some(e)),
                 }
-                // Fetch phases
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/phases").await {
                     Ok(data) => phases.set(data),
                     Err(e) => fetch_error.set(Some(e)),
                 }
-                // Fetch errors
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/errors").await {
                     Ok(data) => errors.set(data),
                     Err(e) => fetch_error.set(Some(e)),
                 }
-                // Fetch SLO
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/slo").await {
                     Ok(data) => slo.set(data),
                     Err(e) => fetch_error.set(Some(e)),
@@ -53,10 +52,8 @@ pub fn DataPlanePage() -> impl IntoView {
         }
     };
 
-    // Initial fetch
     fetch();
 
-    // Refresh every REFRESH_SECS
     let fetch = fetch;
     leptos::task::spawn_local(async move {
         loop {
@@ -65,152 +62,201 @@ pub fn DataPlanePage() -> impl IntoView {
         }
     });
 
+    let is_loaded = Signal::derive(move || !summary.get().is_null());
+
     view! {
-        <div class="space-y-6 p-4 md:p-6">
-            <PageHeader title=|| "Data Plane" description=|| "Real-time data plane observability: SLO, phase latency, error attribution">
+        <div class="page-content space-y-6">
+            <PageHeader title=move || t.dataplane_page_title() description=move || t.dataplane_page_desc()>
                 <div />
             </PageHeader>
 
             {move || {
                 if let Some(ref err) = fetch_error.get() {
-                    return view! { <div class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm">{err.clone()}</div> }.into_any();
+                    return view! { <div class="alert alert-error">{err.clone()}</div> }.into_any();
+                }
+                view! {}.into_any()
+            }}
+
+            {move || {
+                if !is_loaded.get() {
+                    return view! { <crate::components::ui::Spinner /> }.into_any();
                 }
                 view! {}.into_any()
             }}
 
             // ── SLO Summary Cards ──────────────────────────────────────
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {move || slo_card("Cache Hit Rate", summary.get().get("hit_rate_5m").and_then(|v| v.as_f64()).map(|v| format!("{:.1}%", v * 100.0)).unwrap_or_else(|| "—".to_string()), "Over last 5 minutes")}
-                {move || slo_card("P95 E2E Latency", summary.get().get("e2e_p95_ms").and_then(|v| v.as_f64()).map(|v| format!("{:.1}ms", v)).unwrap_or_else(|| "—".to_string()), "End-to-end")}
-                {move || slo_card("Error Rate", summary.get().get("error_rate").and_then(|v| v.as_f64()).map(|v| format!("{:.4}%", v * 100.0)).unwrap_or_else(|| "—".to_string()), "5xx / total requests")}
-                {move || slo_card("Cost Saved", summary.get().get("cost_saved_usd").and_then(|v| v.as_f64()).map(|v| format!("${:.2}", v)).unwrap_or_else(|| "—".to_string()), "Cumulative USD")}
+                <MetricCard
+                    title=t.dataplane_cache_hit_rate()
+                    value=Signal::derive(move || summary.get().get("hit_rate_5m").and_then(|v| v.as_f64()).map(|v| format!("{:.1}%", v * 100.0)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_last_5min()
+                />
+                <MetricCard
+                    title=t.dataplane_p95_e2e_latency()
+                    value=Signal::derive(move || summary.get().get("e2e_p95_ms").and_then(|v| v.as_f64()).map(|v| format!("{:.1}ms", v)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_end_to_end()
+                />
+                <MetricCard
+                    title=t.dataplane_error_rate()
+                    value=Signal::derive(move || summary.get().get("error_rate").and_then(|v| v.as_f64()).map(|v| format!("{:.4}%", v * 100.0)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_5xx_of_total()
+                />
+                <MetricCard
+                    title=t.dataplane_cost_saved()
+                    value=Signal::derive(move || summary.get().get("cost_saved_usd").and_then(|v| v.as_f64()).map(|v| format!("${:.2}", v)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_cumulative_usd()
+                />
             </div>
 
             // ── SLO Compliance Cards ──────────────────────────────────
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {move || slo_card("Sample Count (Ring)", slo.get().get("sample_count").and_then(|v| v.as_u64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string()), "Metrics history ring")}
-                {move || slo_card("QPS (5m)", slo.get().get("qps_5m").and_then(|v| v.as_f64()).map(|v| format!("{:.1}", v)).unwrap_or_else(|| "—".to_string()), "Avg queries/sec")}
-                {move || slo_card("", "".to_string(), "")}
-                {move || slo_card("Backend Count", summary.get().get("backend_count").and_then(|v| v.as_u64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string()), "Active upstream backends")}
+                <MetricCard
+                    title=t.dataplane_sample_count_ring()
+                    value=Signal::derive(move || slo.get().get("sample_count").and_then(|v| v.as_u64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_metrics_history_ring()
+                />
+                <MetricCard
+                    title=t.dataplane_qps_5m()
+                    value=Signal::derive(move || slo.get().get("qps_5m").and_then(|v| v.as_f64()).map(|v| format!("{:.1}", v)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_avg_qps()
+                />
+                <div />
+                <MetricCard
+                    title=t.dataplane_backend_count()
+                    value=Signal::derive(move || summary.get().get("backend_count").and_then(|v| v.as_u64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string()))
+                    subtitle=t.dataplane_active_backends()
+                />
             </div>
 
             // ── Phase Latency Table ────────────────────────────────────
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Phase Latency (ms)</h3>
-                {move || {
-                    let p = phases.get();
-                    let phase_map = p.get("phases").and_then(|v| v.as_object()).cloned().unwrap_or_default();
-                    let mut phase_names: Vec<String> = phase_map.keys().map(|k| k.clone()).collect();
-                    phase_names.sort();
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <span class="dash-card-title">{t.dataplane_phase_latency_ms()}</span>
+                </div>
+                <div class="dash-card-body">
+                    {move || {
+                        let p = phases.get();
+                        let phase_map = p.get("phases").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                        let mut phase_names: Vec<String> = phase_map.keys().map(|k| k.clone()).collect();
+                        phase_names.sort();
 
-                    if phase_names.is_empty() {
-                        return view! { <p class="text-gray-500 dark:text-gray-400 text-sm italic">No phase data available.</p> }.into_any();
-                    }
+                        if phase_names.is_empty() {
+                            return view! { <p class="text-theme-muted text-sm italic">{t.dataplane_no_phase_data()}</p> }.into_any();
+                        }
 
-                    view! {
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full text-sm">
-                                <thead>
-                                    <tr class="border-b border-gray-200 dark:border-gray-700">
-                                        <th class="text-left py-2 px-3 font-medium text-gray-600 dark:text-gray-300">Phase</th>
-                                        <th class="text-right py-2 px-3 font-medium text-gray-600 dark:text-gray-300">P50 (ms)</th>
-                                        <th class="text-right py-2 px-3 font-medium text-gray-600 dark:text-gray-300">P95 (ms)</th>
-                                        <th class="text-right py-2 px-3 font-medium text-gray-600 dark:text-gray-300">P99 (ms)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {phase_names.iter().map(|name| {
-                                        let phase_data = phase_map.get(name).and_then(|v| v.as_object());
-                                        let p50 = phase_data.and_then(|m| m.get("p50_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
-                                        let p95 = phase_data.and_then(|m| m.get("p95_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
-                                        let p99 = phase_data.and_then(|m| m.get("p99_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
-                                        let bar_width_pct = p95.parse::<f64>().ok().map(|v| (v / 1000.0).min(1.0) * 100.0).unwrap_or(0.0);
+                        view! {
+                            <div class="overflow-x-auto">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>{t.dataplane_phase()}</th>
+                                            <th style="text-align: right">{t.dataplane_p50_ms()}</th>
+                                            <th style="text-align: right">{t.dataplane_p95_ms()}</th>
+                                            <th style="text-align: right">{t.dataplane_p99_ms()}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {phase_names.iter().map(|name| {
+                                            let phase_data = phase_map.get(name).and_then(|v| v.as_object());
+                                            let p50 = phase_data.and_then(|m| m.get("p50_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
+                                            let p95 = phase_data.and_then(|m| m.get("p95_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
+                                            let p99 = phase_data.and_then(|m| m.get("p99_ms")).and_then(|v| v.as_f64()).map(|v| format!("{:.2}", v)).unwrap_or_else(|| "—".to_string());
+                                            let bar_width_pct = p95.parse::<f64>().ok().map(|v| (v / 1000.0).min(1.0) * 100.0).unwrap_or(0.0);
 
-                                        view! {
-                                            <tr class="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                                                <td class="py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{name.to_string()}</td>
-                                                <td class="text-right py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{p50}</td>
-                                                <td class="text-right py-2 px-3 font-mono text-xs text-blue-600 dark:text-blue-400 font-medium">
-                                                    <div class="flex items-center justify-end gap-2">
-                                                        <div class="w-16 h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                                                            <div class="h-full bg-blue-500 rounded-full" style={ format!("width: {}%", bar_width_pct) }></div>
+                                            view! {
+                                                <tr>
+                                                    <td style="font-family: var(--font-mono); font-size: 0.75rem">{name.to_string()}</td>
+                                                    <td style="text-align: right; font-family: var(--font-mono); font-size: 0.75rem">{p50}</td>
+                                                    <td style="text-align: right; font-family: var(--font-mono); font-size: 0.75rem; color: var(--cc-info); font-weight: 500">
+                                                        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem">
+                                                            <div style="width: 4rem; height: 0.375rem; background: var(--cc-bg-elevated); border-radius: 9999px; overflow: hidden">
+                                                                <div style={format!("height: 100%; background: var(--cc-info); border-radius: 9999px; width: {}%", bar_width_pct)}></div>
+                                                            </div>
+                                                            {p95}
                                                         </div>
-                                                        {p95}
-                                                    </div>
-                                                </td>
-                                                <td class="text-right py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{p99}</td>
-                                            </tr>
-                                        }.into_any()
-                                    }).collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
-                        </div>
-                    }.into_any()
-                }}
+                                                    </td>
+                                                    <td style="text-align: right; font-family: var(--font-mono); font-size: 0.75rem">{p99}</td>
+                                                </tr>
+                                            }.into_any()
+                                        }).collect::<Vec<_>>()}
+                                    </tbody>
+                                </table>
+                            </div>
+                        }.into_any()
+                    }}
+                </div>
             </div>
 
             // ── Error Attribution ──────────────────────────────────────
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 // Rejection Reasons
-                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Rejection Reasons (total)</h3>
-                    {move || {
-                        let e = errors.get();
-                        let reasons = e.get("rejection_reasons").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                        if reasons.is_empty() {
-                            return view! { <p class="text-gray-500 dark:text-gray-400 text-sm italic">No rejections recorded.</p> }.into_any();
-                        }
-                        let max_count = reasons.iter().filter_map(|r| r.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
-                        view! {
-                            <div class="space-y-2">
-                                {reasons.into_iter().map(|r| {
-                                    let reason = r.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                                    let count = r.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let pct = max_count as f64;
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <span class="dash-card-title">{t.dataplane_rejection_reasons_total()}</span>
+                    </div>
+                    <div class="dash-card-body">
+                        {move || {
+                            let e = errors.get();
+                            let reasons = e.get("rejection_reasons").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                            if reasons.is_empty() {
+                                return view! { <p class="text-theme-muted text-sm italic">{t.dataplane_no_rejections()}</p> }.into_any();
+                            }
+                            let max_count = reasons.iter().filter_map(|r| r.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
+                            view! {
+                                <div style="display: flex; flex-direction: column; gap: 0.5rem">
+                                    {reasons.into_iter().map(|r| {
+                                        let reason = r.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                                        let count = r.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        let pct = max_count as f64;
 
-                                    view! {
-                                        <div class="flex items-center gap-2">
-                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=reason.clone()>{reason.clone()}</span>
-                                            <div class="flex-1 h-4 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                                                <div class="h-full bg-red-500 rounded-full" style={ format!("width: {}%", (count as f64 / pct) * 100.0) }></div>
+                                        view! {
+                                            <div style="display: flex; align-items: center; gap: 0.5rem">
+                                                <span style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--cc-text-muted); width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap" title=reason.clone()>{reason.clone()}</span>
+                                                <div style="flex: 1; height: 1rem; background: var(--cc-bg-elevated); border-radius: 9999px; overflow: hidden">
+                                                    <div style={format!("height: 100%; background: var(--cc-error); border-radius: 9999px; width: {}%", (count as f64 / pct) * 100.0)}></div>
+                                                </div>
+                                                <span style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--cc-text); width: 4rem; text-align: right">{count}</span>
                                             </div>
-                                            <span class="text-xs font-mono text-gray-700 dark:text-gray-300 w-16 text-right">{count}</span>
-                                        </div>
-                                    }.into_any()
-                                }).collect::<Vec<_>>()}
-                            </div>
-                        }.into_any()
-                    }}
+                                        }.into_any()
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            }.into_any()
+                        }}
+                    </div>
                 </div>
 
                 // Error Sources
-                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Error Sources (total)</h3>
-                    {move || {
-                        let e = errors.get();
-                        let sources = e.get("error_sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                        if sources.is_empty() {
-                            return view! { <p class="text-gray-500 dark:text-gray-400 text-sm italic">No error sources recorded.</p> }.into_any();
-                        }
-                        let max_count = sources.iter().filter_map(|s| s.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
-                        view! {
-                            <div class="space-y-2">
-                                {sources.into_iter().map(|s| {
-                                    let source = s.get("source").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                                    let count = s.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    view! {
-                                        <div class="flex items-center gap-2">
-                                            <span class="text-xs font-mono text-gray-600 dark:text-gray-400 w-36 truncate" title=source.clone()>{source.clone()}</span>
-                                            <div class="flex-1 h-4 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                                                <div class="h-full bg-yellow-500 rounded-full" style={ format!("width: {}%", (count as f64 / max_count as f64) * 100.0) }></div>
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <span class="dash-card-title">{t.dataplane_error_sources_total()}</span>
+                    </div>
+                    <div class="dash-card-body">
+                        {move || {
+                            let e = errors.get();
+                            let sources = e.get("error_sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                            if sources.is_empty() {
+                                return view! { <p class="text-theme-muted text-sm italic">{t.dataplane_no_error_sources()}</p> }.into_any();
+                            }
+                            let max_count = sources.iter().filter_map(|s| s.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
+                            view! {
+                                <div style="display: flex; flex-direction: column; gap: 0.5rem">
+                                    {sources.into_iter().map(|s| {
+                                        let source = s.get("source").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                                        let count = s.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        view! {
+                                            <div style="display: flex; align-items: center; gap: 0.5rem">
+                                                <span style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--cc-text-muted); width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap" title=source.clone()>{source.clone()}</span>
+                                                <div style="flex: 1; height: 1rem; background: var(--cc-bg-elevated); border-radius: 9999px; overflow: hidden">
+                                                    <div style={format!("height: 100%; background: var(--cc-warning); border-radius: 9999px; width: {}%", (count as f64 / max_count as f64) * 100.0)}></div>
+                                                </div>
+                                                <span style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--cc-text); width: 4rem; text-align: right">{count}</span>
                                             </div>
-                                            <span class="text-xs font-mono text-gray-700 dark:text-gray-300 w-16 text-right">{count}</span>
-                                        </div>
-                                    }.into_any()
-                                }).collect::<Vec<_>>()}
-                            </div>
-                        }.into_any()
-                    }}
+                                        }.into_any()
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            }.into_any()
+                        }}
+                    </div>
                 </div>
             </div>
 
@@ -222,51 +268,44 @@ pub fn DataPlanePage() -> impl IntoView {
                     return view! {}.into_any();
                 }
                 view! {
-                    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">PG Trace Errors (last 1h)</h3>
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full text-sm">
-                                <thead>
-                                    <tr class="border-b border-gray-200 dark:border-gray-700">
-                                        <th class="text-left py-2 px-3 font-medium text-gray-600 dark:text-gray-300">Error Code</th>
-                                        <th class="text-left py-2 px-3 font-medium text-gray-600 dark:text-gray-300">Status</th>
-                                        <th class="text-left py-2 px-3 font-medium text-gray-600 dark:text-gray-300">Upstream Result</th>
-                                        <th class="text-right py-2 px-3 font-medium text-gray-600 dark:text-gray-300">Count</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {trace_errors.into_iter().map(|row| {
-                                        let error_code = row.get("error_code").and_then(|v| v.as_str()).unwrap_or("—").to_string();
-                                        let status_code = row.get("status_code").and_then(|v| v.as_i64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string());
-                                        let upstream_result = row.get("upstream_result").and_then(|v| v.as_str()).unwrap_or("—").to_string();
-                                        let count = row.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-                                        view! {
-                                            <tr class="border-b border-gray-100 dark:border-gray-700/50">
-                                                <td class="py-2 px-3 font-mono text-xs text-red-600 dark:text-red-400">{error_code}</td>
-                                                <td class="py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{status_code}</td>
-                                                <td class="py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{upstream_result}</td>
-                                                <td class="text-right py-2 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{count}</td>
-                                            </tr>
-                                        }.into_any()
-                                    }).collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">{t.dataplane_pg_trace_errors_1h()}</span>
+                        </div>
+                        <div class="dash-card-body-flush">
+                            <div class="overflow-x-auto">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>{t.dataplane_error_code()}</th>
+                                            <th>{t.dataplane_status()}</th>
+                                            <th>{t.dataplane_upstream_result()}</th>
+                                            <th style="text-align: right">{t.dataplane_count()}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {trace_errors.into_iter().map(|row| {
+                                            let error_code = row.get("error_code").and_then(|v| v.as_str()).unwrap_or("—").to_string();
+                                            let status_code = row.get("status_code").and_then(|v| v.as_i64()).map(|v| format!("{}", v)).unwrap_or_else(|| "—".to_string());
+                                            let upstream_result = row.get("upstream_result").and_then(|v| v.as_str()).unwrap_or("—").to_string();
+                                            let count = row.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                                            view! {
+                                                <tr>
+                                                    <td style="color: var(--cc-error); font-weight: 500">{error_code}</td>
+                                                    <td>{status_code}</td>
+                                                    <td>{upstream_result}</td>
+                                                    <td style="text-align: right">{count}</td>
+                                                </tr>
+                                            }.into_any()
+                                        }).collect::<Vec<_>>()}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 }.into_any()
             }}
 
-        </div>
-    }
-}
-
-/// Render a single SLO card.
-fn slo_card(title: &str, value: String, subtitle: &str) -> impl IntoView {
-    view! {
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{title}</p>
-            <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{subtitle}</p>
         </div>
     }
 }
