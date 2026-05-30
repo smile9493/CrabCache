@@ -12,6 +12,7 @@ use crate::upstream_headers::{
     prepare_passthrough_upstream_headers, smooth_upstream_client_headers, upstream_header_names,
 };
 use bytes::Bytes;
+use memchr::memmem;
 use pingora_core::prelude::*;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
@@ -40,6 +41,12 @@ pub(crate) async fn run_upstream_request_filter(
             ctx.is_streaming,
             conn_config.upstream_force_http1,
         );
+        // Forward the known Content-Length from the client request to the upstream
+        // so the upstream can size the body in advance (avoids chunked transfer-encoding
+        // which some upstreams may not handle well for passthrough connections).
+        if let Some(len) = ctx.request_passthrough.inbound_content_length {
+            let _ = upstream_request.insert_header("content-length", len.to_string());
+        }
         upstream_request.set_send_end_stream(false);
     } else if ctx.new_request_body.is_some() {
         let features = &proxy.state.features;
@@ -175,26 +182,41 @@ pub(crate) async fn run_upstream_request_filter(
 /// Inject `stream_options.include_usage: true` into a streaming request body so the upstream
 /// API returns token usage in the final SSE chunk. Used by MiMo direct-mimo and request-passthrough
 /// paths that relay raw client bodies without going through `prepare_upstream_request`.
-pub(crate) fn inject_stream_options_include_usage(body: Vec<u8>) -> Vec<u8> {
-    let Ok(mut obj) = serde_json::from_slice::<serde_json::Value>(&body) else {
+///
+/// Uses substring-based detection (memchr) instead of a full JSON parse to stay compatible
+/// with the zero-buffer passthrough design.
+pub(crate) fn inject_stream_options_include_usage(mut body: Vec<u8>) -> Vec<u8> {
+    // 1. Fast-path: bail if "stream_options" already present
+    if memmem::find(&body, b"\"stream_options\"").is_some() {
+        return body;
+    }
+    // 2. Locate "stream": true
+    let stream_key = b"\"stream\":";
+    let Some(pos) = memmem::find(&body, stream_key) else {
         return body;
     };
-    let Some(map) = obj.as_object_mut() else {
+    let after = &body[pos + stream_key.len()..];
+    let trimmed = after
+        .iter()
+        .copied()
+        .skip_while(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+        .collect::<Vec<_>>();
+    if !trimmed.starts_with(b"true") {
         return body;
-    };
-    if !map.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+    }
+    // 3. Find first '{' (skip leading whitespace) and inject after it
+    let brace_pos = body
+        .iter()
+        .position(|&b| b == b'{')
+        .unwrap_or(body.len().saturating_sub(1));
+    if brace_pos >= body.len().saturating_sub(1) {
         return body;
     }
-    let so = map
-        .entry("stream_options")
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    if let Some(so_map) = so.as_object_mut() {
-        so_map.insert("include_usage".into(), serde_json::Value::Bool(true));
-    }
-    match serde_json::to_vec(&obj) {
-        Ok(new_body) => new_body,
-        Err(_) => body,
-    }
+    let insert_at = brace_pos + 1;
+    let injection = b"\"stream_options\":{\"include_usage\":true},";
+    body.reserve(injection.len());
+    body.splice(insert_at..insert_at, injection.iter().copied());
+    body
 }
 
 /// Run the `request_body_filter` phase: replace upstream body with prepared payload.

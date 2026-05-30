@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::context::GatewayContext;
-use crate::sse::UsageData;
+use crate::sse::{UsageData, parse_sse_chunk};
 
 use codex::CodexTranslatePipeline;
 use passthrough::PassthroughPipeline;
@@ -117,6 +117,13 @@ impl SsePipeline for StreamPipeline {
 /// - If the request has a `prepared_request` with an accumulator, use the full reasoning rewrite.
 /// - If the pipeline is CursorDeepSeekV4 but reasoning display is disabled, use silent strip.
 /// - Otherwise, use passthrough.
+///
+/// # Note on MiMo streaming cache
+///
+/// MiMo / GenericRelay requests fall through to [`PassthroughPipeline`], which is a
+/// zero-buffer design.  Streaming responses therefore skip L0/L1 cache — the pipeline
+/// cannot reconstruct the full assistant message at EOS.  Non-streaming MiMo requests
+/// (where this function returns `None`) still write to cache via the normal EOS path.
 pub(crate) fn select_sse_pipeline(
     ctx: &mut GatewayContext,
     store: Arc<ReasoningBackend>,
@@ -157,4 +164,16 @@ pub(crate) fn select_sse_pipeline(
     } else {
         Some(StreamPipeline::Passthrough(PassthroughPipeline::new()))
     }
+}
+
+/// Extract [`UsageData`] from an SSE chunk by parsing events and looking for a usage event.
+/// Shared by all pipeline variants to avoid three copies of the same logic.
+pub(crate) fn extract_usage_from_bytes(bytes: &[u8]) -> Option<UsageData> {
+    let events = parse_sse_chunk(bytes);
+    for event in &events {
+        if let Some(usage) = event.parse_usage() {
+            return Some(usage);
+        }
+    }
+    None
 }

@@ -5,8 +5,7 @@
 
 use bytes::Bytes;
 
-use super::{ChunkResult, FlushResult, SsePipeline};
-use crate::sse::{UsageData, parse_sse_chunk};
+use super::{ChunkResult, FlushResult, SsePipeline, extract_usage_from_bytes};
 use crate::sse_rewrite::apply_silent_strip_to_sse_chunk;
 
 pub(crate) struct SilentStripPipeline {
@@ -47,14 +46,4 @@ impl SsePipeline for SilentStripPipeline {
     fn messages(&self) -> Vec<serde_json::Value> {
         Vec::new()
     }
-}
-
-fn extract_usage_from_bytes(bytes: &[u8]) -> Option<UsageData> {
-    let events = parse_sse_chunk(bytes);
-    for event in &events {
-        if let Some(usage) = event.parse_usage() {
-            return Some(usage);
-        }
-    }
-    None
 }

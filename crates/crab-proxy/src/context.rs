@@ -49,6 +49,7 @@ use crab_semantic::SemanticCache;
 use pingora_core::connectors::http::Connector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -293,6 +294,9 @@ pub struct UpstreamState {
     pub first_body_chunk_logged: bool,
     /// Upstream `Content-Encoding` (stripped from forwarded headers); drives R7 decompress.
     pub response_decompress: crate::upstream_response_decompress::UpstreamDecompressState,
+    /// Saved prepared upstream body for 429 retry — restored in `response_filter` before
+    /// returning a retryable error so that `request_body_filter` can resend the full body.
+    pub prepared_body_for_retry: Option<bytes::Bytes>,
 }
 
 impl UpstreamState {
@@ -321,6 +325,7 @@ impl Default for UpstreamState {
             error_passthrough: false,
             sse_rate_limited: false,
             first_body_chunk_logged: false,
+            prepared_body_for_retry: None,
             response_decompress:
                 crate::upstream_response_decompress::UpstreamDecompressState::default(),
         }
@@ -566,6 +571,9 @@ pub struct FeaturesConfig {
     pub mimo_session_store_ttl_secs: u64,
     #[serde(default = "default_mimo_session_store_max_messages")]
     pub mimo_session_store_max_messages: usize,
+    /// Minimum bytes of request body prefix to trigger MiMo passthrough (overlap connect + upload).
+    #[serde(default = "default_passthrough_prefix_bytes")]
+    pub passthrough_prefix_bytes: usize,
 }
 
 fn default_mimo_keep_recent_turns() -> usize {
@@ -578,6 +586,10 @@ fn default_mimo_session_store_ttl_secs() -> u64 {
 
 fn default_mimo_session_store_max_messages() -> usize {
     200
+}
+
+fn default_passthrough_prefix_bytes() -> usize {
+    1024
 }
 
 fn default_upstream_request_gzip_min_bytes() -> usize {
@@ -596,19 +608,19 @@ pub struct GatewayState {
     pub coalescer: Arc<RequestCoalescer>,
     pub reasoning_store: Arc<ReasoningBackend>,
     pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
-    pub cors_enabled: bool,
+    pub cors_enabled: Arc<AtomicBool>,
     pub trace_logger: Option<Arc<TraceLogger>>,
     pub raw_capture_logger: Option<Arc<RawCaptureLogger>>,
     pub cache_key_namespace: Option<String>,
-    pub pricing: PricingConfig,
+    pub pricing: Arc<parking_lot::RwLock<PricingConfig>>,
     /// Max raw SSE bytes stored per stream cache entry (`0` = never store `sse_body`).
     pub max_sse_cache_bytes: usize,
-    pub max_request_body_bytes: usize,
+    pub max_request_body_bytes: Arc<AtomicUsize>,
     pub request_semaphore: Arc<Semaphore>,
     pub client_key_limiter: Arc<ClientKeyLimiter>,
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
     pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
-    pub features: FeaturesConfig,
+    pub features: parking_lot::RwLock<FeaturesConfig>,
     /// Tracks session fingerprints that have already been seen (for connection pre-warm).
     /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
     pub seen_session_fingerprints: moka::sync::Cache<String, ()>,

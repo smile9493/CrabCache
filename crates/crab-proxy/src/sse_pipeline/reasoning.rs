@@ -9,8 +9,7 @@ use crab_reasoning::{
 };
 use std::sync::Arc;
 
-use super::{ChunkResult, FlushResult, SsePipeline};
-use crate::sse::{UsageData, parse_sse_chunk};
+use super::{ChunkResult, FlushResult, SsePipeline, extract_usage_from_bytes};
 use crate::sse_rewrite::rewrite_upstream_sse_bytes;
 
 pub(crate) struct ReasoningRewritePipeline {
@@ -127,14 +126,4 @@ impl SsePipeline for ReasoningRewritePipeline {
             })
             .sum()
     }
-}
-
-fn extract_usage_from_bytes(bytes: &[u8]) -> Option<UsageData> {
-    let events = parse_sse_chunk(bytes);
-    for event in &events {
-        if let Some(usage) = event.parse_usage() {
-            return Some(usage);
-        }
-    }
-    None
 }

@@ -319,6 +319,7 @@ max_files = 5
 # mimo_session_store = false           # Redis canonical messages per stable session (upstream only)
 # mimo_session_store_ttl_secs = 86400
 # mimo_session_store_max_messages = 200
+# passthrough_prefix_bytes = 1024       # Minimum body bytes to trigger MiMo passthrough (overlap connect + upload)
 
 # ── Log Retention (Admin Dashboard) ──────────────────────────────
 # The admin dashboard runs a background cleanup task every 10 minutes

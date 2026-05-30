@@ -1,11 +1,20 @@
 //! Passthrough SSE pipeline for MiMo, GenericRelay, and other non-reasoning pipelines.
 //!
 //! Forwards upstream SSE chunks directly to the client with no transformation.
+//!
+//! # Streaming cache limitation
+//!
+//! This pipeline is a **zero-buffer passthrough**: it does not accumulate SSE chunks to
+//! reconstruct the final assistant message.  Consequently [`SsePipeline::messages`] always
+//! returns an empty Vec, and the response-body cache write (L0/L1) in
+//! `response_body.rs` is skipped for streaming MiMo/GenericRelay responses.
+//!
+//! Non-streaming MiMo requests still go through the normal (non-passthrough) EOS path
+//! and are cached as usual.
 
 use bytes::Bytes;
 
-use super::{ChunkResult, FlushResult, SsePipeline};
-use crate::sse::{UsageData, parse_sse_chunk};
+use super::{ChunkResult, FlushResult, SsePipeline, extract_usage_from_bytes};
 
 pub(crate) struct PassthroughPipeline;
 
@@ -16,9 +25,8 @@ impl PassthroughPipeline {
 }
 
 impl SsePipeline for PassthroughPipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, _client_sse_body: &mut Vec<u8>) -> ChunkResult {
         let usage = extract_usage_from_bytes(&data);
-        client_sse_body.extend_from_slice(&data);
         ChunkResult {
             client_bytes: Some(data),
             usage,
@@ -36,14 +44,4 @@ impl SsePipeline for PassthroughPipeline {
     fn messages(&self) -> Vec<serde_json::Value> {
         Vec::new()
     }
-}
-
-fn extract_usage_from_bytes(bytes: &[u8]) -> Option<UsageData> {
-    let events = parse_sse_chunk(bytes);
-    for event in &events {
-        if let Some(usage) = event.parse_usage() {
-            return Some(usage);
-        }
-    }
-    None
 }

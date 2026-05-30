@@ -42,6 +42,7 @@ use pingora_core::prelude::*;
 use pingora_proxy::Session;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -496,6 +497,7 @@ async fn run_post_body_phases(
             Err(DeepSeekUserIdLimitError::Exceeded) => {
                 global_metrics().record_deepseek_user_id_concurrency_rejected(tier.as_str());
                 global_metrics().record_rejected("deepseek_user_concurrency_exceeded");
+                global_metrics().record_rejection_by_source("client");
                 let body = deepseek_user_concurrency_exceeded_error_json();
                 if !send_json_error(
                     session,
@@ -660,6 +662,7 @@ async fn run_post_body_phases(
         );
     }
     // #endregion
+    ctx.upstream.prepared_body_for_retry = Some(new_body.clone());
     ctx.new_request_body = Some(new_body.clone());
     ctx.upstream_body_for_capture = Some(new_body);
     ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
@@ -781,7 +784,6 @@ mod tests {
     #[test]
     fn mimo_pipelines_use_direct_passthrough() {
         assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
-        assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
         assert!(mimo_direct_passthrough(RequestPipeline::MimoPaygRelay));
         assert!(!mimo_direct_passthrough(RequestPipeline::GenericRelay));
         assert!(!mimo_direct_passthrough(RequestPipeline::CursorDeepSeekV4));
@@ -789,9 +791,6 @@ mod tests {
 
     #[test]
     fn mimo_pipelines_allow_request_passthrough() {
-        assert!(request_passthrough_allowed_pipeline(
-            RequestPipeline::MimoTokenPlanRelay
-        ));
         assert!(request_passthrough_allowed_pipeline(
             RequestPipeline::MimoTokenPlanRelay
         ));
@@ -805,6 +804,17 @@ mod tests {
 }
 
 /// Early pipeline select on a partial body so direct MiMo relay can start before EOS.
+///
+/// # Exact-cache limitation
+///
+/// The passthrough path skips the exact L0/L1 cache probe because only a small prefix
+/// (typically 1024 bytes) is available at this point — not enough to compute a full
+/// request-body hash or `cache_key`.  Non-passthrough paths (small bodies that arrive
+/// completely in the first read) still go through `run_post_body_phases` → exact cache.
+///
+/// Future work: at passthrough EOS, when the full body hash is available, we could
+/// retroactively probe the cache and short-circuit if a hit is found (unlikely for
+/// streaming, but possible for short conversations).
 fn try_arm_mimo_request_passthrough_on_partial_body(
     proxy: &GatewayProxy,
     session: &mut Session,
@@ -818,14 +828,14 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     domain_pipeline: &Option<String>,
     domain_upstream_profile: &Option<String>,
 ) -> bool {
-    const MIN_PASSTHROUGH_PREFIX_BYTES: usize = 1024;
     if !crate::streaming_body_forward::feature_enabled(proxy) {
         return false;
     }
     if !crate::streaming_body_forward::path_eligible(req_path, req_method) {
         return false;
     }
-    if session.is_body_done() || partial_body.len() < MIN_PASSTHROUGH_PREFIX_BYTES {
+    let min_prefix = proxy.state.features.read().passthrough_prefix_bytes;
+    if session.is_body_done() || partial_body.len() < min_prefix {
         return false;
     }
     {
@@ -915,7 +925,11 @@ async fn request_passthrough_handoff(
         .inbound_content_length
         .unwrap_or(ctx.request_passthrough.buffer.len());
     ctx.upstream_outbound_body_len = 0;
-    // Exact-cache is intentionally disabled on this path; bodies are not buffered.
+    // Exact-cache is intentionally disabled on this path: we only have a 1KB+ prefix,
+    // not the full body, so we cannot compute the complete cache key or body hash.
+    // Non-passthrough paths (small bodies, full body arrives in first read) still run
+    // run_post_body_phases → exact cache.  A future optimisation could retroactively
+    // probe the cache at passthrough EOS when the full body hash is available.
     // Store prefix body for trace logging (request_messages_snapshot will contain first 1KB+).
     ctx.original_request_body = Some(Bytes::from(ctx.request_passthrough.buffer.clone()));
     ctx.parsed_request_payload = None;
@@ -992,7 +1006,7 @@ pub(crate) async fn run(
         // Fall through to normal request processing (auth already in session headers).
     }
 
-    if proxy.state.cors_enabled
+    if proxy.state.cors_enabled.load(Ordering::Relaxed)
         && session.req_header().method == http::Method::OPTIONS
         && send_cors_preflight(session).await
     {
@@ -1276,6 +1290,7 @@ pub(crate) async fn run(
             Ok(guard) => ctx.client_key_guard = Some(guard),
             Err(ClientKeyLimitError::Exceeded) => {
                 global_metrics().record_rejected("client_concurrency_exceeded");
+                global_metrics().record_rejection_by_source("client");
                 let body = client_concurrency_exceeded_error_json();
                 if !send_json_error(
                     session,
@@ -1295,6 +1310,7 @@ pub(crate) async fn run(
         Ok(permit) => ctx.request_permit = Some(permit),
         Err(_) => {
             global_metrics().record_rejected("overloaded");
+            global_metrics().record_rejection_by_source("client");
             let _ = session.respond_error(503).await;
             return Ok(true);
         }
@@ -1317,6 +1333,7 @@ pub(crate) async fn run(
         .domain_within_quota(ctx.domain.as_deref())
     {
         global_metrics().record_rejected("domain_quota_exceeded");
+        global_metrics().record_rejection_by_source("client");
         let _ = session.respond_error(429).await;
         return Ok(true);
     }
@@ -1335,13 +1352,14 @@ pub(crate) async fn run(
         .and_then(|s| s.parse().ok());
 
     let mut full_body = Vec::new();
-    let max_body = proxy.state.max_request_body_bytes;
+    let max_body = proxy.state.max_request_body_bytes.load(Ordering::Relaxed);
     let mut hasher = Sha256::new();
     loop {
         match session.downstream_session.read_request_body().await? {
             Some(data) => {
                 if full_body.len() + data.len() > max_body {
                     global_metrics().record_rejected("body_too_large");
+                    global_metrics().record_rejection_by_source("client");
                     let _ = session.respond_error(413).await;
                     return Ok(true);
                 }
