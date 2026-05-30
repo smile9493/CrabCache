@@ -99,6 +99,8 @@ pub(crate) async fn run(
 
     let features = proxy.state.features.read().clone();
     let selected = router.select_with_hint(affinity_key.as_bytes(), preferred_backend.as_deref());
+    let max_inflight = features.default_max_inflight_per_backend.max(1);
+    let score_weights: crate::backend_state::ScoreWeights = (&features.score_weights).into();
     let mut ranked_backends = rank_backends(
         route_strategy_for(&features),
         &router.ready_backends(),
@@ -106,6 +108,8 @@ pub(crate) async fn run(
         selected.as_ref().map(|b| b.name),
         &proxy.state.backend_load,
         &profile.id,
+        max_inflight,
+        &score_weights,
     );
     if ranked_backends.is_empty()
         && let Some(selected) = selected
@@ -129,7 +133,6 @@ pub(crate) async fn run(
     let mut selected_name = ranked_backends[0].name.clone();
     let mut selected_tls_sni = ranked_backends[0].tls_sni.clone();
 
-    let max_inflight = features.default_max_inflight_per_backend.max(1);
     let prefill_threshold_ms = features.backend_prefill_overload_threshold_ms;
     let mut backend_permit = None;
     let mut overload_state = "ready";
@@ -248,6 +251,8 @@ fn rank_backends(
     selected_name: Option<&str>,
     backend_load: &crate::backend_state::BackendLoadRegistry,
     profile_id: &str,
+    max_inflight: usize,
+    score_weights: &crate::backend_state::ScoreWeights,
 ) -> Vec<crab_route::Backend> {
     let mut backends = ready.to_vec();
     if backends.is_empty() {
@@ -321,6 +326,17 @@ fn rank_backends(
             });
             ranked.extend(backends);
         }
+        BackendRouteStrategy::WeightedKetama => {
+            backends.sort_by(|a, b| {
+                let sa = backend_load.score_backend(profile_id, &a.name, max_inflight, 0, score_weights, true, 0.5);
+                let sb = backend_load.score_backend(profile_id, &b.name, max_inflight, 0, score_weights, true, 0.5);
+                sb.score
+                    .partial_cmp(&sa.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            ranked.extend(backends);
+        }
     }
 
     ranked
@@ -377,6 +393,8 @@ mod tests {
             None,
             &load,
             "profile",
+            8,
+            &crate::backend_state::DEFAULT_SCORE_WEIGHTS,
         );
         assert_eq!(ranked.first().map(|b| b.name.as_str()), Some("b2"));
     }
@@ -392,6 +410,8 @@ mod tests {
             None,
             &load,
             "profile",
+            8,
+            &crate::backend_state::DEFAULT_SCORE_WEIGHTS,
         );
         assert_eq!(ranked.first().map(|b| b.name.as_str()), Some("b2"));
     }

@@ -42,6 +42,7 @@ mod helper_fns;
 mod metrics_helpers;
 mod semantic_runtime;
 mod send_helpers;
+pub mod responses_chain_store;
 mod session_store;
 mod sse_pipeline;
 mod sse_rewrite;
@@ -75,6 +76,7 @@ pub use proxy::{
     GatewayProxy, should_defer_upstream_request_body, should_skip_upstream_trailing_empty_eos,
 };
 pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
+pub use responses_chain_store::ResponsesChainStore;
 pub use runtime::{DomainPolicy, DomainUsage, RuntimeConfig};
 pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
 pub use session_store::SessionStore;

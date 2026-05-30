@@ -243,6 +243,53 @@ impl LbRouter {
         &self.meta
     }
 
+    /// Multi-factor weighted selection: score all ready backends and return the highest.
+    ///
+    /// `score_fn` maps a backend name to a score where **higher is better**.
+    /// Unlike `select_p2c` (which compares two random candidates), this evaluates
+    /// all ready backends — suitable for small backend sets (2-10 nodes).
+    /// Returns `None` if no backends are ready.
+    pub fn select_weighted<F>(&self, score_fn: F) -> Option<SelectedBackend<'_>>
+    where
+        F: Fn(&str) -> f64,
+    {
+        let lb = self.lb.load();
+        let pool = lb.backends();
+        let registered = pool.get_backend();
+
+        let mut best: Option<(&PBackend, f64)> = None;
+        for pb in registered.iter() {
+            if !pool.ready(pb) {
+                continue;
+            }
+            let addr = match pb.addr {
+                PSocketAddr::Inet(a) => a,
+                _ => continue,
+            };
+            let Some(meta) = self.meta.get(&addr) else {
+                continue;
+            };
+            let score = score_fn(&meta.name);
+            match best {
+                None => best = Some((pb, score)),
+                Some((_, prev)) if score > prev => best = Some((pb, score)),
+                _ => {}
+            }
+        }
+
+        best.and_then(|(pb, _)| {
+            let addr = match pb.addr {
+                PSocketAddr::Inet(a) => a,
+                _ => return None,
+            };
+            self.meta.get(&addr).map(|m| SelectedBackend {
+                addr,
+                name: &m.name,
+                tls_sni: &m.tls_sni,
+            })
+        })
+    }
+
     /// Power-of-Two-Choices selection: randomly pick two ready backends,
     /// return the one with the better score.
     ///

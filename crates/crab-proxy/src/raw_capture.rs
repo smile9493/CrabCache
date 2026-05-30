@@ -510,6 +510,8 @@ impl RawCaptureLogger {
             consumer: consumer.map(|s| s.to_string()),
             project_id: project_id.map(|s| s.to_string()),
             pipeline: pipeline.map(|s| s.to_string()),
+            client_path_suffix: meta.client_path_suffix.clone(),
+            client_wire_api: meta.client_wire_api.clone(),
             stream,
             client_body_bytes,
             upstream_body_bytes,

@@ -30,6 +30,14 @@ impl ClientWireApi {
             Self::ChatCompletions
         }
     }
+
+    /// Stable label stored in raw capture / trace (`responses` | `chat_completions`).
+    pub fn as_wire_api_str(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chat_completions",
+            Self::Responses => "responses",
+        }
+    }
 }
 
 /// True for `POST /v1/responses` (Codex CLI and OpenAI Responses clients).
@@ -236,6 +244,9 @@ pub enum BackendRouteStrategy {
     P2c,
     LeastUsed,
     CostOptimized,
+    /// Multi-factor weighted Ketama: score all ready backends on health, latency,
+    /// load, affinity-hit-rate, and 429-rate; pick the best.
+    WeightedKetama,
 }
 
 impl Default for BackendRouteStrategy {
@@ -250,6 +261,7 @@ impl BackendRouteStrategy {
             "p2c" => Self::P2c,
             "least_used" | "least-used" => Self::LeastUsed,
             "cost_optimized" | "cost-optimized" | "eco" => Self::CostOptimized,
+            "weighted_ketama" | "weighted-ketama" | "weighted" => Self::WeightedKetama,
             _ => Self::Ketama,
         }
     }
@@ -260,6 +272,7 @@ impl BackendRouteStrategy {
             Self::P2c => "p2c",
             Self::LeastUsed => "least_used",
             Self::CostOptimized => "cost_optimized",
+            Self::WeightedKetama => "weighted_ketama",
         }
     }
 }
@@ -389,6 +402,10 @@ pub struct StreamState {
     pub(crate) stream_pipeline: Option<crate::sse_pipeline::StreamPipeline>,
     /// Chat Completions → Responses API SSE translator for non-Codex `/v1/responses` clients.
     pub(crate) responses_translator: Option<crate::responses_wire::ChatToResponsesSseTranslator>,
+    /// `response.created` + `response.in_progress` bytes queued at upstream headers (prefill keepalive).
+    pub(crate) responses_wire_bootstrap: Option<Vec<u8>>,
+    /// Bootstrap already merged into the first downstream body chunk.
+    pub(crate) responses_wire_bootstrap_sent: bool,
 }
 
 /// Early-connect passthrough: overlap upstream TCP/TLS while the client body uploads.
@@ -630,6 +647,17 @@ pub struct FeaturesConfig {
     pub mimo_session_store_ttl_secs: u64,
     #[serde(default = "default_mimo_session_store_max_messages")]
     pub mimo_session_store_max_messages: usize,
+    /// Persist Responses `previous_response_id` chains to Redis (Moka L0 + Redis L1).
+    #[serde(default = "default_responses_chain_redis")]
+    pub responses_chain_redis: bool,
+    #[serde(default = "default_responses_chain_ttl_secs")]
+    pub responses_chain_ttl_secs: u64,
+    #[serde(default = "default_responses_chain_max_capacity")]
+    pub responses_chain_max_capacity: u64,
+    #[serde(default = "default_responses_chain_max_value_bytes")]
+    pub responses_chain_max_value_bytes: usize,
+    #[serde(default = "default_responses_chain_max_output_items")]
+    pub responses_chain_max_output_items: usize,
     /// Minimum bytes of request body prefix to trigger MiMo passthrough (overlap connect + upload).
     #[serde(default = "default_passthrough_prefix_bytes")]
     pub passthrough_prefix_bytes: usize,
@@ -668,10 +696,44 @@ pub struct FeaturesConfig {
     #[serde(default = "default_mimo_key_binding_ttl_secs")]
     pub mimo_key_binding_ttl_secs: u64,
     /// Max concurrent requests per upstream key in MiMo key-binding mode.
-    /// When exceeded, the conversation temporarily overflows to another key
-    /// (binding unchanged). Set to 0 to disable the per-key limit.
+    /// When exceeded, the conversation waits up to `mimo_key_overflow_wait_ms`
+    /// before spilling to another key (binding unchanged). Set to 0 to disable.
     #[serde(default = "default_mimo_key_max_inflight")]
     pub mimo_key_max_inflight: usize,
+    /// Milliseconds to wait on the bound key's semaphore before spilling to
+    /// another key. Protects prefix-cache affinity while bounding tail latency.
+    #[serde(default = "default_mimo_key_overflow_wait_ms")]
+    pub mimo_key_overflow_wait_ms: u64,
+    /// Weights for multi-factor weighted Ketama routing (used when backend_route_strategy = weighted_ketama).
+    #[serde(default)]
+    pub score_weights: ScoreWeightsConfig,
+    /// Pre-flight backend health checks before upstream (quota preflight).
+    #[serde(default)]
+    pub preflight: PreflightConfig,
+}
+
+/// Configuration for quota preflight / backend health gating.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreflightConfig {
+    /// Enable quota preflight checks.
+    pub enabled: bool,
+    /// Cooldown (ms) after which a 429-backend can be retried.
+    pub cooldown_ms: u64,
+    /// Max consecutive 429s before marking a backend as skipped.
+    pub max_consecutive_429: u32,
+    /// Skip backend if 429-rate >= this threshold.
+    pub skip_threshold: f64,
+}
+
+impl Default for PreflightConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cooldown_ms: 60_000,
+            max_consecutive_429: 3,
+            skip_threshold: 0.5,
+        }
+    }
 }
 
 impl Default for FeaturesConfig {
@@ -693,6 +755,11 @@ impl Default for FeaturesConfig {
             mimo_session_store: false,
             mimo_session_store_ttl_secs: default_mimo_session_store_ttl_secs(),
             mimo_session_store_max_messages: default_mimo_session_store_max_messages(),
+            responses_chain_redis: default_responses_chain_redis(),
+            responses_chain_ttl_secs: default_responses_chain_ttl_secs(),
+            responses_chain_max_capacity: default_responses_chain_max_capacity(),
+            responses_chain_max_value_bytes: default_responses_chain_max_value_bytes(),
+            responses_chain_max_output_items: default_responses_chain_max_output_items(),
             passthrough_prefix_bytes: default_passthrough_prefix_bytes(),
             backend_load_aware_routing_enabled: false,
             backend_route_strategy: BackendRouteStrategy::default(),
@@ -705,6 +772,9 @@ impl Default for FeaturesConfig {
             mimo_key_binding: false,
             mimo_key_binding_ttl_secs: default_mimo_key_binding_ttl_secs(),
             mimo_key_max_inflight: default_mimo_key_max_inflight(),
+            mimo_key_overflow_wait_ms: default_mimo_key_overflow_wait_ms(),
+            score_weights: ScoreWeightsConfig::default(),
+            preflight: PreflightConfig::default(),
         }
     }
 }
@@ -719,6 +789,26 @@ fn default_mimo_session_store_ttl_secs() -> u64 {
 
 fn default_mimo_session_store_max_messages() -> usize {
     200
+}
+
+fn default_responses_chain_redis() -> bool {
+    true
+}
+
+fn default_responses_chain_ttl_secs() -> u64 {
+    3600
+}
+
+fn default_responses_chain_max_capacity() -> u64 {
+    50_000
+}
+
+fn default_responses_chain_max_value_bytes() -> usize {
+    256 * 1024
+}
+
+fn default_responses_chain_max_output_items() -> usize {
+    64
 }
 
 fn default_passthrough_prefix_bytes() -> usize {
@@ -750,7 +840,39 @@ fn default_mimo_key_binding_ttl_secs() -> u64 {
 }
 
 fn default_mimo_key_max_inflight() -> usize {
-    3
+    6
+}
+
+fn default_mimo_key_overflow_wait_ms() -> u64 {
+    200
+}
+
+/// Serializable config for multi-factor weighted routing scores.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScoreWeightsConfig {
+    pub health: f64,
+    pub latency_inv: f64,
+    pub load_inv: f64,
+    pub affinity_hit: f64,
+    pub rate_429_inv: f64,
+}
+
+impl Default for ScoreWeightsConfig {
+    fn default() -> Self {
+        crate::backend_state::DEFAULT_SCORE_WEIGHTS.into()
+    }
+}
+
+impl From<crate::backend_state::ScoreWeights> for ScoreWeightsConfig {
+    fn from(w: crate::backend_state::ScoreWeights) -> Self {
+        Self { health: w.health, latency_inv: w.latency_inv, load_inv: w.load_inv, affinity_hit: w.affinity_hit, rate_429_inv: w.rate_429_inv }
+    }
+}
+
+impl From<&ScoreWeightsConfig> for crate::backend_state::ScoreWeights {
+    fn from(c: &ScoreWeightsConfig) -> Self {
+        crate::backend_state::ScoreWeights::from_config(c.health, c.latency_inv, c.load_inv, c.affinity_hit, c.rate_429_inv)
+    }
 }
 
 pub struct GatewayState {
@@ -794,6 +916,8 @@ pub struct GatewayState {
     pub session_store: Option<Arc<crate::session_store::SessionStore>>,
     /// MiMo conversation-level key binding store (stable_session → key_id).
     pub key_binding_store: Option<Arc<crate::key_binding::KeyBindingStore>>,
+    /// Codex Responses API `previous_response_id` chain (response_id → prior output[]).
+    pub responses_chain_store: Arc<crate::responses_chain_store::ResponsesChainStore>,
     /// Backend-level circuit breaker registry (4-state machine).
     pub circuit_breakers: std::sync::Arc<crate::circuit_breaker::CircuitBreakerRegistry>,
     /// Model-level lockout registry (per-profile/backend/model).

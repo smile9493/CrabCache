@@ -141,6 +141,12 @@ pub struct CaptureRequestMeta {
     /// Direct TCP peer seen by Pingora (often the reverse proxy hop).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_peer_addr: Option<String>,
+    /// HTTP path seen at gateway (e.g. `/v1/responses`, `/v1/chat/completions`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_path_suffix: Option<String>,
+    /// Client wire protocol: `responses` (Codex CLI) or `chat_completions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_wire_api: Option<String>,
 }
 
 /// Complete raw capture entry written to disk.
@@ -160,6 +166,12 @@ pub struct RawCaptureEntry {
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
+    /// HTTP path at gateway (e.g. `/v1/responses`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_path_suffix: Option<String>,
+    /// `responses` | `chat_completions` — distinguishes Codex / Responses clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_wire_api: Option<String>,
     pub stream: bool,
     pub client_body_bytes: u64,
     pub upstream_body_bytes: u64,

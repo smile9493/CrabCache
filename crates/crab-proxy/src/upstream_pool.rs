@@ -4,7 +4,7 @@ use crab_metrics::global_metrics;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const REASONING_NAMESPACE_AUTH: &str = "gateway-upstream-pool";
 
@@ -50,18 +50,22 @@ struct UpstreamKeySlot {
     inflight: AtomicUsize,
     cooldown_until_ms: AtomicU64,
     supported_models: RwLock<Arc<[String]>>,
+    /// Hard concurrency limit per key. Permits acquired on acquire, released on Guard drop.
+    semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 pub struct UpstreamKeyPool {
     slots: Vec<UpstreamKeySlot>,
     rr: AtomicUsize,
     cooldown_secs: u64,
+    max_inflight: usize,
 }
 
 /// Holds an inflight slot until dropped.
 pub struct UpstreamKeyGuard {
     pool: Arc<UpstreamKeyPool>,
     index: usize,
+    _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl Drop for UpstreamKeyGuard {
@@ -168,8 +172,19 @@ fn auto_assign_account_ids(specs: &mut [UpstreamKeySpec]) {
     }
 }
 
+/// Config `max_inflight == 0` means no per-key cap; tokio rejects `usize::MAX` permits.
+const UNLIMITED_INFLIGHT_PERMITS: usize = 1_048_576;
+
+fn semaphore_permits(max_inflight: usize) -> usize {
+    if max_inflight == 0 {
+        UNLIMITED_INFLIGHT_PERMITS
+    } else {
+        max_inflight
+    }
+}
+
 impl UpstreamKeyPool {
-    pub fn new(mut specs: Vec<UpstreamKeySpec>, cooldown_secs: u64) -> Arc<Self> {
+    pub fn new(mut specs: Vec<UpstreamKeySpec>, cooldown_secs: u64, max_inflight: usize) -> Arc<Self> {
         auto_assign_account_ids(&mut specs);
         ensure_unique_ids(&mut specs);
         let slots: Vec<UpstreamKeySlot> = specs
@@ -189,6 +204,9 @@ impl UpstreamKeyPool {
                     inflight: AtomicUsize::new(0),
                     cooldown_until_ms: AtomicU64::new(0),
                     supported_models: RwLock::new(Arc::from(spec.supported_models.clone())),
+                    semaphore: Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
+                        max_inflight,
+                    ))),
                 }
             })
             .collect();
@@ -197,10 +215,11 @@ impl UpstreamKeyPool {
             slots,
             rr: AtomicUsize::new(0),
             cooldown_secs,
+            max_inflight,
         })
     }
 
-    pub fn from_secrets(secrets: Vec<String>, cooldown_secs: u64) -> Arc<Self> {
+    pub fn from_secrets(secrets: Vec<String>, cooldown_secs: u64, max_inflight: usize) -> Arc<Self> {
         let specs = secrets
             .into_iter()
             .enumerate()
@@ -212,7 +231,7 @@ impl UpstreamKeyPool {
                 supported_models: Vec::new(),
             })
             .collect();
-        Self::new(specs, cooldown_secs)
+        Self::new(specs, cooldown_secs, max_inflight)
     }
 
     pub fn len(&self) -> usize {
@@ -389,6 +408,16 @@ impl UpstreamKeyPool {
                         supported_models = prev.supported_models.read().clone();
                     }
                 }
+                let semaphore = old
+                    .slots
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|prev| prev.semaphore.clone())
+                    .unwrap_or_else(|| {
+                        Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
+                            old.max_inflight,
+                        )))
+                    });
                 UpstreamKeySlot {
                     id,
                     secret: Arc::from(spec.secret.as_str()),
@@ -397,6 +426,7 @@ impl UpstreamKeyPool {
                     inflight: AtomicUsize::new(inflight),
                     cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
                     supported_models: RwLock::new(supported_models),
+                    semaphore,
                 }
             })
             .collect();
@@ -405,6 +435,7 @@ impl UpstreamKeyPool {
             slots: new_slots,
             rr: AtomicUsize::new(old.rr.load(Ordering::Relaxed)),
             cooldown_secs: old.cooldown_secs,
+            max_inflight: old.max_inflight,
         })
     }
 
@@ -432,12 +463,55 @@ impl UpstreamKeyPool {
                 && s.enabled.load(Ordering::Relaxed)
                 && s.cooldown_until_ms.load(Ordering::Relaxed) <= now
         })?;
+        // Try to acquire a semaphore permit (non-blocking).
+        let permit = Arc::clone(&self.slots[idx].semaphore)
+            .try_acquire_owned()
+            .ok()?;
         let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
         global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
         Some(UpstreamKeyGuard {
             pool: Arc::clone(self),
             index: idx,
+            _permit: Some(permit),
         })
+    }
+
+    /// Async variant: wait up to `timeout` for a semaphore permit on the bound key,
+    /// then spill to `acquire_excluding_key` on timeout.
+    pub async fn acquire_with_binding_async(
+        self: &Arc<Self>,
+        bound_key_id: &str,
+        timeout: Duration,
+    ) -> Option<UpstreamKeyGuard> {
+        // Fast path: try acquire bound key immediately.
+        if let Some(guard) = self.acquire_specific(bound_key_id) {
+            return Some(guard);
+        }
+
+        // Slow path: wait for a permit on the bound key with timeout.
+        let idx = self.slots.iter().position(|s| {
+            s.id == bound_key_id
+                && s.enabled.load(Ordering::Relaxed)
+                && s.cooldown_until_ms.load(Ordering::Relaxed) <= now_ms()
+        });
+        if let Some(idx) = idx {
+            let sem_future = Arc::clone(&self.slots[idx].semaphore).acquire_owned();
+            match tokio::time::timeout(timeout, sem_future).await {
+                Ok(Ok(permit)) => {
+                    let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
+                    global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
+                    return Some(UpstreamKeyGuard {
+                        pool: Arc::clone(self),
+                        index: idx,
+                        _permit: Some(permit),
+                    });
+                }
+                _ => {} // Timeout or semaphore closed → spill
+            }
+        }
+
+        // Spill: acquire any key excluding the bound one.
+        self.acquire_excluding_key(bound_key_id)
     }
 
     /// Acquire a key excluding a specific key_id (for overflow when bound key is full).
@@ -549,11 +623,16 @@ impl UpstreamKeyPool {
         }
 
         let idx = best_idx?;
+        // Try semaphore; fail closed so the caller can try the next candidate.
+        let permit = Arc::clone(&self.slots[idx].semaphore)
+            .try_acquire_owned()
+            .ok()?;
         let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
         global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
         Some(UpstreamKeyGuard {
             pool: Arc::clone(self),
             index: idx,
+            _permit: Some(permit),
         })
     }
 
@@ -633,7 +712,7 @@ mod tests {
                 "sk-key-two-bbbbbb".into(),
                 "sk-key-three-ccccc".into(),
             ],
-            60,
+            60, 0,
         );
         let statuses = pool.list_status();
         assert_eq!(statuses.len(), 3);
@@ -663,8 +742,8 @@ mod tests {
 
     #[test]
     fn auto_account_id_is_deterministic() {
-        let pool1 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60);
-        let pool2 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60);
+        let pool1 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60, 0);
+        let pool2 = UpstreamKeyPool::from_secrets(vec!["sk-deterministic-key".into()], 60, 0);
         let s1 = pool1.list_status();
         let s2 = pool2.list_status();
         assert_eq!(s1[0].account_id, s2[0].account_id);

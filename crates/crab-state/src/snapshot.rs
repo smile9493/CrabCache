@@ -87,6 +87,16 @@ pub struct UpstreamProfileSnapshot {
     pub tls_sni: String,
     pub endpoints: Vec<BackendSnapshot>,
     pub keys: Vec<UpstreamKeySnapshot>,
+    /// Profile ID to try when this profile's upstream fails (5xx, 429, timeout).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_profile_id: Option<String>,
+    /// Maximum number of fallback attempts per request (default 2).
+    #[serde(default = "default_fallback_max_retries")]
+    pub fallback_max_retries: u32,
+}
+
+fn default_fallback_max_retries() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -207,6 +217,8 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                     provider: profile.provider.as_str().to_string(),
                     base_url: profile.base_url.clone(),
                     fallback_model: profile.fallback_model.clone(),
+                    fallback_profile_id: profile.fallback_profile_id.clone(),
+                    fallback_max_retries: profile.fallback_max_retries,
                     tls_sni: profile.tls_sni.clone(),
                     endpoints,
                     keys,
@@ -314,6 +326,8 @@ pub fn apply_snapshot_to_runtime(
                 tls_sni: Some(p.tls_sni.clone()),
                 default_weight: 1,
                 proxy_url: None,
+                fallback_profile_id: p.fallback_profile_id.clone(),
+                fallback_max_retries: p.fallback_max_retries,
             };
             // Apply key fallback: explicit -> default profile -> legacy global pool.
             let resolved_specs = resolve_profile_key_specs(specs, runtime, &p.id);
@@ -366,7 +380,7 @@ pub fn apply_snapshot_to_runtime(
                 supported_models: k.supported_models.clone(),
             })
             .collect();
-        let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs);
+        let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs, 0);
         let default_id = runtime.default_upstream_profile_id();
         runtime
             .replace_profile_pool(&default_id, pool)

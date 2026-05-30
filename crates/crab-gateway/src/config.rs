@@ -613,7 +613,7 @@ impl GatewayConfig {
                 .clone()
                 .unwrap_or_else(|| self.resolved_tls_sni());
             let keys = self.profile_key_secrets(&profile);
-            let pool = UpstreamKeyPool::from_secrets(keys, cooldown);
+            let pool = UpstreamKeyPool::from_secrets(keys, cooldown, 0);
             let pool_handle = Arc::new(RwLock::new(pool));
             map.insert(
                 profile.id.clone(),
@@ -626,6 +626,8 @@ impl GatewayConfig {
                     router,
                     upstream_pool: pool_handle,
                     proxy_url: None,
+                    fallback_profile_id: None,
+                    fallback_max_retries: 2,
                 }),
             );
         }

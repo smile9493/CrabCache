@@ -1071,6 +1071,7 @@ pub async fn fetch_capture_list(
     request_hash: Option<&str>,
     session_fingerprint: Option<&str>,
     backend_name: Option<&str>,
+    client_wire_api: Option<&str>,
 ) -> Result<crate::types::CaptureListResponse, String> {
     let mut path = format!("{}/capture/list?hours={}", API_BASE, hours);
     if let Some(l) = limit {
@@ -1093,6 +1094,9 @@ pub async fn fetch_capture_list(
     }
     if let Some(bn) = backend_name.filter(|s| !s.is_empty()) {
         path.push_str(&format!("&backend_name={}", percent_encode_query(bn)));
+    }
+    if let Some(wire) = client_wire_api.filter(|s| !s.is_empty()) {
+        path.push_str(&format!("&client_wire_api={}", percent_encode_query(wire)));
     }
     fetch_json(&path).await
 }

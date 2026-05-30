@@ -440,6 +440,43 @@ fn main() -> Result<()> {
         None
     };
 
+    let runtime_handle = rt.handle().clone();
+    let responses_chain_store = if config.features.responses_chain_redis {
+        match rt.block_on(async {
+            crab_proxy::ResponsesChainStore::new_tiered(
+                config.features.responses_chain_max_capacity,
+                config.features.responses_chain_ttl_secs,
+                &config.cache.l1_redis_url,
+                config.features.responses_chain_max_value_bytes,
+                config.features.responses_chain_max_output_items,
+                runtime_handle.clone(),
+            )
+            .await
+        }) {
+            Ok(store) => {
+                tracing::info!("Responses chain store enabled (Moka L0 + Redis L1 crab:responses_chain:*)");
+                store
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Responses chain Redis unavailable; using Moka L0 only"
+                );
+                crab_proxy::ResponsesChainStore::new_l0_only(
+                    config.features.responses_chain_max_capacity,
+                    config.features.responses_chain_ttl_secs,
+                    runtime_handle.clone(),
+                )
+            }
+        }
+    } else {
+        crab_proxy::ResponsesChainStore::new_l0_only(
+            config.features.responses_chain_max_capacity,
+            config.features.responses_chain_ttl_secs,
+            runtime_handle.clone(),
+        )
+    };
+
     let semantic_cache = if config.semantic.enabled {
         let pool = EmbedderPool::load(
             &config.semantic.model_path,
@@ -956,6 +993,7 @@ fn main() -> Result<()> {
         client_endpoint: client_endpoint.clone(),
         session_store,
         key_binding_store,
+        responses_chain_store,
         circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
         model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default()),
         client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),

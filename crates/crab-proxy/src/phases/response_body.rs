@@ -328,6 +328,8 @@ pub(crate) fn run(
                         &ctx.model,
                         result.client_bytes,
                     );
+                    result.client_bytes =
+                        crate::responses_wire::prepend_responses_wire_bootstrap(ctx, result.client_bytes);
                 }
                 *body = result.client_bytes;
             } else {
@@ -550,6 +552,14 @@ pub(crate) fn run(
     }
 
     if end_of_stream && ctx.is_streaming {
+        if crate::responses_wire::needs_responses_wire_translate(ctx)
+            && !ctx.stream.responses_wire_bootstrap_sent
+            && let Some(bootstrap) = ctx.stream.responses_wire_bootstrap.take()
+        {
+            ctx.stream.responses_wire_bootstrap_sent = true;
+            *body = Some(bytes::Bytes::from(bootstrap));
+        }
+
         if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
             let flush = pipeline.flush_remainder(&mut ctx.stream.client_sse_body);
             if pipeline.reasoning_finalized() {
@@ -569,15 +579,90 @@ pub(crate) fn run(
                 if !tail.is_empty() {
                     *body = Some(bytes::Bytes::from(tail));
                 }
+                if translator.is_completed() {
+                    crate::responses_wire::store_responses_chain_output(
+                        &proxy.state.responses_chain_store,
+                        translator.response_id(),
+                        translator.completed_output(),
+                    );
+                }
+            } else if ctx.upstream.http_status.is_some_and(|s| s == 200) {
+                let model = ctx.model.clone();
+                crate::responses_wire::arm_responses_wire_stream(ctx, &model);
+                if let Some(translator) = ctx.stream.responses_translator.as_mut() {
+                    let tail = translator.flush();
+                    if !tail.is_empty() {
+                        *body = Some(bytes::Bytes::from(tail));
+                    }
+                    if translator.is_completed() {
+                        crate::responses_wire::store_responses_chain_output(
+                            &proxy.state.responses_chain_store,
+                            translator.response_id(),
+                            translator.completed_output(),
+                        );
+                    }
+                }
+            }
+        }
+
+        if crate::responses_wire::needs_responses_wire_translate(ctx)
+            && ctx.client_wire_api == crate::context::ClientWireApi::Responses
+            && !crate::sse::sse_bytes_contains_event(&ctx.stream.client_sse_body, "response.completed")
+            && !ctx
+                .stream
+                .responses_translator
+                .as_ref()
+                .is_some_and(|t| t.is_completed())
+        {
+            let model = ctx.model.as_str();
+            let resp_id = ctx
+                .stream
+                .responses_translator
+                .as_ref()
+                .map(|t| t.response_id().to_string())
+                .unwrap_or_else(|| format!("resp_{}", uuid::Uuid::new_v4().simple()));
+            let created_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let completed = serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "id": resp_id,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": model,
+                    "status": "completed",
+                    "output": ctx.stream.responses_translator.as_ref().map(|t| t.completed_output()).unwrap_or_default(),
+                    "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 },
+                }
+            });
+            if let Ok(line) = serde_json::to_string(&completed) {
+                let mut synthetic = format!("event: response.completed\ndata: {line}\n\n");
+                synthetic.push_str("data: [DONE]\n\n");
+                let mut merged = Vec::new();
+                if let Some(existing) = body.take() {
+                    merged.extend_from_slice(&existing);
+                }
+                merged.extend_from_slice(synthetic.as_bytes());
+                *body = Some(bytes::Bytes::from(merged));
+                if let Some(translator) = ctx.stream.responses_translator.as_ref() {
+                    crate::responses_wire::store_responses_chain_output(
+                        &proxy.state.responses_chain_store,
+                        translator.response_id(),
+                        translator.completed_output(),
+                    );
+                }
+                warn!(
+                    request_id = %ctx.request_id,
+                    "Upstream disconnected without response.completed; synthesized Responses completion"
+                );
             }
         }
 
         // CodexRelay + Responses API: upstream SSE passes through verbatim.
         // If the upstream disconnected before sending `response.completed`,
         // synthesize one so the client doesn't hang waiting for it.
-        // NOTE: for non-Codex pipelines (MiMo/DeepSeek) with Responses wire,
-        // ChatToResponsesSseTranslator handles response.completed via its
-        // completed_sent flag, so no synthesis is needed here.
         if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
             && ctx.client_wire_api == crate::context::ClientWireApi::Responses
             && !crate::sse::sse_bytes_contains_event(&ctx.accumulated_body, "response.completed")

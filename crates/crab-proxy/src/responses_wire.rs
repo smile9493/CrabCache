@@ -7,9 +7,11 @@ use http::Uri;
 use pingora_http::RequestHeader;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::context::{ClientWireApi, GatewayContext};
+use crate::responses_chain_store::ResponsesChainStore;
 use crate::sse::parse_sse_chunk;
 
 /// Upstream path for OpenAI-compatible chat backends (DeepSeek, MiMo, …).
@@ -29,7 +31,88 @@ pub fn apply_responses_wire_upstream_request(req: &mut RequestHeader) {
     }
 }
 
+/// Expand Codex `previous_response_id` chains using gateway-stored prior `output[]`.
+pub async fn apply_responses_chain(
+    payload: &mut Value,
+    store: &ResponsesChainStore,
+) {
+    let Some(prev_id) = payload
+        .get("previous_response_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let Some(prev_output) = store.get(prev_id).await else {
+        tracing::debug!(
+            previous_response_id = prev_id,
+            "responses chain store miss — follow-up may lack prior tool context"
+        );
+        return;
+    };
+    let prev_inputs: Vec<Value> = prev_output
+        .iter()
+        .filter_map(responses_output_item_to_input)
+        .collect();
+    let mut merged_input = prev_inputs.clone();
+    match payload.get("input") {
+        Some(Value::String(text)) if !text.is_empty() => {
+            merged_input.push(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": text }],
+            }));
+        }
+        Some(Value::Array(items)) if items.is_empty() => {}
+        Some(Value::Array(items)) => {
+            // Codex normally sends only the delta after `previous_response_id`. If the client
+            // resends a full transcript, avoid duplicating the stored chain (OmniRoute #1729).
+            if items.len() > prev_inputs.len().saturating_add(2) {
+                merged_input = items.clone();
+            } else {
+                merged_input.extend(items.iter().cloned());
+            }
+        }
+        _ => {}
+    }
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("input".into(), Value::Array(merged_input));
+        obj.remove("previous_response_id");
+    }
+}
+
+fn responses_output_item_to_input(item: &Value) -> Option<Value> {
+    match item.get("type").and_then(|t| t.as_str())? {
+        "message" => Some(json!({
+            "type": "message",
+            "role": item.get("role").and_then(|v| v.as_str()).unwrap_or("assistant"),
+            "content": item.get("content").cloned().unwrap_or(Value::Array(vec![])),
+        })),
+        "function_call" => Some(json!({
+            "type": "function_call",
+            "call_id": item.get("call_id").cloned().unwrap_or(Value::String(String::new())),
+            "name": item.get("name").cloned().unwrap_or(Value::Null),
+            "arguments": item
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}"),
+        })),
+        "reasoning" => None,
+        _ => None,
+    }
+}
+
+/// Persist completed Responses `output[]` for follow-up requests using `previous_response_id`.
+pub fn store_responses_chain_output(
+    store: &ResponsesChainStore,
+    response_id: &str,
+    output: Vec<Value>,
+) {
+    store.put(response_id, output);
+}
+
 /// Convert a Responses API request body into Chat Completions JSON for upstream relay.
+/// Aligned with OmniRoute `openai-responses.ts` (turn grouping, input sanitization).
 pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
     if payload
         .get("messages")
@@ -59,68 +142,243 @@ pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
             messages.push(json!({ "role": "user", "content": text }));
         }
         Some(Value::Array(items)) => {
-            for item in items {
-                append_responses_input_item(item, &mut messages);
-            }
+            let sanitized = sanitize_responses_input_items(items);
+            messages.extend(convert_responses_input_to_messages(&sanitized));
         }
         _ => {}
     }
 
+    messages = filter_orphaned_tool_messages(&messages);
+
+    // Responses API fields that Chat Completions backends reject or ignore.
     out.remove("input");
     out.remove("instructions");
     out.remove("previous_response_id");
     out.remove("prompt");
+    out.remove("include");
+    out.remove("background");
+    out.remove("store");
+    out.remove("reasoning");
+    out.remove("safety_identifier");
     out.insert("messages".into(), Value::Array(messages));
 
     if let Some(max_out) = payload.get("max_output_tokens") {
         out.insert("max_tokens".into(), max_out.clone());
         out.remove("max_output_tokens");
+    } else if let Some(mct) = payload.get("max_completion_tokens") {
+        out.insert("max_tokens".into(), mct.clone());
+        out.remove("max_completion_tokens");
     }
 
     if let Some(tools) = payload.get("tools").and_then(|v| v.as_array()) {
-        out.insert("tools".into(), Value::Array(convert_tools_responses_to_chat(tools)));
+        out.insert(
+            "tools".into(),
+            Value::Array(convert_tools_responses_to_chat(tools)),
+        );
+    }
+
+    if let Some(tc) = out.get("tool_choice").and_then(|v| v.as_object()).cloned() {
+        if tc.get("type").and_then(|t| t.as_str()) == Some("function")
+            && tc.get("name").is_some()
+            && tc.get("function").is_none()
+        {
+            out.insert(
+                "tool_choice".into(),
+                json!({
+                    "type": "function",
+                    "function": { "name": tc.get("name").cloned().unwrap_or(Value::Null) },
+                }),
+            );
+        }
     }
 
     Value::Object(out)
 }
 
-fn append_responses_input_item(item: &Value, messages: &mut Vec<Value>) {
-    let item_type = item.get("type").and_then(|t| t.as_str());
-    match item_type {
-        Some("function_call") => {
-            messages.push(json!({
-                "role": "assistant",
-                "content": null,
-                "tool_calls": [{
-                    "id": item.get("call_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "type": "function",
-                    "function": {
-                        "name": item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                        "arguments": item.get("arguments").and_then(|v| v.as_str()).unwrap_or(""),
-                    }
-                }]
-            }));
+/// Drop Codex internal runtime frames (e.g. `phase: commentary`) before upstream relay.
+fn sanitize_responses_input_items(items: &[Value]) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|item| !is_internal_assistant_message(item))
+        .map(sanitize_responses_input_item_ids)
+        .collect()
+}
+
+fn is_internal_assistant_message(item: &Value) -> bool {
+    let Some(obj) = item.as_object() else {
+        return false;
+    };
+    let item_type = match obj.get("type").and_then(|t| t.as_str()) {
+        Some(t) => t,
+        None if obj.get("role").is_some() => "message",
+        _ => return false,
+    };
+    if item_type != "message" {
+        return false;
+    }
+    if obj.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+        return false;
+    }
+    let phase = obj
+        .get("phase")
+        .and_then(|p| p.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    phase == "commentary"
+}
+
+fn sanitize_function_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(128)
+        .collect()
+}
+
+fn sanitize_responses_input_item_ids(item: &Value) -> Value {
+    let Some(obj) = item.as_object() else {
+        return item.clone();
+    };
+    let item_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let mut next = obj.clone();
+    if (item_type == "function_call" || item_type == "function_call_output")
+        && let Some(name) = next.get("name").and_then(|v| v.as_str())
+        && (!name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            || name.len() > 128)
+    {
+        next.insert("name".into(), Value::String(sanitize_function_name(name)));
+    }
+    let Some(id) = next.get("id").and_then(|v| v.as_str()) else {
+        return Value::Object(next);
+    };
+    let expected_prefix = match item_type {
+        "function_call" => "fc_",
+        "message" => "msg_",
+        "reasoning" => "rs_",
+        _ => "",
+    };
+    if expected_prefix.is_empty() || id.starts_with(expected_prefix) {
+        return Value::Object(next);
+    }
+    next.remove("id");
+    Value::Object(next)
+}
+
+/// Group `function_call` items into assistant `tool_calls` turns (OmniRoute-compatible).
+fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
+    let mut messages: Vec<Value> = Vec::new();
+    let mut current_assistant: Option<Map<String, Value>> = None;
+
+    let flush_assistant = |messages: &mut Vec<Value>, current: &mut Option<Map<String, Value>>| {
+        if let Some(msg) = current.take() {
+            messages.push(Value::Object(msg));
         }
-        Some("function_call_output") => {
-            let output = item
-                .get("output")
-                .map(content_value_to_string)
-                .unwrap_or_default();
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": item.get("call_id").and_then(|v| v.as_str()).unwrap_or(""),
-                "content": output,
-            }));
+    };
+
+    for item in items {
+        let item_type = item
+            .get("type")
+            .and_then(|t| t.as_str())
+            .or_else(|| item.get("role").map(|_| "message"));
+
+        match item_type {
+            Some("reasoning") => continue,
+            Some("message") => {
+                flush_assistant(&mut messages, &mut current_assistant);
+                let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                let content = responses_content_to_chat(item.get("content"), role);
+                if content_is_nonempty(&content) {
+                    messages.push(json!({ "role": role, "content": content }));
+                }
+            }
+            Some("function_call") => {
+                let name = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let call_id = item
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let arguments = function_call_arguments_to_string(item.get("arguments"));
+                let entry = current_assistant.get_or_insert_with(|| {
+                    let mut m = Map::new();
+                    m.insert("role".into(), json!("assistant"));
+                    m.insert("content".into(), Value::Null);
+                    m.insert("tool_calls".into(), json!([]));
+                    m
+                });
+                if let Some(arr) = entry.get_mut("tool_calls").and_then(|v| v.as_array_mut()) {
+                    arr.push(json!({
+                        "id": call_id,
+                        "type": "function",
+                        "function": { "name": name, "arguments": arguments },
+                    }));
+                }
+            }
+            Some("function_call_output") => {
+                flush_assistant(&mut messages, &mut current_assistant);
+                let output = item
+                    .get("output")
+                    .map(content_value_to_string)
+                    .unwrap_or_default();
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": item.get("call_id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "content": output,
+                }));
+            }
+            _ => {}
         }
-        Some("message") | None => {
-            let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-            let content = responses_content_to_chat(item.get("content"), role);
-            if content_is_nonempty(&content) {
-                messages.push(json!({ "role": role, "content": content }));
+    }
+
+    flush_assistant(&mut messages, &mut current_assistant);
+    messages
+}
+
+fn function_call_arguments_to_string(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()),
+        None => "{}".to_string(),
+    }
+}
+
+fn filter_orphaned_tool_messages(messages: &[Value]) -> Vec<Value> {
+    let mut call_ids = std::collections::HashSet::new();
+    for msg in messages {
+        if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tcs {
+                if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                    call_ids.insert(id.to_string());
+                }
             }
         }
-        _ => {}
     }
+    messages
+        .iter()
+        .filter(|msg| {
+            if msg.get("role").and_then(|r| r.as_str()) == Some("tool") {
+                msg.get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| call_ids.contains(id))
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 fn responses_content_to_chat(content: Option<&Value>, role: &str) -> Value {
@@ -203,6 +461,11 @@ fn content_is_nonempty(content: &Value) -> bool {
 fn convert_tools_responses_to_chat(tools: &[Value]) -> Vec<Value> {
     tools
         .iter()
+        .filter(|tool| {
+            tool.get("type")
+                .and_then(|t| t.as_str())
+                .map_or(true, |t| !t.starts_with("tool_search"))
+        })
         .map(|tool| {
             if tool.get("type").and_then(|t| t.as_str()) == Some("function")
                 && tool.get("function").is_none()
@@ -254,9 +517,11 @@ pub struct ChatToResponsesSseTranslator {
     in_thinking: bool,
     tool_calls: HashMap<u32, ToolCallState>,
     pending_usage: Option<Value>,
-    #[allow(dead_code)]
     model: String,
+    last_emit_at: Option<Instant>,
 }
+
+const RESPONSES_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 
 impl ChatToResponsesSseTranslator {
     pub fn new(model: &str) -> Self {
@@ -284,15 +549,97 @@ impl ChatToResponsesSseTranslator {
             tool_calls: HashMap::new(),
             pending_usage: None,
             model: model.to_string(),
+            last_emit_at: None,
         }
+    }
+
+    pub fn response_id(&self) -> &str {
+        &self.response_id
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.completed_sent
+    }
+
+    /// Emit `response.created` + `response.in_progress` before upstream body (Codex prefill keepalive).
+    pub fn bootstrap_stream(&mut self) -> Vec<u8> {
+        if self.started {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        self.started = true;
+        self.emit(
+            &mut out,
+            json!({
+                "type": "response.created",
+                "response": {
+                    "id": self.response_id,
+                    "object": "response",
+                    "created_at": self.created_at,
+                    "status": "in_progress",
+                    "background": false,
+                    "error": null,
+                    "model": self.model,
+                    "output": [],
+                }
+            }),
+        );
+        self.emit(
+            &mut out,
+            json!({
+                "type": "response.in_progress",
+                "response": {
+                    "id": self.response_id,
+                    "object": "response",
+                    "created_at": self.created_at,
+                    "status": "in_progress",
+                    "model": self.model,
+                }
+            }),
+        );
+        out
+    }
+
+    pub fn completed_output(&self) -> Vec<Value> {
+        let mut output: Vec<Value> = Vec::new();
+        if let Some(rs_id) = &self.reasoning_id {
+            output.push(json!({
+                "id": rs_id,
+                "type": "reasoning",
+                "summary": [{ "type": "summary_text", "text": self.reasoning_text }],
+            }));
+        }
+        if self.msg_item_added {
+            output.push(json!({
+                "id": self.msg_id(self.msg_index),
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "annotations": [], "text": self.msg_text }],
+            }));
+        }
+        for entry in self.tool_calls.values() {
+            if entry.call_id.is_empty() {
+                continue;
+            }
+            output.push(json!({
+                "id": format!("fc_{}", entry.call_id),
+                "type": "function_call",
+                "call_id": entry.call_id,
+                "name": entry.name,
+                "arguments": if entry.args_buf.is_empty() { "{}" } else { &entry.args_buf },
+            }));
+        }
+        output
     }
 
     pub fn translate_chunk(&mut self, chunk: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
+        self.maybe_emit_keepalive(&mut out);
         for event in parse_sse_chunk(chunk) {
             if event.is_done() {
                 self.close_all(&mut out);
                 self.emit_completed(&mut out);
+                append_done_marker(&mut out);
                 continue;
             }
             let Ok(value) = serde_json::from_str::<Value>(event.data) else {
@@ -327,6 +674,7 @@ impl ChatToResponsesSseTranslator {
                             "status": "in_progress",
                             "background": false,
                             "error": null,
+                            "model": self.model,
                             "output": [],
                         }
                     }),
@@ -340,6 +688,7 @@ impl ChatToResponsesSseTranslator {
                             "object": "response",
                             "created_at": self.created_at,
                             "status": "in_progress",
+                            "model": self.model,
                         }
                     }),
                 );
@@ -411,7 +760,29 @@ impl ChatToResponsesSseTranslator {
         let mut out = Vec::new();
         self.close_all(&mut out);
         self.emit_completed(&mut out);
+        if self.completed_sent {
+            append_done_marker(&mut out);
+        }
         out
+    }
+
+    fn maybe_emit_keepalive(&mut self, out: &mut Vec<u8>) {
+        if !self.started || self.completed_sent {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_emit_at
+            .is_some_and(|last| now.duration_since(last) >= RESPONSES_SSE_KEEPALIVE)
+        {
+            // OmniRoute OPENAI_RESPONSES_IN_PROGRESS heartbeat for Codex CLI.
+            out.extend_from_slice(b"data: {\"type\":\"response.in_progress\"}\n\n");
+            self.last_emit_at = Some(now);
+        }
+    }
+
+    fn touch_emit(&mut self) {
+        self.last_emit_at = Some(Instant::now());
     }
 
     fn emit(&mut self, out: &mut Vec<u8>, mut data: Value) {
@@ -420,6 +791,7 @@ impl ChatToResponsesSseTranslator {
             obj.insert("sequence_number".into(), json!(self.seq));
         }
         append_responses_event(out, data);
+        self.touch_emit();
     }
 
     fn msg_id(&self, idx: i32) -> String {
@@ -641,9 +1013,12 @@ impl ChatToResponsesSseTranslator {
                 entry.call_id = id;
             }
         }
+        if let Some(args) = &args_delta {
+            entry.args_buf.push_str(args);
+        }
 
-        let should_add_item = !entry.item_added && !entry.call_id.is_empty();
-        let add_payload = if should_add_item {
+        let add_item = !entry.item_added && !entry.call_id.is_empty();
+        let add_payload = if add_item {
             entry.item_added = true;
             Some((
                 entry.call_id.clone(),
@@ -653,22 +1028,8 @@ impl ChatToResponsesSseTranslator {
         } else {
             None
         };
-
-        if let Some(args) = args_delta {
-            entry.args_buf.push_str(&args);
-            if !entry.call_id.is_empty() {
-                let call_id = entry.call_id.clone();
-                self.emit(
-                    out,
-                    json!({
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": format!("fc_{call_id}"),
-                        "output_index": tc_idx,
-                        "delta": args,
-                    }),
-                );
-            }
-        }
+        let emit_args = args_delta.filter(|_| !entry.call_id.is_empty());
+        let call_id_for_delta = entry.call_id.clone();
 
         if let Some((call_id, name, idx)) = add_payload {
             self.emit(
@@ -683,6 +1044,18 @@ impl ChatToResponsesSseTranslator {
                         "call_id": call_id,
                         "name": name,
                     },
+                }),
+            );
+        }
+
+        if let Some(args) = emit_args {
+            self.emit(
+                out,
+                json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": format!("fc_{call_id_for_delta}"),
+                    "output_index": tc_idx,
+                    "delta": args,
                 }),
             );
         }
@@ -701,7 +1074,7 @@ impl ChatToResponsesSseTranslator {
         let args = if entry.args_buf.is_empty() {
             "{}".to_string()
         } else {
-            entry.args_buf.clone()
+            clean_tool_call_arguments(&entry.args_buf)
         };
         self.emit(
             out,
@@ -779,6 +1152,7 @@ impl ChatToResponsesSseTranslator {
             "status": "completed",
             "background": false,
             "error": null,
+            "model": self.model,
             "output": output,
         });
         if let Some(usage) = self.pending_usage.take() {
@@ -859,7 +1233,9 @@ pub fn translate_client_bytes_for_responses_wire(
         return None;
     }
     if translator.is_none() {
-        *translator = Some(ChatToResponsesSseTranslator::new(model));
+        let mut tr = ChatToResponsesSseTranslator::new(model);
+        tr.bootstrap_stream();
+        *translator = Some(tr);
     }
     let out = translator.as_mut().expect("initialized").translate_chunk(&data);
     if out.is_empty() {
@@ -867,6 +1243,37 @@ pub fn translate_client_bytes_for_responses_wire(
     } else {
         Some(Bytes::from(out))
     }
+}
+
+/// Initialize Responses SSE translator at upstream headers (prefill bootstrap for Codex CLI).
+pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
+    if ctx.stream.responses_translator.is_some() {
+        return;
+    }
+    let mut tr = ChatToResponsesSseTranslator::new(model);
+    let bootstrap = tr.bootstrap_stream();
+    if !bootstrap.is_empty() {
+        ctx.stream.responses_wire_bootstrap = Some(bootstrap);
+    }
+    ctx.stream.responses_translator = Some(tr);
+}
+
+pub fn prepend_responses_wire_bootstrap(
+    ctx: &mut GatewayContext,
+    bytes: Option<Bytes>,
+) -> Option<Bytes> {
+    if ctx.stream.responses_wire_bootstrap_sent {
+        return bytes;
+    }
+    let Some(bootstrap) = ctx.stream.responses_wire_bootstrap.take() else {
+        return bytes;
+    };
+    ctx.stream.responses_wire_bootstrap_sent = true;
+    let mut merged = bootstrap;
+    if let Some(data) = bytes {
+        merged.extend_from_slice(&data);
+    }
+    Some(Bytes::from(merged))
 }
 
 fn chat_usage_to_responses(usage: &Value) -> Value {
@@ -880,11 +1287,46 @@ fn chat_usage_to_responses(usage: &Value) -> Value {
         .and_then(|v| v.as_u64())
         .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()))
         .unwrap_or(0);
-    json!({
+    let mut out = json!({
         "input_tokens": input,
         "output_tokens": output,
         "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(input + output),
-    })
+    });
+    if let Some(cached) = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
+    {
+        out["input_tokens_details"] = json!({ "cached_tokens": cached });
+    }
+    if let Some(reasoning) = usage
+        .pointer("/completion_tokens_details/reasoning_tokens")
+        .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
+        .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
+    {
+        out["output_tokens_details"] = json!({ "reasoning_tokens": reasoning });
+    }
+    out
+}
+
+fn clean_tool_call_arguments(raw: &str) -> String {
+    let Ok(mut parsed) = serde_json::from_str::<Value>(raw) else {
+        return raw.to_string();
+    };
+    let Some(obj) = parsed.as_object_mut() else {
+        return raw.to_string();
+    };
+    obj.retain(|_, v| {
+        !(v.as_str().is_some_and(|s| s.is_empty())
+            || v.as_array().is_some_and(|a| a.is_empty()))
+    });
+    serde_json::to_string(obj).unwrap_or_else(|_| raw.to_string())
+}
+
+fn append_done_marker(out: &mut Vec<u8>) {
+    out.extend_from_slice(b"data: [DONE]\n\n");
 }
 
 /// Write an SSE block. The `event:` line matches JSON `type` (Codex/openai SDK convention).
@@ -987,6 +1429,108 @@ mod tests {
     }
 
     #[test]
+    fn flush_appends_done_marker() {
+        let sse = concat!(
+            "data: ",
+            "{\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+            "data: ",
+            "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        );
+        let mut tr = ChatToResponsesSseTranslator::new("gpt-5.4-mini");
+        let _ = tr.translate_chunk(sse.as_bytes());
+        let tail = tr.flush();
+        let text = String::from_utf8_lossy(&tail);
+        assert!(text.contains("data: [DONE]"));
+    }
+
+    #[tokio::test]
+    async fn responses_chain_expands_previous_response_id() {
+        let store = ResponsesChainStore::new_l0_only(
+            16,
+            60,
+            tokio::runtime::Handle::current(),
+        );
+        store_responses_chain_output(
+            &store,
+            "resp_prev",
+            vec![json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "prior" }],
+            })],
+        );
+        let mut payload = json!({
+            "model": "gpt-5.4-mini",
+            "stream": true,
+            "previous_response_id": "resp_prev",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "next" }],
+            }],
+        });
+        apply_responses_chain(&mut payload, &store).await;
+        let chat = responses_payload_to_chat_completions(&payload);
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[1]["role"], "user");
+        assert!(payload.get("previous_response_id").is_none());
+    }
+
+    #[test]
+    fn groups_function_calls_into_single_assistant_message() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_a",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"a\"}",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_b",
+                    "name": "write_file",
+                    "arguments": "{\"path\":\"b\"}",
+                },
+            ],
+        });
+        let chat = responses_payload_to_chat_completions(&payload);
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn drops_commentary_phase_assistant_messages() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [{ "type": "output_text", "text": "internal" }],
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "continue" }],
+                },
+            ],
+        });
+        let chat = responses_payload_to_chat_completions(&payload);
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
     fn codex_deepseek_always_triggers_translation() {
         use crate::context::{ClientWireApi, GatewayContext};
 
@@ -1014,5 +1558,54 @@ mod tests {
 
         ctx.client_wire_api = ClientWireApi::Responses;
         assert!(needs_responses_wire_translate(&ctx));
+    }
+
+    #[test]
+    fn sanitize_function_call_names_for_mimo() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "input": [{
+                "type": "function_call",
+                "call_id": "c1",
+                "name": "mcp__ns__get.issue",
+                "arguments": "{}",
+            }],
+        });
+        let chat = responses_payload_to_chat_completions(&payload);
+        let name = chat["messages"][0]["tool_calls"][0]["function"]["name"]
+            .as_str()
+            .unwrap();
+        assert_eq!(name, "mcp__ns__get_issue");
+    }
+
+    #[tokio::test]
+    async fn chain_avoids_duplicating_full_resend_input() {
+        let store = ResponsesChainStore::new_l0_only(
+            16,
+            60,
+            tokio::runtime::Handle::current(),
+        );
+        store_responses_chain_output(
+            &store,
+            "resp_prev",
+            vec![json!({
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "read_file",
+                "arguments": "{}",
+            })],
+        );
+        let mut payload = json!({
+            "previous_response_id": "resp_prev",
+            "input": (0..5).map(|i| json!({
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": format!("turn {i}") }],
+            })).collect::<Vec<_>>(),
+        });
+        apply_responses_chain(&mut payload, &store).await;
+        let items = payload["input"].as_array().unwrap();
+        assert_eq!(items.len(), 5);
     }
 }

@@ -352,20 +352,24 @@ async fn run_post_body_phases(
         }
     }
 
-    // Stable session id (ReasoningStore + session store): conv > pck > sk-cc > req hash.
+    // Stable session id (ReasoningStore + session store):
+    //   conv_id > pck > session_fingerprint > sk-cc > req_hash
+    // session_fingerprint is not yet available here (computed after body parse below);
+    // it will be injected into stable_session_buf after body parsing completes.
     let client_session = client_session_from_authorization(ctx.authorization.as_deref());
     let client_session_for_log = client_session.clone();
-    let stable_session_buf = ctx
+    let mut stable_session_buf = ctx
         .conversation_id
         .clone()
         .or(ctx.prompt_cache_key.clone())
-        .or(client_session)
+        // client_session and session_fingerprint are populated post-parse below.
         .or_else(|| {
             ctx.req_hash
                 .as_ref()
                 .map(|h| format!("req:{}", &h[..h.len().min(16)]))
         });
-    let stable_session = stable_session_buf.as_deref();
+    #[allow(unused_assignments)]
+    let mut stable_session = stable_session_buf.as_deref();
 
     // ─── Phase 4: Preparation (reasoning preprocessing, composition extraction) ───
     let active_profile = proxy.active_upstream_profile(ctx);
@@ -377,6 +381,7 @@ async fn run_post_body_phases(
     let (stable_session_kind, stable_session_prefix) = stable_session_log_fields(
         ctx.conversation_id.as_deref(),
         ctx.prompt_cache_key.as_deref(),
+        ctx.session_fingerprint.as_deref(),
         client_session_for_log.as_deref(),
         ctx.req_hash.as_deref(),
     );
@@ -444,7 +449,12 @@ async fn run_post_body_phases(
             full_body.clone()
         };
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
-            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) {
+            if let Ok(mut payload) = serde_json::from_slice::<serde_json::Value>(&body) {
+                crate::responses_wire::apply_responses_chain(
+                    &mut payload,
+                    &proxy.state.responses_chain_store,
+                )
+                .await;
                 let chat = crate::responses_wire::responses_payload_to_chat_completions(&payload);
                 ctx.parsed_request_payload = Some(Arc::new(chat.clone()));
                 body = Bytes::from(serde_json::to_vec(&chat).unwrap_or_default());
@@ -495,6 +505,14 @@ async fn run_post_body_phases(
             ctx.session_fingerprint =
                 crab_capture::session_fingerprint_from_payload(parsed_payload.as_ref());
         }
+        // Refresh stable_session now that session_fingerprint is available.
+        // Priority: conv_id > pck > session_fingerprint > client_key > req_hash.
+        if stable_session_buf.is_none() {
+            if let Some(sfp) = ctx.session_fingerprint.as_deref() {
+                stable_session_buf = Some(format!("sfp:{}", sfp));
+            }
+        }
+        stable_session = stable_session_buf.as_deref();
         refresh_affinity_key(
             ctx,
             &affinity_headers,
@@ -540,6 +558,19 @@ async fn run_post_body_phases(
             }
         }
 
+        if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            let mut wire_payload = parsed_payload.as_ref().clone();
+            crate::responses_wire::apply_responses_chain(
+                &mut wire_payload,
+                &proxy.state.responses_chain_store,
+            )
+            .await;
+            parsed_payload = Arc::new(crate::responses_wire::responses_payload_to_chat_completions(
+                &wire_payload,
+            ));
+            ctx.parsed_request_payload = Some(parsed_payload.clone());
+        }
+
         if GatewayProxy::is_mimo_pipeline(selection.pipeline)
             && let Some(store) = &proxy.state.session_store
         {
@@ -557,12 +588,6 @@ async fn run_post_body_phases(
                 cache_namespace.as_deref(),
             )
             .await;
-        }
-
-        if crate::responses_wire::needs_responses_wire_translate(ctx) {
-            parsed_payload = Arc::new(crate::responses_wire::responses_payload_to_chat_completions(
-                parsed_payload.as_ref(),
-            ));
             ctx.parsed_request_payload = Some(parsed_payload.clone());
         }
 
@@ -630,15 +655,10 @@ async fn run_post_body_phases(
                 ));
             }
             RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
-                // Responses API client → convert to Chat Completions before MiMo processing.
-                let mimo_payload = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
-                    &crate::responses_wire::responses_payload_to_chat_completions(payload)
-                } else {
-                    payload
-                };
+                // `parsed_payload` already converted from Responses API when needed (above).
                 let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
-                    mimo_payload,
+                    payload,
                     &profile_fallback,
                     features.mimo_retire_prefix_messages,
                     features.mimo_keep_recent_turns,
@@ -923,6 +943,39 @@ async fn run_post_body_phases(
     }
     // #endregion
 
+    // ─── Phase 4.5: Quota Preflight ──────────────────────────────────────
+    // Quick profile-level health gate: if every backend in the active profile
+    // is in cooldown (recent 429 streaks), short-circuit before cache lookup + coalescing.
+    {
+        let features = proxy.state.features.read().clone();
+        let preflight = &features.preflight;
+        if preflight.enabled {
+            let profile = proxy.active_upstream_profile(ctx);
+            let ready = profile.router.ready_backends();
+            if ready.is_empty() {
+                global_metrics().record_rejected("preflight_no_ready_backends");
+                debug!(
+                    request_id = %ctx.request_id,
+                    profile = %profile.id,
+                    "Preflight: no ready backends in profile router"
+                );
+                let retry_after = (preflight.cooldown_ms / 1000).max(1);
+                let body = r#"{"error":{"message":"upstream_backend_unavailable","type":"server_error","code":503}}"#;
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    body.as_bytes(),
+                    retry_after,
+                )
+                .await
+                {
+                    let _ = session.respond_error(503).await;
+                }
+                return Ok(true);
+            }
+        }
+    }
+
     // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
     match crate::phases::cache_coalesce::run(proxy, session, ctx).await? {
         crate::phases::cache_coalesce::CachePhaseOutcome::Return(done) => {
@@ -1121,6 +1174,7 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     let (stable_kind, _stable_prefix) = stable_session_log_fields(
         ctx.conversation_id.as_deref(),
         ctx.prompt_cache_key.as_deref(),
+        ctx.session_fingerprint.as_deref(),
         None,
         None,
     );

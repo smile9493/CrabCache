@@ -225,5 +225,13 @@ pub(crate) async fn run(
     timeline_stamp(&mut ctx.timeline.upstream_response_headers);
     timeline_stamp(&mut ctx.timeline.prefill_done);
 
+    if status == 200
+        && ctx.is_streaming
+        && crate::responses_wire::needs_responses_wire_translate(ctx)
+    {
+        let model = ctx.model.clone();
+        crate::responses_wire::arm_responses_wire_stream(ctx, &model);
+    }
+
     Ok(())
 }

@@ -108,6 +108,12 @@ pub struct GatewayMetrics {
     pub session_store_miss_total: IntCounter,
     pub session_store_prefix_break_total: IntCounter,
     pub session_store_upstream_bytes_saved: IntCounter,
+    pub responses_chain_l0_hit_total: IntCounter,
+    pub responses_chain_l0_miss_total: IntCounter,
+    pub responses_chain_redis_hit_total: IntCounter,
+    pub responses_chain_redis_miss_total: IntCounter,
+    pub responses_chain_persist_skip_total: IntCounter,
+    pub responses_chain_persist_error_total: IntCounter,
     pub request_passthrough_total: IntCounter,
     /// Cache write latency per tier (L0/L1).
     pub cache_write_latency: HistogramVec,
@@ -555,6 +561,30 @@ impl GatewayMetrics {
             "gateway_session_store_upstream_bytes_saved_total",
             "Estimated upstream message bytes saved by session store merge",
         )?;
+        let responses_chain_l0_hit_total = IntCounter::new(
+            "gateway_responses_chain_l0_hit_total",
+            "Responses chain Moka L0 hits",
+        )?;
+        let responses_chain_l0_miss_total = IntCounter::new(
+            "gateway_responses_chain_l0_miss_total",
+            "Responses chain Moka L0 misses (triggers Redis lookup)",
+        )?;
+        let responses_chain_redis_hit_total = IntCounter::new(
+            "gateway_responses_chain_redis_hit_total",
+            "Responses chain Redis L1 hits",
+        )?;
+        let responses_chain_redis_miss_total = IntCounter::new(
+            "gateway_responses_chain_redis_miss_total",
+            "Responses chain Redis L1 misses",
+        )?;
+        let responses_chain_persist_skip_total = IntCounter::new(
+            "gateway_responses_chain_persist_skip_total",
+            "Responses chain Redis persist skipped (value too large)",
+        )?;
+        let responses_chain_persist_error_total = IntCounter::new(
+            "gateway_responses_chain_persist_error_total",
+            "Responses chain Redis persist errors",
+        )?;
         let request_passthrough_total = IntCounter::new(
             "gateway_request_passthrough_total",
             "MiMo direct request passthrough handoffs (prefix sniff + chunk relay)",
@@ -685,6 +715,12 @@ impl GatewayMetrics {
             session_store_miss_total,
             session_store_prefix_break_total,
             session_store_upstream_bytes_saved,
+            responses_chain_l0_hit_total,
+            responses_chain_l0_miss_total,
+            responses_chain_redis_hit_total,
+            responses_chain_redis_miss_total,
+            responses_chain_persist_skip_total,
+            responses_chain_persist_error_total,
             request_passthrough_total,
             cache_write_latency,
             upstream_response_status,
@@ -755,6 +791,12 @@ impl GatewayMetrics {
         registry.register(Box::new(self.session_store_miss_total.clone()))?;
         registry.register(Box::new(self.session_store_prefix_break_total.clone()))?;
         registry.register(Box::new(self.session_store_upstream_bytes_saved.clone()))?;
+        registry.register(Box::new(self.responses_chain_l0_hit_total.clone()))?;
+        registry.register(Box::new(self.responses_chain_l0_miss_total.clone()))?;
+        registry.register(Box::new(self.responses_chain_redis_hit_total.clone()))?;
+        registry.register(Box::new(self.responses_chain_redis_miss_total.clone()))?;
+        registry.register(Box::new(self.responses_chain_persist_skip_total.clone()))?;
+        registry.register(Box::new(self.responses_chain_persist_error_total.clone()))?;
         registry.register(Box::new(self.request_passthrough_total.clone()))?;
         registry.register(Box::new(self.cache_write_latency.clone()))?;
         registry.register(Box::new(self.upstream_response_status.clone()))?;
@@ -781,6 +823,30 @@ impl GatewayMetrics {
 
     pub fn record_session_store_upstream_bytes_saved(&self, bytes: u64) {
         self.session_store_upstream_bytes_saved.inc_by(bytes);
+    }
+
+    pub fn record_responses_chain_l0_hit(&self) {
+        self.responses_chain_l0_hit_total.inc();
+    }
+
+    pub fn record_responses_chain_l0_miss(&self) {
+        self.responses_chain_l0_miss_total.inc();
+    }
+
+    pub fn record_responses_chain_redis_hit(&self) {
+        self.responses_chain_redis_hit_total.inc();
+    }
+
+    pub fn record_responses_chain_redis_miss(&self) {
+        self.responses_chain_redis_miss_total.inc();
+    }
+
+    pub fn record_responses_chain_persist_skip(&self) {
+        self.responses_chain_persist_skip_total.inc();
+    }
+
+    pub fn record_responses_chain_persist_error(&self) {
+        self.responses_chain_persist_error_total.inc();
     }
 
     pub fn record_request_passthrough_total(&self) {

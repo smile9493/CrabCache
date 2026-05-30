@@ -20,6 +20,8 @@ struct CaptureFilterForm {
     request_hash: String,
     session_fingerprint: String,
     backend_name: String,
+    /// When true, list API filters `client_wire_api=responses` (Codex CLI).
+    codex_only: bool,
 }
 
 impl CaptureFilterForm {
@@ -29,6 +31,7 @@ impl CaptureFilterForm {
             || !self.request_hash.trim().is_empty()
             || !self.session_fingerprint.trim().is_empty()
             || !self.backend_name.trim().is_empty()
+            || self.codex_only
     }
     fn consumer_opt(&self) -> Option<&str> {
         let v = self.consumer.trim();
@@ -49,6 +52,13 @@ impl CaptureFilterForm {
     fn backend_opt(&self) -> Option<&str> {
         let v = self.backend_name.trim();
         if v.is_empty() { None } else { Some(v) }
+    }
+    fn client_wire_api_opt(&self) -> Option<&str> {
+        if self.codex_only {
+            Some("responses")
+        } else {
+            None
+        }
     }
 }
 
@@ -87,6 +97,15 @@ fn backend_short(e: &RawCaptureEntry) -> String {
     e.backend_name.clone().unwrap_or_else(|| "-".to_string())
 }
 
+fn wire_short(e: &RawCaptureEntry) -> String {
+    match e.client_wire_api.as_deref() {
+        Some("responses") => "R".to_string(),
+        Some("chat_completions") => "C".to_string(),
+        None if e.client_path_suffix.as_deref() == Some("/v1/responses") => "R".to_string(),
+        _ => "-".to_string(),
+    }
+}
+
 // ── Main page ────────────────────────────────────────────────────────
 
 #[component]
@@ -110,6 +129,7 @@ pub fn CapturePage() -> impl IntoView {
             let hash = f.hash_opt().map(|s| s.to_string());
             let session = f.session_opt().map(|s| s.to_string());
             let backend = f.backend_opt().map(|s| s.to_string());
+            let wire = f.client_wire_api_opt().map(|s| s.to_string());
             leptos::task::spawn_local(async move {
                 list_data.try_set(None);
                 let result = api::fetch_capture_list(
@@ -120,6 +140,7 @@ pub fn CapturePage() -> impl IntoView {
                     hash.as_deref(),
                     session.as_deref(),
                     backend.as_deref(),
+                    wire.as_deref(),
                 )
                 .await;
                 list_data.try_set(Some(result));
@@ -269,6 +290,21 @@ pub fn CapturePage() -> impl IntoView {
                     on:input=move |ev| filter_draft.update(|f| f.backend_name = event_target_value(&ev))
                 />
                 <div class="logs-filter-actions">
+                    <button
+                        on:click=move |_| {
+                            filter_draft.update(|f| f.codex_only = !f.codex_only);
+                            apply_filters();
+                        }
+                        class=move || {
+                            if active_filter.get().codex_only {
+                                "btn btn-primary text-xs"
+                            } else {
+                                "btn btn-secondary text-xs"
+                            }
+                        }
+                    >
+                        {t.capture_filter_codex()}
+                    </button>
                     <button on:click=move |_| apply_filters() class="btn btn-primary text-xs">
                         {t.capture_filter_apply()}
                     </button>
@@ -292,6 +328,7 @@ pub fn CapturePage() -> impl IntoView {
                     if let Some(v) = f.hash_opt() { parts.push(format!("hash={v}")); }
                     if let Some(v) = f.session_opt() { parts.push(format!("session={v}")); }
                     if let Some(v) = f.backend_opt() { parts.push(format!("backend={v}")); }
+                    if f.codex_only { parts.push("wire=responses".into()); }
                     let label = format!("{} {}", t.capture_filter_active(), parts.join(" · "));
                     view! {
                         <div class="px-1">
@@ -332,6 +369,7 @@ pub fn CapturePage() -> impl IntoView {
                                         <tr>
                                             <th>{t.capture_col_time()}</th>
                                             <th>{t.capture_col_session()}</th>
+                                            <th>{t.capture_col_wire()}</th>
                                             <th>{t.capture_col_backend()}</th>
                                             <th>{t.capture_col_model()}</th>
                                             <th>{t.capture_col_delta()}</th>
@@ -353,6 +391,12 @@ pub fn CapturePage() -> impl IntoView {
                                                 let upstream = &entry.structure.upstream;
                                                 let session_title = entry.session_fingerprint.clone().unwrap_or_default();
                                                 let session_label = session_short(&entry);
+                                                let wire_label = wire_short(&entry);
+                                                let wire_title = entry
+                                                    .client_wire_api
+                                                    .clone()
+                                                    .or_else(|| entry.client_path_suffix.clone())
+                                                    .unwrap_or_default();
                                                 let backend_label = backend_short(&entry);
                                                 let row_class = move || {
                                                     if is_selected() {
@@ -379,6 +423,9 @@ pub fn CapturePage() -> impl IntoView {
                                                         </td>
                                                         <td class="text-xs font-mono text-theme-secondary" title=session_title.clone()>
                                                             {session_label}
+                                                        </td>
+                                                        <td class="text-xs font-mono text-theme-secondary" title=wire_title.clone()>
+                                                            {wire_label}
                                                         </td>
                                                         <td class="text-xs font-mono text-theme-secondary truncate max-w-[5rem]">
                                                             {backend_label}
@@ -512,6 +559,11 @@ fn CaptureDetailContent(detail: CaptureDetailResponse) -> impl IntoView {
                 <DetailField label="project" value=e.project_id.clone().unwrap_or("-".into()) />
                 <DetailField label=t.capture_col_session() value=e.session_fingerprint.clone().unwrap_or("-".into()) />
                 <DetailField label=t.capture_col_backend() value=e.backend_name.clone().unwrap_or("-".into()) />
+                <DetailField label=t.capture_col_wire() value={
+                    e.client_wire_api.clone()
+                        .or_else(|| e.client_path_suffix.clone())
+                        .unwrap_or("-".into())
+                } />
                 <DetailField label="affinity" value=e.affinity_key.clone().unwrap_or("-".into()) />
                 <DetailField label="client_key_fp" value=e.client_key_fingerprint.clone().unwrap_or("-".into()) />
                 <DetailField label=t.capture_col_duration() value=e.duration_ms.to_string() />

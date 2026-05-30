@@ -111,6 +111,10 @@ pub struct CaptureListQuery {
     pub client_key_fingerprint: Option<String>,
     #[serde(default)]
     pub affinity_kind: Option<String>,
+    #[serde(default)]
+    pub client_wire_api: Option<String>,
+    #[serde(default)]
+    pub client_path_suffix: Option<String>,
 }
 
 fn default_capture_hours() -> u32 {
@@ -177,6 +181,23 @@ pub async fn get_capture_list(
             if let Some(ref ak) = query.affinity_kind
                 && !ak.is_empty()
                 && e.affinity_kind.as_deref() != Some(ak.as_str())
+            {
+                return false;
+            }
+            if let Some(ref wire) = query.client_wire_api
+                && !wire.is_empty()
+            {
+                let matches = e.client_wire_api.as_deref() == Some(wire.as_str())
+                    || (e.client_wire_api.is_none()
+                        && wire == "responses"
+                        && e.client_path_suffix.as_deref() == Some("/v1/responses"));
+                if !matches {
+                    return false;
+                }
+            }
+            if let Some(ref path) = query.client_path_suffix
+                && !path.is_empty()
+                && e.client_path_suffix.as_deref() != Some(path.as_str())
             {
                 return false;
             }

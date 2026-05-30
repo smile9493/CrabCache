@@ -87,6 +87,7 @@ pub fn client_session_from_authorization(authorization: Option<&str>) -> Option<
 pub fn stable_session_log_fields(
     conversation_id: Option<&str>,
     prompt_cache_key: Option<&str>,
+    session_fingerprint: Option<&str>,
     client_session: Option<&str>,
     req_hash: Option<&str>,
 ) -> (&'static str, Option<String>) {
@@ -98,6 +99,9 @@ pub fn stable_session_log_fields(
     }
     if prompt_cache_key.is_some_and(|s| !s.trim().is_empty()) {
         return ("prompt_cache_key", prompt_cache_key.map(prefix8));
+    }
+    if session_fingerprint.is_some_and(|s| !s.trim().is_empty()) {
+        return ("session_fp", session_fingerprint.map(prefix8));
     }
     if client_session.is_some_and(|s| !s.trim().is_empty()) {
         return ("client_key", client_session.map(prefix8));
@@ -168,6 +172,9 @@ pub fn build_capture_request_meta(
         }
     });
 
+    let req_path = req_header.uri.path();
+    let client_path_suffix = (!req_path.is_empty()).then(|| req_path.to_string());
+
     crab_capture::CaptureRequestMeta {
         conversation_id: ctx.conversation_id.clone(),
         prompt_cache_key: ctx.prompt_cache_key.clone(),
@@ -203,6 +210,8 @@ pub fn build_capture_request_meta(
         },
         client_ip: ctx.client_ip.clone(),
         client_peer_addr: ctx.client_peer_addr.clone(),
+        client_path_suffix,
+        client_wire_api: Some(ctx.client_wire_api.as_wire_api_str().to_string()),
     }
 }
 

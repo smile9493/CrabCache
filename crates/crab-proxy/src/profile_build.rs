@@ -21,6 +21,10 @@ pub struct ProfileBuildInput {
     pub tls_sni: Option<String>,
     pub default_weight: u32,
     pub proxy_url: Option<String>,
+    /// Profile ID to try when this profile's upstream fails (5xx, 429, timeout).
+    pub fallback_profile_id: Option<String>,
+    /// Maximum number of fallback attempts per request (default 2).
+    pub fallback_max_retries: u32,
 }
 
 pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>, String> {
@@ -146,9 +150,9 @@ pub fn build_profile_runtime(
         Some(existing) => existing,
         None => {
             let pool = if key_specs.is_empty() {
-                UpstreamKeyPool::new(Vec::new(), cooldown_secs)
+                UpstreamKeyPool::new(Vec::new(), cooldown_secs, 0)
             } else {
-                UpstreamKeyPool::new(key_specs.clone(), cooldown_secs)
+                UpstreamKeyPool::new(key_specs.clone(), cooldown_secs, 0)
             };
             Arc::new(RwLock::new(pool))
         }
@@ -165,6 +169,8 @@ pub fn build_profile_runtime(
         provider: UpstreamProvider::from_str(&input.provider),
         base_url: parsed.normalized,
         fallback_model: input.fallback_model.trim().to_string(),
+        fallback_profile_id: input.fallback_profile_id.clone(),
+        fallback_max_retries: input.fallback_max_retries,
         tls_sni,
         router,
         upstream_pool: pool_handle,

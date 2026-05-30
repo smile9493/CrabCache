@@ -227,6 +227,7 @@ impl GatewayProxy {
                     .conversation_id
                     .as_deref()
                     .or(ctx.prompt_cache_key.as_deref())
+                    .or(ctx.session_fingerprint.as_deref())
                     .or(ctx.client_key_fingerprint.as_deref());
 
                 if let Some(sid) = stable_session {

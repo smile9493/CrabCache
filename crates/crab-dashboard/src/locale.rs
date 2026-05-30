@@ -381,6 +381,30 @@ impl Translations {
             Locale::EnUS => "Backend",
         }
     }
+    pub fn capture_filter_codex(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "仅 Codex (Responses)",
+            Locale::EnUS => "Codex only (Responses)",
+        }
+    }
+    pub fn capture_col_wire(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "协议",
+            Locale::EnUS => "Wire",
+        }
+    }
+    pub fn capture_wire_responses(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Responses",
+            Locale::EnUS => "Responses",
+        }
+    }
+    pub fn capture_wire_chat(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Chat",
+            Locale::EnUS => "Chat",
+        }
+    }
     pub fn capture_col_session(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "会话",
