@@ -405,6 +405,52 @@ pub fn build_auth_url(challenge: &str, state: &str, port: u16) -> String {
     )
 }
 
+/// Decode email, plan, and account_id from a Codex OAuth access_token JWT (no signature check).
+pub fn decode_codex_access_token_claims(
+    access_token: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Ok(claims) = parse_jwt_payload(access_token) else {
+        return (None, None, None);
+    };
+    let mut email = claims.email;
+    let mut plan_type = claims.plan_type;
+    let account_id = claims.account_id;
+
+    if email.is_none() || plan_type.is_none() {
+        if let Ok(payload) = decode_jwt_payload_value(access_token) {
+            let auth = payload.get("https://api.openai.com/auth");
+            let profile = payload.get("https://api.openai.com/profile");
+            if email.is_none() {
+                email = profile
+                    .and_then(|p| p.get("email"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+            if plan_type.is_none() {
+                plan_type = auth
+                    .and_then(|a| a.get("chatgpt_plan_type"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+        }
+    }
+
+    (email, plan_type, account_id)
+}
+
+fn decode_jwt_payload_value(jwt: &str) -> Result<serde_json::Value, AuthError> {
+    let parts: Vec<&str> = jwt.split('.').collect();
+    if parts.len() < 2 {
+        return Err(AuthError::OAuth("invalid JWT format".into()));
+    }
+    let payload_b64 = parts[1];
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .map_err(|e| AuthError::OAuth(format!("failed to decode JWT payload: {e}")))?;
+    serde_json::from_slice(&payload_bytes)
+        .map_err(|e| AuthError::OAuth(format!("failed to parse JWT JSON: {e}")))
+}
+
 /// Parse JWT payload without signature verification
 pub fn parse_jwt_payload(jwt: &str) -> Result<JwtClaims, AuthError> {
     let parts: Vec<&str> = jwt.split('.').collect();
@@ -412,12 +458,7 @@ pub fn parse_jwt_payload(jwt: &str) -> Result<JwtClaims, AuthError> {
         return Err(AuthError::OAuth("invalid JWT format".into()));
     }
 
-    let payload_b64 = parts[1];
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .map_err(|e| AuthError::OAuth(format!("failed to decode JWT payload: {e}")))?;
-
-    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)?;
+    let payload = decode_jwt_payload_value(jwt)?;
 
     let auth_info = payload
         .get("https://api.openai.com/auth")

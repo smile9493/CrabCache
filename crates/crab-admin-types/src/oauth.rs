@@ -42,6 +42,14 @@ pub struct CodexCredentialSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expired_at: Option<String>,
     pub disabled: bool,
+    /// Gateway key pool slot (`key-2`, …) when this row mirrors a pool entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Whether a refresh_token is stored (can auto-renew).
+    #[serde(default)]
+    pub has_refresh_token: bool,
 }
 
 /// Response to `GET /api/admin/oauth/codex/credentials`.

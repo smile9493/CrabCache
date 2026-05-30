@@ -11,6 +11,7 @@ use chrono::Utc;
 use crab_admin_types::oauth::*;
 use crab_auth::oauth::codex::CodexAuthenticator;
 use crab_auth::oauth::{ensure_fresh_codex_token, parse_codex_import_documents};
+use crab_auth::oauth::codex::decode_codex_access_token_claims;
 use crab_auth::store::{FileTokenStore, TokenStore};
 use crab_auth::types::{Provider, TokenRecord};
 use std::collections::{HashMap, HashSet};
@@ -54,7 +55,7 @@ pub fn resolve_auth_dir() -> PathBuf {
         })
 }
 
-/// Ensure persistent auth dir exists; migrate legacy paths; rebuild missing credential stubs.
+/// Ensure persistent auth dir exists; migrate legacy paths; sync credentials with key pool.
 pub async fn prepare_auth_dir(state: &AppState) {
     let auth_dir = &state.auth_dir;
     if tokio::fs::create_dir_all(auth_dir).await.is_err() {
@@ -64,19 +65,196 @@ pub async fn prepare_auth_dir(state: &AppState) {
     let migrated = migrate_legacy_auth_dirs(auth_dir).await;
     let profile_secrets = state.upstream_profile_secrets.read().clone();
     let codex_profiles = codex_like_profile_ids(state, &profile_secrets);
-    let hydrated = hydrate_codex_credentials_from_profile_secrets(
-        auth_dir,
-        &profile_secrets,
-        &codex_profiles,
-    )
-    .await;
+    let mut synced = 0usize;
+    for profile_id in &codex_profiles {
+        synced += reconcile_codex_credentials_with_pool(state, profile_id).await;
+    }
     tracing::info!(
         path = %auth_dir.display(),
         migrated,
-        hydrated,
+        synced,
         codex_profiles = ?codex_profiles,
         "Codex auth directory ready"
     );
+}
+
+/// True when profile uses Codex OAuth key pool semantics.
+pub fn profile_is_codex_like(state: &AppState, profile_id: &str) -> bool {
+    let providers = state.upstream_profile_providers.read();
+    providers
+        .get(profile_id)
+        .map(|p| p == "codex" || p == "openai")
+        .unwrap_or_else(|| profile_id == "codex")
+}
+
+/// Keep `auth_dir` credentials aligned with gateway key pool (one logical account per pool slot).
+pub async fn reconcile_codex_credentials_with_pool(state: &AppState, profile_id: &str) -> usize {
+    if !profile_is_codex_like(state, profile_id) {
+        return 0;
+    }
+
+    let Ok(keys_view) = state
+        .gateway
+        .get_upstream_profile_keys(profile_id)
+        .await
+    else {
+        return 0;
+    };
+
+    let export_secrets: HashMap<String, String> = state
+        .gateway
+        .export_upstream_profile_keys(profile_id)
+        .await
+        .map(|export| {
+            export
+                .keys
+                .into_iter()
+                .map(|k| (k.id, k.secret))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let cached_secrets: HashMap<String, String> = state
+        .upstream_profile_secrets
+        .read()
+        .get(profile_id)
+        .map(|pool| {
+            pool.iter()
+                .map(|s| (s.id.clone(), s.secret.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let store = FileTokenStore::new(&state.auth_dir);
+    let existing = store.list().await.unwrap_or_default();
+    let mut touched = 0usize;
+
+    for key in keys_view.keys {
+        let access_token = cached_secrets
+            .get(&key.id)
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .or_else(|| {
+                export_secrets
+                    .get(&key.id)
+                    .filter(|s| !s.trim().is_empty())
+                    .cloned()
+            });
+        let Some(access_token) = access_token else {
+            continue;
+        };
+
+        let (jwt_email, jwt_plan, jwt_account) = decode_codex_access_token_claims(&access_token);
+        let account_id = jwt_account
+            .as_deref()
+            .map(normalize_pool_account_id)
+            .filter(|a| a != "default")
+            .unwrap_or_else(|| normalize_pool_account_id(&key.account_id));
+
+        let mut record = find_credential_for_account(&existing, &account_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let id = format!("codex-{account_id}").replace(['/', '\\', ':'], "_");
+                TokenRecord {
+                    id,
+                    provider: Provider::Codex,
+                    access_token: String::new(),
+                    refresh_token: None,
+                    id_token: None,
+                    email: None,
+                    expired_at: None,
+                    last_refresh: None,
+                    disabled: false,
+                    metadata: HashMap::new(),
+                    file_path: None,
+                }
+            });
+
+        record.access_token = access_token;
+        record.disabled = !key.enabled;
+        if record
+            .email
+            .as_ref()
+            .is_none_or(|e| e.trim().is_empty() || e == &account_id)
+        {
+            record.email = jwt_email.clone().or_else(|| record.email.clone());
+        }
+        record.metadata.insert(
+            "profile_id".to_string(),
+            serde_json::Value::String(profile_id.to_string()),
+        );
+        record.metadata.insert(
+            "account_id".to_string(),
+            serde_json::Value::String(account_id.clone()),
+        );
+        record.metadata.insert(
+            "key_id".to_string(),
+            serde_json::Value::String(key.id.clone()),
+        );
+        if let Some(plan) = jwt_plan {
+            record.metadata.insert(
+                "plan_type".to_string(),
+                serde_json::Value::String(plan),
+            );
+        }
+
+        if store.save(&record).await.is_ok() {
+            touched += 1;
+        }
+    }
+
+    touched
+}
+
+fn find_credential_for_account<'a>(
+    records: &'a [TokenRecord],
+    account_id: &str,
+) -> Option<&'a TokenRecord> {
+    let normalized = normalize_pool_account_id(account_id);
+    records
+        .iter()
+        .filter(|r| r.provider == Provider::Codex)
+        .filter(|r| {
+            r.metadata
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .map(normalize_pool_account_id)
+                == Some(normalized.clone())
+        })
+        .max_by_key(|r| {
+            u8::from(
+                r.refresh_token
+                    .as_ref()
+                    .is_some_and(|t| !t.trim().is_empty()),
+            )
+        })
+}
+
+/// Fill key-pool card email/plan from unified credential store when probe data is missing.
+pub async fn enrich_upstream_keys_from_credentials(
+    state: &AppState,
+    keys: &mut [crab_admin_types::upstream::UpstreamKeyView],
+) {
+    let store = FileTokenStore::new(&state.auth_dir);
+    let Ok(records) = store.list().await else {
+        return;
+    };
+    for key in keys.iter_mut() {
+        let account_id = normalize_pool_account_id(&key.account_id);
+        let Some(rec) = find_credential_for_account(&records, &account_id) else {
+            continue;
+        };
+        if key.email.is_none() {
+            key.email = rec.email.clone();
+        }
+        if key.plan_type.is_none() {
+            key.plan_type = rec
+                .metadata
+                .get("plan_type")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+    }
 }
 
 fn codex_like_profile_ids(
@@ -103,58 +281,6 @@ fn normalize_pool_account_id(raw: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-async fn profile_key_account_ids(state: &AppState, profile_id: &str) -> HashSet<String> {
-    if let Ok(export) = state
-        .gateway
-        .export_upstream_profile_keys(profile_id)
-        .await
-    {
-        return export
-            .keys
-            .iter()
-            .map(|k| normalize_pool_account_id(&k.account_id))
-            .collect();
-    }
-    state
-        .upstream_profile_secrets
-        .read()
-        .get(profile_id)
-        .map(|secrets| {
-            secrets
-                .iter()
-                .map(|s| normalize_pool_account_id(&s.account_id))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn credential_belongs_to_profile(
-    record: &TokenRecord,
-    profile_id: &str,
-    pool_accounts: &HashSet<String>,
-) -> bool {
-    if record.provider != Provider::Codex {
-        return false;
-    }
-    let meta_profile = record
-        .metadata
-        .get("profile_id")
-        .and_then(|v| v.as_str());
-    if meta_profile == Some(profile_id) {
-        return true;
-    }
-    if meta_profile.is_some() {
-        return false;
-    }
-    let account = record
-        .metadata
-        .get("account_id")
-        .and_then(|v| v.as_str())
-        .map(normalize_pool_account_id)
-        .unwrap_or_default();
-    pool_accounts.contains(&account)
 }
 
 async fn migrate_legacy_auth_dirs(target: &Path) -> usize {
@@ -191,78 +317,6 @@ async fn migrate_legacy_auth_dirs(target: &Path) -> usize {
         }
     }
     copied
-}
-
-/// Create minimal Codex credential files from Admin profile secrets when OAuth JSON files are missing.
-async fn hydrate_codex_credentials_from_profile_secrets(
-    auth_dir: &Path,
-    profile_secrets: &HashMap<String, Vec<UpstreamPoolSecret>>,
-    codex_profiles: &HashSet<String>,
-) -> usize {
-    let store = FileTokenStore::new(auth_dir);
-    let existing = store.list().await.unwrap_or_default();
-    let known_accounts: HashSet<String> = existing
-        .iter()
-        .filter_map(|r| {
-            r.metadata
-                .get("account_id")
-                .and_then(|v| v.as_str())
-                .map(normalize_pool_account_id)
-        })
-        .collect();
-    let mut created = 0usize;
-    for (profile_id, secrets) in profile_secrets {
-        if !codex_profiles.contains(profile_id) {
-            continue;
-        }
-        for s in secrets {
-            if s.secret.is_empty() {
-                continue;
-            }
-            let account_id = if s.account_id.trim().is_empty() {
-                format!("key-{}", s.id)
-            } else {
-                normalize_pool_account_id(&s.account_id)
-            };
-            if known_accounts.contains(&account_id) {
-                continue;
-            }
-            let id = format!("codex-{account_id}").replace(['/', '\\', ':'], "_");
-            if existing.iter().any(|r| r.id == id) {
-                continue;
-            }
-            let mut metadata = HashMap::new();
-            metadata.insert(
-                "profile_id".to_string(),
-                serde_json::Value::String(profile_id.clone()),
-            );
-            metadata.insert(
-                "account_id".to_string(),
-                serde_json::Value::String(account_id.clone()),
-            );
-            metadata.insert(
-                "hydrated_from".to_string(),
-                serde_json::Value::String("profile_secrets".to_string()),
-            );
-            let record = TokenRecord {
-                id,
-                provider: Provider::Codex,
-                access_token: s.secret.clone(),
-                refresh_token: None,
-                id_token: None,
-                email: Some(account_id.clone()),
-                expired_at: None,
-                last_refresh: None,
-                disabled: false,
-                metadata,
-                file_path: None,
-            };
-            if store.save(&record).await.is_ok() {
-                created += 1;
-            }
-        }
-    }
-    created
 }
 
 /// Save credential (refresh if needed) and upsert into profile key pool.
@@ -311,6 +365,8 @@ async fn import_codex_record_to_profile(
         &account_id,
     )
     .await?;
+
+    reconcile_codex_credentials_with_pool(state, profile_id).await;
 
     Ok((
         credential_id,
@@ -947,6 +1003,41 @@ async fn list_codex_credentials_for_profile(
     state: &AppState,
     profile_id: Option<&str>,
 ) -> Result<Json<CodexCredentialListResponse>, (axum::http::StatusCode, String)> {
+    if let Some(pid) = profile_id {
+        reconcile_codex_credentials_with_pool(state, pid).await;
+
+        let keys_view = state
+            .gateway
+            .get_upstream_profile_keys(pid)
+            .await
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    format!("Failed to list profile keys: {e}"),
+                )
+            })?;
+
+        let store = FileTokenStore::new(&state.auth_dir);
+        let records = store.list().await.map_err(|e| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to list credentials: {e}"),
+            )
+        })?;
+
+        let credentials: Vec<CodexCredentialSummary> = keys_view
+            .keys
+            .iter()
+            .filter_map(|key| {
+                let account_id = normalize_pool_account_id(&key.account_id);
+                let record = find_credential_for_account(&records, &account_id)?;
+                Some(credential_summary_from_record(record, Some(key.id.clone())))
+            })
+            .collect();
+
+        return Ok(Json(CodexCredentialListResponse { credentials }));
+    }
+
     let store = FileTokenStore::new(&state.auth_dir);
     let records = store.list().await.map_err(|e| {
         (
@@ -955,57 +1046,31 @@ async fn list_codex_credentials_for_profile(
         )
     })?;
 
-    let pool_accounts = if let Some(pid) = profile_id {
-        profile_key_account_ids(state, pid).await
-    } else {
-        HashSet::new()
-    };
-
-    let total_codex = records
-        .iter()
-        .filter(|r| r.provider == Provider::Codex)
-        .count();
-
     let credentials: Vec<CodexCredentialSummary> = records
         .into_iter()
-        .filter(|r| {
-            if let Some(pid) = profile_id {
-                credential_belongs_to_profile(r, pid, &pool_accounts)
-            } else {
-                r.provider == Provider::Codex
-            }
-        })
-        .map(credential_summary_from_record)
+        .filter(|r| r.provider == Provider::Codex)
+        .map(|r| credential_summary_from_record(&r, None))
         .collect();
-
-    // #region agent log
-    {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/home/smile/github_project/CrabCache/.cursor/debug-b4b459.log")
-        {
-            let _ = writeln!(
-                f,
-                r#"{{"sessionId":"b4b459","hypothesisId":"A","location":"oauth_codex.rs:list_codex_credentials_for_profile","message":"credentials filtered","data":{{"profile_id":{},"total_codex":{},"filtered":{},"pool_account_count":{}}},"timestamp":{}}}"#,
-                serde_json::to_string(&profile_id).unwrap_or_else(|_| "null".into()),
-                total_codex,
-                credentials.len(),
-                pool_accounts.len(),
-                chrono::Utc::now().timestamp_millis()
-            );
-        }
-    }
-    // #endregion
 
     Ok(Json(CodexCredentialListResponse { credentials }))
 }
 
-fn credential_summary_from_record(r: TokenRecord) -> CodexCredentialSummary {
+fn credential_summary_from_record(
+    r: &TokenRecord,
+    key_id: Option<String>,
+) -> CodexCredentialSummary {
+    let account_id = r
+        .metadata
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let has_refresh_token = r
+        .refresh_token
+        .as_ref()
+        .is_some_and(|token| !token.trim().is_empty());
     CodexCredentialSummary {
-        id: r.id,
-        email: r.email,
+        id: r.id.clone(),
+        email: r.email.clone(),
         plan_type: r
             .metadata
             .get("plan_type")
@@ -1013,6 +1078,14 @@ fn credential_summary_from_record(r: TokenRecord) -> CodexCredentialSummary {
             .map(String::from),
         expired_at: r.expired_at.map(|dt| dt.to_rfc3339()),
         disabled: r.disabled,
+        key_id: key_id.or_else(|| {
+            r.metadata
+                .get("key_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        }),
+        account_id,
+        has_refresh_token,
     }
 }
 

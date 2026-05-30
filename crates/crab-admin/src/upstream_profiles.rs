@@ -83,21 +83,25 @@ pub async fn get_profile_keys(
         .await
         .map_err(|e| e.to_string())?;
     let models_probe = crate::upstream::probe_profile_key_models_internal(state, id).await.ok();
+    let mut keys: Vec<_> = view
+        .keys
+        .into_iter()
+        .map(|k| {
+            let mut mapped = upstream_key_view_from_control(k);
+            if let Some(probe) = &models_probe {
+                if let Some(entry) = probe.keys.iter().find(|e| e.key_id == mapped.id) {
+                    mapped = crate::types::enrich_upstream_key_view(mapped, entry);
+                }
+            }
+            mapped
+        })
+        .collect();
+    if crate::oauth_codex::profile_is_codex_like(state, id) {
+        crate::oauth_codex::enrich_upstream_keys_from_credentials(state, &mut keys).await;
+    }
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
-        keys: view
-            .keys
-            .into_iter()
-            .map(|k| {
-                let mut mapped = upstream_key_view_from_control(k);
-                if let Some(probe) = &models_probe {
-                    if let Some(entry) = probe.keys.iter().find(|e| e.key_id == mapped.id) {
-                        mapped = crate::types::enrich_upstream_key_view(mapped, entry);
-                    }
-                }
-                mapped
-            })
-            .collect(),
+        keys,
     })
 }
 
@@ -163,6 +167,9 @@ pub async fn put_profile_keys(
         .await
         .map_err(|e| e.to_string())?;
     state.flush_persist();
+    if crate::oauth_codex::profile_is_codex_like(state, id) {
+        crate::oauth_codex::reconcile_codex_credentials_with_pool(state, id).await;
+    }
     Ok(UpstreamProfileKeysAdminView {
         profile_id: view.profile_id,
         keys: view
