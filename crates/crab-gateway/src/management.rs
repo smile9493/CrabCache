@@ -1490,7 +1490,13 @@ async fn put_pricing_config(
     pricing.default_input_price_per_million = req.default_input_price_per_million;
     pricing.default_output_price_per_million = req.default_output_price_per_million;
     pricing.model_overrides = req.model_overrides.into_iter().map(|(k, v)| {
-        (k, crab_proxy::ModelPricing { input: v.input, output: v.output })
+        (
+            k,
+            crab_proxy::ModelPricing {
+                input_price_per_million: v.input,
+                output_price_per_million: v.output,
+            },
+        )
     }).collect();
     Ok(Json(pricing_view(&pricing)))
 }
@@ -1500,7 +1506,13 @@ fn pricing_view(p: &PricingConfig) -> PricingConfigView {
         default_input_price_per_million: p.default_input_price_per_million,
         default_output_price_per_million: p.default_output_price_per_million,
         model_overrides: p.model_overrides.iter().map(|(k, v)| {
-            (k.clone(), ModelPricingView { input: v.input, output: v.output })
+            (
+                k.clone(),
+                ModelPricingView {
+                    input: v.input_price_per_million,
+                    output: v.output_price_per_million,
+                },
+            )
         }).collect(),
     }
 }

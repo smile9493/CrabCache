@@ -519,6 +519,12 @@ impl Translations {
             Locale::EnUS => "Reasoning",
         }
     }
+    pub fn tab_features(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实验性功能",
+            Locale::EnUS => "Features",
+        }
+    }
     pub fn sidebar_live(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "实时监控",

@@ -806,6 +806,14 @@ fn main() -> Result<()> {
         snap
     }));
 
+    let pricing_shared = Arc::new(parking_lot::RwLock::new(
+        config.cache.pricing.clone().unwrap_or_default(),
+    ));
+    let features_shared = Arc::new(parking_lot::RwLock::new(config.features.clone()));
+    let cors_enabled_state = Arc::new(AtomicBool::new(config.gateway.cors_enabled));
+    let max_request_body_bytes_state =
+        Arc::new(AtomicUsize::new(config.limits.max_request_body_bytes));
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -904,10 +912,6 @@ fn main() -> Result<()> {
         "[DEBUG] global rate constructed",
         serde_json::json!({ "window_secs": 1 }),
     );
-    let cors_enabled_state = Arc::new(AtomicBool::new(config.gateway.cors_enabled));
-    let max_request_body_bytes_state = Arc::new(AtomicUsize::new(config.limits.max_request_body_bytes));
-    let pricing_shared = Arc::new(parking_lot::RwLock::new(config.cache.pricing.clone().unwrap_or_default()));
-    let features_shared = Arc::new(parking_lot::RwLock::new(config.features.clone()));
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,

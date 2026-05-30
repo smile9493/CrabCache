@@ -374,7 +374,7 @@ pub(crate) fn run(
                     &proxy.state.runtime,
                     &proxy.state.pricing.read(),
                 );
-                if proxy.state.features.affinity_prompt_cache_feedback {
+                if proxy.state.features.read().affinity_prompt_cache_feedback {
                     accumulate_affinity_prompt_cache_usage(
                         ctx,
                         usage_data.prompt_cache_hit_tokens,

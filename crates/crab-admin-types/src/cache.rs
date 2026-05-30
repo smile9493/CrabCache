@@ -82,6 +82,22 @@ pub struct FeaturesConfigView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceLoggingConfigView {
+    pub max_lines: u64,
+    pub max_files: u64,
+    pub max_payload_bytes: usize,
+    pub max_response_preview_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawCaptureConfigView {
+    pub enabled: bool,
+    pub sample_rate: f64,
+    pub mask_api_keys: bool,
+    pub sample_always_on_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamCacheToggle {
     pub enabled: bool,
 }

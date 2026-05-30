@@ -353,9 +353,10 @@ async fn run_post_body_phases(
                 proxy.state.cache_key_namespace.as_deref(),
                 ctx.project_id.as_deref(),
             );
+            let features = proxy.state.features.read().clone();
             crate::session_store::apply_mimo_session_store(
                 store,
-                &proxy.state.features.read(),
+                &features,
                 ctx,
                 &mut parsed_payload,
                 stable_session,

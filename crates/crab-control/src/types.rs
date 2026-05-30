@@ -477,6 +477,25 @@ fn default_upstream_request_timeout_secs() -> u64 { 300 }
 fn default_upstream_write_timeout_secs() -> u64 { 300 }
 fn default_upstream_connection_timeout_secs() -> u64 { 60 }
 
+/// Trace logging runtime config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceLoggingConfigView {
+    pub max_lines: u64,
+    pub max_files: u64,
+    pub max_payload_bytes: usize,
+    pub max_response_preview_bytes: usize,
+}
+
+/// Raw capture runtime config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawCaptureConfigView {
+    pub enabled: bool,
+    /// Samle rate 0.0–1.0.
+    pub sample_rate: f64,
+    pub mask_api_keys: bool,
+    pub sample_always_on_error: bool,
+}
+
 /// Hot-reloadable features config (Management API).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturesConfigView {

@@ -620,7 +620,7 @@ pub struct GatewayState {
     pub client_key_limiter: Arc<ClientKeyLimiter>,
     pub client_key_rate_limiter: Arc<ClientKeyRateLimiter>,
     pub deepseek_user_id_limiter: Arc<UpstreamUserIdLimiter>,
-    pub features: parking_lot::RwLock<FeaturesConfig>,
+    pub features: Arc<parking_lot::RwLock<FeaturesConfig>>,
     /// Tracks session fingerprints that have already been seen (for connection pre-warm).
     /// Bounded to 10K entries with LRU eviction and 1-hour TTL.
     pub seen_session_fingerprints: moka::sync::Cache<String, ()>,
