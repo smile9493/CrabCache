@@ -225,7 +225,9 @@ pub fn LivePage() -> impl IntoView {
     let t = use_translations();
     let vs = view_state::load_view_state();
     let consumers: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
-    let selected_consumer: RwSignal<Option<String>> = RwSignal::new(vs.live_consumer.clone());
+    let selected_consumer: RwSignal<Option<String>> = RwSignal::new(
+        vs.live_consumer.clone().or_else(|| Some("*".to_string())),
+    );
     let window_secs: RwSignal<u32> = RwSignal::new(vs.live_window_secs.unwrap_or(12 * 3600));
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
     let consumers_loaded = RwSignal::new(false);
@@ -282,12 +284,12 @@ pub fn LivePage() -> impl IntoView {
                     })
                     .unwrap_or_default();
                 if !names.is_empty() {
-                    if selected_consumer.try_get_untracked().flatten().is_none()
-                        && let Some(first) = names.first()
-                    {
-                        selected_consumer.try_set(Some(first.clone()));
+                    if selected_consumer.try_get_untracked().flatten().is_none() {
+                        selected_consumer.try_set(Some("*".to_string()));
                     }
-                    consumers.try_set(names);
+                    let mut with_all = vec!["*".to_string()];
+                    with_all.extend(names);
+                    consumers.try_set(with_all);
                     consumers_loaded.try_set(true);
                     return;
                 }
@@ -303,12 +305,12 @@ pub fn LivePage() -> impl IntoView {
                         .filter(|n| !n.is_empty())
                         .collect();
                     if !names.is_empty() {
-                        if selected_consumer.try_get_untracked().flatten().is_none()
-                            && let Some(first) = names.first()
-                        {
-                            selected_consumer.try_set(Some(first.clone()));
+                        if selected_consumer.try_get_untracked().flatten().is_none() {
+                            selected_consumer.try_set(Some("*".to_string()));
                         }
-                        consumers.try_set(names);
+                        let mut with_all = vec!["*".to_string()];
+                        with_all.extend(names);
+                        consumers.try_set(with_all);
                     }
                 }
                 Err(e) => { consumers_error.try_set(Some(e)); }
@@ -714,10 +716,14 @@ fn LiveTopConfigRow(
                         }
                     }
                 >
-                    <option value="">{t.live_select_consumer()}</option>
                     {move || consumers.get().into_iter().map(|name| {
-                        let label = name.clone();
-                        view! { <option value=label.clone()>{label.clone()}</option> }
+                        let value = name.clone();
+                        let display = if name == "*" {
+                            t.live_all_consumers().to_string()
+                        } else {
+                            name.clone()
+                        };
+                        view! { <option value=value>{display}</option> }
                     }).collect_view()}
                 </select>
             </div>
@@ -928,7 +934,12 @@ fn LiveTrafficPanel(
         })
     };
 
-    let chart_subtitle = format!("{consumer} · {window_lbl}");
+    let consumer_display = if consumer == "*" {
+        t.live_all_consumers().to_string()
+    } else {
+        consumer.clone()
+    };
+    let chart_subtitle = format!("{consumer_display} · {window_lbl}");
     let throughput_title = t.live_chart_throughput().to_string();
     let hit_title = format!("{} ({hit_pct:.1}%)", t.live_cache_hit_trend());
     let no_data = t.live_no_data();
@@ -941,7 +952,7 @@ fn LiveTrafficPanel(
                     {t.live_traffic_stats()}
                 </span>
                 <span class="panel-header-meta">
-                    {consumer.clone()}
+                    {consumer_display.clone()}
                     " · "
                     {window_lbl}
                 </span>

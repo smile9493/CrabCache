@@ -3566,6 +3566,7 @@ async fn get_live_metrics(
     if consumer.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    // "*" is a wildcard meaning "all consumers" — no filtering by consumer name.
 
     let path = crate::trace_log::trace_log_path();
     let pg = state.pg_store.read().clone();

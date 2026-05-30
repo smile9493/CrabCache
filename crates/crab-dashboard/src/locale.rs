@@ -565,6 +565,12 @@ impl Translations {
             Locale::EnUS => "Select consumer…",
         }
     }
+    pub fn live_all_consumers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部",
+            Locale::EnUS => "All",
+        }
+    }
     pub fn live_pick_consumer_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "请从上方下拉框选择一个 Consumer，以查看实时指标",

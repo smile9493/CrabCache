@@ -239,6 +239,9 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
 }
 
 fn consumer_matches(entry: &TraceLogEntry, consumer: &str) -> bool {
+    if consumer == "*" {
+        return true;
+    }
     entry
         .consumer
         .as_deref()
