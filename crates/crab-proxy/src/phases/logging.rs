@@ -94,6 +94,8 @@ pub(crate) async fn run(
             request_id = %ctx.request_id,
             request_hash = %ctx.req_hash.as_ref().unwrap_or(&"missing".to_string()),
             content_length = ctx.content_length,
+            client_ip = ?ctx.client_ip,
+            client_peer_addr = ?ctx.client_peer_addr,
             upstream_outbound_bytes = ctx.upstream_outbound_body_len,
             upstream_status = ?ctx.upstream.http_status,
             latency_ms = latency_ms,
@@ -248,6 +250,8 @@ pub(crate) async fn run(
                 };
                 entry.guardrail_blocked = ctx.guardrail_blocked;
                 entry.guardrail_labels = ctx.guardrail_hits.clone();
+                entry.client_ip = ctx.client_ip.clone();
+                entry.client_peer_addr = ctx.client_peer_addr.clone();
                 entry.body_read_duration_ms = match (
                     ctx.timeline.body_read_start,
                     ctx.timeline.body_read_done,

@@ -20,7 +20,12 @@ pub struct SanitizedLogEntry {
     pub consumer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Resolved downstream client IP (X-Forwarded-For / X-Real-IP / peer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
+    /// Direct TCP peer seen by Pingora (often the reverse proxy hop).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_peer_addr: Option<String>,
     pub project_id: Option<String>,
     pub model: String,
     pub prompt_tokens: usize,
@@ -223,6 +228,8 @@ impl SanitizedLogEntry {
             conversation_id,
             consumer,
             domain,
+            client_ip: None,
+            client_peer_addr: None,
             project_id,
             model: model.to_string(),
             prompt_tokens,

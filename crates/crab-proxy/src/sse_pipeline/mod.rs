@@ -5,6 +5,7 @@
 //! streaming and delegates to it for each upstream chunk.
 
 mod codex;
+pub(crate) mod compression;
 mod passthrough;
 mod reasoning;
 mod silent_strip;
@@ -19,6 +20,7 @@ use crate::context::GatewayContext;
 use crate::sse::{UsageData, parse_sse_chunk};
 
 use codex::CodexTranslatePipeline;
+use compression::CompressionPipeline;
 use passthrough::PassthroughPipeline;
 use reasoning::ReasoningRewritePipeline;
 use silent_strip::SilentStripPipeline;
@@ -65,6 +67,7 @@ pub(crate) enum StreamPipeline {
     SilentStrip(SilentStripPipeline),
     Passthrough(PassthroughPipeline),
     CodexTranslate(CodexTranslatePipeline),
+    Compressed(Box<CompressionPipeline>),
 }
 
 impl SsePipeline for StreamPipeline {
@@ -74,6 +77,7 @@ impl SsePipeline for StreamPipeline {
             Self::SilentStrip(p) => p.process_chunk(data, client_sse_body),
             Self::Passthrough(p) => p.process_chunk(data, client_sse_body),
             Self::CodexTranslate(p) => p.process_chunk(data, client_sse_body),
+            Self::Compressed(p) => p.process_chunk(data, client_sse_body),
         }
     }
 
@@ -83,6 +87,7 @@ impl SsePipeline for StreamPipeline {
             Self::SilentStrip(p) => p.flush_remainder(client_sse_body),
             Self::Passthrough(p) => p.flush_remainder(client_sse_body),
             Self::CodexTranslate(p) => p.flush_remainder(client_sse_body),
+            Self::Compressed(p) => p.flush_remainder(client_sse_body),
         }
     }
 
@@ -92,6 +97,7 @@ impl SsePipeline for StreamPipeline {
             Self::SilentStrip(p) => p.reasoning_finalized(),
             Self::Passthrough(p) => p.reasoning_finalized(),
             Self::CodexTranslate(p) => p.reasoning_finalized(),
+            Self::Compressed(p) => p.reasoning_finalized(),
         }
     }
 
@@ -101,6 +107,7 @@ impl SsePipeline for StreamPipeline {
             Self::SilentStrip(p) => p.messages(),
             Self::Passthrough(p) => p.messages(),
             Self::CodexTranslate(p) => p.messages(),
+            Self::Compressed(p) => p.messages(),
         }
     }
 
@@ -110,6 +117,7 @@ impl SsePipeline for StreamPipeline {
             Self::SilentStrip(p) => p.store_partial_reasoning(store),
             Self::Passthrough(p) => p.store_partial_reasoning(store),
             Self::CodexTranslate(p) => p.store_partial_reasoning(store),
+            Self::Compressed(p) => p.store_partial_reasoning(store),
         }
     }
 }

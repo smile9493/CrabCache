@@ -307,9 +307,16 @@ pub(crate) fn run(
 
             if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
                 ctx.accumulated_body.extend_from_slice(&data);
-                let result = pipeline.process_chunk(data, &mut ctx.stream.client_sse_body);
-                if let Some(usage) = result.usage {
-                    apply_usage_to_ctx(proxy, ctx, usage);
+                let mut result = pipeline.process_chunk(data, &mut ctx.stream.client_sse_body);
+                if let Some(u) = result.usage {
+                    apply_usage_to_ctx(proxy, ctx, u);
+                }
+                if crate::responses_wire::needs_responses_wire_translate(ctx) {
+                    result.client_bytes = crate::responses_wire::translate_client_bytes_for_responses_wire(
+                        &mut ctx.stream.responses_translator,
+                        &ctx.model,
+                        result.client_bytes,
+                    );
                 }
                 *body = result.client_bytes;
             } else {
@@ -394,6 +401,13 @@ pub(crate) fn run(
             }
         } else {
             ctx.accumulated_body.clone()
+        };
+
+        let client_body = if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            crate::responses_wire::chat_completions_bytes_to_responses(&client_body, &ctx.model)
+                .unwrap_or(client_body)
+        } else {
+            client_body
         };
 
         if let Ok(body_value) = serde_json::from_slice::<serde_json::Value>(&client_body) {
@@ -529,6 +543,15 @@ pub(crate) fn run(
             }
             if let Some(usage) = flush.usage {
                 apply_usage_to_ctx(proxy, ctx, usage);
+            }
+        }
+
+        if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            if let Some(translator) = ctx.stream.responses_translator.as_mut() {
+                let tail = translator.flush();
+                if !tail.is_empty() {
+                    *body = Some(bytes::Bytes::from(tail));
+                }
             }
         }
 

@@ -387,6 +387,8 @@ pub struct StreamState {
     pub reasoning_bypass_warned: bool,
     /// Pipeline-specific SSE processing handler (created once per streaming request).
     pub(crate) stream_pipeline: Option<crate::sse_pipeline::StreamPipeline>,
+    /// Chat Completions → Responses API SSE translator for non-Codex `/v1/responses` clients.
+    pub(crate) responses_translator: Option<crate::responses_wire::ChatToResponsesSseTranslator>,
 }
 
 /// Early-connect passthrough: overlap upstream TCP/TLS while the client body uploads.
@@ -426,6 +428,10 @@ pub struct GatewayContext {
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
+    /// Resolved downstream client IP (X-Forwarded-For / X-Real-IP / peer).
+    pub client_ip: Option<String>,
+    /// Direct TCP peer seen by Pingora (often the reverse proxy hop).
+    pub client_peer_addr: Option<String>,
     pub request_pipeline: Option<RequestPipeline>,
     pub pipeline_reason: Option<PipelineSelectionReason>,
     pub upstream_profile_id: Option<String>,
@@ -516,6 +522,8 @@ impl GatewayContext {
             model: String::new(),
             consumer: None,
             domain: None,
+            client_ip: None,
+            client_peer_addr: None,
             request_pipeline: None,
             pipeline_reason: None,
             upstream_profile_id: None,
@@ -754,6 +762,12 @@ pub struct GatewayState {
     pub client_endpoint: Arc<parking_lot::RwLock<ClientEndpointSnapshot>>,
     /// MiMo transparent session store (Redis `crab:session:*`).
     pub session_store: Option<Arc<crate::session_store::SessionStore>>,
+    /// Backend-level circuit breaker registry (4-state machine).
+    pub circuit_breakers: std::sync::Arc<crate::circuit_breaker::CircuitBreakerRegistry>,
+    /// Model-level lockout registry (per-profile/backend/model).
+    pub model_lockouts: std::sync::Arc<crate::model_lockout::ModelLockoutRegistry>,
+    /// Client-level lockout registry (brute-force protection).
+    pub client_lockouts: std::sync::Arc<crate::client_lockout::ClientLockoutRegistry>,
 }
 
 #[cfg(test)]

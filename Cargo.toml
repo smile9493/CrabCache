@@ -21,6 +21,7 @@ members = [
     "crates/crab-admin-types",
     "crates/crab-capture",
     "crates/crab-auth",
+    "crates/crab-translator",
 ]
 
 [workspace.package]

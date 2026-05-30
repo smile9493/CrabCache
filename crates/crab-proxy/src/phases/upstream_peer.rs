@@ -51,10 +51,17 @@ pub(crate) async fn run(
 
     let req_header = session.req_header();
 
-    let client_ip = session
-        .client_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_default();
+    let client_ip = ctx
+        .client_ip
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            session
+                .client_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_default()
+        });
 
     // Build minimal HeaderMap for affinity fallback (only needed headers).
     // Headers must match extract_affinity_key() — see its doc comment.
@@ -128,6 +135,15 @@ pub(crate) async fn run(
     let mut overload_state = "ready";
     let mut selected_found = false;
     for candidate in ranked_backends {
+        // Skip backends whose circuit breaker is OPEN (not allowing requests).
+        if !proxy.state.circuit_breakers.can_execute(&candidate.name).await {
+            debug!(
+                request_id = %ctx.request_id,
+                backend = %candidate.name,
+                "Skipping backend with OPEN circuit breaker"
+            );
+            continue;
+        }
         let candidate_state = proxy.state.backend_load.overload_state(
             &profile.id,
             &candidate.name,

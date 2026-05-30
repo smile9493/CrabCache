@@ -946,6 +946,9 @@ fn main() -> Result<()> {
         global_rate: startup_global_rate,
         client_endpoint: client_endpoint.clone(),
         session_store,
+        circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
+        model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default()),
+        client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),
     });
     // #region debug-point C:state-build-done
     debug_agent_log(

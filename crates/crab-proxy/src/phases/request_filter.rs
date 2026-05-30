@@ -12,8 +12,8 @@ use crate::error_jsons::{
     upstream_pool_exhausted_error_json,
 };
 use crate::helper_fns::{
-    client_session_from_authorization, fingerprint_client_key, is_models_endpoint,
-    last_user_message_fingerprint, stable_session_log_fields,
+    client_session_from_authorization, extract_client_endpoint_addrs, fingerprint_client_key,
+    is_models_endpoint, last_user_message_fingerprint, stable_session_log_fields,
 };
 use crate::{evaluate_request_guardrails, maybe_handle_cursor_bypass};
 use crate::metrics_helpers::timeline_stamp;
@@ -96,10 +96,16 @@ async fn run_post_body_phases(
 
     ctx.prompt_cache_key = quick.prompt_cache_key;
 
-    let client_ip = session
-        .client_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_default();
+    let client_ip = ctx
+        .client_ip
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            session
+                .client_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_default()
+        });
     // Build a minimal HeaderMap with only the headers needed for affinity extraction,
     // avoiding a full HeaderMap clone of all request headers.
     // Headers must match extract_affinity_key() — see its doc comment.
@@ -494,21 +500,11 @@ async fn run_post_body_phases(
             .await;
         }
 
-        if ctx.client_wire_api == crate::context::ClientWireApi::Responses
-            && selection.pipeline != RequestPipeline::CodexRelay
-        {
-            let body = serde_json::json!({
-                "error": {
-                    "message": "POST /v1/responses is supported only with a Codex upstream profile (provider=codex or key upstream_profile=codex)",
-                    "type": "invalid_request_error",
-                    "code": "unsupported_path",
-                }
-            });
-            let body_str = body.to_string();
-            if !send_json_error(session, http::StatusCode::NOT_FOUND, body_str.as_bytes()).await {
-                let _ = session.respond_error(404).await;
-            }
-            return Ok(true);
+        if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            parsed_payload = Arc::new(crate::responses_wire::responses_payload_to_chat_completions(
+                parsed_payload.as_ref(),
+            ));
+            ctx.parsed_request_payload = Some(parsed_payload.clone());
         }
 
         let payload = parsed_payload.as_ref();
@@ -1166,6 +1162,10 @@ pub(crate) async fn run(
 
     let req_path = session.req_header().uri.path().to_string();
     let req_method = session.req_header().method.clone();
+
+    let client_addrs = extract_client_endpoint_addrs(session);
+    ctx.client_ip = Some(client_addrs.client_ip.clone());
+    ctx.client_peer_addr = Some(client_addrs.peer_addr);
 
     {
         let hdr = session.req_header();

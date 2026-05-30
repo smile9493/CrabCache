@@ -58,6 +58,14 @@ pub(crate) async fn run(
     );
     // #endregion
     if status >= 400 {
+        // Record failures toward backend circuit breaker (NOT for 429 — connection-scoped)
+        if matches!(status, 408 | 500 | 502 | 503 | 504) {
+            if let Some(ref backend_name) = ctx.upstream.backend_name {
+                let kind = crate::circuit_breaker::classify_failure(status, None);
+                proxy.state.circuit_breakers.on_failure(backend_name, kind).await;
+            }
+        }
+
         warn!(
             request_id = %ctx.request_id,
             status,
@@ -201,8 +209,14 @@ pub(crate) async fn run(
     let _ = upstream_response.insert_header("x-request-id", ctx.request_id.clone());
     let _ = upstream_response.insert_header("x-cache-status", "miss");
 
-    // Record success is deferred to logging phase (stream completion)
-    // to avoid counting incomplete SSE streams as successes
+    // Record circuit breaker success for non-streaming responses (status < 400).
+    // Streaming success is deferred to the logging phase to avoid counting
+    // incomplete SSE streams as successes.
+    if !ctx.is_streaming {
+        if let Some(ref backend_name) = ctx.upstream.backend_name {
+            proxy.state.circuit_breakers.on_success(backend_name).await;
+        }
+    }
 
     let now = std::time::Instant::now();
     if ctx.upstream.headers_at.is_none() {

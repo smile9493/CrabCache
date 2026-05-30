@@ -5780,6 +5780,32 @@ impl Translations {
             Locale::EnUS => "Count",
         }
     }
+
+    // ── Overview section nav ─────────────────────────────────────────
+    pub fn overview_section_hero(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "核心指标",
+            Locale::EnUS => "Key Metrics",
+        }
+    }
+    pub fn overview_section_timeseries(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "趋势",
+            Locale::EnUS => "Trends",
+        }
+    }
+    pub fn overview_section_detail(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "详细指标",
+            Locale::EnUS => "Details",
+        }
+    }
+    pub fn overview_section_diagnostics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "诊断",
+            Locale::EnUS => "Diagnostics",
+        }
+    }
 }
 
 pub fn provide_locale() -> RwSignal<Locale> {

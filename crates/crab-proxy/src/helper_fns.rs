@@ -6,6 +6,46 @@ use sha2::{Digest, Sha256};
 
 use crate::context::GatewayContext;
 
+/// Resolved client endpoint: real client IP plus the direct TCP peer seen by Pingora.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientEndpointAddrs {
+    /// Best-effort client IP (`X-Forwarded-For` leftmost, then `X-Real-IP`, else peer).
+    pub client_ip: String,
+    /// Direct connection peer (often OpenResty / docker bridge when proxied).
+    pub peer_addr: String,
+}
+
+/// Extract the downstream client IP for logging and affinity fallback.
+pub fn extract_client_endpoint_addrs(session: &Session) -> ClientEndpointAddrs {
+    let peer_addr = session
+        .client_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let headers = &session.req_header().headers;
+    let client_ip = forwarded_client_ip(headers).unwrap_or_else(|| peer_addr.clone());
+    ClientEndpointAddrs {
+        client_ip,
+        peer_addr,
+    }
+}
+
+fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = xff.split(',').next() {
+            let ip = first.trim();
+            if !ip.is_empty() {
+                return Some(ip.to_string());
+            }
+        }
+    }
+    headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 /// SHA-256 hex prefix (16 chars) of the client API key token (Bearer value).
 pub fn fingerprint_client_key(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -93,10 +133,16 @@ pub fn build_capture_request_meta(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone())),
     );
-    let client_ip = session
-        .client_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_default();
+    let client_ip = ctx
+        .client_ip
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            session
+                .client_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_default()
+        });
 
     let affinity_key = ctx.upstream.affinity_key.clone().unwrap_or_else(|| {
         extract_affinity_key(
@@ -155,6 +201,8 @@ pub fn build_capture_request_meta(
         } else {
             None
         },
+        client_ip: ctx.client_ip.clone(),
+        client_peer_addr: ctx.client_peer_addr.clone(),
     }
 }
 
@@ -229,5 +277,28 @@ mod tests {
             Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         );
         assert_eq!(trace_request_hash_prefix(&expected_hex), expected_hex[..16]);
+    }
+
+    #[test]
+    fn forwarded_client_ip_prefers_xff_leftmost() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.10, 10.0.0.1".parse().unwrap(),
+        );
+        assert_eq!(
+            forwarded_client_ip(&headers).as_deref(),
+            Some("203.0.113.10")
+        );
+    }
+
+    #[test]
+    fn forwarded_client_ip_falls_back_to_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.5".parse().unwrap());
+        assert_eq!(
+            forwarded_client_ip(&headers).as_deref(),
+            Some("198.51.100.5")
+        );
     }
 }

@@ -243,6 +243,75 @@ impl LbRouter {
         &self.meta
     }
 
+    /// Power-of-Two-Choices selection: randomly pick two ready backends,
+    /// return the one with the better score.
+    ///
+    /// `score_fn` maps a `BackendMeta` name to a score where **lower is better**.
+    /// Returns `None` if no backends are ready.
+    pub fn select_p2c<F>(&self, score_fn: F) -> Option<SelectedBackend<'_>>
+    where
+        F: Fn(&str) -> f64,
+    {
+        let lb = self.lb.load();
+        let pool = lb.backends();
+        let registered = pool.get_backend();
+
+        // Collect all ready backends with CrabCache metadata.
+        let mut ready: Vec<(&PBackend, &BackendMeta)> = Vec::new();
+        for pb in registered.iter() {
+            if !pool.ready(pb) {
+                continue;
+            }
+            let addr = match pb.addr {
+                PSocketAddr::Inet(a) => a,
+                _ => continue,
+            };
+            if let Some(meta) = self.meta.get(&addr) {
+                ready.push((pb, meta));
+            }
+        }
+
+        if ready.is_empty() {
+            return None;
+        }
+        if ready.len() == 1 {
+            let (pb, meta) = ready[0];
+            return Some(SelectedBackend {
+                addr: match pb.addr {
+                    PSocketAddr::Inet(a) => a,
+                    _ => return None,
+                },
+                name: &meta.name,
+                tls_sni: &meta.tls_sni,
+            });
+        }
+
+        // Deterministic P2C using affinity key from the first two backends' names.
+        let hash1 = stable_hash_for_p2c(&ready[0].1.name);
+        let hash2 = stable_hash_for_p2c(&ready[1].1.name);
+        let idx1 = hash1 as usize % ready.len();
+        let mut idx2 = hash2 as usize % ready.len();
+        if idx2 == idx1 {
+            idx2 = (idx2 + 1) % ready.len();
+        }
+
+        let (pb_a, meta_a) = ready[idx1];
+        let (pb_b, meta_b) = ready[idx2];
+
+        let score_a = score_fn(&meta_a.name);
+        let score_b = score_fn(&meta_b.name);
+
+        let winner = if score_a <= score_b { (pb_a, meta_a) } else { (pb_b, meta_b) };
+        Some(SelectedBackend {
+            addr: match winner.0.addr {
+                PSocketAddr::Inet(a) => a,
+                _ => return None,
+            },
+            name: &winner.1.name,
+            tls_sni: &winner.1.tls_sni,
+        })
+    }
+
     /// Rebuild the router with a new set of backends.
     ///
     /// Atomically swaps the inner `LoadBalancer` so that both the proxy's
@@ -342,6 +411,15 @@ impl BackgroundService for LbHealthService {
             }
         }
     }
+}
+
+/// Deterministic hash for P2C backend selection (avoids `rand` dependency).
+fn stable_hash_for_p2c(key: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let digest = hasher.finalize();
+    u64::from_be_bytes(digest[..8].try_into().unwrap_or([0; 8]))
 }
 
 #[cfg(test)]

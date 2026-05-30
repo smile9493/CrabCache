@@ -321,6 +321,60 @@ max_files = 5
 # mimo_session_store_max_messages = 200
 # passthrough_prefix_bytes = 1024       # Minimum body bytes to trigger MiMo passthrough (overlap connect + upload)
 
+# ── Multi-Layer Resilience (Circuit Breaker / Lockout) ───────────
+# Inspired by OmniRoute's 4-layer resilience architecture.
+# [resilience]
+# circuit_breaker_enabled = true
+# failure_threshold = 12             # 408/500/502/503/504 failures before OPEN
+# degradation_threshold = 7          # ceil(failure_threshold * 0.6) — warning zone
+# reset_timeout_secs = 30            # base cooldown before OPEN → HALF_OPEN
+# max_backoff_multiplier = 4         # max backoff = reset_timeout * multiplier
+# backoff_escalation_count = 3       # OPEN cycles before backoff escalation
+# # Per-kind cooldown overrides
+# rate_limit_cooldown_secs = 60      # 429 with rate limit body
+# quota_exhausted_cooldown_secs = 3600  # 429 with quota/billing body
+# # Model-level lockout (per-profile/backend/model)
+# model_lockout_enabled = true
+# model_lockout_base_cooldown_secs = 60
+# model_lockout_max_backoff_level = 5
+# # Client-level lockout (brute-force auth protection)
+# client_lockout_enabled = true
+# client_lockout_max_attempts = 5
+# client_lockout_duration_secs = 900   # 15 minutes
+# client_lockout_attempt_window_secs = 300  # 5 minutes
+
+# ── Token Compression Pipeline (SSE Stream) ─────────────────────
+# [compression]
+# enabled = false
+# deduplicate_content_deltas = true   # suppress consecutive identical content deltas
+# truncate_long_content = false       # truncate tool output content > threshold
+# max_content_chars = 4096            # truncation threshold (chars)
+
+# ── Multi-Routing Strategies ─────────────────────────────────────
+# Extend beyond Ketama with P2C, cost-optimized, and round-robin.
+# Per-profile: set routing_strategy in [[upstream.profiles]].
+# [routing]
+# default_strategy = "ketama"        # ketama | p2c | cost_optimized | round_robin
+
+# ── Guardrails (PII / Prompt Injection) ──────────────────────────
+# [guardrails]
+# enabled = true
+# # PII detection/redaction in messages[].content
+# pii_detection = "off"              # off | detect | redact
+# # Prompt injection detection
+# injection_detection = false
+# injection_mode = "warn"            # block | warn | log
+# injection_threshold = "high"       # low | medium | high
+# # Custom regex patterns for injection detection
+# custom_patterns = []
+
+# ── Bypass Handler ───────────────────────────────────────────────
+# Intercept well-known request patterns and return canned responses
+# to avoid consuming tokens or hitting upstream APIs.
+# [bypass]
+# enabled = true
+# skip_patterns = ["Warmup", "count"]  # substrings to match in message content
+
 # ── Log Retention (Admin Dashboard) ──────────────────────────────
 # The admin dashboard runs a background cleanup task every 10 minutes
 # that enforces these retention limits. Configure via env vars:

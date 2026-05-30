@@ -135,6 +135,12 @@ pub struct CaptureRequestMeta {
     pub request_passthrough: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_passthrough_prefix_len: Option<usize>,
+    /// Resolved downstream client IP (X-Forwarded-For / X-Real-IP / peer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
+    /// Direct TCP peer seen by Pingora (often the reverse proxy hop).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_peer_addr: Option<String>,
 }
 
 /// Complete raw capture entry written to disk.

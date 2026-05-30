@@ -99,6 +99,7 @@ fn AuthenticatedShell() -> impl IntoView {
                                     <Route path=path!("/cache") view=CachePage />
                                     <Route path=path!("/requests") view=RequestsPage />
                                     <Route path=path!("/sessions") view=SessionsRedirectPage />
+                                    <Route path=path!("/dataplane") view=DataPlaneRedirectPage />
                                     <Route path=path!("/upstream") view=UpstreamPage />
                                 </Routes>
                             </main>
@@ -135,6 +136,20 @@ fn InfraRedirectPage() -> impl IntoView {
     view! {
         <div class="page-content">
             <div class="glass-card text-sm text-theme-muted">"Redirecting to Overview..."</div>
+        </div>
+    }
+}
+
+#[component]
+fn DataPlaneRedirectPage() -> impl IntoView {
+    Effect::new(move |_| {
+        if let Some(win) = web_sys::window() {
+            let _ = win.location().set_href("/");
+        }
+    });
+    view! {
+        <div class="page-content">
+            <div class="glass-card text-sm text-theme-muted">"Data Plane is now part of Overview. Redirecting..."</div>
         </div>
     }
 }

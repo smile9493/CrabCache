@@ -7,6 +7,19 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+/// Configuration for guardrails behavior.
+#[derive(Debug, Clone, Default)]
+pub struct GuardrailConfig {
+    /// Enable PII detection/masking (email, phone, SSN, credit card).
+    pub pii_masker_enabled: bool,
+    /// Enable prompt injection detection.
+    pub injection_detector_enabled: bool,
+    /// "warn" (default) or "block".
+    pub mode: String,
+    /// Custom bypass skip patterns (path substrings or regex patterns).
+    pub bypass_skip_patterns: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GuardrailResult {
     pub blocked: bool,
@@ -99,6 +112,8 @@ fn input_sanitizer_mode() -> String {
         .to_lowercase()
 }
 
+/// Expanded prompt injection patterns covering system override, data exfiltration,
+/// role hijacking, and known jailbreak techniques.
 fn injection_patterns() -> &'static [&'static str] {
     &[
         "ignore previous instructions",
@@ -108,6 +123,39 @@ fn injection_patterns() -> &'static [&'static str] {
         "reveal hidden",
         "bypass safety",
         "override instructions",
+        "forget everything",
+        "new instructions",
+        "you are now",
+        "act as",
+        "pretend you are",
+        "ignore all prior",
+        "disregard all",
+        "override system",
+        "override your rules",
+        "do anything now",
+        "jailbreak",
+        "dan mode",
+        "developer mode",
+        "act as admin",
+        "reveal your prompt",
+        "what is your system prompt",
+        "output your instructions",
+        "repeat after me",
+        "translate to code",
+    ]
+}
+
+/// Title extraction detection patterns — detect attempts to extract conversation titles
+/// or system metadata from the LLM.
+fn title_extraction_patterns() -> &'static [&'static str] {
+    &[
+        "what is the title",
+        "extract the title",
+        "summarize the title",
+        "generate a title",
+        "conversation title",
+        "session title",
+        "thread title",
     ]
 }
 
@@ -133,6 +181,36 @@ fn pii_secret_re() -> &'static regex::Regex {
     })
 }
 
+/// SSN pattern: 123-45-6789 or 123 45 6789.
+fn pii_ssn_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("valid SSN regex")
+    })
+}
+
+/// Credit card pattern: 13-19 digit sequences (Visa, MC, Amex, Discover).
+fn pii_credit_card_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b",
+        )
+        .expect("valid credit card regex")
+    })
+}
+
+/// Mask PII in text by replacing matches with placeholder tokens.
+pub fn mask_pii(text: &str) -> String {
+    let text = pii_email_re().replace_all(text, "[EMAIL]");
+    let text = pii_phone_re().replace_all(&text, "[PHONE]");
+    let text = pii_secret_re().replace_all(&text, "[SECRET]");
+    let text = pii_ssn_re().replace_all(&text, "[SSN]");
+    let text = pii_credit_card_re().replace_all(&text, "[CREDIT_CARD]");
+    text.into_owned()
+}
+
+/// Evaluate request guardrails: check for prompt injection and PII.
 pub fn evaluate_request_guardrails(payload: &Value, headers: &HeaderMap) -> GuardrailResult {
     if !input_sanitizer_enabled() {
         return GuardrailResult::default();
@@ -152,10 +230,19 @@ pub fn evaluate_request_guardrails(payload: &Value, headers: &HeaderMap) -> Guar
     {
         labels.push("prompt-injection".to_string());
     }
+    if !disabled.contains("title-extraction")
+        && title_extraction_patterns()
+            .iter()
+            .any(|needle| text.contains(needle))
+    {
+        labels.push("title-extraction".to_string());
+    }
     if !disabled.contains("pii-masker")
         && (pii_email_re().is_match(&text)
             || pii_phone_re().is_match(&text)
-            || pii_secret_re().is_match(&text))
+            || pii_secret_re().is_match(&text)
+            || pii_ssn_re().is_match(&text)
+            || pii_credit_card_re().is_match(&text))
     {
         labels.push("pii".to_string());
     }
@@ -176,6 +263,18 @@ pub fn evaluate_request_guardrails(payload: &Value, headers: &HeaderMap) -> Guar
         labels,
         message,
     }
+}
+
+/// Check if a request path matches any of the configured bypass skip patterns.
+///
+/// Returns `true` if the path should bypass guardrail processing entirely.
+pub fn path_matches_bypass_skip_pattern(path: &str, patterns: &[String]) -> bool {
+    for pattern in patterns {
+        if path.contains(pattern.as_str()) {
+            return true;
+        }
+    }
+    false
 }
 
 pub async fn maybe_handle_cursor_bypass(
@@ -231,5 +330,65 @@ mod tests {
         });
         let result = evaluate_request_guardrails(&payload, &HeaderMap::new());
         assert!(result.labels.iter().any(|l| l == "pii"));
+    }
+
+    #[test]
+    fn detects_ssn_in_pii() {
+        let payload = json!({
+            "messages": [
+                {"role": "user", "content": "my SSN is 123-45-6789"}
+            ]
+        });
+        let result = evaluate_request_guardrails(&payload, &HeaderMap::new());
+        assert!(result.labels.iter().any(|l| l == "pii"));
+    }
+
+    #[test]
+    fn detects_credit_card_in_pii() {
+        let payload = json!({
+            "messages": [
+                {"role": "user", "content": "my card is 4111111111111111"}
+            ]
+        });
+        let result = evaluate_request_guardrails(&payload, &HeaderMap::new());
+        assert!(result.labels.iter().any(|l| l == "pii"));
+    }
+
+    #[test]
+    fn detects_title_extraction() {
+        let payload = json!({
+            "messages": [
+                {"role": "user", "content": "what is the title of this conversation"}
+            ]
+        });
+        let result = evaluate_request_guardrails(&payload, &HeaderMap::new());
+        assert!(result.labels.iter().any(|l| l == "title-extraction"));
+    }
+
+    #[test]
+    fn mask_pii_replaces_email() {
+        let masked = mask_pii("Contact alice@example.com for info");
+        assert!(masked.contains("[EMAIL]"));
+        assert!(!masked.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn mask_pii_replaces_ssn() {
+        let masked = mask_pii("SSN: 123-45-6789");
+        assert!(masked.contains("[SSN]"));
+    }
+
+    #[test]
+    fn mask_pii_replaces_credit_card() {
+        let masked = mask_pii("Card: 4111111111111111");
+        assert!(masked.contains("[CREDIT_CARD]"));
+    }
+
+    #[test]
+    fn bypass_skip_pattern_matches() {
+        let patterns = vec!["/health".to_string(), "debug".to_string()];
+        assert!(path_matches_bypass_skip_pattern("/health", &patterns));
+        assert!(path_matches_bypass_skip_pattern("/debug/test", &patterns));
+        assert!(!path_matches_bypass_skip_pattern("/v1/chat/completions", &patterns));
     }
 }

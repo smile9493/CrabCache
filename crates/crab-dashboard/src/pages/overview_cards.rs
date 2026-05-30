@@ -275,8 +275,63 @@ pub fn OverviewCardGrid(
 
                         view! {
                             <>
+                                // Segment navigation bar
+                                <nav class="overview-segment-nav">
+                                    <a class="overview-segment-link segment-active"
+                                        href="#ov-hero"
+                                        on:click=move |ev| {
+                                            ev.prevent_default();
+                                            if let Some(el) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                                .and_then(|d| d.get_element_by_id("ov-hero"))
+                                            {
+                                                el.scroll_into_view_with_bool(true);
+                                            }
+                                        }
+                                    >{t.overview_section_hero()}</a>
+                                    <a class="overview-segment-link"
+                                        href="#ov-ts"
+                                        on:click=move |ev| {
+                                            ev.prevent_default();
+                                            if let Some(el) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                                .and_then(|d| d.get_element_by_id("ov-ts"))
+                                            {
+                                                el.scroll_into_view_with_bool(true);
+                                            }
+                                        }
+                                    >{t.overview_section_timeseries()}</a>
+                                    <a class="overview-segment-link"
+                                        href="#ov-detail"
+                                        on:click=move |ev| {
+                                            ev.prevent_default();
+                                            if let Some(el) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                                .and_then(|d| d.get_element_by_id("ov-detail"))
+                                            {
+                                                el.scroll_into_view_with_bool(true);
+                                            }
+                                        }
+                                    >{t.overview_section_detail()}</a>
+                                    <a class="overview-segment-link"
+                                        href="#ov-diag"
+                                        on:click=move |ev| {
+                                            ev.prevent_default();
+                                            if let Some(el) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                                .and_then(|d| d.get_element_by_id("ov-diag"))
+                                            {
+                                                el.scroll_into_view_with_bool(true);
+                                            }
+                                        }
+                                    >{t.overview_section_diagnostics()}</a>
+                                </nav>
+
                                 <TraceCompareBanner trace=trace.clone() metrics=metrics.clone() />
-                                <div class="overview-cards-hero">
+
+                                // Section: Key Metrics
+                                <div id="ov-hero" class="overview-section-anchor">
+                                    <div class="overview-cards-hero">
                                     <OverviewMetricCard
                                         label=t.overview_health_title().to_string()
                                         headline=health_headline
@@ -430,16 +485,22 @@ pub fn OverviewCardGrid(
                                         }
                                     />
                                 </div>
+                                </div> // close ov-hero
 
-                                <div class="overview-timeseries-wrap glass-card p-4">
-                                    <TimeSeriesChart
-                                        points=ts_points
-                                        selected_view=ts_window
-                                        suggestions=sugg.clone()
-                                    />
+                                // Section: Trends
+                                <div id="ov-ts" class="overview-section-anchor">
+                                    <div class="overview-timeseries-wrap glass-card p-4">
+                                        <TimeSeriesChart
+                                            points=ts_points
+                                            selected_view=ts_window
+                                            suggestions=sugg.clone()
+                                        />
+                                    </div>
                                 </div>
 
-                                <div class="overview-cards-detail">
+                                // Section: Details
+                                <div id="ov-detail" class="overview-section-anchor">
+                                    <div class="overview-cards-detail">
                                     <OverviewMetricCard
                                         label=t.overview_token_stats().to_string()
                                         headline=token_headline
@@ -669,6 +730,7 @@ pub fn OverviewCardGrid(
                                         }
                                     />
                                 </div>
+                                </div> // close ov-detail
                                 <DomainDetailDrawer domain=selected_domain />
                                 {move || {
                                     if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {

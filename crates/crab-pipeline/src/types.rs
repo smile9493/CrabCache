@@ -289,3 +289,42 @@ impl PipelineGlobals {
 
 #[allow(dead_code)]
 pub type ModelPrefixProfileMap = HashMap<String, String>;
+
+/// Routing strategy for selecting among upstream backends.
+///
+/// This enum is used in pipeline configuration to specify the load balancing
+/// algorithm. It maps to `BackendRouteStrategy` in the proxy layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategy {
+    /// Ketama consistent hashing — session affinity via hash ring.
+    Ketama,
+    /// Power of Two Choices — randomly pick two backends, choose the better one.
+    P2c,
+    /// Cost-optimized — balance load and cost weight.
+    CostOptimized,
+}
+
+impl Default for RoutingStrategy {
+    fn default() -> Self {
+        Self::Ketama
+    }
+}
+
+impl RoutingStrategy {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "p2c" | "power_of_two" | "power-of-two" => Self::P2c,
+            "cost_optimized" | "cost-optimized" | "eco" => Self::CostOptimized,
+            _ => Self::Ketama,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ketama => "ketama",
+            Self::P2c => "p2c",
+            Self::CostOptimized => "cost_optimized",
+        }
+    }
+}

@@ -1533,15 +1533,18 @@ fn DataPlaneDiagnostics() -> impl IntoView {
     let phases = RwSignal::new(serde_json::Value::Null);
     let errors = RwSignal::new(serde_json::Value::Null);
     let fetch_error = RwSignal::new(None::<String>);
+    let is_loaded = RwSignal::new(false);
 
     let fetch = {
         let phases = phases;
         let errors = errors;
         let fetch_error = fetch_error;
+        let is_loaded = is_loaded;
         move || {
             let phases = phases;
             let errors = errors;
             let fetch_error = fetch_error;
+            let is_loaded = is_loaded;
             leptos::task::spawn_local(async move {
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/phases").await {
                     Ok(data) => phases.set(data),
@@ -1551,6 +1554,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                     Ok(data) => errors.set(data),
                     Err(e) => fetch_error.set(Some(e)),
                 }
+                is_loaded.set(true);
             });
         }
     };
@@ -1566,7 +1570,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
     });
 
     view! {
-        <div class="mt-6 border-t border-theme pt-5">
+        <div id="ov-diag" class="overview-section-anchor mt-6 border-t border-theme pt-5">
             <div class="flex items-baseline gap-3 mb-4">
                 <h2 class="text-base font-semibold text-theme">{t.dataplane_page_title()}</h2>
                 <span class="text-xs text-theme-muted">{t.dataplane_page_desc()}</span>
@@ -1587,6 +1591,19 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                     </div>
                     <div class="dash-card-body-flush overflow-x-auto">
                         {move || {
+                            if !is_loaded.get() {
+                                return view! {
+                                    <div class="p-4 space-y-2">
+                                        {(0..5).map(|_| view! {
+                                            <div class="dp-skeleton-row">
+                                                <div class="skeleton-block" style="width:6rem;height:0.75rem"></div>
+                                                <div class="dp-skeleton-bar" style="height:0.625rem"></div>
+                                                <div class="skeleton-block" style="width:3rem;height:0.75rem"></div>
+                                            </div>
+                                        }).collect_view()}
+                                    </div>
+                                }.into_any();
+                            }
                             let p = phases.get();
                             let phase_map = p.get("phases").and_then(|v| v.as_object()).cloned().unwrap_or_default();
                             let mut phase_names: Vec<String> = phase_map.keys().map(|k| k.clone()).collect();
@@ -1645,6 +1662,19 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                         </div>
                         <div class="dash-card-body">
                             {move || {
+                                if !is_loaded.get() {
+                                    return view! {
+                                        <div class="p-3 space-y-2">
+                                            {(0..4).map(|_| view! {
+                                                <div class="dp-skeleton-row">
+                                                    <div class="skeleton-block" style="width:8rem;height:0.75rem"></div>
+                                                    <div class="dp-skeleton-bar" style="height:0.875rem"></div>
+                                                    <div class="skeleton-block" style="width:2.5rem;height:0.75rem"></div>
+                                                </div>
+                                            }).collect_view()}
+                                        </div>
+                                    }.into_any();
+                                }
                                 let e = errors.get();
                                 let reasons = e.get("rejection_reasons").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                                 if reasons.is_empty() {
@@ -1678,6 +1708,19 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                         </div>
                         <div class="dash-card-body">
                             {move || {
+                                if !is_loaded.get() {
+                                    return view! {
+                                        <div class="p-3 space-y-2">
+                                            {(0..4).map(|_| view! {
+                                                <div class="dp-skeleton-row">
+                                                    <div class="skeleton-block" style="width:8rem;height:0.75rem"></div>
+                                                    <div class="dp-skeleton-bar" style="height:0.875rem"></div>
+                                                    <div class="skeleton-block" style="width:2.5rem;height:0.75rem"></div>
+                                                </div>
+                                            }).collect_view()}
+                                        </div>
+                                    }.into_any();
+                                }
                                 let e = errors.get();
                                 let sources = e.get("error_sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                                 if sources.is_empty() {

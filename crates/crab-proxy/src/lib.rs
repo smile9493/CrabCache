@@ -1,11 +1,16 @@
 mod client_key_limiter;
 mod client_key_rate_limiter;
 pub mod backend_state;
+pub mod circuit_breaker;
 mod codex;
+mod responses_wire;
 mod context;
 mod debug_log;
+pub mod client_lockout;
+pub mod fallback_policy;
 mod error;
 mod guardrails;
+pub mod model_lockout;
 mod masking;
 mod phases;
 mod profile_build;
@@ -58,7 +63,10 @@ pub use context::{
 };
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
-pub use guardrails::{GuardrailResult, evaluate_request_guardrails, maybe_handle_cursor_bypass};
+pub use guardrails::{
+    GuardrailConfig, GuardrailResult, evaluate_request_guardrails, mask_pii,
+    maybe_handle_cursor_bypass, path_matches_bypass_skip_pattern,
+};
 pub use profile_build::{
     ProfileBuildInput, build_profile_runtime, parse_profile_backends, resolve_profile_key_specs,
 };
