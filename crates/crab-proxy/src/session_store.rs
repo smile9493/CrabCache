@@ -43,8 +43,8 @@ impl SessionStore {
     pub async fn new(redis_url: &str) -> anyhow::Result<Self> {
         let manager = RedisConnectionManager::new(redis_url)?;
         let pool = bb8::Pool::builder()
-            .max_size(8)
-            .connection_timeout(std::time::Duration::from_secs(2))
+            .max_size(12)
+            .connection_timeout(std::time::Duration::from_secs(5))
             .build(manager)
             .await?;
         Ok(Self { pool })

@@ -161,6 +161,23 @@ pub fn parse_sse_chunk(chunk: &[u8]) -> Vec<SseEvent<'_>> {
     events
 }
 
+/// Check whether raw SSE bytes contain at least one event with the given `type` field value
+/// in its JSON `data` payload. Used to detect whether upstream already sent a terminal event
+/// (e.g. `response.completed`) before disconnecting.
+pub fn sse_bytes_contains_event(bytes: &[u8], event_type: &str) -> bool {
+    for event in parse_sse_chunk(bytes) {
+        if event.is_done() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(event.data) {
+            if val.get("type").and_then(|t| t.as_str()) == Some(event_type) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn reconstruct_sse_data(events: &[SseEvent<'_>]) -> Bytes {
     let mut result = Vec::new();
     for event in events {

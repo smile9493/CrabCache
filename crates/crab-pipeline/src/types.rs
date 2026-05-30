@@ -12,6 +12,8 @@ pub enum RequestPipeline {
     GenericRelay,
     /// Codex (ChatGPT) Responses API relay — translates Chat Completions ↔ Responses API.
     CodexRelay,
+    /// Codex client → DeepSeek upstream: Responses API ↔ Chat Completions with DeepSeek normalization.
+    CodexDeepSeek,
 }
 
 impl RequestPipeline {
@@ -23,6 +25,7 @@ impl RequestPipeline {
             RequestPipeline::MimoPaygRelay => "mimo_payg_relay",
             RequestPipeline::GenericRelay => "generic_relay",
             RequestPipeline::CodexRelay => "codex_relay",
+            RequestPipeline::CodexDeepSeek => "codex_deepseek",
         }
     }
 }
@@ -80,6 +83,7 @@ pub enum PipelineOverride {
     MimoPaygRelay,
     GenericRelay,
     CodexRelay,
+    CodexDeepSeek,
 }
 
 impl PipelineOverride {
@@ -92,6 +96,7 @@ impl PipelineOverride {
             "mimo_payg_relay" => Self::MimoPaygRelay,
             "generic_relay" => Self::GenericRelay,
             "codex_relay" => Self::CodexRelay,
+            "codex_deepseek" => Self::CodexDeepSeek,
             _ => Self::Auto,
         }
     }
@@ -105,6 +110,7 @@ impl PipelineOverride {
             PipelineOverride::MimoPaygRelay => "mimo_payg_relay",
             PipelineOverride::GenericRelay => "generic_relay",
             PipelineOverride::CodexRelay => "codex_relay",
+            PipelineOverride::CodexDeepSeek => "codex_deepseek",
         }
     }
 }
@@ -146,6 +152,7 @@ pub enum PipelineSelectionReason {
     MimoProvider,
     CodexProvider,
     ModelAlias,
+    CodexDeepSeekModelAlias,
 }
 
 impl PipelineSelectionReason {
@@ -161,6 +168,7 @@ impl PipelineSelectionReason {
             PipelineSelectionReason::MimoProvider => "mimo_provider",
             PipelineSelectionReason::CodexProvider => "codex_provider",
             PipelineSelectionReason::ModelAlias => "model_alias",
+            PipelineSelectionReason::CodexDeepSeekModelAlias => "codex_deepseek_model_alias",
         }
     }
 }

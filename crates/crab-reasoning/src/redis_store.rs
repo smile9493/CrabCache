@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::warn;
+use tracing::{debug, warn};
+
+/// Max keys to fetch/delete per prune tick (avoids monopolizing Redis for minutes).
+const PRUNE_MAX_KEYS_PER_TICK: usize = 2_000;
+const SCAN_COUNT: usize = 500;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ReasoningEntry {
@@ -179,22 +183,53 @@ impl RedisReasoningStore {
         });
     }
 
-    fn prune_to_max_rows(&self, max_rows: usize) -> anyhow::Result<()> {
-        let client = Arc::clone(&self.client);
-        let prefix = self.prefix.clone();
-        let mut conn = client.get_connection()?;
-        let pattern = format!("{prefix}:*");
+    fn scan_key_count(&self, conn: &mut redis::Connection) -> anyhow::Result<usize> {
+        let pattern = format!("{}:*", self.prefix);
         let mut cursor: u64 = 0;
-        let mut entries: Vec<(String, f64)> = Vec::new();
+        let mut total = 0usize;
         loop {
             let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
                 .arg(&pattern)
                 .arg("COUNT")
-                .arg(500)
+                .arg(SCAN_COUNT)
+                .query(conn)?;
+            total += keys.len();
+            if next == 0 {
+                break;
+            }
+            cursor = next;
+        }
+        Ok(total)
+    }
+
+    fn prune_to_max_rows(&self, max_rows: usize) -> anyhow::Result<()> {
+        let client = Arc::clone(&self.client);
+        let prefix = self.prefix.clone();
+        let mut conn = client.get_connection()?;
+        let key_count = self.scan_key_count(&mut conn)?;
+        if key_count <= max_rows {
+            return Ok(());
+        }
+
+        let pattern = format!("{prefix}:*");
+        let mut cursor: u64 = 0;
+        let mut entries: Vec<(String, f64)> = Vec::new();
+        let fetch_budget = PRUNE_MAX_KEYS_PER_TICK.min(key_count.saturating_sub(max_rows) + SCAN_COUNT);
+
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(SCAN_COUNT)
                 .query(&mut conn)?;
             for k in keys {
+                if entries.len() >= fetch_budget {
+                    break;
+                }
                 let Ok(Some(s)) = conn.get::<_, Option<String>>(&k) else {
                     continue;
                 };
@@ -202,19 +237,27 @@ impl RedisReasoningStore {
                     entries.push((k, entry.created_at));
                 }
             }
-            if next == 0 {
+            if entries.len() >= fetch_budget || next == 0 {
                 break;
             }
             cursor = next;
         }
-        if entries.len() <= max_rows {
+
+        if entries.is_empty() {
             return Ok(());
         }
+
         entries.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let to_delete = entries.len() - max_rows;
+        let to_delete = entries.len().min(key_count.saturating_sub(max_rows));
         for (k, _) in entries.into_iter().take(to_delete) {
             let _: () = conn.del(k)?;
         }
+        debug!(
+            key_count,
+            max_rows,
+            deleted = to_delete,
+            "Reasoning Redis max_rows prune"
+        );
         Ok(())
     }
 }

@@ -312,6 +312,7 @@ pub struct CacheConfig {
     pub l0_ttl_secs: Option<u64>,
     pub l1_redis_url: String,
     pub l1_pool_size: Option<u32>,
+    pub l1_connection_timeout_secs: Option<u64>,
     pub default_ttl_secs: Option<u64>,
     pub model_ttl_overrides: Option<HashMap<String, u64>>,
     pub consumer_ttl_overrides: Option<HashMap<String, u64>>,

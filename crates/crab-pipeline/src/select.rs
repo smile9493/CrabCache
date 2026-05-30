@@ -45,6 +45,16 @@ pub fn select_request_pipeline(
 
     let (pipeline, reason) = auto_pipeline_with_reason(ctx, provider);
 
+    // When a model alias overrides the pipeline (e.g. gpt-4o → deepseek-v4-pro via Codex key),
+    // also override the upstream profile so the request uses the correct endpoints and key pool.
+    let upstream_profile_id =
+        if reason == PipelineSelectionReason::ModelAlias && ctx.model_alias_pipeline.is_some() {
+            profile_for_pipeline(pipeline, profiles)
+                .unwrap_or(upstream_profile_id)
+        } else {
+            upstream_profile_id
+        };
+
     PipelineSelection {
         pipeline,
         upstream_profile_id,
@@ -63,6 +73,30 @@ fn normalize_legacy_codex_provider(
     } else {
         provider
     }
+}
+
+/// Find a profile whose provider matches the pipeline's expected provider.
+fn profile_for_pipeline(
+    pipeline: RequestPipeline,
+    profiles: &[ProfileDescriptor],
+) -> Option<String> {
+    let target_id = match pipeline {
+        RequestPipeline::CursorDeepSeekV4
+        | RequestPipeline::DeepSeekLight
+        | RequestPipeline::CodexDeepSeek => "deepseek",
+        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => "mimo",
+        RequestPipeline::CodexRelay => {
+            return profiles
+                .iter()
+                .find(|p| p.id == "codex" || p.id == "openai")
+                .map(|p| p.id.clone());
+        }
+        RequestPipeline::GenericRelay => return None,
+    };
+    profiles
+        .iter()
+        .find(|p| p.id == target_id)
+        .map(|p| p.id.clone())
 }
 
 fn pipeline_from_override(
@@ -107,6 +141,13 @@ fn pipeline_from_override(
                 Some(RequestPipeline::GenericRelay)
             }
         }
+        PipelineOverride::CodexDeepSeek => {
+            if provider == UpstreamProvider::Deepseek {
+                Some(RequestPipeline::CodexDeepSeek)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
     }
 }
 
@@ -114,51 +155,12 @@ fn auto_pipeline_with_reason(
     ctx: &PipelineRequestContext<'_>,
     provider: UpstreamProvider,
 ) -> (RequestPipeline, PipelineSelectionReason) {
-    if provider == UpstreamProvider::Deepseek
-        && let Some(alias_pipe) = ctx.model_alias_pipeline
-    {
-        match alias_pipe {
-            PipelineOverride::CursorDeepSeekV4 => {
-                return (
-                    RequestPipeline::CursorDeepSeekV4,
-                    PipelineSelectionReason::ModelAlias,
-                );
-            }
-            PipelineOverride::DeepSeekLight => {
-                return (
-                    RequestPipeline::DeepSeekLight,
-                    PipelineSelectionReason::ModelAlias,
-                );
-            }
-            PipelineOverride::GenericRelay => {
-                return (
-                    RequestPipeline::GenericRelay,
-                    PipelineSelectionReason::ModelAlias,
-                );
-            }
-            PipelineOverride::MimoTokenPlanRelay
-            | PipelineOverride::MimoPaygRelay
-            | PipelineOverride::CodexRelay
-            | PipelineOverride::Auto => {}
-        }
-    }
-
-    if provider == UpstreamProvider::Mimo
-        && let Some(alias_pipe) = ctx.model_alias_pipeline
-    {
-        match alias_pipe {
-            PipelineOverride::MimoTokenPlanRelay
-            | PipelineOverride::MimoPaygRelay
-            | PipelineOverride::GenericRelay => {
-                let pipeline = match alias_pipe {
-                    PipelineOverride::MimoTokenPlanRelay => RequestPipeline::MimoTokenPlanRelay,
-                    PipelineOverride::MimoPaygRelay => RequestPipeline::MimoPaygRelay,
-                    _ => RequestPipeline::GenericRelay,
-                };
-                return (pipeline, PipelineSelectionReason::ModelAlias);
-            }
-            PipelineOverride::Auto => {}
-            _ => {}
+    // Model alias pipeline takes priority regardless of profile provider.
+    // This allows a Codex-profile API key to route aliased models (e.g. gpt-4o → deepseek-v4-pro)
+    // through DeepSeek/MiMo pipelines instead of CodexRelay.
+    if let Some(alias_pipe) = ctx.model_alias_pipeline {
+        if let Some(resolved) = resolve_alias_pipeline(alias_pipe) {
+            return (resolved, PipelineSelectionReason::ModelAlias);
         }
     }
 
@@ -170,8 +172,26 @@ fn auto_pipeline_with_reason(
         | RequestPipeline::MimoPaygRelay => PipelineSelectionReason::MimoProvider,
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
         RequestPipeline::CodexRelay => PipelineSelectionReason::CodexProvider,
+        // CodexDeepSeek is only selected via model alias; legacy never produces it.
+        RequestPipeline::CodexDeepSeek => PipelineSelectionReason::CodexDeepSeekModelAlias,
     };
     (pipeline, reason)
+}
+
+/// Resolve an explicit model-alias pipeline override to a concrete [`RequestPipeline`].
+///
+/// Returns `None` for `Auto` (fall through to legacy heuristics).
+fn resolve_alias_pipeline(alias_pipe: PipelineOverride) -> Option<RequestPipeline> {
+    match alias_pipe {
+        PipelineOverride::CursorDeepSeekV4 => Some(RequestPipeline::CursorDeepSeekV4),
+        PipelineOverride::DeepSeekLight => Some(RequestPipeline::DeepSeekLight),
+        PipelineOverride::MimoTokenPlanRelay => Some(RequestPipeline::MimoTokenPlanRelay),
+        PipelineOverride::MimoPaygRelay => Some(RequestPipeline::MimoPaygRelay),
+        PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
+        PipelineOverride::CodexRelay => Some(RequestPipeline::CodexRelay),
+        PipelineOverride::CodexDeepSeek => Some(RequestPipeline::CodexDeepSeek),
+        PipelineOverride::Auto => None,
+    }
 }
 
 fn auto_pipeline_legacy(
@@ -206,10 +226,14 @@ pub fn validate_pipeline_override(
     provider: UpstreamProvider,
 ) -> Option<&'static str> {
     match override_pipe {
-        PipelineOverride::CursorDeepSeekV4 | PipelineOverride::DeepSeekLight
+        PipelineOverride::CursorDeepSeekV4
+        | PipelineOverride::DeepSeekLight
+        | PipelineOverride::CodexDeepSeek
             if provider != UpstreamProvider::Deepseek =>
         {
-            Some("cursor_deepseek_v4 and deepseek_light require a deepseek upstream profile")
+            Some(
+                "cursor_deepseek_v4, deepseek_light, and codex_deepseek require a deepseek upstream profile",
+            )
         }
         PipelineOverride::MimoTokenPlanRelay
         | PipelineOverride::MimoPaygRelay
@@ -340,6 +364,53 @@ mod tests {
         let sel = select_request_pipeline(&globals, &profiles, &ctx);
         assert_eq!(sel.upstream_profile_id, "openai");
         assert_eq!(sel.pipeline, RequestPipeline::GenericRelay);
+    }
+
+    #[test]
+    fn gpt4o_alias_codex_deepseek_selects_pipeline() {
+        let globals = globals_with_gpt4o_codex_deepseek_alias();
+        let profiles = vec![ProfileDescriptor {
+            id: "deepseek".into(),
+            provider: UpstreamProvider::Deepseek,
+        }];
+        let payload = json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let ctx = PipelineRequestContext {
+            model: "gpt-4o",
+            payload: Some(&payload),
+            alias_upstream_model: Some("deepseek-v4-pro"),
+            model_alias_pipeline: Some(PipelineOverride::CodexDeepSeek),
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "deepseek");
+        assert_eq!(sel.pipeline, RequestPipeline::CodexDeepSeek);
+        assert_eq!(sel.reason, PipelineSelectionReason::ModelAlias);
+    }
+
+    fn globals_with_gpt4o_codex_deepseek_alias() -> PipelineGlobals {
+        use crate::cursor_models::{CursorModelEntry, CursorModelsConfig};
+        use std::collections::HashMap;
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "gpt-4o".into(),
+            CursorModelEntry {
+                upstream: "deepseek-v4-pro".into(),
+                pipeline: PipelineOverride::CodexDeepSeek,
+            },
+        );
+        PipelineGlobals::with_profiles_mode_and_cursor_models(
+            "deepseek",
+            ["deepseek", "codex"].map(String::from),
+            PipelineMode::Auto,
+            CursorModelsConfig {
+                aliases,
+                force_deepseek_profile_for_aliases: true,
+                synthetic_models_enabled: false,
+            },
+        )
     }
 
     #[test]

@@ -80,6 +80,8 @@ pub struct AppState {
     pub limits_config: RwLock<StoredLimitsConfig>,
     pub pricing_config: RwLock<StoredPricingConfig>,
     pub features_config: RwLock<StoredFeaturesConfig>,
+    pub trace_logging_config: RwLock<StoredTraceLoggingConfig>,
+    pub raw_capture_config: RwLock<StoredRawCaptureConfig>,
     pub reasoning_config: RwLock<ReasoningConfig>,
     pub upstream_config: RwLock<StoredUpstreamConfig>,
     pub models: RwLock<StoredModelList>,
@@ -345,6 +347,44 @@ impl Default for StoredFeaturesConfig {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredTraceLoggingConfig {
+    pub max_lines: u64,
+    pub max_files: u64,
+    pub max_payload_bytes: usize,
+    pub max_response_preview_bytes: usize,
+}
+
+impl Default for StoredTraceLoggingConfig {
+    fn default() -> Self {
+        Self {
+            max_lines: 100_000,
+            max_files: 5,
+            max_payload_bytes: 4096,
+            max_response_preview_bytes: 512,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredRawCaptureConfig {
+    pub enabled: bool,
+    pub sample_rate: f64,
+    pub mask_api_keys: bool,
+    pub sample_always_on_error: bool,
+}
+
+impl Default for StoredRawCaptureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sample_rate: 0.01,
+            mask_api_keys: false,
+            sample_always_on_error: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StoredModel {
     pub profile_id: String,
@@ -582,6 +622,8 @@ impl AppState {
                 model_overrides: std::collections::HashMap::new(),
             }),
             features_config: RwLock::new(StoredFeaturesConfig::default()),
+            trace_logging_config: RwLock::new(StoredTraceLoggingConfig::default()),
+            raw_capture_config: RwLock::new(StoredRawCaptureConfig::default()),
             reasoning_config: RwLock::new(ReasoningConfig {
                 thinking_mode: "auto".to_string(),
                 reasoning_effort: "medium".to_string(),

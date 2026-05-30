@@ -167,6 +167,10 @@ pub(crate) fn select_sse_pipeline(
         && ctx.client_wire_api == crate::context::ClientWireApi::Responses
     {
         Some(StreamPipeline::Passthrough(PassthroughPipeline::new()))
+    } else if ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek) {
+        // CodexDeepSeek: passthrough SSE chunks; responses_wire translation in
+        // response_body.rs converts Chat Completions SSE → Responses API SSE.
+        Some(StreamPipeline::Passthrough(PassthroughPipeline::new()))
     } else if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4)
         && !ctx.cached_reasoning_config.display_reasoning
     {

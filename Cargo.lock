@@ -1550,8 +1550,6 @@ name = "crab-state"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bb8",
- "bb8-redis",
  "crab-cache",
  "crab-control",
  "crab-metrics",

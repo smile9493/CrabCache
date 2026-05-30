@@ -577,6 +577,10 @@ impl GatewayContext {
     }
 }
 
+// `Instant` is Send but not Sync; Pingora's `HttpServerApp` requires `CTX: Send + Sync`.
+// Each `GatewayContext` is owned by one worker for the request lifetime.
+unsafe impl Sync for GatewayContext {}
+
 /// Experimental feature flags — each gate is independent and default off.
 #[derive(Debug, Deserialize, Clone)]
 pub struct FeaturesConfig {
@@ -653,6 +657,21 @@ pub struct FeaturesConfig {
     /// Reserve switch for future MiMo overload degradation.
     #[serde(default)]
     pub mimo_overload_degrade_to_generic: bool,
+    /// Enable conversation-level upstream key binding for MiMo pipeline.
+    /// Once a conversation binds to a key, all subsequent requests use that key
+    /// (no rotation) until the binding expires after `mimo_key_binding_ttl_secs`
+    /// of idle time, or the key's concurrency exceeds `mimo_key_max_inflight`.
+    #[serde(default)]
+    pub mimo_key_binding: bool,
+    /// Idle TTL (seconds) for MiMo key bindings. A binding is released after
+    /// this duration of no requests on the same conversation.
+    #[serde(default = "default_mimo_key_binding_ttl_secs")]
+    pub mimo_key_binding_ttl_secs: u64,
+    /// Max concurrent requests per upstream key in MiMo key-binding mode.
+    /// When exceeded, the conversation temporarily overflows to another key
+    /// (binding unchanged). Set to 0 to disable the per-key limit.
+    #[serde(default = "default_mimo_key_max_inflight")]
+    pub mimo_key_max_inflight: usize,
 }
 
 impl Default for FeaturesConfig {
@@ -683,6 +702,9 @@ impl Default for FeaturesConfig {
             backend_overload_cooldown_ms: default_backend_overload_cooldown_ms(),
             pipeline_overload_degrade_enabled: false,
             mimo_overload_degrade_to_generic: false,
+            mimo_key_binding: false,
+            mimo_key_binding_ttl_secs: default_mimo_key_binding_ttl_secs(),
+            mimo_key_max_inflight: default_mimo_key_max_inflight(),
         }
     }
 }
@@ -721,6 +743,14 @@ fn default_upstream_request_gzip_min_bytes() -> usize {
 
 fn default_compression_threshold() -> usize {
     40
+}
+
+fn default_mimo_key_binding_ttl_secs() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_mimo_key_max_inflight() -> usize {
+    3
 }
 
 pub struct GatewayState {
@@ -762,6 +792,8 @@ pub struct GatewayState {
     pub client_endpoint: Arc<parking_lot::RwLock<ClientEndpointSnapshot>>,
     /// MiMo transparent session store (Redis `crab:session:*`).
     pub session_store: Option<Arc<crate::session_store::SessionStore>>,
+    /// MiMo conversation-level key binding store (stable_session → key_id).
+    pub key_binding_store: Option<Arc<crate::key_binding::KeyBindingStore>>,
     /// Backend-level circuit breaker registry (4-state machine).
     pub circuit_breakers: std::sync::Arc<crate::circuit_breaker::CircuitBreakerRegistry>,
     /// Model-level lockout registry (per-profile/backend/model).

@@ -136,6 +136,8 @@ pub(crate) async fn run_upstream_request_filter(
                 .or(ctx.prompt_cache_key.as_deref());
             apply_codex_upstream_request(upstream_request, account_id, ctx.is_streaming, session_id);
         }
+    } else if crate::responses_wire::needs_responses_wire_translate(ctx) {
+        crate::responses_wire::apply_responses_wire_upstream_request(upstream_request);
     }
     // #region agent log
     let had_auth_after = upstream_request

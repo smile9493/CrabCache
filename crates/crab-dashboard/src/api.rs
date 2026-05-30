@@ -1137,6 +1137,30 @@ pub async fn update_retention_policy(
     put_json(&format!("{API_BASE}/logs/retention"), policy).await
 }
 
+// ── Trace Logging Config ──
+
+pub async fn fetch_trace_logging_config() -> Result<crate::types::TraceLoggingConfigView, String> {
+    fetch_json(&format!("{API_BASE}/config/trace-logging")).await
+}
+
+pub async fn update_trace_logging_config(
+    req: &crate::types::TraceLoggingConfigView,
+) -> Result<crate::types::TraceLoggingConfigView, String> {
+    put_json(&format!("{API_BASE}/config/trace-logging"), req).await
+}
+
+// ── Raw Capture Config ──
+
+pub async fn fetch_raw_capture_config() -> Result<crate::types::RawCaptureConfigView, String> {
+    fetch_json(&format!("{API_BASE}/config/raw-capture")).await
+}
+
+pub async fn update_raw_capture_config(
+    req: &crate::types::RawCaptureConfigView,
+) -> Result<crate::types::RawCaptureConfigView, String> {
+    put_json(&format!("{API_BASE}/config/raw-capture"), req).await
+}
+
 // ── Audit Log ──
 
 /// The backend returns `{ entries: [...] }`. We unwrap and return the inner Vec.

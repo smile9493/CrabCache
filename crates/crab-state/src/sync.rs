@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
-use crate::redis_store::{RedisStateConfig, RedisStateStore};
+use crate::redis_store::RedisStateStore;
 use crate::snapshot::{apply_snapshot_to_runtime, build_snapshot_from_runtime};
 use crab_metrics::global_metrics;
 use crab_proxy::RuntimeConfig;
@@ -47,32 +47,22 @@ async fn refresh_from_store(
 
 /// Poll Redis revision and subscribe to pub/sub; refresh local `RuntimeConfig` on change.
 pub fn spawn_state_refresh_task(
-    state_config: Arc<RedisStateConfig>,
+    store: Arc<RedisStateStore>,
     runtime: Arc<RuntimeConfig>,
     upstream_cooldown_secs: u64,
     interval_secs: u64,
 ) {
-    let redis_url = state_config.redis_url.clone();
-    let key_prefix = state_config.key_prefix.trim_end_matches(':').to_string();
-    let rev_channel = format!("{key_prefix}:rev");
+    let redis_url = store.redis_url().to_string();
+    let rev_channel = format!("{}:rev", store.key_prefix());
 
     let runtime_sub = runtime.clone();
     let runtime_poll = runtime.clone();
     let poll_secs = interval_secs.max(1);
 
-    let config = state_config;
-
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("state refresh runtime");
         rt.block_on(async move {
-            let store = match RedisStateStore::connect(&config).await {
-                Ok(s) => Arc::new(s),
-                Err(e) => {
-                    error!(error = %e, "State sync: failed to connect store, aborting");
-                    return;
-                }
-            };
-
+            let store = store;
             let store_poll = store.clone();
             tokio::spawn(async move {
                 let mut last_version = store_poll.current_version().await.unwrap_or(0);

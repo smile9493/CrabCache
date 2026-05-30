@@ -1,16 +1,17 @@
 use crate::snapshot::ControlPlaneSnapshot;
 use anyhow::{Context, Result};
-use bb8::Pool;
-use bb8_redis::RedisConnectionManager;
+use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct RedisStateConfig {
     pub redis_url: String,
     pub key_prefix: String,
+    /// Reserved for future tuning; `ConnectionManager` multiplexes a shared connection.
+    pub pool_size: u32,
+    pub connection_timeout_secs: u64,
 }
 
 impl RedisStateConfig {
@@ -18,12 +19,26 @@ impl RedisStateConfig {
         Self {
             redis_url: redis_url.into(),
             key_prefix: key_prefix.into(),
+            pool_size: default_state_pool_size(),
+            connection_timeout_secs: default_state_connection_timeout_secs(),
         }
     }
 }
 
+fn default_state_pool_size() -> u32 {
+    12
+}
+
+fn default_state_connection_timeout_secs() -> u64 {
+    10
+}
+
+/// Redis-backed control plane store.
+///
+/// Uses [`ConnectionManager`] (not bb8) so Management API, Pingora workers, and the
+/// background refresh thread can share the same store without runtime-local pool leaks.
 pub struct RedisStateStore {
-    pool: Pool<RedisConnectionManager>,
+    conn: ConnectionManager,
     redis_url: String,
     prefix: String,
     rev_channel: String,
@@ -31,20 +46,16 @@ pub struct RedisStateStore {
 
 impl RedisStateStore {
     pub async fn connect(config: &RedisStateConfig) -> Result<Self> {
-        let pool = Pool::builder()
-            .max_size(8)
-            .connection_timeout(Duration::from_secs(5))
-            .idle_timeout(Some(Duration::from_secs(60)))
-            .max_lifetime(Some(Duration::from_secs(300)))
-            .build(RedisConnectionManager::new(config.redis_url.clone())?)
+        let client = redis::Client::open(config.redis_url.as_str()).context("Redis state client")?;
+        let conn = ConnectionManager::new(client)
             .await
-            .context("Redis state store pool")?;
+            .context("Redis state connection manager")?;
 
         let prefix = config.key_prefix.trim_end_matches(':').to_string();
         let rev_channel = format!("{prefix}:rev");
 
         Ok(Self {
-            pool,
+            conn,
             redis_url: config.redis_url.clone(),
             prefix,
             rev_channel,
@@ -56,13 +67,13 @@ impl RedisStateStore {
     }
 
     pub async fn current_version(&self) -> Result<u64> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn.clone();
         let v: Option<u64> = conn.get(self.key("version")).await?;
         Ok(v.unwrap_or(0))
     }
 
     pub async fn load_all(&self) -> Result<(u64, ControlPlaneSnapshot)> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn.clone();
         let version: u64 = conn
             .get::<_, Option<u64>>(self.key("version"))
             .await?
@@ -114,7 +125,7 @@ impl RedisStateStore {
     }
 
     pub async fn save_all(&self, snap: &ControlPlaneSnapshot) -> Result<u64> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn.clone();
         let _: () = conn
             .set(self.key("keys"), serde_json::to_string(&snap.keys)?)
             .await?;
@@ -150,7 +161,7 @@ impl RedisStateStore {
     }
 
     pub async fn is_empty(&self) -> Result<bool> {
-        let mut conn = self.pool.get().await?;
+        let mut conn = self.conn.clone();
         let exists: bool = conn.exists(self.key("keys")).await?;
         Ok(!exists)
     }
@@ -163,11 +174,13 @@ impl RedisStateStore {
         &self.redis_url
     }
 
+    pub fn key_prefix(&self) -> &str {
+        &self.prefix
+    }
+
     pub async fn ping(&self) -> bool {
-        match self.pool.get().await {
-            Ok(mut conn) => conn.get::<_, String>("PING").await.is_ok(),
-            Err(_) => false,
-        }
+        let mut conn = self.conn.clone();
+        conn.get::<_, String>("PING").await.is_ok()
     }
 }
 
@@ -181,6 +194,10 @@ pub struct StateBackendConfig {
     pub key_prefix: String,
     #[serde(default = "default_refresh")]
     pub refresh_interval_secs: u64,
+    #[serde(default = "default_state_pool_size")]
+    pub pool_size: u32,
+    #[serde(default = "default_state_connection_timeout_secs")]
+    pub connection_timeout_secs: u64,
 }
 
 fn default_backend() -> String {
@@ -202,6 +219,8 @@ impl Default for StateBackendConfig {
             redis_url: None,
             key_prefix: default_prefix(),
             refresh_interval_secs: default_refresh(),
+            pool_size: default_state_pool_size(),
+            connection_timeout_secs: default_state_connection_timeout_secs(),
         }
     }
 }

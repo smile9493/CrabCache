@@ -123,6 +123,8 @@ pub struct GatewayMetrics {
     pub rejection_by_source: IntCounterVec,
     /// Pipeline-level backpressure decisions.
     pub pipeline_backpressure: IntCounterVec,
+    /// MiMo conversation-level key binding events (hit/miss/spill/expired).
+    pub key_binding: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -617,6 +619,14 @@ impl GatewayMetrics {
             &["pipeline", "profile", "reason"],
         )?;
 
+        let key_binding = IntCounterVec::new(
+            Opts::new(
+                "gateway_key_binding_total",
+                "MiMo conversation-level key binding events",
+            ),
+            &["event"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -683,6 +693,7 @@ impl GatewayMetrics {
             trace_write_total,
             rejection_by_source,
             pipeline_backpressure,
+            key_binding,
         })
     }
 
@@ -752,6 +763,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.trace_write_total.clone()))?;
         registry.register(Box::new(self.rejection_by_source.clone()))?;
         registry.register(Box::new(self.pipeline_backpressure.clone()))?;
+        registry.register(Box::new(self.key_binding.clone()))?;
         Ok(())
     }
 
@@ -826,6 +838,13 @@ impl GatewayMetrics {
         self.pipeline_backpressure
             .with_label_values(&[pipeline, profile, reason])
             .inc();
+    }
+
+    /// Record a MiMo key binding event.
+    /// `event`: "hit" (bound key reused), "miss" (new binding created),
+    ///          "spill" (overflow to another key), "expired" (binding released).
+    pub fn record_key_binding_event(&self, event: &str) {
+        self.key_binding.with_label_values(&[event]).inc();
     }
 
     pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {

@@ -180,8 +180,15 @@ pub(crate) fn run(
         && !ctx.accumulated_body.is_empty()
     {
         let status = ctx.upstream.http_status.unwrap_or(500);
-        let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
-            ctx.accumulated_body.clone()
+        let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses
+            || ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek)
+        {
+            // Codex/Responses API: wrap plain-text or JSON error into a Responses-compatible
+            // error object so the client can parse it instead of seeing a raw upstream body.
+            crate::error_jsons::format_upstream_error_for_client(
+                &ctx.accumulated_body,
+                status,
+            )
         } else {
             format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model)
         };
@@ -242,8 +249,12 @@ pub(crate) fn run(
             if end_of_stream {
                 let status = ctx.upstream.http_status.unwrap_or(500);
                 let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses
+                    || ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek)
                 {
-                    ctx.accumulated_body.clone()
+                    crate::error_jsons::format_upstream_error_for_client(
+                        &ctx.accumulated_body,
+                        status,
+                    )
                 } else {
                     format_upstream_error_sse_for_client(
                         &ctx.accumulated_body,
@@ -325,16 +336,21 @@ pub(crate) fn run(
         } else if ctx.request_pipeline != Some(RequestPipeline::CodexRelay)
             || ctx.client_wire_api == crate::context::ClientWireApi::Responses
         {
-            *body = Some(data);
+            if !ctx.is_streaming && crate::responses_wire::needs_responses_wire_translate(ctx) {
+                *body = None;
+            } else {
+                *body = Some(data);
+            }
         } else {
             *body = None;
         }
     }
 
-    // Non-streaming: buffer upstream chunks until EOS (reasoning rewrite or Codex SSE assembly).
+    // Non-streaming: buffer upstream chunks until EOS (reasoning rewrite, Codex SSE, or Responses wire).
     if !ctx.is_streaming
         && (ctx.prepared_request.is_some()
-            || ctx.request_pipeline == Some(RequestPipeline::CodexRelay))
+            || ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
+            || crate::responses_wire::needs_responses_wire_translate(ctx))
         && !end_of_stream
     {
         *body = None;
@@ -526,6 +542,7 @@ pub(crate) fn run(
 
         if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
             || ctx.prepared_request.is_some()
+            || crate::responses_wire::needs_responses_wire_translate(ctx)
         {
             *body = Some(bytes::Bytes::from(client_body.clone()));
             ctx.response_body_preview = client_body;
@@ -552,6 +569,48 @@ pub(crate) fn run(
                 if !tail.is_empty() {
                     *body = Some(bytes::Bytes::from(tail));
                 }
+            }
+        }
+
+        // CodexRelay + Responses API: upstream SSE passes through verbatim.
+        // If the upstream disconnected before sending `response.completed`,
+        // synthesize one so the client doesn't hang waiting for it.
+        // NOTE: for non-Codex pipelines (MiMo/DeepSeek) with Responses wire,
+        // ChatToResponsesSseTranslator handles response.completed via its
+        // completed_sent flag, so no synthesis is needed here.
+        if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
+            && ctx.client_wire_api == crate::context::ClientWireApi::Responses
+            && !crate::sse::sse_bytes_contains_event(&ctx.accumulated_body, "response.completed")
+        {
+            let model = ctx.model.as_str();
+            let resp_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
+            let created_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let completed = serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "id": resp_id,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": model,
+                    "status": "completed",
+                    "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 },
+                }
+            });
+            if let Ok(line) = serde_json::to_string(&completed) {
+                let synthetic = format!("event: response.completed\ndata: {line}\n\n");
+                let mut merged = Vec::new();
+                if let Some(existing) = body.take() {
+                    merged.extend_from_slice(&existing);
+                }
+                merged.extend_from_slice(synthetic.as_bytes());
+                *body = Some(bytes::Bytes::from(merged));
+                warn!(
+                    request_id = %ctx.request_id,
+                    "Upstream disconnected without response.completed; synthesized one"
+                );
             }
         }
 

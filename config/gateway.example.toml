@@ -126,6 +126,8 @@ backend = "memory"
 # redis_url = ""      # empty → reuse cache.l1_redis_url
 # key_prefix = "crab:state"
 # refresh_interval_secs = 5
+# pool_size = 12
+# connection_timeout_secs = 10
 
 [cache]
 default_ttl_secs = 3600
@@ -135,6 +137,7 @@ l0_ttl_secs = 3600
 # Docker Compose: use redis://redis:6379 (see config/gateway.docker.toml) or CRABCACHE_L1_REDIS_URL.
 l1_redis_url = "redis://127.0.0.1:6379"
 l1_pool_size = 16
+# l1_connection_timeout_secs = 10
 
 # When true, streaming responses are cached (stores raw SSE bytes for exact replay).
 # Defaults to false; when disabled avoids synthetic SSE on hit.
@@ -320,6 +323,9 @@ max_files = 5
 # mimo_session_store_ttl_secs = 86400
 # mimo_session_store_max_messages = 200
 # passthrough_prefix_bytes = 1024       # Minimum body bytes to trigger MiMo passthrough (overlap connect + upload)
+# mimo_key_binding = false              # Conversation-level upstream key binding for MiMo (lock key per conversation)
+# mimo_key_binding_ttl_secs = 300       # Idle TTL (seconds) for key bindings; 5 minutes default
+# mimo_key_max_inflight = 3             # Max concurrent requests per bound key (0 = unlimited)
 
 # ── Multi-Layer Resilience (Circuit Breaker / Lockout) ───────────
 # Inspired by OmniRoute's 4-layer resilience architecture.

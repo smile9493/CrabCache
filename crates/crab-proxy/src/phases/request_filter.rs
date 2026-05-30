@@ -51,12 +51,36 @@ fn mimo_direct_passthrough(pipeline: RequestPipeline) -> bool {
     GatewayProxy::is_mimo_pipeline(pipeline)
 }
 
+fn mimo_uses_direct_body_relay(ctx: &GatewayContext, pipeline: RequestPipeline) -> bool {
+    mimo_direct_passthrough(pipeline) && !crate::responses_wire::needs_responses_wire_translate(ctx)
+}
+
 fn request_passthrough_allowed_pipeline(pipeline: RequestPipeline) -> bool {
     mimo_direct_passthrough(pipeline)
 }
 
 fn can_arm_mimo_request_passthrough(stream: Option<bool>) -> bool {
     matches!(stream, Some(true))
+}
+
+/// Codex and other Responses API clients require Chat↔Responses translation.
+/// Upgrade DeepSeek pipelines automatically when the client uses `/v1/responses`.
+fn upgrade_pipeline_for_responses_client(
+    client_wire_api: crate::context::ClientWireApi,
+    pipeline: RequestPipeline,
+    provider: UpstreamProvider,
+) -> RequestPipeline {
+    if client_wire_api == crate::context::ClientWireApi::Responses
+        && provider == UpstreamProvider::Deepseek
+        && matches!(
+            pipeline,
+            RequestPipeline::DeepSeekLight | RequestPipeline::CursorDeepSeekV4
+        )
+    {
+        RequestPipeline::CodexDeepSeek
+    } else {
+        pipeline
+    }
 }
 
 /// Shared path after the full client body is available (normal read or streaming finalize).
@@ -127,9 +151,23 @@ async fn run_post_body_phases(
 
     let pipeline_globals = proxy.state.runtime.pipeline_globals();
     let model_alias_entry = pipeline_globals.cursor_models.resolve(&ctx.model);
-    let alias_upstream_model = model_alias_entry.map(|e| e.upstream.as_str());
-    let model_alias_pipeline = model_alias_entry.map(|e| e.pipeline);
-    let alias_hit = model_alias_entry.is_some();
+    // Codex CLI (`wire_api=responses`) sends gpt-5.4-mini etc. without cursor_models alias.
+    // Synthesize CodexDeepSeek routing to the default DeepSeek upstream model.
+    let profile_for_alias = proxy.state.runtime.default_profile();
+    let synthetic_codex_deepseek = ctx.client_wire_api == crate::context::ClientWireApi::Responses
+        && crab_pipeline::is_openai_or_codex_display_model(&ctx.model)
+        && model_alias_entry.is_none()
+        && key_pipeline
+            .as_deref()
+            .map(PipelineOverride::from_str)
+            != Some(PipelineOverride::CodexRelay);
+    let alias_upstream_model = model_alias_entry
+        .map(|e| e.upstream.as_str())
+        .or(synthetic_codex_deepseek.then(|| profile_for_alias.fallback_model.as_str()));
+    let model_alias_pipeline = model_alias_entry
+        .map(|e| e.pipeline)
+        .or(synthetic_codex_deepseek.then_some(PipelineOverride::CodexDeepSeek));
+    let alias_hit = model_alias_entry.is_some() || synthetic_codex_deepseek;
 
     let selection = if !skip_early_pipeline_select {
         let pipe_ctx = PipelineRequestContext {
@@ -265,6 +303,20 @@ async fn run_post_body_phases(
         }
     };
 
+    if let Some(pipe) = ctx.request_pipeline {
+        let upgraded =
+            upgrade_pipeline_for_responses_client(ctx.client_wire_api, pipe, selection.provider);
+        if upgraded != pipe {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                from = %pipe.as_str(),
+                to = %upgraded.as_str(),
+                "Upgraded pipeline for Responses API client"
+            );
+            ctx.request_pipeline = Some(upgraded);
+        }
+    }
+
     if maybe_handle_cursor_bypass(proxy, session, ctx).await? {
         return Ok(true);
     }
@@ -330,7 +382,7 @@ async fn run_post_body_phases(
     );
     ctx.stable_session_kind = Some(stable_session_kind.to_string());
 
-    let direct_mimo = mimo_direct_passthrough(selection.pipeline);
+    let direct_mimo = mimo_uses_direct_body_relay(ctx, selection.pipeline);
     let guardrail_payload = serde_json::from_slice::<serde_json::Value>(full_body.as_ref()).ok();
     let mut parse_elapsed = std::time::Duration::default();
     let mut reject_missing = false;
@@ -381,7 +433,7 @@ async fn run_post_body_phases(
                 return Ok(true);
             }
         }
-        let body = if ctx.is_streaming {
+        let mut body = if ctx.is_streaming {
             Bytes::from(
                 crate::phases::upstream_request::inject_stream_options_include_usage(
                     full_body.to_vec(),
@@ -391,6 +443,13 @@ async fn run_post_body_phases(
         } else {
             full_body.clone()
         };
+        if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) {
+                let chat = crate::responses_wire::responses_payload_to_chat_completions(&payload);
+                ctx.parsed_request_payload = Some(Arc::new(chat.clone()));
+                body = Bytes::from(serde_json::to_vec(&chat).unwrap_or_default());
+            }
+        }
         ctx.new_request_body = Some(body);
         ctx.upstream_body_for_capture = Some(full_body.clone());
     } else {
@@ -509,7 +568,11 @@ async fn run_post_body_phases(
 
         let payload = parsed_payload.as_ref();
 
-        match selection.pipeline {
+        let pipeline = ctx
+            .request_pipeline
+            .expect("request_pipeline set before upstream prepare");
+
+        match pipeline {
             RequestPipeline::CursorDeepSeekV4 => {
                 let prepared = prepare_upstream_request(
                     payload,
@@ -567,9 +630,15 @@ async fn run_post_body_phases(
                 ));
             }
             RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
+                // Responses API client → convert to Chat Completions before MiMo processing.
+                let mimo_payload = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+                    &crate::responses_wire::responses_payload_to_chat_completions(payload)
+                } else {
+                    payload
+                };
                 let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
-                    payload,
+                    mimo_payload,
                     &profile_fallback,
                     features.mimo_retire_prefix_messages,
                     features.mimo_keep_recent_turns,
@@ -600,6 +669,22 @@ async fn run_post_body_phases(
                 ctx.parsed_upstream_payload = Some(Arc::new(prepared.payload.clone()));
                 ctx.new_request_body = Some(Bytes::from(
                     serde_json::to_vec(&prepared.payload).unwrap_or_default(),
+                ));
+            }
+            RequestPipeline::CodexDeepSeek => {
+                // Codex client → DeepSeek: force Responses API → Chat Completions conversion,
+                // then apply DeepSeek normalization (role mapping, tool filtering, model resolution).
+                let chat_payload =
+                    crate::responses_wire::responses_payload_to_chat_completions(payload);
+                let light = prepare_light_request(
+                    &chat_payload,
+                    &profile_fallback,
+                    alias_upstream_model,
+                    effective_user_id.as_deref(),
+                );
+                upstream_model_log = light.upstream_model.clone();
+                ctx.new_request_body = Some(Bytes::from(
+                    serde_json::to_vec(&light.payload).unwrap_or_default(),
                 ));
             }
         }
@@ -970,6 +1055,9 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
         return false;
     }
     if !crate::streaming_body_forward::path_eligible(req_path, req_method) {
+        return false;
+    }
+    if crate::context::is_client_responses_path(req_path) {
         return false;
     }
     let min_prefix = proxy.state.features.read().passthrough_prefix_bytes;

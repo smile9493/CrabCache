@@ -46,6 +46,7 @@ mod session_store;
 mod sse_pipeline;
 mod sse_rewrite;
 mod streaming_body_forward;
+pub mod key_binding;
 
 pub use cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,

@@ -169,6 +169,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_features_config).put(update_features_config),
         )
         .route(
+            "/api/admin/config/trace-logging",
+            get(get_trace_logging_config).put(update_trace_logging_config),
+        )
+        .route(
+            "/api/admin/config/raw-capture",
+            get(get_raw_capture_config).put(update_raw_capture_config),
+        )
+        .route(
             "/api/admin/reasoning/config",
             get(get_reasoning_config).put(put_reasoning_config),
         )
@@ -2870,6 +2878,62 @@ async fn update_features_config(
         mimo_session_store_ttl_secs: f2.mimo_session_store_ttl_secs,
         mimo_session_store_max_messages: f2.mimo_session_store_max_messages,
         passthrough_prefix_bytes: f2.passthrough_prefix_bytes,
+    })
+}
+
+async fn get_trace_logging_config(State(state): State<Arc<AppState>>) -> Json<TraceLoggingConfigView> {
+    let c = state.trace_logging_config.read().clone();
+    Json(TraceLoggingConfigView {
+        max_lines: c.max_lines,
+        max_files: c.max_files,
+        max_payload_bytes: c.max_payload_bytes,
+        max_response_preview_bytes: c.max_response_preview_bytes,
+    })
+}
+
+async fn update_trace_logging_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<TraceLoggingConfigView>,
+) -> Json<TraceLoggingConfigView> {
+    let mut c = state.trace_logging_config.write();
+    c.max_lines = req.max_lines;
+    c.max_files = req.max_files;
+    c.max_payload_bytes = req.max_payload_bytes;
+    c.max_response_preview_bytes = req.max_response_preview_bytes;
+    state.flush_persist();
+    Json(TraceLoggingConfigView {
+        max_lines: c.max_lines,
+        max_files: c.max_files,
+        max_payload_bytes: c.max_payload_bytes,
+        max_response_preview_bytes: c.max_response_preview_bytes,
+    })
+}
+
+async fn get_raw_capture_config(State(state): State<Arc<AppState>>) -> Json<RawCaptureConfigView> {
+    let c = state.raw_capture_config.read().clone();
+    Json(RawCaptureConfigView {
+        enabled: c.enabled,
+        sample_rate: c.sample_rate,
+        mask_api_keys: c.mask_api_keys,
+        sample_always_on_error: c.sample_always_on_error,
+    })
+}
+
+async fn update_raw_capture_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RawCaptureConfigView>,
+) -> Json<RawCaptureConfigView> {
+    let mut c = state.raw_capture_config.write();
+    c.enabled = req.enabled;
+    c.sample_rate = req.sample_rate;
+    c.mask_api_keys = req.mask_api_keys;
+    c.sample_always_on_error = req.sample_always_on_error;
+    state.flush_persist();
+    Json(RawCaptureConfigView {
+        enabled: c.enabled,
+        sample_rate: c.sample_rate,
+        mask_api_keys: c.mask_api_keys,
+        sample_always_on_error: c.sample_always_on_error,
     })
 }
 

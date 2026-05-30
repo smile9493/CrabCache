@@ -412,6 +412,42 @@ impl UpstreamKeyPool {
         self.acquire_excluding_account(None)
     }
 
+    /// Query the current inflight count for a specific key by id.
+    /// Returns `usize::MAX` if the key is not found.
+    pub fn inflight_of(&self, key_id: &str) -> usize {
+        self.slots
+            .iter()
+            .find(|s| s.id == key_id)
+            .map(|s| s.inflight.load(Ordering::Relaxed))
+            .unwrap_or(usize::MAX)
+    }
+
+    /// Acquire a specific key by id (for conversation-level binding).
+    /// Respects enabled + cooldown checks. Returns `None` if the key is
+    /// disabled, in cooldown, or not found.
+    pub fn acquire_specific(self: &Arc<Self>, key_id: &str) -> Option<UpstreamKeyGuard> {
+        let now = now_ms();
+        let idx = self.slots.iter().position(|s| {
+            s.id == key_id
+                && s.enabled.load(Ordering::Relaxed)
+                && s.cooldown_until_ms.load(Ordering::Relaxed) <= now
+        })?;
+        let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
+        global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
+        Some(UpstreamKeyGuard {
+            pool: Arc::clone(self),
+            index: idx,
+        })
+    }
+
+    /// Acquire a key excluding a specific key_id (for overflow when bound key is full).
+    /// Selects the enabled, non-cooldown key with the lowest inflight count.
+    pub fn acquire_excluding_key(self: &Arc<Self>, excluded_key_id: &str) -> Option<UpstreamKeyGuard> {
+        self.acquire_excluding_account_with_filter(None, |slot| {
+            slot.id != excluded_key_id
+        })
+    }
+
     /// Prefer JWT OAuth keys for Codex profiles (skip legacy `sk-*` placeholders).
     pub fn acquire_codex_oauth(self: &Arc<Self>) -> Option<UpstreamKeyGuard> {
         self.acquire_for_upstream_model("", true)

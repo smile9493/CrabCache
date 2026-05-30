@@ -14,8 +14,6 @@ anyhow.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 redis.workspace = true
-bb8.workspace = true
-bb8-redis.workspace = true
 crab-cache.workspace = true
 crab-proxy = { path = "../crab-proxy" }
 crab-route = { path = "../crab-route" }

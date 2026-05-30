@@ -393,8 +393,10 @@ fn main() -> Result<()> {
 
     let l1_pool = rt.block_on(async {
         bb8::Pool::builder()
-            .max_size(config.cache.l1_pool_size.unwrap_or(16))
-            .connection_timeout(Duration::from_secs(3))
+            .max_size(config.cache.l1_pool_size.unwrap_or(32))
+            .connection_timeout(Duration::from_secs(
+                config.cache.l1_connection_timeout_secs.unwrap_or(10),
+            ))
             .idle_timeout(Some(Duration::from_secs(60)))
             .build(bb8_redis::RedisConnectionManager::new(
                 config.cache.l1_redis_url.clone(),
@@ -673,10 +675,12 @@ fn main() -> Result<()> {
 
     let state_store: Option<Arc<RedisStateStore>> = if config.state.is_redis() {
         let store = rt.block_on(async {
-            RedisStateStore::connect(&RedisStateConfig::new(
-                state_redis_url.clone(),
-                config.state.key_prefix.clone(),
-            ))
+            RedisStateStore::connect(&RedisStateConfig {
+                redis_url: state_redis_url.clone(),
+                key_prefix: config.state.key_prefix.clone(),
+                pool_size: config.state.pool_size,
+                connection_timeout_secs: config.state.connection_timeout_secs,
+            })
             .await
         })?;
         let store = Arc::new(store);
@@ -726,12 +730,8 @@ fn main() -> Result<()> {
                 "Loaded control plane state from Redis"
             );
         }
-        let state_config = Arc::new(RedisStateConfig::new(
-            state_redis_url.clone(),
-            config.state.key_prefix.clone(),
-        ));
         spawn_state_refresh_task(
-            state_config,
+            store.clone(),
             runtime.clone(),
             config.upstream.key_cooldown_secs,
             config.state.refresh_interval_secs,
@@ -813,6 +813,15 @@ fn main() -> Result<()> {
     let cors_enabled_state = Arc::new(AtomicBool::new(config.gateway.cors_enabled));
     let max_request_body_bytes_state =
         Arc::new(AtomicUsize::new(config.limits.max_request_body_bytes));
+
+    // MiMo conversation-level key binding store (created if feature enabled).
+    let key_binding_store = if config.features.mimo_key_binding {
+        Some(crab_proxy::key_binding::KeyBindingStore::new(
+            config.features.mimo_key_binding_ttl_secs,
+        ))
+    } else {
+        None
+    };
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -946,6 +955,7 @@ fn main() -> Result<()> {
         global_rate: startup_global_rate,
         client_endpoint: client_endpoint.clone(),
         session_store,
+        key_binding_store,
         circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
         model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default()),
         client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),

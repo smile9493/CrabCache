@@ -41,6 +41,8 @@ backend = "redis"
 redis_url = "redis://redis:6379"
 key_prefix = "crab:state"
 refresh_interval_secs = 5
+pool_size = 12
+connection_timeout_secs = 10
 
 [cache]
 default_ttl_secs = 3600
@@ -48,7 +50,8 @@ l0_max_capacity = 10000
 l0_ttl_secs = 3600
 stream_cache_enabled = true
 l1_redis_url = "redis://redis:6379"
-l1_pool_size = 16
+l1_pool_size = 32
+l1_connection_timeout_secs = 10
 fingerprint_version = 1
 fingerprint_normalize_content = true
 
@@ -78,7 +81,7 @@ display_reasoning = false
 collapsible_reasoning = true
 cache_db_path = "/app/data/reasoning_content.sqlite3"
 cache_max_age_secs = 2592000
-cache_max_rows = 100000
+cache_max_rows = 15000
 
 [connection]
 tcp_keepalive_idle_secs = 60
@@ -131,3 +134,7 @@ upstream_request_gzip = false
 upstream_request_gzip_min_bytes = 4096
 mimo_retire_prefix_messages = true
 mimo_keep_recent_turns = 6
+# Conversation-level upstream key binding for MiMo (lock key per conversation).
+mimo_key_binding = true
+mimo_key_binding_ttl_secs = 300  # 5 minutes idle TTL
+mimo_key_max_inflight = 3        # max concurrent requests per bound key

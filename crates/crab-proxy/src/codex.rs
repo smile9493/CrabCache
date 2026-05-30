@@ -167,6 +167,22 @@ fn ensure_codex_required_input(out: &mut Value, payload: &Value) {
     }
     if let Some(prompt) = extract_last_user_prompt(payload) {
         out["prompt"] = json!(prompt);
+        return;
+    }
+    // Last resort: inject a synthetic user message so Codex doesn't reject with
+    // "Input must be a list" when all messages were system/developer only.
+    let fallback_text = out
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Continue")
+        .to_string();
+    if let Some(input) = out.get_mut("input").and_then(|v| v.as_array_mut()) {
+        input.push(json!({
+            "type": "message",
+            "role": "user",
+            "content": [{ "type": "input_text", "text": fallback_text }],
+        }));
     }
 }
 
@@ -220,7 +236,8 @@ fn prepare_codex_responses_passthrough(
 
     let mut out = json!({
         "instructions": payload.get("instructions").and_then(|v| v.as_str()).unwrap_or(""),
-        "stream": payload.get("stream").and_then(|v| v.as_bool()).unwrap_or(true),
+        // Codex `/backend-api/codex/responses` rejects `stream: false`; always force streaming.
+        "stream": true,
         "store": payload.get("store").and_then(|v| v.as_bool()).unwrap_or(false),
         "parallel_tool_calls": payload.get("parallel_tool_calls").and_then(|v| v.as_bool()).unwrap_or(true),
         "include": payload.get("include").cloned().unwrap_or_else(|| json!(["reasoning.encrypted_content"])),
@@ -1149,7 +1166,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(prepared.payload["input"].as_array().unwrap().len(), 0);
+        // Empty messages → fallback synthetic user message injected to avoid Codex 400.
+        let input = prepared.payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "message");
         assert!(prepared.payload.get("conversation_id").is_none());
         assert_eq!(prepared.payload["prompt_cache_key"], "conv-abc");
         assert_eq!(prepared.session_id.as_deref(), Some("conv-abc"));
@@ -1171,7 +1191,9 @@ mod tests {
         });
         let prepared = prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
         let input = prepared.payload["input"].as_array().unwrap();
-        assert!(input.iter().all(|item| item.get("type") != Some(&json!("message"))));
+        // Empty user messages are skipped, but a synthetic fallback is injected to avoid Codex 400.
+        let message_items: Vec<_> = input.iter().filter(|item| item.get("type") == Some(&json!("message"))).collect();
+        assert_eq!(message_items.len(), 1);
         assert!(prepared.payload.get("conversation_id").is_none());
         assert_eq!(prepared.payload["prompt_cache_key"], "c1");
     }

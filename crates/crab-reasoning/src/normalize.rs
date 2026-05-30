@@ -532,9 +532,13 @@ fn normalize_message(
         .to_string();
     msg.insert("role".into(), Value::String(role.clone()));
 
-    let role_str = if role == "function" { "tool" } else { &role };
-    if role == "function" {
-        msg.insert("role".into(), Value::String("tool".into()));
+    let role_str = match role.as_str() {
+        "function" => "tool",
+        "developer" => "system",
+        other => other,
+    };
+    if role_str != role.as_str() {
+        msg.insert("role".into(), Value::String(role_str.into()));
     }
 
     if msg.contains_key("content") {
@@ -1082,7 +1086,38 @@ fn filter_supported_request_fields(payload: &Value) -> serde_json::Map<String, V
     {
         prepared.insert("max_tokens".into(), mct.clone());
     }
+    // Normalize roles that non-OpenAI backends don't support.
+    normalize_message_roles_in_place(&mut prepared);
     prepared
+}
+
+/// Map unsupported roles (`developer`, `function`) to their equivalents (`system`, `tool`)
+/// directly in the prepared JSON map. Used by pipelines that don't go through `normalize_messages`.
+fn normalize_message_roles_in_place(map: &mut serde_json::Map<String, Value>) {
+    if let Some(messages) = map.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+                let mapped = match role {
+                    "developer" => Some("system"),
+                    "function" => Some("tool"),
+                    _ => None,
+                };
+                if let Some(new_role) = mapped {
+                    if let Some(obj) = msg.as_object_mut() {
+                        obj.insert("role".into(), Value::String(new_role.into()));
+                    }
+                }
+            }
+        }
+    }
+    // Remove non-function tools (e.g. Cursor's `namespace` type) that non-OpenAI backends reject.
+    if let Some(tools) = map.get_mut("tools").and_then(|t| t.as_array_mut()) {
+        tools.retain(|tool| {
+            tool.get("type")
+                .and_then(|t| t.as_str())
+                .map_or(true, |t| t == "function")
+        });
+    }
 }
 
 #[derive(Debug, Clone)]

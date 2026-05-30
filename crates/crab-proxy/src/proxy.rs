@@ -218,6 +218,92 @@ impl GatewayProxy {
         } else {
             canonical_model
         };
+
+        // MiMo conversation-level key binding: try bound key first.
+        let features = self.state.features.read();
+        if ctx.request_pipeline.map_or(false, Self::is_mimo_pipeline) && features.mimo_key_binding {
+            if let Some(ref binding_store) = self.state.key_binding_store {
+                let stable_session = ctx
+                    .conversation_id
+                    .as_deref()
+                    .or(ctx.prompt_cache_key.as_deref())
+                    .or(ctx.client_key_fingerprint.as_deref());
+
+                if let Some(sid) = stable_session {
+                    if let Some(binding) = binding_store.get(sid) {
+                        let max_inflight = features.mimo_key_max_inflight;
+                        // Bound key available and under concurrency limit?
+                        if max_inflight == 0 || pool.inflight_of(&binding.key_id) < max_inflight {
+                            if let Some(guard) = pool.acquire_specific(&binding.key_id) {
+                                binding_store.touch(sid);
+                                ctx.upstream.miss = true;
+                                ctx.upstream.key_guard = Some(guard);
+                                global_metrics().record_key_binding_event("hit");
+                                tracing::debug!(
+                                    request_id = %ctx.request_id,
+                                    session_id = %sid,
+                                    key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                                    "MiMo key binding hit: reusing bound key"
+                                );
+                                return true;
+                            }
+                        }
+                        // Bound key full or unavailable: overflow to another key.
+                        if let Some(guard) = pool.acquire_excluding_key(&binding.key_id) {
+                            ctx.upstream.miss = true;
+                            ctx.upstream.key_guard = Some(guard);
+                            global_metrics().record_key_binding_event("spill");
+                            tracing::debug!(
+                                request_id = %ctx.request_id,
+                                session_id = %sid,
+                                bound_key_id = %binding.key_id,
+                                overflow_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                                "MiMo key binding overflow: bound key full, using alternative"
+                            );
+                            return true;
+                        }
+                        // All other keys exhausted too.
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            session_id = %sid,
+                            "MiMo key binding: all keys exhausted (bound + overflow)"
+                        );
+                        global_metrics().record_rejected("upstream_key_exhausted");
+                        global_metrics().record_rejection_by_source("upstream");
+                        return false;
+                    }
+                    // No binding for this session: create one.
+                    if let Some(guard) = pool.acquire_for_upstream_model(&upstream_model, false)
+                        .or_else(|| pool.acquire())
+                    {
+                        let kid = guard.key_id().to_string();
+                        binding_store.put(sid.to_string(), kid);
+                        ctx.upstream.miss = true;
+                        ctx.upstream.key_guard = Some(guard);
+                        global_metrics().record_key_binding_event("miss");
+                        tracing::debug!(
+                            request_id = %ctx.request_id,
+                            session_id = %sid,
+                            key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+                            "MiMo key binding: new binding created"
+                        );
+                        return true;
+                    }
+                    // No keys available at all.
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        session_id = %sid,
+                        "MiMo key binding: no upstream keys available for new binding"
+                    );
+                    global_metrics().record_rejected("upstream_key_exhausted");
+                    global_metrics().record_rejection_by_source("upstream");
+                    return false;
+                }
+                // No stable session id available: fall through to default logic.
+            }
+        }
+
+        // Default acquire logic (Codex, non-MiMo, or MiMo without key binding).
         let guard = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
             pool.acquire_for_upstream_model(&upstream_model, true)
                 .or_else(|| pool.acquire_codex_oauth())
