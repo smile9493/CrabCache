@@ -30,6 +30,20 @@ use pingora_proxy::Session;
 use std::time::Duration;
 use tracing::warn;
 
+fn upstream_error_body_for_client(ctx: &GatewayContext, status: u16) -> Vec<u8> {
+    if ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek) {
+        crate::error_jsons::format_upstream_error_responses_stream(
+            &ctx.accumulated_body,
+            status,
+            &ctx.model,
+        )
+    } else if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+        format_upstream_error_for_client(&ctx.accumulated_body, status)
+    } else {
+        format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model)
+    }
+}
+
 fn apply_usage_to_ctx(
     proxy: &GatewayProxy,
     ctx: &mut GatewayContext,
@@ -164,18 +178,7 @@ pub(crate) fn run(
         && !ctx.accumulated_body.is_empty()
     {
         let status = ctx.upstream.http_status.unwrap_or(500);
-        let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses
-            || ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek)
-        {
-            // Codex/Responses API: wrap plain-text or JSON error into a Responses-compatible
-            // error object so the client can parse it instead of seeing a raw upstream body.
-            crate::error_jsons::format_upstream_error_for_client(
-                &ctx.accumulated_body,
-                status,
-            )
-        } else {
-            format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model)
-        };
+        let client_body = upstream_error_body_for_client(ctx, status);
         *body = Some(bytes::Bytes::from(client_body));
         return Ok(None);
     }
@@ -212,20 +215,7 @@ pub(crate) fn run(
             ctx.accumulated_body.extend_from_slice(&data);
             if end_of_stream {
                 let status = ctx.upstream.http_status.unwrap_or(500);
-                let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses
-                    || ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek)
-                {
-                    crate::error_jsons::format_upstream_error_for_client(
-                        &ctx.accumulated_body,
-                        status,
-                    )
-                } else {
-                    format_upstream_error_sse_for_client(
-                        &ctx.accumulated_body,
-                        status,
-                        &ctx.model,
-                    )
-                };
+                let client_body = upstream_error_body_for_client(ctx, status);
                 *body = Some(bytes::Bytes::from(client_body));
             } else {
                 *body = None;
@@ -544,8 +534,9 @@ pub(crate) fn run(
                     *body = Some(bytes::Bytes::from(tail));
                 }
                 if translator.is_completed() {
-                    crate::responses_wire::store_responses_chain_output(
+                    crate::responses_wire::store_responses_chain_output_for_ctx(
                         &proxy.state.responses_chain_store,
+                        ctx,
                         translator.response_id(),
                         translator.completed_output(),
                     );
@@ -559,8 +550,9 @@ pub(crate) fn run(
                         *body = Some(bytes::Bytes::from(tail));
                     }
                     if translator.is_completed() {
-                        crate::responses_wire::store_responses_chain_output(
+                        crate::responses_wire::store_responses_chain_output_for_ctx(
                             &proxy.state.responses_chain_store,
+                            ctx,
                             translator.response_id(),
                             translator.completed_output(),
                         );

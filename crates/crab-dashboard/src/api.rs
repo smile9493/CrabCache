@@ -1295,8 +1295,13 @@ pub async fn cancel_codex_device_login(
         .map_err(|e| format!("Invalid cancel response: {e}"))
 }
 
-pub async fn list_codex_credentials() -> Result<CodexCredentialListResponse, String> {
-    fetch_json(&format!("{}/oauth/codex/credentials", API_BASE)).await
+pub async fn list_codex_credentials(profile_id: &str) -> Result<CodexCredentialListResponse, String> {
+    fetch_json(&format!(
+        "{}/upstream/profiles/{}/oauth/codex/credentials",
+        API_BASE,
+        urlencoding::encode(profile_id)
+    ))
+    .await
 }
 
 pub async fn import_codex_credential(

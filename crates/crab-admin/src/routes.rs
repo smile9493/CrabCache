@@ -252,6 +252,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/oauth/codex/credentials",
             get(crate::oauth_codex::list_codex_credentials),
         )
+        .route(
+            "/api/admin/upstream/profiles/:id/oauth/codex/credentials",
+            get(crate::oauth_codex::list_profile_codex_credentials),
+        )
         // ── Codex OAuth PKCE Login ──
         .route(
             "/api/admin/upstream/profiles/:id/oauth/codex/pkce/start",

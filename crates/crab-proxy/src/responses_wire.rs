@@ -16,6 +16,40 @@ use crate::sse::parse_sse_chunk;
 /// Upstream path for OpenAI-compatible chat backends (DeepSeek, MiMo, …).
 const CHAT_COMPLETIONS_UPSTREAM_PATH: &str = "/v1/chat/completions";
 
+/// Which upstream pipeline consumes Responses → Chat Completions conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponsesWireTarget {
+    /// Codex CLI → DeepSeek: preserve tool chains; do not apply MiMo session sanitizers.
+    CodexDeepSeek,
+    /// MiMo Responses relay: orphan tool filtering + session-store sanitizers downstream.
+    Mimo,
+    /// DeepSeek light / other non-MiMo, non-CodexDeepSeek translators.
+    Default,
+}
+
+pub fn responses_wire_target(ctx: &GatewayContext) -> ResponsesWireTarget {
+    match ctx.request_pipeline {
+        Some(RequestPipeline::CodexDeepSeek) => ResponsesWireTarget::CodexDeepSeek,
+        Some(RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay) => {
+            ResponsesWireTarget::Mimo
+        }
+        _ => ResponsesWireTarget::Default,
+    }
+}
+
+/// Redis/L0 namespace so CodexDeepSeek and MiMo chains never collide.
+pub fn responses_chain_namespace(ctx: &GatewayContext) -> &'static str {
+    match ctx.request_pipeline {
+        Some(RequestPipeline::CodexDeepSeek) => "codex_deepseek",
+        Some(RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay) => "mimo",
+        _ => "default",
+    }
+}
+
+fn namespaced_chain_id(namespace: &str, response_id: &str) -> String {
+    format!("{namespace}:{response_id}")
+}
+
 pub fn needs_responses_wire_translate(ctx: &GatewayContext) -> bool {
     // CodexDeepSeek always forces Responses API translation regardless of client path.
     ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek)
@@ -34,6 +68,7 @@ pub fn apply_responses_wire_upstream_request(req: &mut RequestHeader) {
 pub async fn apply_responses_chain(
     payload: &mut Value,
     store: &ResponsesChainStore,
+    chain_namespace: &str,
 ) {
     let Some(prev_id) = payload
         .get("previous_response_id")
@@ -42,9 +77,11 @@ pub async fn apply_responses_chain(
     else {
         return;
     };
-    let Some(prev_output) = store.get(prev_id).await else {
+    let store_key = namespaced_chain_id(chain_namespace, prev_id);
+    let Some(prev_output) = store.get(&store_key).await else {
         tracing::debug!(
             previous_response_id = prev_id,
+            chain_namespace,
             "responses chain store miss — follow-up may lack prior tool context"
         );
         return;
@@ -104,15 +141,41 @@ fn responses_output_item_to_input(item: &Value) -> Option<Value> {
 /// Persist completed Responses `output[]` for follow-up requests using `previous_response_id`.
 pub fn store_responses_chain_output(
     store: &ResponsesChainStore,
+    chain_namespace: &str,
     response_id: &str,
     output: Vec<Value>,
 ) {
-    store.put(response_id, output);
+    if response_id.is_empty() {
+        return;
+    }
+    store.put(&namespaced_chain_id(chain_namespace, response_id), output);
+}
+
+pub fn store_responses_chain_output_for_ctx(
+    store: &ResponsesChainStore,
+    ctx: &GatewayContext,
+    response_id: &str,
+    output: Vec<Value>,
+) {
+    store_responses_chain_output(
+        store,
+        responses_chain_namespace(ctx),
+        response_id,
+        output,
+    );
 }
 
 /// Convert a Responses API request body into Chat Completions JSON for upstream relay.
 /// Aligned with OmniRoute `openai-responses.ts` (turn grouping, input sanitization).
 pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
+    responses_payload_to_chat_completions_for(payload, ResponsesWireTarget::Default)
+}
+
+/// Pipeline-specific Responses → Chat Completions conversion (CodexDeepSeek vs MiMo).
+pub fn responses_payload_to_chat_completions_for(
+    payload: &Value,
+    target: ResponsesWireTarget,
+) -> Value {
     if payload
         .get("messages")
         .and_then(|m| m.as_array())
@@ -147,7 +210,7 @@ pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
         _ => {}
     }
 
-    messages = filter_orphaned_tool_messages(&messages);
+    messages = finalize_responses_messages_for_target(messages, target);
 
     // Responses API fields that Chat Completions backends reject or ignore.
     out.remove("input");
@@ -193,6 +256,20 @@ pub fn responses_payload_to_chat_completions(payload: &Value) -> Value {
 
     crab_reasoning::ensure_codex_file_tools_from_context(&mut out);
     Value::Object(out)
+}
+
+fn finalize_responses_messages_for_target(
+    messages: Vec<Value>,
+    target: ResponsesWireTarget,
+) -> Vec<Value> {
+    match target {
+        // Codex→DeepSeek: never drop tool messages (DeepSeek 400 if tool_calls lack followers).
+        // Only strip assistant tool_calls that have no matching tool output anywhere in history.
+        ResponsesWireTarget::CodexDeepSeek => strip_dangling_assistant_tool_calls(&messages),
+        ResponsesWireTarget::Mimo | ResponsesWireTarget::Default => {
+            filter_orphaned_tool_messages(&messages)
+        }
+    }
 }
 
 /// Drop Codex internal runtime frames (e.g. `phase: commentary`) before upstream relay.
@@ -1426,8 +1503,9 @@ pub fn synthesize_responses_completed_tail(
     }
     ctx.stream.client_sse_body.extend_from_slice(&out);
     if let Some(translator) = ctx.stream.responses_translator.as_ref() {
-        store_responses_chain_output(
+        store_responses_chain_output_for_ctx(
             chain_store,
+            ctx,
             translator.response_id(),
             translator.completed_output(),
         );
@@ -1469,17 +1547,29 @@ pub fn build_graceful_responses_stream_tail(
     if let Some(translator) = ctx.stream.responses_translator.as_mut() {
         out.extend_from_slice(&translator.flush());
         if translator.is_completed() {
-            store_responses_chain_output(
+            store_responses_chain_output_for_ctx(
                 chain_store,
+                ctx,
                 translator.response_id(),
                 translator.completed_output(),
             );
         }
     }
-    if responses_stream_needs_completed_event(ctx)
-        && let Some(tail) = synthesize_responses_completed_tail(ctx, chain_store)
-    {
-        out.extend_from_slice(&tail);
+    ctx.stream.client_sse_body.extend_from_slice(&out);
+    if !crate::sse::sse_bytes_contains_event(&ctx.stream.client_sse_body, "response.completed") {
+        let before = out.len();
+        append_synthetic_responses_completed(&mut out, ctx);
+        if out.len() > before {
+            ctx.stream.client_sse_body.extend_from_slice(&out[before..]);
+            if let Some(translator) = ctx.stream.responses_translator.as_ref() {
+                store_responses_chain_output_for_ctx(
+                    chain_store,
+                    ctx,
+                    translator.response_id(),
+                    translator.completed_output(),
+                );
+            }
+        }
     }
     if out.is_empty() {
         None
@@ -1670,6 +1760,7 @@ mod tests {
         );
         store_responses_chain_output(
             &store,
+            "default",
             "resp_prev",
             vec![json!({
                 "type": "message",
@@ -1687,7 +1778,7 @@ mod tests {
                 "content": [{ "type": "input_text", "text": "next" }],
             }],
         });
-        apply_responses_chain(&mut payload, &store).await;
+        apply_responses_chain(&mut payload, &store, "default").await;
         let chat = responses_payload_to_chat_completions(&payload);
         let messages = chat["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 2);
@@ -1925,6 +2016,7 @@ mod tests {
         );
         store_responses_chain_output(
             &store,
+            "default",
             "resp_prev",
             vec![json!({
                 "type": "function_call",
@@ -1941,8 +2033,69 @@ mod tests {
                 "content": [{ "type": "input_text", "text": format!("turn {i}") }],
             })).collect::<Vec<_>>(),
         });
-        apply_responses_chain(&mut payload, &store).await;
+        apply_responses_chain(&mut payload, &store, "default").await;
         let items = payload["input"].as_array().unwrap();
         assert_eq!(items.len(), 5);
+    }
+
+    #[test]
+    fn codex_deepseek_keeps_tool_messages_for_deepseek() {
+        let payload = json!({
+            "model": "gpt-5.4-mini",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_a",
+                    "name": "read_file",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_a",
+                    "output": "ok",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_b",
+                    "name": "write_file",
+                    "arguments": "{}",
+                },
+            ],
+        });
+        let chat =
+            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::CodexDeepSeek);
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_a");
+        assert_eq!(messages[1]["role"], "tool");
+    }
+
+    #[tokio::test]
+    async fn responses_chain_namespaces_do_not_cross_pipelines() {
+        let store = ResponsesChainStore::new_l0_only(
+            16,
+            60,
+            tokio::runtime::Handle::current(),
+        );
+        store_responses_chain_output(
+            &store,
+            "mimo",
+            "resp_prev",
+            vec![json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "mimo only" }],
+            })],
+        );
+        let mut payload = json!({
+            "previous_response_id": "resp_prev",
+            "input": [{ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "x" }] }],
+        });
+        apply_responses_chain(&mut payload, &store, "codex_deepseek").await;
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], "user");
     }
 }

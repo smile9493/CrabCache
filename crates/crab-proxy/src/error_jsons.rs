@@ -56,6 +56,67 @@ pub fn format_responses_error_sse_for_client(error_json: &[u8]) -> Vec<u8> {
     format!("event: error\ndata: {line}\n\n").into_bytes()
 }
 
+/// Wrap upstream failure as a terminal Responses SSE stream (`response.completed` + `[DONE]`).
+pub fn format_upstream_error_responses_stream(body: &[u8], status: u16, model: &str) -> Vec<u8> {
+    let error_json = format_upstream_error_for_client(body, status);
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&error_json).unwrap_or(serde_json::json!({}));
+    let message = parsed
+        .pointer("/error/message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("Upstream request failed");
+    let code = parsed
+        .pointer("/error/code")
+        .and_then(|c| c.as_str())
+        .unwrap_or("upstream_error");
+    let resp_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let mut out = Vec::new();
+    let emit = |out: &mut Vec<u8>, event_type: &str, payload: serde_json::Value| {
+        if let Ok(line) = serde_json::to_string(&payload) {
+            out.extend_from_slice(format!("event: {event_type}\ndata: {line}\n\n").as_bytes());
+        }
+    };
+    emit(
+        &mut out,
+        "response.created",
+        serde_json::json!({
+            "type": "response.created",
+            "response": {
+                "id": resp_id,
+                "object": "response",
+                "created_at": created_at,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "model": model,
+                "output": [],
+            }
+        }),
+    );
+    emit(
+        &mut out,
+        "response.completed",
+        serde_json::json!({
+            "type": "response.completed",
+            "response": {
+                "id": resp_id,
+                "object": "response",
+                "created_at": created_at,
+                "status": "failed",
+                "model": model,
+                "output": [],
+                "error": { "message": message, "code": code },
+            }
+        }),
+    );
+    out.extend_from_slice(b"data: [DONE]\n\n");
+    out
+}
+
 /// Pick SSE error shape for downstream wire API.
 pub fn format_client_error_sse(error_json: &[u8], model: &str, wire: crate::context::ClientWireApi) -> Vec<u8> {
     match wire {
@@ -250,6 +311,16 @@ pub fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_upstream_error_responses_stream_emits_completed() {
+        let body = b"An assistant message with 'tool_calls' must be followed by tool messages";
+        let out = format_upstream_error_responses_stream(body, 400, "gpt-5.4-mini");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("response.completed"));
+        assert!(s.contains("\"status\":\"failed\""));
+        assert!(s.ends_with("data: [DONE]\n\n"));
+    }
 
     #[test]
     fn format_responses_error_sse_uses_event_error() {

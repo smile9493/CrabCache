@@ -194,9 +194,10 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
     });
 
     let alive_for_creds = Arc::clone(&alive);
+    let pid_for_creds = profile_id.clone();
     leptos::task::spawn_local(async move {
         creds_loading.set(true);
-        if let Ok(list) = api::list_codex_credentials().await {
+        if let Ok(list) = api::list_codex_credentials(&pid_for_creds).await {
             if alive_for_creds.load(Ordering::Relaxed) {
                 credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
                     id: c.id,
@@ -473,9 +474,10 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
 
     // Load credentials
     let alive_for_creds = Arc::clone(&alive);
+    let pid_for_creds = profile_id.clone();
     leptos::task::spawn_local(async move {
         creds_loading.set(true);
-        if let Ok(list) = api::list_codex_credentials().await {
+        if let Ok(list) = api::list_codex_credentials(&pid_for_creds).await {
             if alive_for_creds.load(Ordering::Relaxed) {
                 credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
                     id: c.id,
@@ -648,12 +650,14 @@ fn CredentialList(
     let json_importing = RwSignal::new(false);
     let json_status = RwSignal::new(String::new());
 
+    let reload_pid = profile_id.clone();
     let reload_credentials = move || {
         let credentials = credentials;
         let loading = loading;
+        let pid = reload_pid.clone();
         leptos::task::spawn_local(async move {
             loading.set(true);
-            if let Ok(list) = api::list_codex_credentials().await {
+            if let Ok(list) = api::list_codex_credentials(&pid).await {
                 credentials.set(
                     list.credentials
                         .into_iter()
@@ -720,7 +724,27 @@ fn CredentialList(
                     }
                     json_input.set(String::new());
                     crate::pages::upstream::signal_refresh_key_pool();
-                    reload_credentials();
+                    let reload_pid = p.clone();
+                    let credentials = credentials;
+                    let loading = loading;
+                    leptos::task::spawn_local(async move {
+                        loading.set(true);
+                        if let Ok(list) = api::list_codex_credentials(&reload_pid).await {
+                            credentials.set(
+                                list.credentials
+                                    .into_iter()
+                                    .map(|c| CredentialEntry {
+                                        id: c.id,
+                                        email: c.email,
+                                        plan_type: c.plan_type,
+                                        expired_at: c.expired_at,
+                                        disabled: c.disabled,
+                                    })
+                                    .collect(),
+                            );
+                        }
+                        loading.set(false);
+                    });
                 }
                 Err(e) => error_msg.set(e),
             }

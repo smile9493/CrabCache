@@ -418,12 +418,18 @@ async fn run_post_body_phases(
         };
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
             if let Ok(mut payload) = serde_json::from_slice::<serde_json::Value>(&body) {
+                let chain_ns = crate::responses_wire::responses_chain_namespace(ctx);
+                let wire_target = crate::responses_wire::responses_wire_target(ctx);
                 crate::responses_wire::apply_responses_chain(
                     &mut payload,
                     &proxy.state.responses_chain_store,
+                    chain_ns,
                 )
                 .await;
-                let chat = crate::responses_wire::responses_payload_to_chat_completions(&payload);
+                let chat = crate::responses_wire::responses_payload_to_chat_completions_for(
+                    &payload,
+                    wire_target,
+                );
                 ctx.parsed_request_payload = Some(Arc::new(chat.clone()));
                 body = Bytes::from(serde_json::to_vec(&chat).unwrap_or_default());
             }
@@ -517,19 +523,26 @@ async fn run_post_body_phases(
         }
 
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            let chain_ns = crate::responses_wire::responses_chain_namespace(ctx);
+            let wire_target = crate::responses_wire::responses_wire_target(ctx);
             let mut wire_payload = parsed_payload.as_ref().clone();
             crate::responses_wire::apply_responses_chain(
                 &mut wire_payload,
                 &proxy.state.responses_chain_store,
+                chain_ns,
             )
             .await;
             responses_tool_audit_payload = Some(wire_payload.clone());
-            parsed_payload = Arc::new(crate::responses_wire::responses_payload_to_chat_completions(
-                &wire_payload,
-            ));
+            parsed_payload = Arc::new(
+                crate::responses_wire::responses_payload_to_chat_completions_for(
+                    &wire_payload,
+                    wire_target,
+                ),
+            );
             ctx.parsed_request_payload = Some(parsed_payload.clone());
         }
 
+        // MiMo-only: Redis session merge + turn shrink + tool sanitize (never CodexDeepSeek).
         if GatewayProxy::is_mimo_pipeline(selection.pipeline)
             && let Some(store) = &proxy.state.session_store
         {
@@ -689,12 +702,10 @@ async fn run_post_body_phases(
                 ));
             }
             RequestPipeline::CodexDeepSeek => {
-                // Codex client → DeepSeek: force Responses API → Chat Completions conversion,
-                // then apply DeepSeek normalization (role mapping, tool filtering, model resolution).
-                let chat_payload =
-                    crate::responses_wire::responses_payload_to_chat_completions(payload);
+                // Codex CLI → DeepSeek: wire_payload already converted above (CodexDeepSeek target).
+                // Do not re-run MiMo session sanitizers or a second Responses conversion.
                 let light = prepare_light_request(
-                    &chat_payload,
+                    parsed_payload.as_ref(),
                     &profile_fallback,
                     alias_upstream_model,
                     effective_user_id.as_deref(),

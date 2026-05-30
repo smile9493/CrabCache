@@ -63,14 +63,98 @@ pub async fn prepare_auth_dir(state: &AppState) {
     }
     let migrated = migrate_legacy_auth_dirs(auth_dir).await;
     let profile_secrets = state.upstream_profile_secrets.read().clone();
-    let hydrated =
-        hydrate_codex_credentials_from_profile_secrets(auth_dir, &profile_secrets).await;
+    let codex_profiles = codex_like_profile_ids(state, &profile_secrets);
+    let hydrated = hydrate_codex_credentials_from_profile_secrets(
+        auth_dir,
+        &profile_secrets,
+        &codex_profiles,
+    )
+    .await;
     tracing::info!(
         path = %auth_dir.display(),
         migrated,
         hydrated,
+        codex_profiles = ?codex_profiles,
         "Codex auth directory ready"
     );
+}
+
+fn codex_like_profile_ids(
+    state: &AppState,
+    profile_secrets: &HashMap<String, Vec<UpstreamPoolSecret>>,
+) -> HashSet<String> {
+    let providers = state.upstream_profile_providers.read();
+    profile_secrets
+        .keys()
+        .filter(|id| {
+            providers
+                .get(*id)
+                .map(|p| p == "codex" || p == "openai")
+                .unwrap_or_else(|| *id == "codex")
+        })
+        .cloned()
+        .collect()
+}
+
+fn normalize_pool_account_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+async fn profile_key_account_ids(state: &AppState, profile_id: &str) -> HashSet<String> {
+    if let Ok(export) = state
+        .gateway
+        .export_upstream_profile_keys(profile_id)
+        .await
+    {
+        return export
+            .keys
+            .iter()
+            .map(|k| normalize_pool_account_id(&k.account_id))
+            .collect();
+    }
+    state
+        .upstream_profile_secrets
+        .read()
+        .get(profile_id)
+        .map(|secrets| {
+            secrets
+                .iter()
+                .map(|s| normalize_pool_account_id(&s.account_id))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn credential_belongs_to_profile(
+    record: &TokenRecord,
+    profile_id: &str,
+    pool_accounts: &HashSet<String>,
+) -> bool {
+    if record.provider != Provider::Codex {
+        return false;
+    }
+    let meta_profile = record
+        .metadata
+        .get("profile_id")
+        .and_then(|v| v.as_str());
+    if meta_profile == Some(profile_id) {
+        return true;
+    }
+    if meta_profile.is_some() {
+        return false;
+    }
+    let account = record
+        .metadata
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(normalize_pool_account_id)
+        .unwrap_or_default();
+    pool_accounts.contains(&account)
 }
 
 async fn migrate_legacy_auth_dirs(target: &Path) -> usize {
@@ -113,6 +197,7 @@ async fn migrate_legacy_auth_dirs(target: &Path) -> usize {
 async fn hydrate_codex_credentials_from_profile_secrets(
     auth_dir: &Path,
     profile_secrets: &HashMap<String, Vec<UpstreamPoolSecret>>,
+    codex_profiles: &HashSet<String>,
 ) -> usize {
     let store = FileTokenStore::new(auth_dir);
     let existing = store.list().await.unwrap_or_default();
@@ -122,11 +207,14 @@ async fn hydrate_codex_credentials_from_profile_secrets(
             r.metadata
                 .get("account_id")
                 .and_then(|v| v.as_str())
-                .map(String::from)
+                .map(normalize_pool_account_id)
         })
         .collect();
     let mut created = 0usize;
-    for secrets in profile_secrets.values() {
+    for (profile_id, secrets) in profile_secrets {
+        if !codex_profiles.contains(profile_id) {
+            continue;
+        }
         for s in secrets {
             if s.secret.is_empty() {
                 continue;
@@ -134,7 +222,7 @@ async fn hydrate_codex_credentials_from_profile_secrets(
             let account_id = if s.account_id.trim().is_empty() {
                 format!("key-{}", s.id)
             } else {
-                s.account_id.trim().to_string()
+                normalize_pool_account_id(&s.account_id)
             };
             if known_accounts.contains(&account_id) {
                 continue;
@@ -144,6 +232,10 @@ async fn hydrate_codex_credentials_from_profile_secrets(
                 continue;
             }
             let mut metadata = HashMap::new();
+            metadata.insert(
+                "profile_id".to_string(),
+                serde_json::Value::String(profile_id.clone()),
+            );
             metadata.insert(
                 "account_id".to_string(),
                 serde_json::Value::String(account_id.clone()),
@@ -188,6 +280,12 @@ async fn import_codex_record_to_profile(
                 format!("Token refresh failed: {e}"),
             )
         })?;
+
+    let mut fresh = fresh;
+    fresh.metadata.insert(
+        "profile_id".to_string(),
+        serde_json::Value::String(profile_id.to_string()),
+    );
 
     let store = FileTokenStore::new(&state.auth_dir);
     let credential_id = store.save(&fresh).await.map_err(|e| {
@@ -830,9 +928,24 @@ pub async fn cancel_device_login(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
-/// GET `/api/admin/oauth/codex/credentials`
+/// GET `/api/admin/oauth/codex/credentials` (legacy: all credentials)
 pub async fn list_codex_credentials(
     State(state): State<Arc<AppState>>,
+) -> Result<Json<CodexCredentialListResponse>, (axum::http::StatusCode, String)> {
+    list_codex_credentials_for_profile(&state, None).await
+}
+
+/// GET `/api/admin/upstream/profiles/:id/oauth/codex/credentials`
+pub async fn list_profile_codex_credentials(
+    State(state): State<Arc<AppState>>,
+    AxumPath(profile_id): AxumPath<String>,
+) -> Result<Json<CodexCredentialListResponse>, (axum::http::StatusCode, String)> {
+    list_codex_credentials_for_profile(&state, Some(profile_id.as_str())).await
+}
+
+async fn list_codex_credentials_for_profile(
+    state: &AppState,
+    profile_id: Option<&str>,
 ) -> Result<Json<CodexCredentialListResponse>, (axum::http::StatusCode, String)> {
     let store = FileTokenStore::new(&state.auth_dir);
     let records = store.list().await.map_err(|e| {
@@ -842,24 +955,65 @@ pub async fn list_codex_credentials(
         )
     })?;
 
+    let pool_accounts = if let Some(pid) = profile_id {
+        profile_key_account_ids(state, pid).await
+    } else {
+        HashSet::new()
+    };
+
+    let total_codex = records
+        .iter()
+        .filter(|r| r.provider == Provider::Codex)
+        .count();
+
     let credentials: Vec<CodexCredentialSummary> = records
         .into_iter()
-        .filter(|r| r.provider == crab_auth::types::Provider::Codex)
-        .map(|r| CodexCredentialSummary {
-            id: r.id,
-            email: r.email,
-            plan_type: r
-                .metadata
-                .get("plan_type")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            expired_at: r.expired_at.map(|dt| dt.to_rfc3339()),
-            disabled: r.disabled,
+        .filter(|r| {
+            if let Some(pid) = profile_id {
+                credential_belongs_to_profile(r, pid, &pool_accounts)
+            } else {
+                r.provider == Provider::Codex
+            }
         })
+        .map(credential_summary_from_record)
         .collect();
 
+    // #region agent log
+    {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/home/smile/github_project/CrabCache/.cursor/debug-b4b459.log")
+        {
+            let _ = writeln!(
+                f,
+                r#"{{"sessionId":"b4b459","hypothesisId":"A","location":"oauth_codex.rs:list_codex_credentials_for_profile","message":"credentials filtered","data":{{"profile_id":{},"total_codex":{},"filtered":{},"pool_account_count":{}}},"timestamp":{}}}"#,
+                serde_json::to_string(&profile_id).unwrap_or_else(|_| "null".into()),
+                total_codex,
+                credentials.len(),
+                pool_accounts.len(),
+                chrono::Utc::now().timestamp_millis()
+            );
+        }
+    }
+    // #endregion
 
     Ok(Json(CodexCredentialListResponse { credentials }))
+}
+
+fn credential_summary_from_record(r: TokenRecord) -> CodexCredentialSummary {
+    CodexCredentialSummary {
+        id: r.id,
+        email: r.email,
+        plan_type: r
+            .metadata
+            .get("plan_type")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        expired_at: r.expired_at.map(|dt| dt.to_rfc3339()),
+        disabled: r.disabled,
+    }
 }
 
 /// POST `/api/admin/upstream/profiles/:id/oauth/codex/import`
