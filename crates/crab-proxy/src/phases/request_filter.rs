@@ -363,6 +363,23 @@ async fn run_post_body_phases(
             .await;
         }
 
+        if ctx.client_wire_api == crate::context::ClientWireApi::Responses
+            && selection.pipeline != RequestPipeline::CodexRelay
+        {
+            let body = serde_json::json!({
+                "error": {
+                    "message": "POST /v1/responses is supported only with a Codex upstream profile (provider=codex or key upstream_profile=codex)",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_path",
+                }
+            });
+            let body_str = body.to_string();
+            if !send_json_error(session, http::StatusCode::NOT_FOUND, body_str.as_bytes()).await {
+                let _ = session.respond_error(404).await;
+            }
+            return Ok(true);
+        }
+
         let payload = parsed_payload.as_ref();
 
         match selection.pipeline {
@@ -440,15 +457,16 @@ async fn run_post_body_phases(
                 let model = alias_upstream_model
                     .filter(|m| !m.is_empty())
                     .unwrap_or(ctx.model.as_str());
-                let prepared = crate::codex::prepare_codex_request(
-                    payload,
-                    model,
-                    crate::codex::CodexPrepareOptions {
-                        conversation_id: ctx.conversation_id.as_deref(),
-                        prompt_cache_key: ctx.prompt_cache_key.as_deref(),
-                        stable_session_id: stable_session,
-                    },
-                );
+                let opts = crate::codex::CodexPrepareOptions {
+                    conversation_id: ctx.conversation_id.as_deref(),
+                    prompt_cache_key: ctx.prompt_cache_key.as_deref(),
+                    stable_session_id: stable_session,
+                };
+                let prepared = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+                    crate::codex::prepare_codex_client_responses(payload, model, opts)
+                } else {
+                    crate::codex::prepare_codex_request(payload, model, opts)
+                };
                 upstream_model_log = prepared.model.clone();
                 ctx.parsed_upstream_payload = Some(Arc::new(prepared.payload.clone()));
                 ctx.new_request_body = Some(Bytes::from(
@@ -1103,10 +1121,15 @@ pub(crate) async fn run(
         return Ok(false);
     }
 
-    if req_path != "/v1/chat/completions" && req_path != "/chat/completions" {
+    if req_path != "/v1/chat/completions"
+        && req_path != "/chat/completions"
+        && !crate::context::is_client_responses_path(&req_path)
+    {
         let _ = session.respond_error(404).await;
         return Ok(true);
     }
+
+    ctx.client_wire_api = crate::context::ClientWireApi::from_request_path(&req_path);
 
     if req_method != http::Method::POST {
         let _ = session.respond_error(405).await;

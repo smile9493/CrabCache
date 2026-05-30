@@ -221,6 +221,15 @@ fn prepare_codex_responses_passthrough(
     }
 }
 
+/// Normalize a client `POST /v1/responses` body for ChatGPT Codex upstream.
+pub fn prepare_codex_client_responses(
+    payload: &Value,
+    upstream_model: &str,
+    opts: CodexPrepareOptions<'_>,
+) -> CodexPreparedRequest {
+    prepare_codex_responses_passthrough(payload, upstream_model, opts)
+}
+
 fn prepare_codex_from_chat_messages(
     payload: &Value,
     upstream_model: &str,
@@ -1091,6 +1100,22 @@ mod tests {
         );
         assert!(prepared.payload.get("conversation_id").is_none());
         assert_eq!(prepared.payload["prompt_cache_key"], "client:xyz");
+    }
+
+    #[test]
+    fn prepare_codex_client_responses_preserves_input_array() {
+        let payload = json!({
+            "model": "gpt-5.4-mini",
+            "stream": true,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        });
+        let prepared = prepare_codex_client_responses(
+            &payload,
+            "gpt-5.4-mini",
+            CodexPrepareOptions::default(),
+        );
+        assert_eq!(prepared.model, "gpt-5.4-mini");
+        assert!(prepared.payload.get("input").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()));
     }
 
     #[test]

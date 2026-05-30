@@ -139,11 +139,17 @@ pub(crate) fn select_sse_pipeline(
                 store,
             ),
         )))
-    } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
+    } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
+        && ctx.client_wire_api != crate::context::ClientWireApi::Responses
+    {
         Some(StreamPipeline::CodexTranslate(CodexTranslatePipeline::new(
             &ctx.model,
             ctx.original_request_body.clone(),
         )))
+    } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay)
+        && ctx.client_wire_api == crate::context::ClientWireApi::Responses
+    {
+        Some(StreamPipeline::Passthrough(PassthroughPipeline::new()))
     } else if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4)
         && !ctx.cached_reasoning_config.display_reasoning
     {

@@ -1,7 +1,8 @@
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 
-use crate::error_jsons::format_openai_error_sse_for_client;
+use crate::context::ClientWireApi;
+use crate::error_jsons::format_client_error_sse;
 
 pub(crate) async fn send_client_error(
     session: &mut Session,
@@ -9,9 +10,10 @@ pub(crate) async fn send_client_error(
     status: http::StatusCode,
     error_json: &[u8],
     model: &str,
+    wire: ClientWireApi,
 ) -> bool {
     if is_streaming {
-        let body = format_openai_error_sse_for_client(error_json, model);
+        let body = format_client_error_sse(error_json, model, wire);
         let mut header = match ResponseHeader::build(http::StatusCode::OK, Some(8)) {
             Ok(h) => h,
             Err(_) => return false,

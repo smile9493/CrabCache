@@ -12,6 +12,36 @@ use crab_client_endpoint::ClientEndpointSnapshot;
 use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
 use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
+
+/// Client-facing OpenAI wire protocol (Chat Completions vs Responses API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClientWireApi {
+    #[default]
+    ChatCompletions,
+    Responses,
+}
+
+impl ClientWireApi {
+    pub fn from_request_path(path: &str) -> Self {
+        if is_client_responses_path(path) {
+            Self::Responses
+        } else {
+            Self::ChatCompletions
+        }
+    }
+}
+
+/// True for `POST /v1/responses` (Codex CLI and OpenAI Responses clients).
+pub fn is_client_responses_path(path: &str) -> bool {
+    path == "/v1/responses" || path.ends_with("/v1/responses")
+}
+
+/// Paths that accept LLM POST bodies (`model` in JSON).
+pub fn is_llm_completion_path(path: &str) -> bool {
+    path == "/v1/chat/completions"
+        || path == "/chat/completions"
+        || is_client_responses_path(path)
+}
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
 };
@@ -345,6 +375,8 @@ pub struct GatewayContext {
     pub cache_tier: Option<CacheTier>,
     pub is_streaming: bool,
     pub is_models_list: bool,
+    /// Downstream wire API inferred from request path.
+    pub client_wire_api: ClientWireApi,
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
@@ -431,6 +463,7 @@ impl GatewayContext {
             cache_tier: None,
             is_streaming: false,
             is_models_list: false,
+            client_wire_api: ClientWireApi::ChatCompletions,
             model: String::new(),
             consumer: None,
             domain: None,

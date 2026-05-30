@@ -50,6 +50,22 @@ pub fn format_openai_error_sse_for_client(error_json: &[u8], model: &str) -> Vec
     .into_bytes()
 }
 
+/// OpenAI Responses API SSE error (Codex CLI wire).
+pub fn format_responses_error_sse_for_client(error_json: &[u8]) -> Vec<u8> {
+    let line = String::from_utf8_lossy(error_json).trim().to_string();
+    format!("event: error\ndata: {line}\n\n").into_bytes()
+}
+
+/// Pick SSE error shape for downstream wire API.
+pub fn format_client_error_sse(error_json: &[u8], model: &str, wire: crate::context::ClientWireApi) -> Vec<u8> {
+    match wire {
+        crate::context::ClientWireApi::Responses => format_responses_error_sse_for_client(error_json),
+        crate::context::ClientWireApi::ChatCompletions => {
+            format_openai_error_sse_for_client(error_json, model)
+        }
+    }
+}
+
 /// Upstream body → OpenAI error JSON → SSE chunks visible in Cursor.
 pub fn format_upstream_error_sse_for_client(body: &[u8], status: u16, model: &str) -> Vec<u8> {
     let json = format_upstream_error_for_client(body, status);
@@ -234,6 +250,15 @@ pub fn missing_reasoning_error_json(missing_count: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_responses_error_sse_uses_event_error() {
+        let json = br#"{"error":{"message":"bad key","type":"invalid_request_error"}}"#;
+        let out = format_responses_error_sse_for_client(json);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.starts_with("event: error"));
+        assert!(s.contains("invalid_request_error"));
+    }
 
     #[test]
     fn format_upstream_error_sse_includes_assistant_content() {

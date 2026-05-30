@@ -34,6 +34,9 @@ pub(crate) async fn run(
     session: &mut Session,
     ctx: &mut GatewayContext,
 ) -> Result<CachePhaseOutcome, pingora_core::Error> {
+    if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+        return Ok(CachePhaseOutcome::Continue);
+    }
     let fingerprint = proxy.state.runtime.fingerprint.read().clone();
     // Observe global RPS via pingora-limits
     proxy.state.global_rate.observe(&GLOBAL_RATE_KEY, 1);
@@ -390,6 +393,7 @@ pub(crate) async fn run(
                             http::StatusCode::BAD_GATEWAY,
                             &body,
                             &ctx.model,
+                            ctx.client_wire_api,
                         )
                         .await
                         {

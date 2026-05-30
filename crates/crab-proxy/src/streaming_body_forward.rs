@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 /// POST chat completions only (body carries `model`).
 pub fn path_eligible(path: &str, method: &http::Method) -> bool {
     method == http::Method::POST
-        && (path == "/v1/chat/completions" || path.ends_with("/v1/chat/completions"))
+        && (path == "/v1/chat/completions"
+            || path.ends_with("/v1/chat/completions")
+            || crate::context::is_client_responses_path(path))
 }
 
 pub fn feature_enabled(proxy: &GatewayProxy) -> bool {
@@ -89,6 +91,7 @@ mod tests {
     #[test]
     fn path_eligible_chat_completions() {
         assert!(path_eligible("/v1/chat/completions", &http::Method::POST));
+        assert!(path_eligible("/v1/responses", &http::Method::POST));
         assert!(!path_eligible("/v1/models", &http::Method::GET));
     }
 }

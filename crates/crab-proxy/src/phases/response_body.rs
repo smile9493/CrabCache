@@ -85,8 +85,11 @@ pub(crate) fn run(
         && !ctx.accumulated_body.is_empty()
     {
         let status = ctx.upstream.http_status.unwrap_or(500);
-        let client_body =
-            format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model);
+        let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+            ctx.accumulated_body.clone()
+        } else {
+            format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model)
+        };
         *body = Some(bytes::Bytes::from(client_body));
         return Ok(None);
     }
@@ -143,8 +146,16 @@ pub(crate) fn run(
             ctx.accumulated_body.extend_from_slice(&data);
             if end_of_stream {
                 let status = ctx.upstream.http_status.unwrap_or(500);
-                let client_body =
-                    format_upstream_error_sse_for_client(&ctx.accumulated_body, status, &ctx.model);
+                let client_body = if ctx.client_wire_api == crate::context::ClientWireApi::Responses
+                {
+                    ctx.accumulated_body.clone()
+                } else {
+                    format_upstream_error_sse_for_client(
+                        &ctx.accumulated_body,
+                        status,
+                        &ctx.model,
+                    )
+                };
                 *body = Some(bytes::Bytes::from(client_body));
             } else {
                 *body = None;
@@ -247,7 +258,9 @@ pub(crate) fn run(
             } else {
                 *body = Some(data);
             }
-        } else if ctx.request_pipeline != Some(RequestPipeline::CodexRelay) {
+        } else if ctx.request_pipeline != Some(RequestPipeline::CodexRelay)
+            || ctx.client_wire_api == crate::context::ClientWireApi::Responses
+        {
             *body = Some(data);
         } else {
             *body = None;
@@ -310,13 +323,17 @@ pub(crate) fn run(
                 None => ctx.accumulated_body.clone(),
             }
         } else if ctx.request_pipeline == Some(RequestPipeline::CodexRelay) {
-            let mut translator = crate::codex::CodexSseTranslator::new(
-                &ctx.model,
-                ctx.original_request_body.as_deref().map(|b| b.as_ref()),
-            );
-            translator
-                .finalize_non_stream(&ctx.accumulated_body)
-                .unwrap_or_else(|| ctx.accumulated_body.clone())
+            if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+                ctx.accumulated_body.clone()
+            } else {
+                let mut translator = crate::codex::CodexSseTranslator::new(
+                    &ctx.model,
+                    ctx.original_request_body.as_deref().map(|b| b.as_ref()),
+                );
+                translator
+                    .finalize_non_stream(&ctx.accumulated_body)
+                    .unwrap_or_else(|| ctx.accumulated_body.clone())
+            }
         } else {
             ctx.accumulated_body.clone()
         };
