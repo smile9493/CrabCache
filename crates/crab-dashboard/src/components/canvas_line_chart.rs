@@ -194,7 +194,7 @@ pub fn CanvasLineChart(
     });
 
     view! {
-        <div class="line-chart-wrap" style=format!("min-height: {}px", height_px + 24)>
+        <div class="line-chart-wrap" style=format!("min-height: {}px", height_px)>
             {move || {
                 let pricing = std::sync::Arc::clone(&series_price_per_million);
                 let labels = x_labels.get();

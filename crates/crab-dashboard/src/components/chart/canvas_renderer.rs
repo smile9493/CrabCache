@@ -5,7 +5,7 @@ use plotters_canvas::CanvasBackend;
 use web_sys::HtmlCanvasElement;
 
 use crate::components::chart::canvas_render::size_canvas_to_css;
-use crate::components::chart::core::value_segments_indexed;
+use crate::components::chart::core::{format_tooltip_value, value_segments_indexed};
 use crate::components::chart::renderer::{BarDrawRequest, ChartRenderer, LineDrawRequest};
 use crate::components::chart::theme::{ChartPalette, resolve_series_color};
 use crate::theme::Theme;
@@ -14,6 +14,39 @@ const MARGIN: u32 = 8;
 
 fn mesh_label(palette: &ChartPalette) -> TextStyle<'_> {
     TextStyle::from(("sans-serif", 11)).color(&palette.muted)
+}
+
+/// Shared mesh configuration: only Left + Bottom label areas, capped tick counts,
+/// compact Y-axis formatting (e.g. "1.2K tokens", "500 ms").
+macro_rules! apply_mesh_config {
+    ($chart:expr, $palette:expr, $labels:expr, $n:expr, $y_unit:expr, $height_px:expr) => {{
+        let y_tick_count: usize = if $height_px <= 120 { 3 } else { 4 };
+        let x_tick_count = 6.min($n);
+
+        $chart
+            .configure_mesh()
+            .max_light_lines(4)
+            .bold_line_style($palette.grid.mix(0.2))
+            .light_line_style($palette.grid.mix(0.1))
+            .axis_style(ShapeStyle::from(&$palette.muted).stroke_width(1))
+            .label_style(mesh_label(&$palette))
+            .x_label_formatter(&|x| {
+                let idx = *x as usize;
+                $labels.get(idx).cloned().unwrap_or_default()
+            })
+            .y_label_formatter(&|y| {
+                let formatted = format_tooltip_value(*y);
+                if $y_unit.is_empty() {
+                    formatted
+                } else {
+                    format!("{} {}", formatted, $y_unit)
+                }
+            })
+            .x_labels(x_tick_count)
+            .y_labels(y_tick_count)
+            .draw()
+            .map_err(|e| e.to_string())?
+    }};
 }
 
 pub struct CanvasLineRenderer {
@@ -43,8 +76,7 @@ impl ChartRenderer for CanvasLineRenderer {
         let root = backend.into_drawing_area();
         root.fill(&palette.bg).ok();
 
-        // Compute Y range — use the same logic as `y_range()` in core.rs
-        // so that canvas coordinates match tooltip hover calculations.
+        // Compute Y range — same logic as `y_range()` in core.rs
         let (auto_ymin, auto_ymax) = {
             let mut ymin = f64::MAX;
             let mut ymax = f64::MIN;
@@ -71,26 +103,15 @@ impl ChartRenderer for CanvasLineRenderer {
         let n = req.labels.len();
         let x_max = (n.saturating_sub(1)).max(1) as f64;
 
+        // Only Left + Bottom label areas — no Top / Right (prevents overlapping numbers).
         let mut chart = ChartBuilder::on(&root)
             .margin(MARGIN)
-            .set_all_label_area_size(36)
+            .set_label_area_size(LabelAreaPosition::Left, 44)
+            .set_label_area_size(LabelAreaPosition::Bottom, 28)
             .build_cartesian_2d(0.0f64..x_max, ymin..ymax)
             .map_err(|e| e.to_string())?;
 
-        chart
-            .configure_mesh()
-            .max_light_lines(4)
-            .bold_line_style(palette.grid.mix(0.2))
-            .light_line_style(palette.grid.mix(0.1))
-            .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
-            .label_style(mesh_label(&palette))
-            .x_label_formatter(&|x| {
-                let idx = *x as usize;
-                req.labels.get(idx).cloned().unwrap_or_default()
-            })
-            .y_label_formatter(&|y| format!("{:.0}{}", y, req.y_unit))
-            .draw()
-            .map_err(|e| e.to_string())?;
+        apply_mesh_config!(chart, palette, req.labels, n, req.y_unit, req.height_px);
 
         // Threshold reference lines.
         for t in &req.thresholds {
@@ -176,26 +197,15 @@ impl ChartRenderer for CanvasLineRenderer {
 
         let x_max = n.max(1) as f64;
 
+        // Only Left + Bottom label areas.
         let mut chart = ChartBuilder::on(&root)
             .margin(MARGIN)
-            .set_all_label_area_size(36)
+            .set_label_area_size(LabelAreaPosition::Left, 44)
+            .set_label_area_size(LabelAreaPosition::Bottom, 28)
             .build_cartesian_2d(0.0f64..x_max, 0.0f64..ymax)
             .map_err(|e| e.to_string())?;
 
-        chart
-            .configure_mesh()
-            .max_light_lines(4)
-            .bold_line_style(palette.grid.mix(0.2))
-            .light_line_style(palette.grid.mix(0.1))
-            .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
-            .label_style(mesh_label(&palette))
-            .x_label_formatter(&|x| {
-                let idx = *x as usize;
-                req.labels.get(idx).cloned().unwrap_or_default()
-            })
-            .y_label_formatter(&|y| format!("{:.0}{}", y, req.y_unit))
-            .draw()
-            .map_err(|e| e.to_string())?;
+        apply_mesh_config!(chart, palette, req.labels, n, req.y_unit, req.height_px);
 
         let n_series = req.series.len().max(1);
         let bucket_w = 0.8;

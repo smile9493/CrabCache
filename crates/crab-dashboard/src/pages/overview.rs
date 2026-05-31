@@ -89,11 +89,12 @@ pub fn OverviewPage() -> impl IntoView {
     let vs = view_state::load_view_state();
     let overview_core: RwSignal<Option<Result<OverviewCore, String>>> = RwSignal::new(None);
     let trace_summary: RwSignal<Option<TraceSummary>> = RwSignal::new(None);
-    let peak_hours_data: RwSignal<crate::types::ModelPeakHoursResponse> = RwSignal::new(crate::types::ModelPeakHoursResponse {
-        models: vec![],
-        data: vec![],
-        last_aggregated_at: None,
-    });
+    let peak_hours_data: RwSignal<crate::types::ModelPeakHoursResponse> =
+        RwSignal::new(crate::types::ModelPeakHoursResponse {
+            models: vec![],
+            data: vec![],
+            last_aggregated_at: None,
+        });
     let peak_hours_error: RwSignal<Option<String>> = RwSignal::new(None);
     let ts_points: RwSignal<Vec<TimeSeriesPoint>> = RwSignal::new(Vec::new());
     let ts_window = RwSignal::new(vs.ts_window.clone().unwrap_or_else(|| "1h".to_string()));
@@ -159,9 +160,7 @@ pub fn OverviewPage() -> impl IntoView {
                         // Self-reschedule: re-register the same persistent closure
                         // instead of allocating a new Closure::once every frame.
                         if let Some(func) = raf_state_inner.borrow().as_ref() {
-                            let _ = web_sys::window()
-                                .unwrap()
-                                .request_animation_frame(func);
+                            let _ = web_sys::window().unwrap().request_animation_frame(func);
                         }
                     }
                 };
@@ -756,7 +755,6 @@ pub fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoV
     }
 }
 
-
 #[component]
 pub fn TraceCompareBanner(
     trace: TraceSummary,
@@ -951,7 +949,6 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     }
 }
 
-
 #[component]
 pub fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
     let t = use_translations();
@@ -1117,14 +1114,14 @@ pub fn TimeSeriesChart(
                             <CanvasLineChart
                                 x_labels=x_labels
                                 series=token_series
-                                height_px=if compact { 120 } else { 160 }
+                                height_px=if compact { 132 } else { 160 }
                                 y_unit="tokens"
                                 empty_message=t.overview_collecting_timeseries()
                             />
                             <CanvasLineChart
                                 x_labels=x_labels
                                 series=request_series
-                                height_px=if compact { 120 } else { 160 }
+                                height_px=if compact { 132 } else { 160 }
                                 y_unit="req"
                                 empty_message=t.overview_collecting_timeseries()
                             />
@@ -1635,13 +1632,13 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                 view! {}.into_any()
             }}
 
-            <div class="grid grid-cols-1 xl:grid-cols-3 gap-2 mb-2">
+            <div class="diag-card-grid grid grid-cols-1 xl:grid-cols-3 gap-2 mb-2 items-stretch">
                 // Phase Latency card
-                <div class="dash-card dash-card-flush">
+                <div class="dash-card">
                     <div class="dash-card-header">
                         <span class="dash-card-title">{t.dataplane_phase_latency_ms()}</span>
                     </div>
-                    <div class="dash-card-body-flush overflow-x-auto">
+                    <div class="dash-card-body diag-card-body overflow-x-auto">
                         {move || {
                             if !is_loaded.get() {
                                 return view! {
@@ -1716,7 +1713,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                     <div class="dash-card-header">
                         <span class="dash-card-title">{t.dataplane_rejection_reasons_total()}</span>
                     </div>
-                    <div class="dash-card-body">
+                    <div class="dash-card-body diag-card-body">
                             {move || {
                                 if !is_loaded.get() {
                                     return view! {
@@ -1762,7 +1759,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                     <div class="dash-card-header">
                         <span class="dash-card-title">{t.dataplane_error_sources_total()}</span>
                     </div>
-                    <div class="dash-card-body">
+                    <div class="dash-card-body diag-card-body">
                             {move || {
                                 if !is_loaded.get() {
                                     return view! {

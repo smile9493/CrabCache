@@ -1517,7 +1517,10 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         let pid = drawer_profile.get().unwrap_or_default();
                                                         let is_codex = prov == "codex" || prov == "openai" || b_url.contains("openai.com");
                                                         is_codex.then(|| view! {
-                                                            <CodexOAuthPanel profile_id=pid />
+                                                            <CodexOAuthPanel
+                                                                profile_id=pid
+                                                                on_pool_changed=Callback::new(move |_: ()| {})
+                                                            />
                                                         })
                                                     }}
                                                     <div class="space-y-4 pt-4 border-t border-theme/10">
