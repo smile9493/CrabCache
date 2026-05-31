@@ -306,6 +306,8 @@ fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<Upstrea
         key_pool_count: pool.len(),
         keys_available: pool.available_count(),
         proxy_url: profile.proxy_url.clone(),
+        fallback_profile_id: profile.fallback_profile_id.clone(),
+        fallback_max_retries: profile.fallback_max_retries,
     })
 }
 
@@ -372,9 +374,32 @@ pub async fn put_upstream_profile(
         tls_sni: req.tls_sni.clone(),
         default_weight: req.default_weight.max(1),
         proxy_url: req.proxy_url.clone(),
-        fallback_profile_id: None,
-        fallback_max_retries: 2,
+        fallback_profile_id: req.fallback_profile_id.clone().filter(|s| !s.is_empty()),
+        fallback_max_retries: req.fallback_max_retries.unwrap_or(2).min(10),
     };
+
+    // Validate fallback chain has no cycles.
+    if let Some(ref fb_id) = input.fallback_profile_id {
+        if fb_id == &id {
+            return Err(bad_request("fallback_profile_id cannot reference self"));
+        }
+        let mut chain = std::collections::HashMap::new();
+        chain.insert(id.clone(), Some(fb_id.clone()));
+        // Include existing profiles for cycle detection.
+        {
+            let profiles = state.runtime.upstream_profiles.read();
+            for (pid, profile) in profiles.iter() {
+                if pid != &id {
+                    chain.insert(pid.clone(), profile.fallback_profile_id.clone());
+                }
+            }
+        }
+        if let Err(cycle_at) = crab_proxy::validate_fallback_chain(&chain) {
+            return Err(bad_request(&format!(
+                "fallback chain cycle detected at profile '{cycle_at}'"
+            )));
+        }
+    }
 
     // Resolve key specs with fallback to existing/default/legacy pools instead of passing empty.
     let resolved_specs = resolve_profile_key_specs(Vec::new(), &state.runtime, &id);

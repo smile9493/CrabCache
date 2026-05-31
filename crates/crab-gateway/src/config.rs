@@ -310,6 +310,8 @@ fn default_coalesce_timeout_secs() -> Option<u64> {
 pub struct CacheConfig {
     pub l0_max_capacity: Option<u64>,
     pub l0_ttl_secs: Option<u64>,
+    /// P3-5: Per-entry byte cap for L0 Moka weigher. When > 0, enables byte-level eviction.
+    pub l0_max_entry_bytes: Option<u32>,
     pub l1_redis_url: String,
     pub l1_pool_size: Option<u32>,
     pub l1_connection_timeout_secs: Option<u64>,
@@ -999,6 +1001,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             cache: CacheConfig {
                 l0_max_capacity: None,
                 l0_ttl_secs: None,
+                l0_max_entry_bytes: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
                 l1_connection_timeout_secs: None,
@@ -1064,6 +1067,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             cache: CacheConfig {
                 l0_max_capacity: None,
                 l0_ttl_secs: None,
+                l0_max_entry_bytes: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
                 l1_connection_timeout_secs: None,
@@ -1132,6 +1136,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             cache: CacheConfig {
                 l0_max_capacity: None,
                 l0_ttl_secs: None,
+                l0_max_entry_bytes: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
                 l1_connection_timeout_secs: None,

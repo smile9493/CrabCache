@@ -1,5 +1,6 @@
 mod coalescing;
 mod hit_rate_sim;
+pub mod idempotency;
 mod key;
 mod sanitized_trace;
 mod tiered;
@@ -11,6 +12,7 @@ mod types;
 pub mod mock;
 
 pub use coalescing::{CoalesceError, CoalesceGuard, RequestCoalescer};
+pub use idempotency::IdempotencyStore;
 pub use hit_rate_sim::{
     CacheStats, SemanticCache, SimEmbedder, SimulatedCache, SweepResult, parameter_sweep,
     simulate_cache_hit_rate, simulate_cache_with_l2,

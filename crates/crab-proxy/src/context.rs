@@ -458,6 +458,10 @@ pub struct GatewayContext {
     pub request_pipeline: Option<RequestPipeline>,
     pub pipeline_reason: Option<PipelineSelectionReason>,
     pub upstream_profile_id: Option<String>,
+    /// Fallback profile chain for automatic failover (populated from profile config).
+    pub profile_fallback_chain: Vec<String>,
+    /// Current fallback attempt index (0 = primary profile).
+    pub profile_fallback_attempt: u32,
     /// Model name after pipeline prepare (upstream-bound).
     pub upstream_model: Option<String>,
     pub request_start: Instant,
@@ -480,6 +484,8 @@ pub struct GatewayContext {
     /// SHA-256 prefix of client Bearer token (for capture: same key grouping).
     pub client_key_fingerprint: Option<String>,
     pub req_hash: Option<String>,
+    /// Idempotency key from `Idempotency-Key` or `X-Request-Id` header (if present).
+    pub idempotency_key: Option<String>,
     pub content_length: usize,
     pub conversation_id: Option<String>,
     /// Resolved tenant id for upstream `user_id` and cache namespaces.
@@ -550,6 +556,8 @@ impl GatewayContext {
             request_pipeline: None,
             pipeline_reason: None,
             upstream_profile_id: None,
+            profile_fallback_chain: Vec::new(),
+            profile_fallback_attempt: 0,
             upstream_model: None,
             request_start: Instant::now(),
             ttft: None,
@@ -566,6 +574,7 @@ impl GatewayContext {
             authorization: None,
             client_key_fingerprint: None,
             req_hash: None,
+            idempotency_key: None,
             content_length: 0,
             conversation_id: None,
             project_id: None,
@@ -761,7 +770,7 @@ pub struct FeaturesConfig {
 }
 
 /// Configuration for quota preflight / backend health gating.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreflightConfig {
     /// Enable quota preflight checks.
     pub enabled: bool,
@@ -951,7 +960,7 @@ fn default_client_lockout_attempt_window_secs() -> u64 {
 }
 
 /// Serializable config for multi-factor weighted routing scores.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoreWeightsConfig {
     pub health: f64,
     pub latency_inv: f64,
@@ -996,6 +1005,8 @@ pub struct GatewayState {
     pub semantic_cache: Option<Arc<SemanticCache>>,
     pub semantic_runtime: SharedSemanticRuntime,
     pub coalescer: Arc<RequestCoalescer>,
+    /// Client-controlled idempotency store (short-lived dedup for retries).
+    pub idempotency: Arc<crab_cache::IdempotencyStore>,
     pub reasoning_store: Arc<ReasoningBackend>,
     pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
     pub cors_enabled: Arc<AtomicBool>,
@@ -1043,6 +1054,8 @@ pub struct GatewayState {
     pub event_bus: Arc<crate::event_bus::EventBus>,
     /// Codex quota cache for quota-aware key selection (WHAM data per key_id).
     pub codex_quota_cache: Arc<crate::codex_quota_cache::CodexQuotaCache>,
+    /// Fault injection for integration testing (debug/test only).
+    pub fault_injection: Arc<crate::fault_injection::FaultInjection>,
 }
 
 #[cfg(test)]

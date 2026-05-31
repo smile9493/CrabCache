@@ -130,13 +130,29 @@ impl TieredCache {
     ) -> Result<Self, CacheError> {
         let arc_swap = Arc::new(ArcSwap::from_pointee(ttl_config.read().clone()));
 
-        let l0 = Cache::builder()
-            .max_capacity(l0_config.max_capacity)
-            .expire_after(DynamicTtlExpiry {
-                ttl_config: arc_swap.clone(),
-            })
-            .support_invalidation_closures()
-            .build();
+        let max_entry_cap = l0_config.max_entry_bytes;
+        let l0 = if max_entry_cap > 0 {
+            // Byte-level mode: weigher caps individual entries and max_capacity = total byte budget.
+            Cache::builder()
+                .max_capacity(l0_config.max_capacity)
+                .weigher(move |_key, entry: &CacheEntry| -> u32 {
+                    entry.estimated_bytes().min(max_entry_cap)
+                })
+                .expire_after(DynamicTtlExpiry {
+                    ttl_config: arc_swap.clone(),
+                })
+                .support_invalidation_closures()
+                .build()
+        } else {
+            // Entry-count mode (legacy): max_capacity = max number of entries.
+            Cache::builder()
+                .max_capacity(l0_config.max_capacity)
+                .expire_after(DynamicTtlExpiry {
+                    ttl_config: arc_swap.clone(),
+                })
+                .support_invalidation_closures()
+                .build()
+        };
 
         Ok(Self {
             l0,

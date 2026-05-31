@@ -65,6 +65,18 @@ impl CacheEntry {
         let expiry = self.created_at + self.ttl_secs;
         now.saturating_sub(expiry)
     }
+    /// Approximate byte size of this cache entry (key overhead + body + SSE body + model name).
+    /// Used by Moka weigher for byte-level capacity control.
+    pub fn estimated_bytes(&self) -> u32 {
+        let body_bytes = self.response_body.len() as u64;
+        let sse_bytes = self
+            .sse_body
+            .as_ref()
+            .map_or(0u64, |b| b.len() as u64);
+        let model_bytes = self.model.len() as u64;
+        let total = body_bytes + sse_bytes + model_bytes + 128; // 128B struct overhead estimate
+        total.min(u32::MAX as u64) as u32
+    }
 }
 
 /// Serde module for `Option<Vec<u8>>` with base64 encoding.
@@ -115,6 +127,9 @@ pub struct UsageInfo {
 pub struct L0Config {
     pub max_capacity: u64,
     pub ttl_secs: u64,
+    /// Per-entry byte cap for Moka weigher. When > 0, enables byte-level eviction
+    /// and interprets `max_capacity` as total byte budget (not entry count).
+    pub max_entry_bytes: u32,
 }
 
 impl Default for L0Config {
@@ -122,6 +137,7 @@ impl Default for L0Config {
         Self {
             max_capacity: 10_000,
             ttl_secs: 3600,
+            max_entry_bytes: 0, // disabled by default (entry-count mode)
         }
     }
 }

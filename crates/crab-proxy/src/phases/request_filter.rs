@@ -871,6 +871,43 @@ async fn run_post_body_phases(
                 }
                 return Ok(true);
             }
+            // Per-backend 429 filtering: skip backends with excessive rate limits.
+            let max_inflight = features.default_max_inflight_per_backend;
+            let healthy: Vec<_> = ready
+                .iter()
+                .filter(|b| {
+                    !proxy.state.backend_load.should_skip_backend(
+                        &profile.id,
+                        &b.name,
+                        max_inflight,
+                        preflight.cooldown_ms,
+                        preflight.max_consecutive_429,
+                        preflight.skip_threshold,
+                    )
+                })
+                .collect();
+            if healthy.is_empty() {
+                global_metrics().record_rejected("preflight_all_backends_429_cooldown");
+                debug!(
+                    request_id = %ctx.request_id,
+                    profile = %profile.id,
+                    "Preflight: all {} ready backends in 429 cooldown",
+                    ready.len()
+                );
+                let retry_after = (preflight.cooldown_ms / 1000).max(1);
+                let body = r#"{"error":{"message":"upstream_backend_rate_limited","type":"server_error","code":429}}"#;
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::TOO_MANY_REQUESTS,
+                    body.as_bytes(),
+                    retry_after,
+                )
+                .await
+                {
+                    let _ = session.respond_error(429).await;
+                }
+                return Ok(true);
+            }
         }
     }
 
@@ -974,6 +1011,65 @@ async fn run_post_body_phases(
                 ctx.upstream.key_guard = Some(guard);
                 global_metrics().record_key_binding_event("codex_pre_acquire");
             }
+        }
+    }
+
+    // ─── Phase 4.7: Fault Injection (debug/test builds only) ───────────────
+    #[cfg(any(test, feature = "fault-injection"))]
+    {
+        let fi = &proxy.state.fault_injection;
+        if fi.should_trigger() {
+            if fi.force_upstream_429.load(Ordering::Relaxed) {
+                warn!(request_id = %ctx.request_id, "Fault injection: forcing 429");
+                let body = r#"{"error":{"message":"fault_injection_429","type":"rate_limit_error","code":429}}"#;
+                if !send_json_error_with_retry_after(session, http::StatusCode::TOO_MANY_REQUESTS, body.as_bytes(), 1).await {
+                    let _ = session.respond_error(429).await;
+                }
+                return Ok(true);
+            }
+            if fi.force_connection_fail.load(Ordering::Relaxed) {
+                warn!(request_id = %ctx.request_id, "Fault injection: forcing connection failure");
+                let body = r#"{"error":{"message":"fault_injection_connection_fail","type":"server_error","code":502}}"#;
+                if !send_json_error(session, http::StatusCode::BAD_GATEWAY, body.as_bytes()).await {
+                    let _ = session.respond_error(502).await;
+                }
+                return Ok(true);
+            }
+            let delay = fi.upstream_delay_ms.load(Ordering::Relaxed);
+            if delay > 0 {
+                warn!(request_id = %ctx.request_id, delay_ms = delay, "Fault injection: artificial delay");
+                tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+            }
+        }
+    }
+
+    // ─── Phase 4.8: Idempotency Check ──────────────────────────────────────
+    // Client-controlled dedup: check Idempotency-Key / X-Request-Id before cache+coalesce.
+    {
+        let req_hdrs = &session.req_header().headers;
+        let idem_key = req_hdrs
+            .get("idempotency-key")
+            .or_else(|| req_hdrs.get("x-request-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        if let Some(key) = idem_key {
+            if let Some((status, body)) = proxy.state.idempotency.check(&key) {
+                debug!(
+                    request_id = %ctx.request_id,
+                    idempotency_key = %key,
+                    status = status,
+                    "Idempotency hit: returning cached response"
+                );
+                global_metrics().record_rejected("idempotency_hit");
+                let status_code = http::StatusCode::from_u16(status)
+                    .unwrap_or(http::StatusCode::OK);
+                if !send_json_error(session, status_code, &body).await {
+                    let _ = session.respond_error(status).await;
+                }
+                return Ok(true);
+            }
+            // Store key for later saving in logging phase.
+            ctx.idempotency_key = Some(key);
         }
     }
 

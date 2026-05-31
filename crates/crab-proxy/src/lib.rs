@@ -11,6 +11,7 @@ pub mod debug_log;
 mod error;
 pub mod event_bus;
 pub mod fallback_policy;
+pub mod fault_injection;
 mod guardrails;
 mod masking;
 pub mod model_lockout;
@@ -65,7 +66,7 @@ pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimit
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     BackendRouteStrategy, ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState,
-    ModelPricing, PricingConfig, ReasoningConfig,
+    ModelPricing, PreflightConfig, PricingConfig, ReasoningConfig, ScoreWeightsConfig,
 };
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
@@ -102,7 +103,7 @@ pub use upstream_pool::{
     DEFAULT_UPSTREAM_ACCOUNT_ID, REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool,
     UpstreamKeySpec, UpstreamKeyStatus, key_preview,
 };
-pub use upstream_profile::UpstreamProfileRuntime;
+pub use upstream_profile::{UpstreamProfileRuntime, validate_fallback_chain};
 pub use upstream_user_id_limiter::{
     DeepSeekConcurrencyTier, DeepSeekUserConcurrencyConfig, DeepSeekUserIdLimitError,
     UpstreamUserIdGuard, UpstreamUserIdLimiter, classify_deepseek_v4_tier,

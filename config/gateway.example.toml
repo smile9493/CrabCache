@@ -133,6 +133,8 @@ backend = "memory"
 default_ttl_secs = 3600
 l0_max_capacity = 10000
 l0_ttl_secs = 3600
+# l0_max_entry_bytes = 1048576  # P3-5: Enable byte-level L0 eviction (1MB per entry cap).
+                                # When set, max_capacity becomes total byte budget (e.g. 100000000 = ~100MB).
 # Bare-metal / local dev: redis on localhost.
 # Docker Compose: use redis://redis:6379 (see config/gateway.docker.toml) or CRABCACHE_L1_REDIS_URL.
 l1_redis_url = "redis://127.0.0.1:6379"
@@ -350,6 +352,37 @@ max_files = 5
 # client_lockout_duration_secs = 900     # Lockout duration (15 minutes)
 # client_lockout_attempt_window_secs = 300  # Sliding window for counting failures (5 minutes)
 # model_lockout_enabled = true           # Model-level lockout (per-profile/backend/model cooldowns)
+#
+# ── P1-1: Multi-factor Weighted Routing ──────────────────────────
+# When backend_route_strategy = "weighted_ketama", the gateway scores all
+# ready backends on 5 factors and picks the highest-scoring one.
+# backend_load_aware_routing_enabled = false
+# backend_route_strategy = "ketama"      # ketama | p2c | least_used | cost_optimized | weighted_ketama
+# backend_concurrency_limit_enabled = false
+# default_max_inflight_per_backend = 8
+# backend_prefill_overload_threshold_ms = 0   # 0 = disabled
+# backend_overload_cooldown_ms = 30000
+# [features.score_weights]
+# health = 0.30           # Backend health status (ready/not_ready)
+# latency_inv = 0.25      # Inverse P95 latency (faster = higher score)
+# load_inv = 0.20         # Inverse active connections (less loaded = higher)
+# affinity_hit = 0.15     # Prompt-cache affinity hit rate
+# rate_429_inv = 0.10     # Inverse 429 rate (fewer rate limits = higher)
+#
+# ── P1-2: Quota Preflight (Backend Health Gating) ────────────────
+# [features.preflight]
+# enabled = false
+# cooldown_ms = 60000          # 429 cooldown window (ms)
+# max_consecutive_429 = 3      # Consecutive 429s before skipping backend
+# skip_threshold = 0.5         # 429-rate threshold to skip backend
+#
+# ── P2-4: Idempotency Layer ──────────────────────────────────────
+# Client-controlled dedup using Idempotency-Key or X-Request-Id header.
+# Complements Request Coalescing (which merges concurrent identical requests).
+# [cache.idempotency]
+# enabled = true
+# window_secs = 5               # TTL window for idempotent responses
+# max_entries = 10000            # Max entries in memory
 
 # ── OAuth TLS Fingerprint Emulation ──────────────────────────────
 # OAuth outbounds (Claude/Gemini/xAI/Codex token exchange) use wreq + Chrome

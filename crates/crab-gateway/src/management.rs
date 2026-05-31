@@ -14,10 +14,10 @@ use crab_control::{
     CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse, ErrorResponse,
     FeaturesConfigView, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, LimitsConfigView,
     ModelPricingView, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PipelineProfileView,
-    PipelineRuntimeConfigView, PricingConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
+    PipelineRuntimeConfigView, PreflightView, PricingConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
     PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
-    RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
+    RoutingSummaryView, ScoreWeightsView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
     UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str,
     parse_backend_endpoints, parse_upstream_base_url,
 };
@@ -25,8 +25,9 @@ use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
 };
 use crab_proxy::{
-    ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig, ReasoningConfig, RuntimeConfig,
-    StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    BackendRouteStrategy, ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig,
+    PreflightConfig, ReasoningConfig, RuntimeConfig, ScoreWeightsConfig, StoredKey,
+    UpstreamKeyPool, UpstreamKeySpec,
 };
 use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_reasoning::ReasoningBackend;
@@ -80,6 +81,8 @@ pub struct ManagementState {
     pub webhook_client: reqwest::Client,
     /// Codex quota cache (shared with gateway runtime for background refresh).
     pub codex_quota_cache: Option<Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>>,
+    /// Fault injection for integration testing.
+    pub fault_injection: Arc<crab_proxy::fault_injection::FaultInjection>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -259,6 +262,11 @@ pub fn router(state: ManagementState) -> Router {
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .merge(crate::webhook_admin::build_webhook_routes())
+        // Debug-only: fault injection control (returns 403 in release builds)
+        .route(
+            "/v1/debug/fault-injection",
+            get(get_fault_injection).put(put_fault_injection).delete(delete_fault_injection),
+        )
         .with_state(state)
 }
 
@@ -1587,6 +1595,27 @@ async fn put_features_config(
     f.mimo_session_store_ttl_secs = req.mimo_session_store_ttl_secs;
     f.mimo_session_store_max_messages = req.mimo_session_store_max_messages;
     f.passthrough_prefix_bytes = req.passthrough_prefix_bytes;
+    // P1-1: Multi-factor routing
+    f.backend_route_strategy = BackendRouteStrategy::from_str(&req.backend_route_strategy);
+    f.backend_load_aware_routing_enabled = req.backend_load_aware_routing_enabled;
+    f.backend_concurrency_limit_enabled = req.backend_concurrency_limit_enabled;
+    f.default_max_inflight_per_backend = req.default_max_inflight_per_backend;
+    f.backend_prefill_overload_threshold_ms = req.backend_prefill_overload_threshold_ms;
+    f.backend_overload_cooldown_ms = req.backend_overload_cooldown_ms;
+    f.score_weights = ScoreWeightsConfig {
+        health: req.score_weights.health,
+        latency_inv: req.score_weights.latency_inv,
+        load_inv: req.score_weights.load_inv,
+        affinity_hit: req.score_weights.affinity_hit,
+        rate_429_inv: req.score_weights.rate_429_inv,
+    };
+    // P1-2: Quota Preflight
+    f.preflight = PreflightConfig {
+        enabled: req.preflight.enabled,
+        cooldown_ms: req.preflight.cooldown_ms,
+        max_consecutive_429: req.preflight.max_consecutive_429,
+        skip_threshold: req.preflight.skip_threshold,
+    };
     Ok(Json(features_view(&f)))
 }
 
@@ -1609,6 +1638,27 @@ fn features_view(f: &FeaturesConfig) -> FeaturesConfigView {
         mimo_session_store_ttl_secs: f.mimo_session_store_ttl_secs,
         mimo_session_store_max_messages: f.mimo_session_store_max_messages,
         passthrough_prefix_bytes: f.passthrough_prefix_bytes,
+        // P1-1: Multi-factor routing
+        backend_route_strategy: f.backend_route_strategy.as_str().to_string(),
+        backend_load_aware_routing_enabled: f.backend_load_aware_routing_enabled,
+        backend_concurrency_limit_enabled: f.backend_concurrency_limit_enabled,
+        default_max_inflight_per_backend: f.default_max_inflight_per_backend,
+        backend_prefill_overload_threshold_ms: f.backend_prefill_overload_threshold_ms,
+        backend_overload_cooldown_ms: f.backend_overload_cooldown_ms,
+        score_weights: ScoreWeightsView {
+            health: f.score_weights.health,
+            latency_inv: f.score_weights.latency_inv,
+            load_inv: f.score_weights.load_inv,
+            affinity_hit: f.score_weights.affinity_hit,
+            rate_429_inv: f.score_weights.rate_429_inv,
+        },
+        // P1-2: Quota Preflight
+        preflight: PreflightView {
+            enabled: f.preflight.enabled,
+            cooldown_ms: f.preflight.cooldown_ms,
+            max_consecutive_429: f.preflight.max_consecutive_429,
+            skip_threshold: f.preflight.skip_threshold,
+        },
     }
 }
 
@@ -2100,6 +2150,71 @@ pub async fn serve(listen_addr: &str, state: ManagementState) -> anyhow::Result<
     tracing::info!(addr = %listen_addr, "Management API listening");
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+// ── Fault Injection handlers (debug/test builds) ──────────────────────
+
+async fn get_fault_injection(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<crab_proxy::fault_injection::FaultInjectionSnapshot>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    if !cfg!(debug_assertions) && !cfg!(feature = "fault-injection") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "fault injection is only available in debug builds".to_string(),
+            }),
+        )
+            .into_response()
+            .into());
+    }
+    Ok(Json(state.fault_injection.snapshot()))
+}
+
+async fn put_fault_injection(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<crab_proxy::fault_injection::FaultInjectionSnapshot>,
+) -> Result<Json<crab_proxy::fault_injection::FaultInjectionSnapshot>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    if !cfg!(debug_assertions) && !cfg!(feature = "fault-injection") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "fault injection is only available in debug builds".to_string(),
+            }),
+        )
+            .into_response()
+            .into());
+    }
+    let fi = &state.fault_injection;
+    use std::sync::atomic::Ordering;
+    fi.redis_down.store(req.redis_down, Ordering::Relaxed);
+    fi.force_upstream_429
+        .store(req.force_upstream_429, Ordering::Relaxed);
+    fi.upstream_delay_ms
+        .store(req.upstream_delay_ms, Ordering::Relaxed);
+    fi.corrupt_l0_cache
+        .store(req.corrupt_l0_cache, Ordering::Relaxed);
+    fi.force_coalesce_leader_fail
+        .store(req.force_coalesce_leader_fail, Ordering::Relaxed);
+    fi.force_connection_fail
+        .store(req.force_connection_fail, Ordering::Relaxed);
+    fi.trigger_after_count
+        .store(req.trigger_after_count, Ordering::Relaxed);
+    tracing::info!(?req, "Fault injection updated");
+    Ok(Json(fi.snapshot()))
+}
+
+async fn delete_fault_injection(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<crab_proxy::fault_injection::FaultInjectionSnapshot>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    state.fault_injection.reset();
+    tracing::info!("Fault injection cleared");
+    Ok(Json(state.fault_injection.snapshot()))
 }
 
 #[cfg(test)]

@@ -83,6 +83,15 @@ pub(crate) async fn run(
             "Request completed"
         );
 
+        // ── Idempotency save ──
+        // If this request carried an idempotency key, save the response so subsequent
+        // retries with the same key get an instant reply.
+        if let Some(idem_key) = ctx.idempotency_key.as_deref() {
+            if let Some(status) = ctx.upstream.http_status {
+                proxy.state.idempotency.save(idem_key, status, ctx.accumulated_body.clone());
+            }
+        }
+
         // ── Event bus emission (non-blocking) ──
         if proxy.state.event_bus.subscriber_count() > 0 {
             use crate::event_bus::{GatewayEvent, RequestCompletedEvent, now_secs};

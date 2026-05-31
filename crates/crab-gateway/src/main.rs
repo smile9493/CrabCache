@@ -457,6 +457,7 @@ fn main() -> Result<()> {
     let l0_config = crab_cache::L0Config {
         max_capacity: config.cache.l0_max_capacity.unwrap_or(10_000),
         ttl_secs: config.cache.l0_ttl_secs.unwrap_or(3600),
+        max_entry_bytes: config.cache.l0_max_entry_bytes.unwrap_or(0),
     };
 
     let tiered_cache = Arc::new(
@@ -948,6 +949,8 @@ fn main() -> Result<()> {
         .build()
         .expect("Failed to create webhook HTTP client");
 
+    let fault_injection = Arc::new(crab_proxy::fault_injection::FaultInjection::default());
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -975,6 +978,7 @@ fn main() -> Result<()> {
         webhook_store: webhook_store.clone(),
         webhook_client: webhook_client.clone(),
         codex_quota_cache: Some(codex_quota_cache.clone()),
+        fault_injection: fault_injection.clone(),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -1033,6 +1037,10 @@ fn main() -> Result<()> {
         semantic_cache,
         semantic_runtime: semantic_runtime.clone(),
         coalescer,
+        idempotency: Arc::new(crab_cache::IdempotencyStore::new(
+            std::time::Duration::from_secs(5),
+            10_000,
+        )),
         reasoning_store,
         reasoning_config: reasoning_config_shared,
         cors_enabled: cors_enabled_state.clone(),
@@ -1068,6 +1076,7 @@ fn main() -> Result<()> {
         client_lockouts,
         event_bus: Arc::new(crab_proxy::event_bus::EventBus::new(1024)),
         codex_quota_cache: codex_quota_cache.clone(),
+        fault_injection: fault_injection.clone(),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -1081,21 +1090,36 @@ fn main() -> Result<()> {
         });
     }
 
+    // Spawn idempotency store cleanup (evicts expired entries every 10 s)
+    {
+        let idem = state.idempotency.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                idem.cleanup_expired();
+            }
+        });
+    }
+
     // Codex quota: wire cache to all Codex profile key pools + spawn background refresh
     {
         let quota_cache = state.codex_quota_cache.clone();
         wire_codex_quota_caches(&state.runtime, &quota_cache);
 
         // Background refresh: every 60s, refresh all enabled Codex key quotas
+        // Uses a dedicated thread with its own tokio runtime (same pattern as management server)
         let runtime_bg = state.runtime.clone();
         let cache_bg = quota_cache.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                refresh_codex_quotas(&runtime_bg, &cache_bg).await;
-            }
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("codex quota refresh runtime");
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    interval.tick().await;
+                    refresh_codex_quotas(&runtime_bg, &cache_bg).await;
+                }
+            });
         });
     }
 

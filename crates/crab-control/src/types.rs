@@ -379,6 +379,16 @@ pub struct UpstreamProfileView {
     pub keys_available: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// Profile ID to try when this profile's upstream fails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_profile_id: Option<String>,
+    /// Maximum number of fallback attempts per request.
+    #[serde(default = "default_fallback_max_retries")]
+    pub fallback_max_retries: u32,
+}
+
+fn default_fallback_max_retries() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,6 +543,96 @@ pub struct FeaturesConfigView {
     pub mimo_session_store_ttl_secs: u64,
     pub mimo_session_store_max_messages: usize,
     pub passthrough_prefix_bytes: usize,
+    // --- P1-1: Multi-factor routing ---
+    /// Route policy used when choosing among healthy upstream backends.
+    #[serde(default)]
+    pub backend_route_strategy: String,
+    /// Enable per-backend runtime load checks when selecting upstream peers.
+    #[serde(default)]
+    pub backend_load_aware_routing_enabled: bool,
+    /// Enable per-backend in-flight concurrency limits.
+    #[serde(default)]
+    pub backend_concurrency_limit_enabled: bool,
+    /// Default max in-flight requests per backend.
+    #[serde(default = "default_max_inflight_per_backend")]
+    pub default_max_inflight_per_backend: usize,
+    /// Mark a backend overloaded when observed prefill exceeds this threshold (0 disables).
+    #[serde(default)]
+    pub backend_prefill_overload_threshold_ms: u64,
+    /// Cooldown window after a backend crosses the prefill threshold.
+    #[serde(default = "default_backend_overload_cooldown_ms")]
+    pub backend_overload_cooldown_ms: u64,
+    /// Weights for multi-factor weighted Ketama routing.
+    #[serde(default)]
+    pub score_weights: ScoreWeightsView,
+    // --- P1-2: Quota Preflight ---
+    /// Pre-flight backend health checks before upstream.
+    #[serde(default)]
+    pub preflight: PreflightView,
+}
+
+fn default_max_inflight_per_backend() -> usize {
+    8
+}
+
+fn default_backend_overload_cooldown_ms() -> u64 {
+    30_000
+}
+
+/// Multi-factor score weights (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoreWeightsView {
+    pub health: f64,
+    pub latency_inv: f64,
+    pub load_inv: f64,
+    pub affinity_hit: f64,
+    pub rate_429_inv: f64,
+}
+
+impl Default for ScoreWeightsView {
+    fn default() -> Self {
+        Self {
+            health: 0.30,
+            latency_inv: 0.25,
+            load_inv: 0.20,
+            affinity_hit: 0.15,
+            rate_429_inv: 0.10,
+        }
+    }
+}
+
+/// Quota preflight config (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreflightView {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_preflight_cooldown_ms")]
+    pub cooldown_ms: u64,
+    #[serde(default = "default_preflight_max_consecutive_429")]
+    pub max_consecutive_429: u32,
+    #[serde(default = "default_preflight_skip_threshold")]
+    pub skip_threshold: f64,
+}
+
+fn default_preflight_cooldown_ms() -> u64 {
+    60_000
+}
+fn default_preflight_max_consecutive_429() -> u32 {
+    3
+}
+fn default_preflight_skip_threshold() -> f64 {
+    0.5
+}
+
+impl Default for PreflightView {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cooldown_ms: 60_000,
+            max_consecutive_429: 3,
+            skip_threshold: 0.5,
+        }
+    }
 }
 
 /// Hot-reloadable pricing config (Management API).
