@@ -49,7 +49,9 @@ pub fn default_codex_file_tool(name: &str, description: Option<&str>) -> Option<
         _ => return None,
     };
     let description = description.unwrap_or(match name {
-        "apply_patch" => "Apply a patch to create, update, or delete files using Codex apply_patch syntax.",
+        "apply_patch" => {
+            "Apply a patch to create, update, or delete files using Codex apply_patch syntax."
+        }
         "read_file" => "Read a file from the workspace.",
         "list_dir" => "List entries in a workspace directory.",
         _ => return None,

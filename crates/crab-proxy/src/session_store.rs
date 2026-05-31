@@ -110,11 +110,7 @@ impl SessionStore {
     }
 
     fn try_tail_anchor_merge(stored: &[Value], client: &[Value]) -> Option<Vec<Value>> {
-        let n = stored
-            .len()
-            .min(client.len())
-            .min(TAIL_ANCHOR_LEN)
-            .max(1);
+        let n = stored.len().min(client.len()).min(TAIL_ANCHOR_LEN).max(1);
         if stored.len() < n || client.len() < n {
             return None;
         }

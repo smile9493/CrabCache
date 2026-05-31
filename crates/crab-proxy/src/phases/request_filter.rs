@@ -14,7 +14,6 @@ use crate::helper_fns::{
     client_session_from_authorization, extract_client_endpoint_addrs, fingerprint_client_key,
     is_models_endpoint, last_user_message_fingerprint, stable_session_log_fields,
 };
-use crate::{evaluate_request_guardrails, maybe_handle_cursor_bypass};
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crate::send_helpers::{
@@ -26,15 +25,16 @@ use crate::tenant::{
     resolve_project_id,
 };
 use crate::upstream_user_id_limiter::{DeepSeekUserIdLimitError, classify_deepseek_v4_tier};
+use crate::{evaluate_request_guardrails, maybe_handle_cursor_bypass};
 use bytes::Bytes;
 use crab_metrics::global_metrics;
 use crab_pipeline::{
-    PipelineOverride, PipelineRequestContext, PipelineSelection, RequestPipeline, UpstreamProvider,
-    select_request_pipeline, validate_pipeline_override,
+    PipelineOverride, PipelineRequestContext, PipelineSelection, PipelineSelectionReason,
+    RequestPipeline, UpstreamProvider, select_request_pipeline, validate_pipeline_override,
 };
 use crab_reasoning::{
-    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_generic_request,
-    prepare_light_request, prepare_mimo_request, prepare_upstream_request,
+    CursorReasoningDisplayAdapter, StreamAccumulator, prepare_codex_mimo_request,
+    prepare_generic_request, prepare_light_request, prepare_mimo_request, prepare_upstream_request,
 };
 use crab_route::extract_affinity_key;
 use http::HeaderMap;
@@ -68,22 +68,52 @@ fn upgrade_pipeline_for_responses_client(
     client_wire_api: crate::context::ClientWireApi,
     pipeline: RequestPipeline,
     provider: UpstreamProvider,
-) -> RequestPipeline {
+) -> (RequestPipeline, Option<PipelineSelectionReason>) {
     if client_wire_api != crate::context::ClientWireApi::Responses {
-        return pipeline;
+        return (pipeline, None);
     }
 
-    match (provider, pipeline) {
+    let upgraded = match (provider, pipeline) {
         (
             UpstreamProvider::Deepseek,
             RequestPipeline::DeepSeekLight | RequestPipeline::CursorDeepSeekV4,
-        ) => RequestPipeline::CodexDeepSeek,
+        ) => Some((
+            RequestPipeline::CodexDeepSeek,
+            PipelineSelectionReason::CodexDeepSeekProvider,
+        )),
         (
             UpstreamProvider::Mimo,
             RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay,
-        ) => RequestPipeline::CodexMimo,
-        _ => pipeline,
-    }
+        ) => Some((
+            RequestPipeline::CodexMimo,
+            PipelineSelectionReason::CodexMimoProvider,
+        )),
+        _ => None,
+    };
+    upgraded
+        .map(|(pipeline, reason)| (pipeline, Some(reason)))
+        .unwrap_or((pipeline, None))
+}
+
+fn apply_mimo_tool_audit(
+    ctx: &mut GatewayContext,
+    payload: &serde_json::Value,
+    upstream_payload: &serde_json::Value,
+    responses_tool_audit_payload: Option<&serde_json::Value>,
+) {
+    let registry_audit = responses_tool_audit_payload
+        .map(crate::responses_tool_registry::audit_responses_tool_registry)
+        .unwrap_or_else(|| crate::responses_tool_registry::audit_chat_tool_registry(payload));
+    let mimo_audit =
+        crate::responses_tool_registry::audit_mimo_tool_pipeline(payload, upstream_payload);
+    crate::responses_tool_registry::log_mimo_codex_tool_registry_warnings(
+        &ctx.request_id,
+        &ctx.model,
+        &registry_audit,
+        Some(&mimo_audit),
+    );
+    ctx.stream.responses_exec_only_surface = registry_audit.exec_only_surface;
+    ctx.stream.client_responses_tool_names = registry_audit.registered_tool_names.clone();
 }
 
 /// Shared path after the full client body is available (normal read or streaming finalize).
@@ -177,7 +207,6 @@ async fn run_post_body_phases(
             &pipe_ctx,
         );
 
-
         if let Some(msg) = validate_pipeline_override(
             pipe_ctx
                 .key_pipeline
@@ -211,7 +240,18 @@ async fn run_post_body_phases(
             selection.reason.as_str(),
         );
         timeline_stamp(&mut ctx.timeline.pipeline_select_done);
-        if proxy.state.features.read().pipeline_overload_degrade_enabled
+        if crate::codex_rate_limit::is_codex_upstream_pipeline(ctx.request_pipeline) {
+            let profile = proxy.active_upstream_profile(ctx);
+            let pool = profile.resolve_upstream_pool();
+            let max_budget = proxy.state.features.read().codex_retry_budget_max;
+            ctx.upstream.retry_budget =
+                crate::codex_rate_limit::codex_retry_budget(pool.len(), max_budget);
+        }
+        if proxy
+            .state
+            .features
+            .read()
+            .pipeline_overload_degrade_enabled
             && GatewayProxy::is_mimo_pipeline(selection.pipeline)
         {
             let profile = proxy.active_upstream_profile(ctx);
@@ -271,7 +311,7 @@ async fn run_post_body_phases(
     };
 
     if let Some(pipe) = ctx.request_pipeline {
-        let upgraded =
+        let (upgraded, reason) =
             upgrade_pipeline_for_responses_client(ctx.client_wire_api, pipe, selection.provider);
         if upgraded != pipe {
             tracing::debug!(
@@ -282,6 +322,10 @@ async fn run_post_body_phases(
             );
             ctx.request_pipeline = Some(upgraded);
             selection.pipeline = upgraded;
+            if let Some(reason) = reason {
+                ctx.pipeline_reason = Some(reason);
+                selection.reason = reason;
+            }
         }
     }
 
@@ -375,8 +419,7 @@ async fn run_post_body_phases(
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
-            if !guardrail.labels.is_empty() {
-            }
+            if !guardrail.labels.is_empty() {}
             if guardrail.blocked {
                 let body = serde_json::json!({
                     "error": {
@@ -391,7 +434,9 @@ async fn run_post_body_phases(
                     model = %ctx.model,
                     "Rejecting request: guardrail block"
                 );
-                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes())
+                    .await
+                {
                     let _ = session.respond_error(400).await;
                 }
                 return Ok(true);
@@ -484,14 +529,14 @@ async fn run_post_body_phases(
             &client_ip,
             body_user_from_payload(parsed_payload.as_ref()),
         );
-        if ctx.guardrail_hits.is_empty() && !ctx.guardrail_blocked
+        if ctx.guardrail_hits.is_empty()
+            && !ctx.guardrail_blocked
             && let Some(payload) = guardrail_payload.as_ref()
         {
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
-            if !guardrail.labels.is_empty() {
-            }
+            if !guardrail.labels.is_empty() {}
             if guardrail.blocked {
                 let body = serde_json::json!({
                     "error": {
@@ -506,7 +551,9 @@ async fn run_post_body_phases(
                     model = %ctx.model,
                     "Rejecting request: guardrail block"
                 );
-                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes()).await {
+                if !send_json_error(session, http::StatusCode::BAD_REQUEST, body_str.as_bytes())
+                    .await
+                {
                     let _ = session.respond_error(400).await;
                 }
                 return Ok(true);
@@ -618,9 +665,7 @@ async fn run_post_body_phases(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::MimoTokenPlanRelay
-            | RequestPipeline::MimoPaygRelay
-            | RequestPipeline::CodexMimo => {
+            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
                 // `parsed_payload` already converted from Responses API when needed (above).
                 let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
@@ -634,23 +679,35 @@ async fn run_post_body_phases(
                 upstream_model_log = mimo.model.clone();
                 ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload.clone()));
                 ctx.new_request_body = mimo.serialized_body.map(Bytes::from);
-                let registry_audit = responses_tool_audit_payload
-                    .as_ref()
-                    .map(crate::responses_tool_registry::audit_responses_tool_registry)
-                    .unwrap_or_else(|| {
-                        crate::responses_tool_registry::audit_chat_tool_registry(payload)
-                    });
-                let mimo_audit =
-                    crate::responses_tool_registry::audit_mimo_tool_pipeline(payload, &mimo.payload);
-                crate::responses_tool_registry::log_mimo_codex_tool_registry_warnings(
-                    &ctx.request_id,
-                    &ctx.model,
-                    &registry_audit,
-                    Some(&mimo_audit),
+                apply_mimo_tool_audit(
+                    ctx,
+                    payload,
+                    &mimo.payload,
+                    responses_tool_audit_payload.as_ref(),
                 );
-                ctx.stream.responses_exec_only_surface = registry_audit.exec_only_surface;
-                ctx.stream.client_responses_tool_names =
-                    registry_audit.registered_tool_names.clone();
+            }
+            RequestPipeline::CodexMimo => {
+                // Codex Responses + MiMo must stay on the real MiMo upstream, but the upstream
+                // is fragile with very large tool transcripts. Keep context structure and
+                // compress long tool outputs only after the body crosses the MiMo safety budget.
+                let features = proxy.state.features.read();
+                let mimo = prepare_codex_mimo_request(
+                    payload,
+                    &profile_fallback,
+                    features.mimo_retire_prefix_messages,
+                    features.mimo_keep_recent_turns,
+                );
+                retired_prefix = mimo.retired_prefix_messages;
+                ctx.retired_prefix_messages = Some(mimo.retired_prefix_messages);
+                upstream_model_log = mimo.model.clone();
+                ctx.parsed_upstream_payload = Some(Arc::new(mimo.payload.clone()));
+                ctx.new_request_body = mimo.serialized_body.map(Bytes::from);
+                apply_mimo_tool_audit(
+                    ctx,
+                    payload,
+                    &mimo.payload,
+                    responses_tool_audit_payload.as_ref(),
+                );
             }
             RequestPipeline::CodexRelay => {
                 let model = alias_upstream_model
@@ -747,7 +804,6 @@ async fn run_post_body_phases(
         "Prepared upstream request"
     );
 
-
     if reject_missing {
         warn!(
             request_id = %ctx.request_id,
@@ -761,18 +817,17 @@ async fn run_post_body_phases(
         return Ok(true);
     }
 
-
     let new_body = ctx
         .new_request_body
         .clone()
         .unwrap_or_else(|| full_body.clone());
     ctx.upstream_outbound_body_len = new_body.len();
-        if ctx.parsed_upstream_payload.is_none() && !direct_mimo {
-            let upstream_parse_start = Instant::now();
-            ctx.parsed_upstream_payload =
-                serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
-                    .ok()
-                    .map(Arc::new);
+    if ctx.parsed_upstream_payload.is_none() && !direct_mimo {
+        let upstream_parse_start = Instant::now();
+        ctx.parsed_upstream_payload =
+            serde_json::from_slice::<serde_json::Value>(new_body.as_ref())
+                .ok()
+                .map(Arc::new);
         global_metrics().record_request_body_stage(
             "json_parse_upstream",
             upstream_parse_start.elapsed(),
@@ -784,8 +839,7 @@ async fn run_post_body_phases(
     ctx.new_request_body = Some(new_body.clone());
     ctx.upstream_body_for_capture = Some(new_body);
     ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
-    if ctx.upstream.retry_buffer_truncated {
-    }
+    if ctx.upstream.retry_buffer_truncated {}
 
     // ─── Phase 4.5: Quota Preflight ──────────────────────────────────────
     // Quick profile-level health gate: if every backend in the active profile
@@ -820,24 +874,32 @@ async fn run_post_body_phases(
         }
     }
 
-    // ─── Phase 4.6: MiMo Key Binding Pre-acquire ───────────────────────────
-    // Pre-acquire the bound upstream key asynchronously. If the bound key is at
-    // capacity (inflight >= max_inflight), wait up to `mimo_key_overflow_wait_ms`
-    // before spilling to another key. This protects prefix-cache affinity for
-    // Cursor's concurrent agentic requests.
+    // ─── Phase 4.6: MiMo / Codex Key Binding Pre-acquire ───────────────────
     if ctx.upstream.key_guard.is_none()
-        && ctx.request_pipeline.map_or(false, |p| GatewayProxy::is_mimo_pipeline(p))
+        && ctx
+            .request_pipeline
+            .map_or(false, |p| GatewayProxy::is_mimo_pipeline(p))
     {
         // Extract binding info while holding the features read lock, then drop it
         // before the async await (parking_lot RwLockReadGuard is !Send).
-        let binding_info: Option<(Arc<crate::key_binding::KeyBindingStore>, String, String, u64)> = {
+        let binding_info: Option<(
+            Arc<crate::key_binding::KeyBindingStore>,
+            String,
+            String,
+            u64,
+        )> = {
             let features = proxy.state.features.read();
             if features.mimo_key_binding {
                 proxy.state.key_binding_store.as_ref().and_then(|store| {
                     stable_session.and_then(|sid| {
                         store.get(sid).map(|binding| {
                             let timeout_ms = features.mimo_key_overflow_wait_ms;
-                            (Arc::clone(store), sid.to_string(), binding.key_id, timeout_ms)
+                            (
+                                Arc::clone(store),
+                                sid.to_string(),
+                                binding.key_id,
+                                timeout_ms,
+                            )
                         })
                     })
                 })
@@ -850,8 +912,9 @@ async fn run_post_body_phases(
             let profile = proxy.active_upstream_profile(ctx);
             let pool = profile.resolve_upstream_pool();
             let timeout = std::time::Duration::from_millis(timeout_ms);
-            if let Some(guard) =
-                pool.acquire_with_binding_async(&bound_key_id, timeout).await
+            if let Some(guard) = pool
+                .acquire_with_binding_async(&bound_key_id, timeout)
+                .await
             {
                 binding_store.touch(&sid);
                 ctx.upstream.key_guard = Some(guard);
@@ -866,6 +929,54 @@ async fn run_post_body_phases(
         }
     }
 
+    if ctx.upstream.key_guard.is_none()
+        && ctx
+            .request_pipeline
+            .map_or(false, GatewayProxy::is_codex_upstream_pipeline)
+    {
+        let binding_info: Option<(
+            Arc<crate::key_binding::KeyBindingStore>,
+            String,
+            String,
+            u64,
+        )> = {
+            let features = proxy.state.features.read();
+            if features.codex_key_binding {
+                proxy.state.key_binding_store.as_ref().and_then(|store| {
+                    stable_session.and_then(|sid| {
+                        let bind_key = crate::key_binding::KeyBindingStore::codex_session_key(sid);
+                        store.get(&bind_key).map(|binding| {
+                            (
+                                Arc::clone(store),
+                                bind_key,
+                                binding.key_id,
+                                features.codex_key_overflow_wait_ms,
+                            )
+                        })
+                    })
+                })
+            } else {
+                None
+            }
+        };
+
+        if let Some((binding_store, bind_key, bound_key_id, timeout_ms)) = binding_info {
+            let profile = proxy.active_upstream_profile(ctx);
+            let pool = profile.resolve_upstream_pool();
+            let timeout = std::time::Duration::from_millis(timeout_ms);
+            let scope = ctx.upstream_model.as_deref().unwrap_or(&ctx.model);
+            let scope = crate::codex_rate_limit::codex_model_scope(scope);
+            if let Some(guard) = pool
+                .acquire_with_binding_async_scoped(&bound_key_id, Some(scope), timeout)
+                .await
+            {
+                binding_store.touch(&bind_key);
+                ctx.upstream.key_guard = Some(guard);
+                global_metrics().record_key_binding_event("codex_pre_acquire");
+            }
+        }
+    }
+
     // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
     match crate::phases::cache_coalesce::run(proxy, session, ctx).await? {
         crate::phases::cache_coalesce::CachePhaseOutcome::Return(done) => {
@@ -874,7 +985,23 @@ async fn run_post_body_phases(
         crate::phases::cache_coalesce::CachePhaseOutcome::Continue => {}
     }
 
-    if !proxy.try_acquire_upstream_key(ctx) {
+    // Codex quota-aware key selection with WHAM preflight (async)
+    let is_codex = ctx
+        .request_pipeline
+        .map_or(false, GatewayProxy::is_codex_upstream_pipeline);
+    let preflight_enabled = if is_codex {
+        let features = proxy.state.features.read();
+        features.codex_quota_preflight
+    } else {
+        false
+    };
+    let key_acquired = if is_codex && preflight_enabled {
+        proxy.try_acquire_codex_with_preflight(ctx).await
+    } else {
+        proxy.try_acquire_upstream_key(ctx)
+    };
+
+    if !key_acquired {
         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
         let failure = pool.diagnose_acquire_failure();
         let (body, error_code, retry_after) = upstream_pool_exhausted_error_details(failure);
@@ -890,7 +1017,6 @@ async fn run_post_body_phases(
         }
         return Ok(true);
     }
-
 
     // ── Connection pre-warm for new session fingerprints ──────────
     // Connection pre-warm trigger is now in upstream_peer (after Ketama selection).
@@ -1060,8 +1186,7 @@ async fn request_passthrough_handoff(
     let before_len = partial_body.len();
     let outbound_prefix =
         crate::phases::upstream_request::inject_stream_options_include_usage(partial_body, true);
-    ctx.request_passthrough.outbound_extra_bytes =
-        outbound_prefix.len().saturating_sub(before_len);
+    ctx.request_passthrough.outbound_extra_bytes = outbound_prefix.len().saturating_sub(before_len);
     ctx.request_passthrough.buffer = outbound_prefix;
     ctx.request_passthrough.armed_prefix_len = ctx.request_passthrough.buffer.len();
     ctx.upstream.retry_budget = 0;
@@ -1231,7 +1356,10 @@ pub(crate) async fn run(
         let (is_authorized, consumer_from_key, domain_from_key, _, _, key_profile) =
             proxy.authorize_client(&provided_key, &auth);
         if !is_authorized {
-            let status = proxy.state.client_lockouts.record_failed_attempt(&provided_key);
+            let status = proxy
+                .state
+                .client_lockouts
+                .record_failed_attempt(&provided_key);
             if status.locked {
                 global_metrics().record_client_lockout();
                 let retry_after_secs = (status.remaining_ms / 1000).max(1);
@@ -1345,10 +1473,12 @@ pub(crate) async fn run(
         key_upstream_profile,
     ) = proxy.authorize_client(&provided_key, &auth);
 
-
     if !is_authorized {
         // Record failed attempt for brute-force protection.
-        let status = proxy.state.client_lockouts.record_failed_attempt(&provided_key);
+        let status = proxy
+            .state
+            .client_lockouts
+            .record_failed_attempt(&provided_key);
         if status.locked {
             global_metrics().record_client_lockout();
             let retry_after_secs = (status.remaining_ms / 1000).max(1);

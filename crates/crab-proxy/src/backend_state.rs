@@ -374,7 +374,11 @@ impl Drop for BackendPermit {
             .inflight
             .fetch_sub(1, Ordering::Relaxed)
             .saturating_sub(1);
-        global_metrics().set_backend_inflight(&self.slot.profile, &self.slot.backend, inflight as i64);
+        global_metrics().set_backend_inflight(
+            &self.slot.profile,
+            &self.slot.backend,
+            inflight as i64,
+        );
     }
 }
 
@@ -395,16 +399,8 @@ mod tests {
     #[test]
     fn latency_observation_marks_backend_overloaded() {
         let registry = BackendLoadRegistry::default();
-        let state = registry.observe_latency(
-            "p",
-            "b",
-            10,
-            Some(60_000.0),
-            None,
-            Some(200),
-            30_000,
-            1_000,
-        );
+        let state =
+            registry.observe_latency("p", "b", 10, Some(60_000.0), None, Some(200), 30_000, 1_000);
         assert_eq!(state, "cooldown");
         assert!(!registry.is_available("p", "b", 10, 30_000));
     }
@@ -413,20 +409,8 @@ mod tests {
     fn repeated_failures_lock_backend() {
         let registry = BackendLoadRegistry::default();
         for _ in 0..3 {
-            let _ = registry.observe_latency(
-                "p",
-                "b",
-                10,
-                None,
-                None,
-                Some(500),
-                30_000,
-                1_000,
-            );
+            let _ = registry.observe_latency("p", "b", 10, None, None, Some(500), 30_000, 1_000);
         }
-        assert_eq!(
-            registry.overload_state("p", "b", 10, 30_000),
-            "locked"
-        );
+        assert_eq!(registry.overload_state("p", "b", 10, 30_000), "locked");
     }
 }

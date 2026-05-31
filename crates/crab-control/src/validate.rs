@@ -34,14 +34,26 @@ pub struct KeyQuotaInfo {
     pub total_used: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_type: Option<String>,
+    /// Codex primary window used % (typically 5h). Kept for backward compat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_used_percent: Option<f64>,
+    /// Codex secondary window used % (typically 7d). Kept for backward compat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary_used_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_reset_after_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary_reset_after_secs: Option<u64>,
+    /// Primary (5h) window absolute reset time as Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reset_at_secs: Option<i64>,
+    /// Secondary (weekly) window absolute reset time as Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_reset_at_secs: Option<i64>,
+    /// Full list of Codex quota windows (5h, weekly, code_review, additional).
+    /// Dashboard renders these dynamically when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_windows: Option<Vec<crate::codex_wham::CodexQuotaWindowItem>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

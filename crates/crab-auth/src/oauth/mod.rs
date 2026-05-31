@@ -6,7 +6,9 @@ pub mod gemini;
 pub mod xai;
 
 pub use codex::{CodexDevicePollResult, CodexDeviceStart};
-pub use codex_import::{ensure_fresh_codex_token, parse_codex_import_documents, token_needs_refresh};
+pub use codex_import::{
+    ensure_fresh_codex_token, parse_codex_import_documents, token_needs_refresh,
+};
 
 use crate::types::{Provider, TokenRecord};
 use async_trait::async_trait;

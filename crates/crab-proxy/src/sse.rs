@@ -18,7 +18,13 @@ impl SseEvent<'_> {
             return true;
         }
         let data = self.data.trim();
-        if data == "[DONE]" || data.len() < 10 {
+        if data == "[DONE]" || data.is_empty() {
+            return false;
+        }
+        if crate::codex_rate_limit::body_indicates_codex_rate_limit(data) {
+            return true;
+        }
+        if data.len() < 10 {
             return false;
         }
         let val: serde_json::Value = match serde_json::from_str(data) {
@@ -31,7 +37,7 @@ impl SseEvent<'_> {
         // Check the structured `type` / `code` fields first (most reliable).
         if let Some(err_type) = error.get("type").and_then(|t| t.as_str()) {
             let t = err_type.to_lowercase();
-            if t.contains("rate_limit") || t == "insufficient_quota" {
+            if t.contains("rate_limit") || t == "insufficient_quota" || t == "usage_limit_reached" {
                 return true;
             }
         }
@@ -41,12 +47,15 @@ impl SseEvent<'_> {
                 return true;
             }
         }
-        // Fall back to message heuristics (narrower than before — no broad "quota"/"capacity").
+        // Fall back to message heuristics.
         if let Some(msg) = error.get("message").and_then(|m| m.as_str()) {
             let m = msg.to_lowercase();
             return m.contains("rate limit")
                 || m.contains("rate_limit")
-                || m.contains("too many requests");
+                || m.contains("too many requests")
+                || m.contains("high demand")
+                || m.contains("at capacity")
+                || m.contains("usage limit");
         }
         false
     }
@@ -298,6 +307,24 @@ mod tests {
         let event = SseEvent {
             event: None,
             data: r#"{"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}"#,
+        };
+        assert!(event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_high_demand() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"error":{"message":"We're currently experiencing high demand, which may cause temporary errors."}}"#,
+        };
+        assert!(event.is_rate_limit_error());
+    }
+
+    #[test]
+    fn test_is_rate_limit_error_usage_limit_reached() {
+        let event = SseEvent {
+            event: None,
+            data: r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":60}}"#,
         };
         assert!(event.is_rate_limit_error());
     }

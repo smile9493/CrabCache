@@ -353,6 +353,38 @@ pub fn UpstreamPage() -> impl IntoView {
         });
     }
 
+    // 120s auto-refresh for Codex profile quota data (aligned with cliproxyapi-dashboard)
+    {
+        let probe = run_key_quota_probe.clone();
+        let interval_handle: std::cell::Cell<Option<gloo_timers::callback::Interval>> =
+            std::cell::Cell::new(None);
+        Effect::new(move |_| {
+            // Cancel any existing interval when profile/provider changes
+            interval_handle.take().map(|h| h.cancel());
+
+            let pid = active_profile.get();
+            let prov = provider.get();
+            let b_url = base_url.get();
+            let is_codex = prov == "codex" || prov == "openai" || b_url.contains("chatgpt.com");
+
+            if !is_codex || pid.is_empty() {
+                return;
+            }
+
+            // Clone values for the interval closure
+            let probe_tick = probe.clone();
+            let pid_tick = pid.clone();
+            let key_pool_ref = key_pool;
+
+            let handle = gloo_timers::callback::Interval::new(120_000, move || {
+                if let Some(Some(Ok(pool))) = key_pool_ref.try_get_untracked() {
+                    probe_tick.clone()(pid_tick.clone(), pool.keys.clone(), false, false);
+                }
+            });
+            interval_handle.set(Some(handle));
+        });
+    }
+
     let load_profile_models = move |pid: String| {
         profile_model_options.set(Vec::new());
         leptos::task::spawn_local(async move {

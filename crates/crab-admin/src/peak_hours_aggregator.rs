@@ -31,7 +31,10 @@ pub async fn run(state: Arc<AppState>) {
     }
 }
 
-fn aggregate_entries(entries: &[TraceLogEntry], since_ms: i64) -> Vec<(String, i64, i64, i64, i64)> {
+fn aggregate_entries(
+    entries: &[TraceLogEntry],
+    since_ms: i64,
+) -> Vec<(String, i64, i64, i64, i64)> {
     let mut buckets: HashMap<(String, i64), (i64, i64, i64)> = HashMap::new();
     for e in entries {
         let ts = e.timestamp_ms as i64;
@@ -41,7 +44,9 @@ fn aggregate_entries(entries: &[TraceLogEntry], since_ms: i64) -> Vec<(String, i
         let hour_bucket = (ts / 3_600_000) * 3_600_000;
         let inp = e.resolved_input_tokens() as i64;
         let out = e.resolved_output_tokens() as i64;
-        let slot = buckets.entry((e.model.clone(), hour_bucket)).or_insert((0, 0, 0));
+        let slot = buckets
+            .entry((e.model.clone(), hour_bucket))
+            .or_insert((0, 0, 0));
         slot.0 += 1;
         slot.1 += inp;
         slot.2 += out;

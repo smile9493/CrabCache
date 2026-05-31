@@ -19,8 +19,8 @@ impl Default for ClientLockoutConfig {
     fn default() -> Self {
         Self {
             max_attempts: 5,
-            lockout_duration: Duration::from_secs(900),  // 15 minutes
-            attempt_window: Duration::from_secs(300),     // 5 minutes
+            lockout_duration: Duration::from_secs(900), // 15 minutes
+            attempt_window: Duration::from_secs(300),   // 5 minutes
         }
     }
 }
@@ -94,13 +94,13 @@ impl ClientLockoutRegistry {
     /// Record a failed auth attempt. Returns whether the client is now locked out.
     pub fn record_failed_attempt(&self, identifier: &str) -> LockoutStatus {
         let now = Instant::now();
-        let mut entry = self
-            .state
-            .entry(identifier.to_string())
-            .or_insert_with(|| ClientLockoutState {
-                attempts: VecDeque::new(),
-                locked_until: None,
-            });
+        let mut entry =
+            self.state
+                .entry(identifier.to_string())
+                .or_insert_with(|| ClientLockoutState {
+                    attempts: VecDeque::new(),
+                    locked_until: None,
+                });
 
         // Clean old attempts
         let window_start = now - self.config.attempt_window;

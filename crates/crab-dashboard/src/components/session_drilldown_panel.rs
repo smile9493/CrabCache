@@ -36,10 +36,7 @@ fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<f64>)
     let mut rows: Vec<_> = r.backends.iter().collect();
     rows.sort_by_key(|b| b.request_count);
     let labels: Vec<String> = rows.iter().map(|b| b.backend_name.clone()).collect();
-    let values: Vec<f64> = rows
-        .iter()
-        .map(|b| b.request_count as f64)
-        .collect();
+    let values: Vec<f64> = rows.iter().map(|b| b.request_count as f64).collect();
     (labels, values)
 }
 

@@ -8,7 +8,6 @@ use crate::proxy::GatewayProxy;
 use crate::upstream_response_decompress::parse_content_encoding;
 use crab_metrics::global_metrics;
 use http::header;
-use pingora_core::ErrorType;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use tracing::{debug, warn};
@@ -42,24 +41,45 @@ pub(crate) async fn run(
         }
     }
     global_metrics().record_http_response(status);
-    global_metrics().record_upstream_response_status(status, ctx.request_pipeline.map(|p| p.as_str()));
+    global_metrics()
+        .record_upstream_response_status(status, ctx.request_pipeline.map(|p| p.as_str()));
+    if status == 401 {
+        if let Some(new_key_id) =
+            proxy.rotate_upstream_key_for_same_request_retry(ctx, "unauthorized_rotate", true, None)
+        {
+            warn!(
+                request_id = %ctx.request_id,
+                new_key_id = %new_key_id,
+                "upstream key rejected with 401; retrying with replacement key"
+            );
+            let mut e = pingora_core::Error::create(
+                pingora_core::ErrorType::HTTPStatus(401),
+                pingora_core::ErrorSource::Upstream,
+                Some("upstream key unauthorized (401), retrying with replacement key".into()),
+                None,
+            );
+            e.set_retry(true);
+            return Err(e);
+        }
+    }
     if status >= 400 {
         // Record failures toward backend circuit breaker (NOT for 429 — connection-scoped)
         if matches!(status, 408 | 500 | 502 | 503 | 504) {
             if let Some(ref backend_name) = ctx.upstream.backend_name {
                 let kind = crate::circuit_breaker::classify_failure(status, None);
-                proxy.state.circuit_breakers.on_failure(backend_name, kind).await;
+                proxy
+                    .state
+                    .circuit_breakers
+                    .on_failure(backend_name, kind)
+                    .await;
 
                 // Fallback policy: classify error for structured cooldown decision.
                 let retry_after_hdr = upstream_response
                     .headers
                     .get(header::RETRY_AFTER)
                     .and_then(|v| v.to_str().ok());
-                let decision = crate::fallback_policy::check_fallback_error(
-                    status,
-                    None,
-                    retry_after_hdr,
-                );
+                let decision =
+                    crate::fallback_policy::check_fallback_error(status, None, retry_after_hdr);
                 if decision.should_fallback {
                     debug!(
                         request_id = %ctx.request_id,
@@ -68,13 +88,11 @@ pub(crate) async fn run(
                         cooldown_ms = decision.cooldown.as_millis(),
                         "Fallback decision from upstream error"
                     );
-                    global_metrics().record_fallback_decision(
-                        match decision.failure_kind {
-                            crate::circuit_breaker::FailureKind::RateLimit => "rate_limit",
-                            crate::circuit_breaker::FailureKind::QuotaExhausted => "quota_exhausted",
-                            crate::circuit_breaker::FailureKind::Transient => "transient",
-                        },
-                    );
+                    global_metrics().record_fallback_decision(match decision.failure_kind {
+                        crate::circuit_breaker::FailureKind::RateLimit => "rate_limit",
+                        crate::circuit_breaker::FailureKind::QuotaExhausted => "quota_exhausted",
+                        crate::circuit_breaker::FailureKind::Transient => "transient",
+                    });
                 }
 
                 // Model-level lockout: exponential backoff for transient failures.
@@ -115,6 +133,16 @@ pub(crate) async fn run(
         }
     }
     let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
+    if let Err(retry_err) = crate::phases::rate_limit_retry::try_upstream_rate_limit_rotation(
+        proxy,
+        ctx,
+        upstream_response,
+        status,
+        None,
+        &pool,
+    ) {
+        return Err(retry_err);
+    }
     let key_id = ctx
         .upstream
         .key_guard
@@ -122,93 +150,6 @@ pub(crate) async fn run(
         .map(|g| g.key_id().to_string());
 
     if status == 429 {
-        if let Some(ref id) = key_id {
-            // Set cooldown for the 429'd key exactly once.
-            pool.report_rate_limited(id);
-            global_metrics().record_upstream_key_request(id, "rate_limited");
-
-            tracing::info!(
-                request_id = %ctx.request_id,
-                key_preview = %id,
-                status = 429,
-                retry_budget = ctx.upstream.retry_budget,
-                "upstream rate limited, attempting key rotation"
-            );
-
-            if ctx.upstream.retry_budget > 0 {
-                ctx.upstream.retry_budget -= 1;
-                // Try a key from a different account_id (cooldown already set above).
-                if let Some(new_guard) = pool.acquire_excluding_account(
-                    ctx.upstream
-                        .key_guard
-                        .as_ref()
-                        .and_then(|g| {
-                            pool.list_status()
-                                .into_iter()
-                                .find(|s| s.id == g.key_id())
-                                .map(|s| s.account_id)
-                        })
-                        .as_deref(),
-                ) {
-                    let new_key_id = new_guard.key_id().to_string();
-                    ctx.upstream.key_guard = Some(new_guard);
-                    global_metrics().record_upstream_key_retry("rate_limited_rotate");
-
-                    // Restore prepared body so request_body_filter can re-emit it on retry.
-                    ctx.new_request_body = ctx.upstream.prepared_body_for_retry.clone();
-                    // The >= 400 block may have set error_passthrough; clear it for retry.
-                    ctx.upstream.error_passthrough = false;
-                    // Reset state from the failed attempt so the retry logs cleanly.
-                    ctx.upstream.error_body_logged = false;
-
-                    tracing::info!(
-                        request_id = %ctx.request_id,
-                        new_key_id = %new_key_id,
-                        "retrying 429 with new upstream key"
-                    );
-
-                    // Return a retryable error — Pingora's retry loop will re-run
-                    // upstream_peer → upstream_request_filter → request_body_filter
-                    // → response_filter with a fresh upstream connection.
-                    let mut e = pingora_core::Error::create(
-                        ErrorType::HTTPStatus(429),
-                        pingora_core::ErrorSource::Upstream,
-                        Some("upstream rate limited, retrying with new key".into()),
-                        None,
-                    );
-                    e.set_retry(true);
-                    return Err(e);
-                } else {
-                    global_metrics().record_upstream_key_retry("cooldown_only");
-                }
-            }
-        }
-        // Model-level lockout for 429: apply rate-limit cooldown via fallback_policy.
-        if let Some(ref model) = ctx.upstream_model {
-            let retry_after_hdr = upstream_response
-                .headers
-                .get(header::RETRY_AFTER)
-                .and_then(|v| v.to_str().ok());
-            let decision = crate::fallback_policy::check_fallback_error(429, None, retry_after_hdr);
-            let profile_id = ctx.upstream_profile_id.as_deref().unwrap_or("default");
-            if let Some(ref backend_name) = ctx.upstream.backend_name {
-                proxy.state.model_lockouts.record_failure(
-                    profile_id,
-                    backend_name,
-                    model,
-                    &decision.reason,
-                    decision.cooldown,
-                    4,
-                );
-                global_metrics().record_model_lockout(profile_id, backend_name, model);
-            }
-        }
-
-        if let Some(guard) = &ctx.coalesce_guard
-            && guard.is_leader()
-        {
-            guard.mark_failed();
-        }
         return Ok(());
     }
     if status == 401 {
@@ -237,6 +178,22 @@ pub(crate) async fn run(
 
     if let Some(ref id) = key_id {
         global_metrics().record_upstream_key_request(id, "ok");
+        pool.record_key_success(id);
+        if let Some(ref binding_store) = proxy.state.key_binding_store {
+            let stable_session = ctx
+                .conversation_id
+                .as_deref()
+                .or(ctx.prompt_cache_key.as_deref())
+                .or(ctx.session_fingerprint.as_deref())
+                .or(ctx.client_key_fingerprint.as_deref());
+            if let Some(sid) = stable_session {
+                binding_store.reset_failures(sid, id);
+                binding_store.reset_failures(
+                    &crate::key_binding::KeyBindingStore::codex_session_key(sid),
+                    id,
+                );
+            }
+        }
         let _ = upstream_response.insert_header("x-upstream-key-id", id.clone());
     }
 

@@ -313,11 +313,20 @@ pub async fn fetch_overview_trace() -> Result<crate::types::TraceSummary, String
     fetch_json(&format!("{}/overview/trace", API_BASE)).await
 }
 
-pub async fn fetch_model_peak_hours(days: u32) -> Result<crate::types::ModelPeakHoursResponse, String> {
-    fetch_json(&format!("{}/analytics/model-peak-hours?days={}", API_BASE, days)).await
+pub async fn fetch_model_peak_hours(
+    days: u32,
+) -> Result<crate::types::ModelPeakHoursResponse, String> {
+    fetch_json(&format!(
+        "{}/analytics/model-peak-hours?days={}",
+        API_BASE, days
+    ))
+    .await
 }
 
-pub async fn delete_model_peak_hour(model: &str, hour_bucket: i64) -> Result<serde_json::Value, String> {
+pub async fn delete_model_peak_hour(
+    model: &str,
+    hour_bucket: i64,
+) -> Result<serde_json::Value, String> {
     let url = format!(
         "{}/analytics/model-peak-hours?model={}&hour_bucket={}",
         API_BASE,
@@ -549,7 +558,9 @@ pub async fn fetch_cache_pricing_config() -> Result<PricingConfigView, String> {
     fetch_json(&format!("{}/cache/pricing", API_BASE)).await
 }
 
-pub async fn update_cache_pricing_config(req: &PricingConfigView) -> Result<PricingConfigView, String> {
+pub async fn update_cache_pricing_config(
+    req: &PricingConfigView,
+) -> Result<PricingConfigView, String> {
     put_json(&format!("{}/cache/pricing", API_BASE), req).await
 }
 
@@ -557,7 +568,9 @@ pub async fn fetch_features_config() -> Result<FeaturesConfigView, String> {
     fetch_json(&format!("{}/config/features", API_BASE)).await
 }
 
-pub async fn update_features_config(req: &FeaturesConfigView) -> Result<FeaturesConfigView, String> {
+pub async fn update_features_config(
+    req: &FeaturesConfigView,
+) -> Result<FeaturesConfigView, String> {
     put_json(&format!("{}/config/features", API_BASE), req).await
 }
 
@@ -1286,7 +1299,10 @@ pub async fn cancel_codex_device_login(
         urlencoding::encode(session_id)
     );
     let (builder, epoch) = apply_admin_auth(Request::delete(&url));
-    let resp = builder.send().await.map_err(|e| format!("Network error: {e}"))?;
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
     if !resp.ok() {
         return Err(http_error(resp, epoch).await);
     }
@@ -1295,7 +1311,9 @@ pub async fn cancel_codex_device_login(
         .map_err(|e| format!("Invalid cancel response: {e}"))
 }
 
-pub async fn list_codex_credentials(profile_id: &str) -> Result<CodexCredentialListResponse, String> {
+pub async fn list_codex_credentials(
+    profile_id: &str,
+) -> Result<CodexCredentialListResponse, String> {
     fetch_json(&format!(
         "{}/upstream/profiles/{}/oauth/codex/credentials",
         API_BASE,
@@ -1338,9 +1356,7 @@ pub async fn import_codex_bulk_json(
 
 // ── PKCE OAuth API ───────────────────────────────────────────────────────────
 
-pub async fn start_codex_pkce_login(
-    profile_id: &str,
-) -> Result<CodexPkceStartResponse, String> {
+pub async fn start_codex_pkce_login(profile_id: &str) -> Result<CodexPkceStartResponse, String> {
     post_json(
         &format!(
             "{}/upstream/profiles/{}/oauth/codex/pkce/start",
@@ -1395,7 +1411,10 @@ pub async fn cancel_codex_pkce_login(
         urlencoding::encode(session_id)
     );
     let (builder, epoch) = apply_admin_auth(Request::delete(&url));
-    let resp = builder.send().await.map_err(|e| format!("Network error: {e}"))?;
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
     if !resp.ok() {
         return Err(http_error(resp, epoch).await);
     }

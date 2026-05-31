@@ -1217,7 +1217,9 @@ fn TraceTab() -> impl IntoView {
                         analysis.try_set(Some(Ok(a)));
                     }
                 }
-                Err(e) => { analysis.try_set(Some(Err(e))); }
+                Err(e) => {
+                    analysis.try_set(Some(Err(e)));
+                }
             };
         });
     };

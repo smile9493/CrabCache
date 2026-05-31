@@ -1,7 +1,7 @@
 use crate::snapshot::ControlPlaneSnapshot;
 use anyhow::{Context, Result};
-use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -46,7 +46,8 @@ pub struct RedisStateStore {
 
 impl RedisStateStore {
     pub async fn connect(config: &RedisStateConfig) -> Result<Self> {
-        let client = redis::Client::open(config.redis_url.as_str()).context("Redis state client")?;
+        let client =
+            redis::Client::open(config.redis_url.as_str()).context("Redis state client")?;
         let conn = ConnectionManager::new(client)
             .await
             .context("Redis state connection manager")?;

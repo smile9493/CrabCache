@@ -21,8 +21,12 @@ pub fn ModelsPage() -> impl IntoView {
     let reload_models = move |pid: String| {
         leptos::task::spawn_local(async move {
             match api::fetch_models(Some(&pid)).await {
-                Ok(m) => { models.try_set(Some(Ok(m))); }
-                Err(e) => { models.try_set(Some(Err(e))); }
+                Ok(m) => {
+                    models.try_set(Some(Ok(m)));
+                }
+                Err(e) => {
+                    models.try_set(Some(Err(e)));
+                }
             }
         });
     };
@@ -46,8 +50,12 @@ pub fn ModelsPage() -> impl IntoView {
         detect_result.set(None);
         leptos::task::spawn_local(async move {
             match api::detect_models(&pid).await {
-                Ok(d) => { detect_result.try_set(Some(Ok(d))); }
-                Err(e) => { detect_result.try_set(Some(Err(e))); }
+                Ok(d) => {
+                    detect_result.try_set(Some(Ok(d)));
+                }
+                Err(e) => {
+                    detect_result.try_set(Some(Err(e)));
+                }
             }
             detecting.try_set(false);
         });
@@ -71,7 +79,9 @@ pub fn ModelsPage() -> impl IntoView {
                     detect_result.try_set(None);
                     reload_models(pid);
                 }
-                Err(e) => { detect_result.try_set(Some(Err(e))); }
+                Err(e) => {
+                    detect_result.try_set(Some(Err(e)));
+                }
             }
             applying.try_set(false);
         });
@@ -87,7 +97,9 @@ pub fn ModelsPage() -> impl IntoView {
                     sync_result.try_set(Some(result));
                     reload_models(pid);
                 }
-                Err(e) => { models.try_set(Some(Err(e))); }
+                Err(e) => {
+                    models.try_set(Some(Err(e)));
+                }
             }
             syncing.try_set(false);
         });

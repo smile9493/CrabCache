@@ -11,10 +11,10 @@ use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::chart::core::ThresholdLine;
 use crate::components::chart_preview_card::ChartPreviewCard;
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
+use crate::components::icons::{Icon, IconName};
 use crate::components::line_chart::{
     ChartSeries, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M, TokenLineChart,
 };
-use crate::components::icons::{Icon, IconName};
 use crate::components::page_header::PageHeader;
 use crate::components::session_drilldown_panel::SessionDrilldownPanel;
 use crate::components::skeleton::SkeletonLive;
@@ -225,9 +225,8 @@ pub fn LivePage() -> impl IntoView {
     let t = use_translations();
     let vs = view_state::load_view_state();
     let consumers: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
-    let selected_consumer: RwSignal<Option<String>> = RwSignal::new(
-        vs.live_consumer.clone().or_else(|| Some("*".to_string())),
-    );
+    let selected_consumer: RwSignal<Option<String>> =
+        RwSignal::new(vs.live_consumer.clone().or_else(|| Some("*".to_string())));
     let window_secs: RwSignal<u32> = RwSignal::new(vs.live_window_secs.unwrap_or(12 * 3600));
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
     let consumers_loaded = RwSignal::new(false);
@@ -270,7 +269,10 @@ pub fn LivePage() -> impl IntoView {
             if !alive.load(Ordering::Relaxed) {
                 return;
             }
-            if let Ok(val) = api::fetch_live_consumers(window_secs.try_get_untracked().unwrap_or(12 * 3600)).await {
+            if let Ok(val) =
+                api::fetch_live_consumers(window_secs.try_get_untracked().unwrap_or(12 * 3600))
+                    .await
+            {
                 if !alive.load(Ordering::Relaxed) {
                     return;
                 }
@@ -313,7 +315,9 @@ pub fn LivePage() -> impl IntoView {
                         consumers.try_set(with_all);
                     }
                 }
-                Err(e) => { consumers_error.try_set(Some(e)); }
+                Err(e) => {
+                    consumers_error.try_set(Some(e));
+                }
             }
             consumers_loaded.try_set(true);
         });
@@ -385,7 +389,11 @@ pub fn LivePage() -> impl IntoView {
             load_generation.try_update(|g| *g += 1);
             let request_id = load_generation.try_get().unwrap_or(0);
             let window = window_secs.try_get().unwrap_or(12 * 3600);
-            let gb = group_by.try_get().unwrap_or(LiveGroupBy::None).as_slice().to_vec();
+            let gb = group_by
+                .try_get()
+                .unwrap_or(LiveGroupBy::None)
+                .as_slice()
+                .to_vec();
             let buf = Arc::clone(&live_buffer_for_loader);
             let dirty = Arc::clone(&live_dirty_for_loader);
             let alive = Arc::clone(&alive);
@@ -523,7 +531,8 @@ pub fn LivePage() -> impl IntoView {
         async move {
             let mut routing_tick: u8 = 0;
             loop {
-                let interval = poll_interval_ms(window_secs.try_get_untracked().unwrap_or(12 * 3600));
+                let interval =
+                    poll_interval_ms(window_secs.try_get_untracked().unwrap_or(12 * 3600));
                 TimeoutFuture::new(interval).await;
                 if !alive_poll.load(Ordering::Relaxed) {
                     break;
@@ -576,7 +585,10 @@ pub fn LivePage() -> impl IntoView {
             .ok();
         on_cleanup(move || {
             if let Some(window) = web_sys::window() {
-                let _ = window.remove_event_listener_with_callback("visibilitychange", vis_cb_fn_for_cleanup.0.as_ref());
+                let _ = window.remove_event_listener_with_callback(
+                    "visibilitychange",
+                    vis_cb_fn_for_cleanup.0.as_ref(),
+                );
             }
         });
     }
@@ -1555,7 +1567,11 @@ fn LiveLatencyPanel(
 }
 
 #[component]
-fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, summary: LiveMetricsSummary, open: RwSignal<bool>) -> impl IntoView {
+fn LiveTokenPanel(
+    buckets: Vec<LiveMetricsBucket>,
+    summary: LiveMetricsSummary,
+    open: RwSignal<bool>,
+) -> impl IntoView {
     let t = use_translations();
     let buckets = std::sync::Arc::new(buckets);
     let x_labels = {
@@ -1594,8 +1610,11 @@ fn LiveTokenPanel(buckets: Vec<LiveMetricsBucket>, summary: LiveMetricsSummary, 
     let out_lbl_preview = out_lbl.clone();
     let in_lbl_detail = in_lbl.clone();
     let out_lbl_detail = out_lbl.clone();
-    let all_tokens_zero = buckets.iter().all(|b| b.input_tokens == 0 && b.output_tokens == 0);
-    let (window_input_tokens, window_output_tokens) = (summary.input_tokens as f64, summary.output_tokens as f64);
+    let all_tokens_zero = buckets
+        .iter()
+        .all(|b| b.input_tokens == 0 && b.output_tokens == 0);
+    let (window_input_tokens, window_output_tokens) =
+        (summary.input_tokens as f64, summary.output_tokens as f64);
     let window_input_cost = token_cost_usd(window_input_tokens, TOKEN_INPUT_PRICE_PER_M);
     let window_output_cost = token_cost_usd(window_output_tokens, TOKEN_OUTPUT_PRICE_PER_M);
     let window_total_cost = window_input_cost + window_output_cost;

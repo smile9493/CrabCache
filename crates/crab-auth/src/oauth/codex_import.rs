@@ -1,6 +1,6 @@
 //! Parse external Codex OAuth JSON exports and ensure tokens are fresh before use.
 
-use super::codex::{credential_filename, hash_account_id, parse_jwt_payload, CodexAuthenticator};
+use super::codex::{CodexAuthenticator, credential_filename, hash_account_id, parse_jwt_payload};
 use super::{AuthError, Authenticator};
 use crate::types::{Provider, TokenRecord};
 use chrono::{DateTime, Duration, Utc};
@@ -98,7 +98,10 @@ fn parse_bulk_accounts_export(root: &Value) -> Result<Vec<TokenRecord>, AuthErro
 }
 
 fn account_matches_codex(account: &Value) -> bool {
-    let platform = account["platform"].as_str().unwrap_or("").to_ascii_lowercase();
+    let platform = account["platform"]
+        .as_str()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let ty = account["type"].as_str().unwrap_or("").to_ascii_lowercase();
     if matches!(platform.as_str(), "openai" | "codex") {
         return true;
@@ -163,20 +166,16 @@ fn parse_single_codex_value(creds: &Value, label: Option<&str>) -> Result<TokenR
     }
 
     let expired_at = parse_expiry(creds);
-    let last_refresh = parse_dt_field(creds, "last_refresh")
-        .or_else(|| parse_dt_field(creds, "lastRefresh"));
+    let last_refresh =
+        parse_dt_field(creds, "last_refresh").or_else(|| parse_dt_field(creds, "lastRefresh"));
 
     let account_id_hash = account_id.as_deref().map(hash_account_id);
     let id = email
         .as_deref()
         .map(|e| {
-            credential_filename(
-                e,
-                plan_type.as_deref(),
-                account_id_hash.as_deref(),
-            )
-            .trim_end_matches(".json")
-            .to_string()
+            credential_filename(e, plan_type.as_deref(), account_id_hash.as_deref())
+                .trim_end_matches(".json")
+                .to_string()
         })
         .unwrap_or_else(|| {
             label

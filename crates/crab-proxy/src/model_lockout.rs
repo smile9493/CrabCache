@@ -74,14 +74,14 @@ impl ModelLockoutRegistry {
         let now = Instant::now();
 
         let failure_count = {
-            let mut state = self
-                .failure_states
-                .entry(key.clone())
-                .or_insert_with(|| FailureState {
-                    failure_count: 0,
-                    last_failure_at: now,
-                    reset_after: base_cooldown,
-                });
+            let mut state =
+                self.failure_states
+                    .entry(key.clone())
+                    .or_insert_with(|| FailureState {
+                        failure_count: 0,
+                        last_failure_at: now,
+                        reset_after: base_cooldown,
+                    });
 
             // Reset count if window expired
             if now.duration_since(state.last_failure_at) > state.reset_after {
@@ -120,23 +120,12 @@ impl ModelLockoutRegistry {
 
         warn!(
             profile,
-            backend,
-            model,
-            reason,
-            cooldown_secs,
-            failure_count,
-            "Model lockout: locked"
+            backend, model, reason, cooldown_secs, failure_count, "Model lockout: locked"
         );
     }
 
     /// Record a quota-exhausted lockout (locks until midnight UTC).
-    pub fn lock_until_midnight(
-        &self,
-        profile: &str,
-        backend: &str,
-        model: &str,
-        reason: &str,
-    ) {
+    pub fn lock_until_midnight(&self, profile: &str, backend: &str, model: &str, reason: &str) {
         let key = lockout_key(profile, backend, model);
         let now = Instant::now();
         let until = next_midnight_utc();
@@ -154,10 +143,7 @@ impl ModelLockoutRegistry {
 
         warn!(
             profile,
-            backend,
-            model,
-            reason,
-            "Model lockout: locked until midnight"
+            backend, model, reason, "Model lockout: locked until midnight"
         );
     }
 
@@ -187,9 +173,8 @@ impl ModelLockoutRegistry {
     pub fn cleanup(&self) {
         let now = Instant::now();
         self.locks.retain(|_, entry| entry.until > now);
-        self.failure_states.retain(|_, state| {
-            now.duration_since(state.last_failure_at) <= state.reset_after * 2
-        });
+        self.failure_states
+            .retain(|_, state| now.duration_since(state.last_failure_at) <= state.reset_after * 2);
     }
 }
 

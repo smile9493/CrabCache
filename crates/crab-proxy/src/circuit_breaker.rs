@@ -8,10 +8,10 @@
 //! - DEGRADED state is a warning zone at 60% of failure_threshold.
 //! - Adaptive backoff escalates timeout after repeated OPEN cycles.
 
-use std::collections::HashMap;
-use std::time::Duration;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Failure classification (from OmniRoute's classify429).
@@ -352,9 +352,17 @@ fn classify_429(body: Option<&str>) -> FailureKind {
     let body_lower = body.unwrap_or("").to_lowercase();
     // Check specific quota patterns first (order matters!)
     let specific_quota = [
-        "daily", "monthly", "quota", "billing",
-        "credit", "hard-limit", "insufficient", "payment",
-        "usage limit", "exceeded daily", "exceeded monthly",
+        "daily",
+        "monthly",
+        "quota",
+        "billing",
+        "credit",
+        "hard-limit",
+        "insufficient",
+        "payment",
+        "usage limit",
+        "exceeded daily",
+        "exceeded monthly",
     ];
     for pattern in &specific_quota {
         if body_lower.contains(pattern) {

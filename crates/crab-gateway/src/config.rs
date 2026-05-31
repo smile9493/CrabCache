@@ -518,7 +518,8 @@ impl GatewayConfig {
             .map(|k| k.inner().to_string())
             .filter(|k| !k.is_empty())
             .collect();
-        if keys.is_empty() {
+        // Only DeepSeek profiles may fall back to the global `[upstream]` key list.
+        if keys.is_empty() && profile.provider.eq_ignore_ascii_case("deepseek") {
             keys = self.upstream_key_secrets();
         }
         keys
@@ -1000,6 +1001,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 l0_ttl_secs: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
+                l1_connection_timeout_secs: None,
                 default_ttl_secs: None,
                 model_ttl_overrides: None,
                 consumer_ttl_overrides: None,
@@ -1064,6 +1066,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 l0_ttl_secs: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
+                l1_connection_timeout_secs: None,
                 default_ttl_secs: None,
                 model_ttl_overrides: None,
                 consumer_ttl_overrides: None,
@@ -1131,6 +1134,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
                 l0_ttl_secs: None,
                 l1_redis_url: "redis://127.0.0.1".into(),
                 l1_pool_size: None,
+                l1_connection_timeout_secs: None,
                 default_ttl_secs: None,
                 model_ttl_overrides: None,
                 consumer_ttl_overrides: None,
@@ -1220,9 +1224,10 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             pg_url: None,
         });
         let err = config.validate().unwrap_err();
-        assert!(err
-            .iter()
-            .any(|e| e.contains("composition_debug.max_lines")));
+        assert!(
+            err.iter()
+                .any(|e| e.contains("composition_debug.max_lines"))
+        );
     }
 
     #[test]
@@ -1244,8 +1249,9 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             pg_url: None,
         });
         let err = config.validate().unwrap_err();
-        assert!(err
-            .iter()
-            .any(|e| e.contains("composition_debug.max_files")));
+        assert!(
+            err.iter()
+                .any(|e| e.contains("composition_debug.max_files"))
+        );
     }
 }

@@ -2,33 +2,31 @@
 
 use leptos::prelude::*;
 
+use crate::api;
 use crate::components::donut_chart::{DonutChart, DonutSegment};
 use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::overview_card::OverviewMetricCard;
+use crate::components::peak_hours_heatmap::PeakHoursHeatmap;
 use crate::components::sparkline::Sparkline;
 use crate::components::ui::ProgressBar;
 use crate::locale::{Translations, use_translations};
 use crate::pages::domains::{DomainDetailDrawer, DomainOverviewTableInline};
 use crate::pages::overview::{
     CacheHitSection, CoalescingCard, ConsumerHitTable, CostSavingsSection, LatencySection,
-    OpsMetricsRow, PrefixCacheCard, PrefixHealthCard, SemanticCacheCard, TimeSeriesChart,
-    TokenStats, TraceCompareBanner, UpstreamKeyStrip, OverviewHealthStrip,
+    OpsMetricsRow, OverviewHealthStrip, PrefixCacheCard, PrefixHealthCard, SemanticCacheCard,
+    TimeSeriesChart, TokenStats, TraceCompareBanner, UpstreamKeyStrip,
 };
-use crate::api;
-use crate::components::peak_hours_heatmap::PeakHoursHeatmap;
+use crate::pages::overview_analytics::{InfraOverviewModule, infra_container_headline};
 use crate::time_utils::format_number;
-use crate::pages::overview_analytics::{infra_container_headline, InfraOverviewModule};
-use wasm_bindgen::JsCast;
 use crate::types::{
-    GatewayHealth, MetricsSnapshot, OverviewOpsMetrics, OverviewSuggestion, PrefixCacheMetricsSnapshot,
-    SemanticConfig, TimeSeriesPoint, TraceSummary,
+    GatewayHealth, MetricsSnapshot, OverviewOpsMetrics, OverviewSuggestion,
+    PrefixCacheMetricsSnapshot, SemanticConfig, TimeSeriesPoint, TraceSummary,
 };
+use wasm_bindgen::JsCast;
 
 fn top_consumer_label(metrics: &MetricsSnapshot) -> (String, Vec<f64>) {
     let mut buckets = metrics.consumer_buckets.clone();
-    buckets.sort_by(|a, b| {
-        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
-    });
+    buckets.sort_by(|a, b| (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens)));
     if let Some(top) = buckets.first() {
         let values: Vec<f64> = buckets
             .iter()
@@ -43,9 +41,7 @@ fn top_consumer_label(metrics: &MetricsSnapshot) -> (String, Vec<f64>) {
 
 fn top_domain_label(metrics: &MetricsSnapshot) -> (String, f64) {
     let mut buckets = metrics.domain_buckets.clone();
-    buckets.sort_by(|a, b| {
-        (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens))
-    });
+    buckets.sort_by(|a, b| (b.hit_tokens + b.miss_tokens).cmp(&(a.hit_tokens + a.miss_tokens)));
     buckets
         .first()
         .map(|d| (d.domain.clone(), d.hit_ratio * 100.0))
@@ -133,18 +129,17 @@ pub fn OverviewCardGrid(
         let handler = std::sync::Arc::new(std::cell::RefCell::new(handler));
         let handler_clone = handler.clone();
         Effect::new(move |_| {
-            let Some(window) = web_sys::window() else { return; };
+            let Some(window) = web_sys::window() else {
+                return;
+            };
             let h = handler_clone.clone();
-            let closure = wasm_bindgen::closure::Closure::wrap(
-                Box::new(move |ev: web_sys::KeyboardEvent| {
+            let closure =
+                wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::KeyboardEvent| {
                     let h = h.borrow();
                     (h)(ev);
-                }) as Box<dyn FnMut(_)>,
-            );
-            let _ = window.add_event_listener_with_callback(
-                "keydown",
-                closure.as_ref().unchecked_ref(),
-            );
+                }) as Box<dyn FnMut(_)>);
+            let _ = window
+                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
             closure.forget();
         });
     }
@@ -168,9 +163,22 @@ pub fn OverviewCardGrid(
 
     // Mutual exclusion: only one modal can be open at a time.
     let all_open_signals = [
-        open_health, open_keys, open_hit, open_qps, open_cost, open_error,
-        open_token, open_coalesce, open_semantic, open_latency, open_ops,
-        open_consumer, open_domain, open_prefix, open_prefix_health, open_infra,
+        open_health,
+        open_keys,
+        open_hit,
+        open_qps,
+        open_cost,
+        open_error,
+        open_token,
+        open_coalesce,
+        open_semantic,
+        open_latency,
+        open_ops,
+        open_consumer,
+        open_domain,
+        open_prefix,
+        open_prefix_health,
+        open_infra,
     ];
     let close_others = Callback::new(move |except_idx: usize| {
         for (i, s) in all_open_signals.iter().enumerate() {
@@ -181,22 +189,38 @@ pub fn OverviewCardGrid(
     });
 
     // Create per-card open callbacks for mutual exclusion.
-    let c0 = close_others.clone(); let on_open_health = Callback::new(move |_: ()| c0.run(0));
-    let c1 = close_others.clone(); let on_open_keys = Callback::new(move |_: ()| c1.run(1));
-    let c2 = close_others.clone(); let on_open_hit = Callback::new(move |_: ()| c2.run(2));
-    let c3 = close_others.clone(); let on_open_qps = Callback::new(move |_: ()| c3.run(3));
-    let c4 = close_others.clone(); let on_open_cost = Callback::new(move |_: ()| c4.run(4));
-    let c5 = close_others.clone(); let on_open_error = Callback::new(move |_: ()| c5.run(5));
-    let c6 = close_others.clone(); let on_open_token = Callback::new(move |_: ()| c6.run(6));
-    let c7 = close_others.clone(); let on_open_coalesce = Callback::new(move |_: ()| c7.run(7));
-    let c8 = close_others.clone(); let on_open_semantic = Callback::new(move |_: ()| c8.run(8));
-    let c9 = close_others.clone(); let on_open_latency = Callback::new(move |_: ()| c9.run(9));
-    let c10 = close_others.clone(); let on_open_ops = Callback::new(move |_: ()| c10.run(10));
-    let c11 = close_others.clone(); let on_open_consumer = Callback::new(move |_: ()| c11.run(11));
-    let c12 = close_others.clone(); let on_open_domain = Callback::new(move |_: ()| c12.run(12));
-    let c13 = close_others.clone(); let on_open_prefix = Callback::new(move |_: ()| c13.run(13));
-    let c14 = close_others.clone(); let on_open_prefix_health = Callback::new(move |_: ()| c14.run(14));
-    let c15 = close_others; let on_open_infra = Callback::new(move |_: ()| c15.run(15));
+    let c0 = close_others.clone();
+    let on_open_health = Callback::new(move |_: ()| c0.run(0));
+    let c1 = close_others.clone();
+    let on_open_keys = Callback::new(move |_: ()| c1.run(1));
+    let c2 = close_others.clone();
+    let on_open_hit = Callback::new(move |_: ()| c2.run(2));
+    let c3 = close_others.clone();
+    let on_open_qps = Callback::new(move |_: ()| c3.run(3));
+    let c4 = close_others.clone();
+    let on_open_cost = Callback::new(move |_: ()| c4.run(4));
+    let c5 = close_others.clone();
+    let on_open_error = Callback::new(move |_: ()| c5.run(5));
+    let c6 = close_others.clone();
+    let on_open_token = Callback::new(move |_: ()| c6.run(6));
+    let c7 = close_others.clone();
+    let on_open_coalesce = Callback::new(move |_: ()| c7.run(7));
+    let c8 = close_others.clone();
+    let on_open_semantic = Callback::new(move |_: ()| c8.run(8));
+    let c9 = close_others.clone();
+    let on_open_latency = Callback::new(move |_: ()| c9.run(9));
+    let c10 = close_others.clone();
+    let on_open_ops = Callback::new(move |_: ()| c10.run(10));
+    let c11 = close_others.clone();
+    let on_open_consumer = Callback::new(move |_: ()| c11.run(11));
+    let c12 = close_others.clone();
+    let on_open_domain = Callback::new(move |_: ()| c12.run(12));
+    let c13 = close_others.clone();
+    let on_open_prefix = Callback::new(move |_: ()| c13.run(13));
+    let c14 = close_others.clone();
+    let on_open_prefix_health = Callback::new(move |_: ()| c14.run(14));
+    let c15 = close_others;
+    let on_open_infra = Callback::new(move |_: ()| c15.run(15));
 
     // Infra headline fetched async once.
     let infra_headline: RwSignal<String> = RwSignal::new("—".to_string());

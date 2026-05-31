@@ -61,7 +61,8 @@ impl DataPlaneCache {
     }
 
     fn get_slo(&self, ttl: Duration) -> Option<&serde_json::Value> {
-        self.slo.as_ref()
+        self.slo
+            .as_ref()
             .filter(|(at, _)| at.elapsed() < ttl)
             .map(|(_, v)| v)
     }
@@ -87,9 +88,7 @@ const CACHE_TTL: Duration = Duration::from_secs(10);
 /// GET /api/admin/dataplane/summary
 ///
 /// Returns SLO-facing aggregate: 5m hit rate, P95 E2E latency, error rate, cost saved.
-pub async fn get_dataplane_summary(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_dataplane_summary(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     // Check cache first
     {
         let cache = get_or_init_cache();
@@ -135,9 +134,7 @@ pub async fn get_dataplane_summary(
 /// GET /api/admin/dataplane/phases
 ///
 /// Returns per-phase P50/P95/P99 latency in ms.
-pub async fn get_dataplane_phases(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_dataplane_phases(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     // Check cache first
     {
         let cache = get_or_init_cache();
@@ -204,9 +201,7 @@ pub async fn get_dataplane_phases(
 /// GET /api/admin/dataplane/errors
 ///
 /// Returns top error codes and rejection reasons by count (last 1h window).
-pub async fn get_dataplane_errors(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_dataplane_errors(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     // Check cache first
     {
         let cache = get_or_init_cache();
@@ -269,9 +264,7 @@ pub async fn get_dataplane_errors(
 /// GET /api/admin/dataplane/slo
 ///
 /// Returns SLO compliance status: uptime, latency budget, error budget.
-pub async fn get_dataplane_slo(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_dataplane_slo(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     // Check cache first
     {
         let cache = get_or_init_cache();
@@ -367,7 +360,9 @@ fn parse_phase_percentile(text: &str, phase: &str, percentile: f64) -> Option<f6
             continue;
         }
         // Extract le value and count
-        let Some(le_start) = line.find("le=\"") else { continue };
+        let Some(le_start) = line.find("le=\"") else {
+            continue;
+        };
         let le_val_start = le_start + 4;
         let le_val_end = line[le_val_start..].find('"')?;
         let le_str = &line[le_val_start..le_val_start + le_val_end];
@@ -376,7 +371,12 @@ fn parse_phase_percentile(text: &str, phase: &str, percentile: f64) -> Option<f6
         // Find the count after the closing brace
         let brace_end = line[le_start..].find("} ")?;
         let after_brace = le_start + brace_end + 2;
-        let count: u64 = line[after_brace..].trim().split_whitespace().next()?.parse().ok()?;
+        let count: u64 = line[after_brace..]
+            .trim()
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()?;
 
         buckets.push((le, count));
     }

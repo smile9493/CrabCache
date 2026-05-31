@@ -134,14 +134,18 @@ fn test_parse_codex_device_poll_interval() {
 
 #[test]
 fn test_is_refresh_error_retryable() {
-    assert!(!codex::is_refresh_error_retryable(&AuthError::TokenExchangeFailed {
-        status: 400,
-        body: r#"{"error":"refresh_token_reused"}"#.to_string(),
-    }));
-    assert!(codex::is_refresh_error_retryable(&AuthError::TokenExchangeFailed {
-        status: 503,
-        body: "upstream unavailable".to_string(),
-    }));
+    assert!(!codex::is_refresh_error_retryable(
+        &AuthError::TokenExchangeFailed {
+            status: 400,
+            body: r#"{"error":"refresh_token_reused"}"#.to_string(),
+        }
+    ));
+    assert!(codex::is_refresh_error_retryable(
+        &AuthError::TokenExchangeFailed {
+            status: 503,
+            body: "upstream unavailable".to_string(),
+        }
+    ));
 }
 
 #[tokio::test]
@@ -149,10 +153,14 @@ async fn test_retry_with_backoff_non_retryable_fails_fast() {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     let calls = AtomicU32::new(0);
-    let result: Result<(), AuthError> = common::retry_with_backoff(3, |_| false, || {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Err(AuthError::OAuth("refresh_token_reused".into())) })
-    })
+    let result: Result<(), AuthError> = common::retry_with_backoff(
+        3,
+        |_| false,
+        || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err(AuthError::OAuth("refresh_token_reused".into())) })
+        },
+    )
     .await;
 
     assert!(result.is_err());
@@ -243,10 +251,7 @@ async fn test_start_device_usercode_with_url_success() {
         .mount(&mock_server)
         .await;
 
-    let url = format!(
-        "{}/api/accounts/deviceauth/usercode",
-        mock_server.uri()
-    );
+    let url = format!("{}/api/accounts/deviceauth/usercode", mock_server.uri());
     let start = CodexAuthenticator::start_device_usercode_with_url(&url)
         .await
         .unwrap();
@@ -284,10 +289,7 @@ async fn test_poll_device_once_pending_then_ready() {
         .mount(&mock_server)
         .await;
 
-    let url = format!(
-        "{}/api/accounts/deviceauth/token",
-        mock_server.uri()
-    );
+    let url = format!("{}/api/accounts/deviceauth/token", mock_server.uri());
     let r1 = CodexAuthenticator::poll_device_once_with_url(&url, "dev-1", "CODE-1")
         .await
         .unwrap();
@@ -311,16 +313,12 @@ async fn test_poll_device_once_server_error_returns_failed() {
     Mock::given(method("POST"))
         .and(path("/api/accounts/deviceauth/token"))
         .respond_with(
-            ResponseTemplate::new(500)
-                .set_body_json(serde_json::json!({"error": "internal"})),
+            ResponseTemplate::new(500).set_body_json(serde_json::json!({"error": "internal"})),
         )
         .mount(&mock_server)
         .await;
 
-    let url = format!(
-        "{}/api/accounts/deviceauth/token",
-        mock_server.uri()
-    );
+    let url = format!("{}/api/accounts/deviceauth/token", mock_server.uri());
     let r = CodexAuthenticator::poll_device_once_with_url(&url, "dev-1", "CODE-1")
         .await
         .unwrap();

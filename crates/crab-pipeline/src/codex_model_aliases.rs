@@ -81,22 +81,13 @@ mod tests {
 
     #[test]
     fn maps_cursor_display_names_case_insensitive() {
-        assert_eq!(
-            canonicalize_client_model("GPT-5.5"),
-            "gpt-5.5"
-        );
-        assert_eq!(
-            canonicalize_client_model("Codex 5.2"),
-            "gpt-5.2-codex"
-        );
+        assert_eq!(canonicalize_client_model("GPT-5.5"), "gpt-5.5");
+        assert_eq!(canonicalize_client_model("Codex 5.2"), "gpt-5.2-codex");
         assert_eq!(
             canonicalize_client_model("Codex 5.1 Max"),
             "gpt-5.1-codex-max"
         );
-        assert_eq!(
-            canonicalize_client_model("codex 5.3"),
-            "gpt-5.3-codex"
-        );
+        assert_eq!(canonicalize_client_model("codex 5.3"), "gpt-5.3-codex");
     }
 
     #[test]

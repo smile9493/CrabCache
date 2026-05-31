@@ -291,10 +291,7 @@ mod tests {
     #[test]
     fn forwarded_client_ip_prefers_xff_leftmost() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            "203.0.113.10, 10.0.0.1".parse().unwrap(),
-        );
+        headers.insert("x-forwarded-for", "203.0.113.10, 10.0.0.1".parse().unwrap());
         assert_eq!(
             forwarded_client_ip(&headers).as_deref(),
             Some("203.0.113.10")

@@ -10,7 +10,6 @@ use crab_reasoning::{
     sanitize_client_completion, sanitize_client_message_content,
 };
 
-
 fn cache_status_header(tier: CacheTier) -> &'static str {
     match tier {
         CacheTier::L0Moka => "HIT_L0",
@@ -256,7 +255,6 @@ pub fn json_to_sse_stream(json_body: &[u8], model: &str, display_reasoning: bool
     }
 
     sse_output.extend_from_slice(b"data: [DONE]\n\n");
-
 
     sse_output
 }

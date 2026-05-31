@@ -31,7 +31,10 @@ use std::time::Duration;
 use tracing::warn;
 
 fn upstream_error_body_for_client(ctx: &GatewayContext, status: u16) -> Vec<u8> {
-    if ctx.request_pipeline == Some(RequestPipeline::CodexDeepSeek) {
+    if matches!(
+        ctx.request_pipeline,
+        Some(RequestPipeline::CodexDeepSeek | RequestPipeline::CodexMimo)
+    ) {
         crate::error_jsons::format_upstream_error_responses_stream(
             &ctx.accumulated_body,
             status,
@@ -44,11 +47,7 @@ fn upstream_error_body_for_client(ctx: &GatewayContext, status: u16) -> Vec<u8> 
     }
 }
 
-fn apply_usage_to_ctx(
-    proxy: &GatewayProxy,
-    ctx: &mut GatewayContext,
-    usage: UsageData,
-) {
+fn apply_usage_to_ctx(proxy: &GatewayProxy, ctx: &mut GatewayContext, usage: UsageData) {
     ctx.tokens.total += usage.prompt_tokens + usage.completion_tokens;
     ctx.tokens.last_input = usage.prompt_tokens;
     ctx.tokens.last_output = usage.completion_tokens;
@@ -76,10 +75,7 @@ fn apply_usage_to_ctx(
     }
 }
 
-fn scan_eos_usage_fallback(
-    proxy: &GatewayProxy,
-    ctx: &mut GatewayContext,
-) {
+fn scan_eos_usage_fallback(proxy: &GatewayProxy, ctx: &mut GatewayContext) {
     if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
         return;
     }
@@ -97,12 +93,19 @@ fn scan_eos_usage_fallback(
     }
 }
 
-fn record_backend_latency(proxy: &GatewayProxy, ctx: &mut GatewayContext, upstream_latency: Duration) {
+fn record_backend_latency(
+    proxy: &GatewayProxy,
+    ctx: &mut GatewayContext,
+    upstream_latency: Duration,
+) {
     let Some(backend) = ctx.upstream.backend_name.as_deref() else {
         return;
     };
     let profile = ctx.upstream_profile_id.as_deref().unwrap_or("default");
-    let pipeline = ctx.request_pipeline.map(|p| p.as_str()).unwrap_or("unknown");
+    let pipeline = ctx
+        .request_pipeline
+        .map(|p| p.as_str())
+        .unwrap_or("unknown");
     global_metrics().record_backend_upstream_latency(
         backend,
         profile,
@@ -255,7 +258,21 @@ pub(crate) fn run(
                     if let Some(guard) = ctx.upstream.key_guard.as_ref() {
                         let key_id = guard.key_id().to_string();
                         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
-                        pool.report_rate_limited(&key_id);
+                        let scope = if crate::codex_rate_limit::is_codex_upstream_pipeline(
+                            ctx.request_pipeline,
+                        ) {
+                            Some(crate::codex_rate_limit::codex_model_scope(
+                                ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
+                            ))
+                        } else {
+                            None
+                        };
+                        let body_text = String::from_utf8_lossy(&data);
+                        let cooldown_secs = crate::codex_rate_limit::resolve_codex_cooldown_secs(
+                            &body_text,
+                            pool.default_cooldown_secs(),
+                        );
+                        pool.report_rate_limited_for(&key_id, cooldown_secs, scope);
                         crab_metrics::global_metrics()
                             .record_upstream_key_request(&key_id, "rate_limited");
                         crab_metrics::global_metrics()
@@ -264,7 +281,9 @@ pub(crate) fn run(
                             request_id = %ctx.request_id,
                             key_id = key_id,
                             model = %ctx.model,
-                            "SSE stream contains rate-limit error from upstream; key cooled down (no mid-stream rotation)"
+                            cooldown_secs,
+                            scope = ?scope,
+                            "SSE stream contains rate-limit/capacity error from upstream; key cooled down (no mid-stream rotation)"
                         );
                     }
                 }
@@ -277,17 +296,24 @@ pub(crate) fn run(
                     apply_usage_to_ctx(proxy, ctx, u);
                 }
                 if crate::responses_wire::needs_responses_wire_translate(ctx) {
-                    result.client_bytes = crate::responses_wire::translate_client_bytes_for_responses_wire(
-                        &mut ctx.stream.responses_translator,
-                        &ctx.model,
+                    result.client_bytes =
+                        crate::responses_wire::translate_client_bytes_for_responses_wire(
+                            &mut ctx.stream.responses_translator,
+                            &ctx.model,
+                            result.client_bytes,
+                        );
+                    result.client_bytes = crate::responses_wire::prepend_responses_wire_bootstrap(
+                        ctx,
                         result.client_bytes,
                     );
-                    result.client_bytes =
-                        crate::responses_wire::prepend_responses_wire_bootstrap(ctx, result.client_bytes);
                     if let Some(ref bytes) = result.client_bytes {
                         ctx.stream.client_sse_body.extend_from_slice(bytes);
                     }
-                    if ctx.stream.responses_translator.as_ref().is_some_and(|t| t.done_marker_sent())
+                    if ctx
+                        .stream
+                        .responses_translator
+                        .as_ref()
+                        .is_some_and(|t| t.done_marker_sent())
                     {
                         ctx.stream.responses_wire_force_downstream_eos = true;
                     }
@@ -450,10 +476,7 @@ pub(crate) fn run(
                 );
 
                 timeline_stamp(&mut ctx.timeline.cache_write_done);
-                global_metrics().record_cache_write_latency(
-                    "l0_l1",
-                    cache_write_start.elapsed(),
-                );
+                global_metrics().record_cache_write_latency("l0_l1", cache_write_start.elapsed());
                 let tiered_cache = proxy.state.tiered_cache.clone();
                 let cache_key = cache_key.clone();
                 let model = ctx.model.clone();

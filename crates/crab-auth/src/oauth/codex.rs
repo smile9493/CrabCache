@@ -110,8 +110,13 @@ impl CodexAuthenticator {
         device_auth_id: &str,
         user_code: &str,
     ) -> Result<CodexDevicePollResult, AuthError> {
-        Self::poll_device_once_with_url_and_proxy(&device_token_url(), device_auth_id, user_code, None)
-            .await
+        Self::poll_device_once_with_url_and_proxy(
+            &device_token_url(),
+            device_auth_id,
+            user_code,
+            None,
+        )
+        .await
     }
 
     /// Step 3: Exchange authorization code from a successful poll into a [`TokenRecord`].
@@ -146,11 +151,15 @@ impl CodexAuthenticator {
             .build()
             .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
         let usercode_req = http_client::scrub_request_headers(usercode_req);
-        let usercode_resp = client.execute(usercode_req).await
+        let usercode_resp = client
+            .execute(usercode_req)
+            .await
             .map_err(|e| AuthError::OAuth(format!("device usercode request failed: {e}")))?;
 
         let status = usercode_resp.status();
-        let body: serde_json::Value = usercode_resp.json().await
+        let body: serde_json::Value = usercode_resp
+            .json()
+            .await
             .map_err(|e| AuthError::OAuth(format!("failed to parse usercode response: {e}")))?;
         if !status.is_success() {
             if status.as_u16() == 404 {
@@ -216,11 +225,15 @@ impl CodexAuthenticator {
             .build()
             .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
         let req = http_client::scrub_request_headers(req);
-        let resp = client.execute(req).await
+        let resp = client
+            .execute(req)
+            .await
             .map_err(|e| AuthError::OAuth(format!("device poll request failed: {e}")))?;
 
         let status = resp.status();
-        let body: serde_json::Value = resp.json().await
+        let body: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AuthError::OAuth(format!("failed to parse poll response: {e}")))?;
 
         if status.is_success() {
@@ -341,8 +354,10 @@ pub fn extract_code_from_callback_url(callback_url: &str) -> Result<(String, Str
         }
     }
 
-    let code = code.ok_or_else(|| AuthError::OAuth("callback URL missing 'code' parameter".into()))?;
-    let state = state.ok_or_else(|| AuthError::OAuth("callback URL missing 'state' parameter".into()))?;
+    let code =
+        code.ok_or_else(|| AuthError::OAuth("callback URL missing 'code' parameter".into()))?;
+    let state =
+        state.ok_or_else(|| AuthError::OAuth("callback URL missing 'state' parameter".into()))?;
     Ok((code, state))
 }
 
@@ -558,8 +573,7 @@ async fn poll_codex_device_token(
     proxy_url: Option<&str>,
 ) -> Result<serde_json::Value, AuthError> {
     let client = http_client::build_anti_detect_client(proxy_url)?;
-    let deadline =
-        tokio::time::Instant::now() + StdDuration::from_secs(DEVICE_POLL_TIMEOUT_SECS);
+    let deadline = tokio::time::Instant::now() + StdDuration::from_secs(DEVICE_POLL_TIMEOUT_SECS);
 
     loop {
         if tokio::time::Instant::now() >= deadline {
@@ -578,11 +592,15 @@ async fn poll_codex_device_token(
             .build()
             .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
         let req = http_client::scrub_request_headers(req);
-        let resp = client.execute(req).await
+        let resp = client
+            .execute(req)
+            .await
             .map_err(|e| AuthError::OAuth(format!("device poll request failed: {e}")))?;
 
         let status = resp.status();
-        let body: serde_json::Value = resp.json().await
+        let body: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AuthError::OAuth(format!("failed to parse poll response: {e}")))?;
 
         if status.is_success() {
@@ -638,10 +656,15 @@ async fn exchange_authorization_code_with_url(
         code_verifier,
     };
 
-    let req = client.post(oauth_token_url).form(&params).build()
+    let req = client
+        .post(oauth_token_url)
+        .form(&params)
+        .build()
         .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
     let req = http_client::scrub_request_headers(req);
-    let resp = client.execute(req).await
+    let resp = client
+        .execute(req)
+        .await
         .map_err(|e| AuthError::OAuth(format!("token exchange request failed: {e}")))?;
 
     let status = resp.status();
@@ -653,7 +676,9 @@ async fn exchange_authorization_code_with_url(
         });
     }
 
-    let token_resp: serde_json::Value = resp.json().await
+    let token_resp: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AuthError::OAuth(format!("failed to parse token response: {e}")))?;
     parse_token_response(&token_resp)
 }
@@ -666,7 +691,10 @@ pub async fn refresh_codex_token_with_proxy(
     refresh_once(record, proxy_url).await
 }
 
-async fn refresh_once(record: &TokenRecord, proxy_url: Option<&str>) -> Result<TokenRecord, AuthError> {
+async fn refresh_once(
+    record: &TokenRecord,
+    proxy_url: Option<&str>,
+) -> Result<TokenRecord, AuthError> {
     let refresh_token = record
         .refresh_token
         .as_ref()
@@ -688,10 +716,15 @@ async fn refresh_once(record: &TokenRecord, proxy_url: Option<&str>) -> Result<T
         scope: "openid profile email",
     };
 
-    let req = client.post(token_url()).form(&params).build()
+    let req = client
+        .post(token_url())
+        .form(&params)
+        .build()
         .map_err(|e| AuthError::OAuth(format!("failed to build request: {e}")))?;
     let req = http_client::scrub_request_headers(req);
-    let resp = client.execute(req).await
+    let resp = client
+        .execute(req)
+        .await
         .map_err(|e| AuthError::OAuth(format!("refresh request failed: {e}")))?;
 
     let status = resp.status();
@@ -703,7 +736,9 @@ async fn refresh_once(record: &TokenRecord, proxy_url: Option<&str>) -> Result<T
         });
     }
 
-    let token_resp: serde_json::Value = resp.json().await
+    let token_resp: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AuthError::OAuth(format!("failed to parse refresh response: {e}")))?;
     let mut refreshed = parse_token_response(&token_resp)?;
     refreshed.id = record.id.clone();
@@ -826,13 +861,9 @@ fn parse_token_response(resp: &serde_json::Value) -> Result<TokenRecord, AuthErr
     let id = email
         .as_deref()
         .map(|e| {
-            credential_filename(
-                e,
-                plan_type.as_deref(),
-                account_id_hash.as_deref(),
-            )
-            .trim_end_matches(".json")
-            .to_string()
+            credential_filename(e, plan_type.as_deref(), account_id_hash.as_deref())
+                .trim_end_matches(".json")
+                .to_string()
         })
         .unwrap_or_else(|| "default".to_string());
 

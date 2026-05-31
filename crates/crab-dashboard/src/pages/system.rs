@@ -4,12 +4,10 @@ use crate::api;
 use crate::auth::{complete_login, use_admin_key};
 use crate::components::ui::*;
 use crate::locale::use_translations;
+use crate::pages::features::FeaturesTab;
 use crate::pages::pipeline::PipelinePage;
 use crate::pages::reasoning::ReasoningPage;
-use crate::pages::features::FeaturesTab;
-use crate::types::{
-    LimitsConfig, SystemUpdateResult, SystemVersion, UpdateCheckResult,
-};
+use crate::types::{LimitsConfig, SystemUpdateResult, SystemVersion, UpdateCheckResult};
 
 #[component]
 pub fn SystemPage() -> impl IntoView {
@@ -71,8 +69,12 @@ fn GeneralTab() -> impl IntoView {
         leptos::task::spawn_local(async move {
             version.try_set(None);
             match api::fetch_system_version().await {
-                Ok(v) => { version.try_set(Some(Ok(v))); },
-                Err(e) => { version.try_set(Some(Err(e))); },
+                Ok(v) => {
+                    version.try_set(Some(Ok(v)));
+                }
+                Err(e) => {
+                    version.try_set(Some(Err(e)));
+                }
             }
         });
     };
@@ -82,8 +84,12 @@ fn GeneralTab() -> impl IntoView {
         update_check.set(None);
         leptos::task::spawn_local(async move {
             match api::check_for_updates().await {
-                Ok(r) => { update_check.try_set(Some(Ok(r))); },
-                Err(e) => { update_check.try_set(Some(Err(e))); },
+                Ok(r) => {
+                    update_check.try_set(Some(Ok(r)));
+                }
+                Err(e) => {
+                    update_check.try_set(Some(Err(e)));
+                }
             }
             checking.try_set(false);
         });
@@ -95,8 +101,12 @@ fn GeneralTab() -> impl IntoView {
         update_result.set(None);
         leptos::task::spawn_local(async move {
             match api::trigger_system_update().await {
-                Ok(r) => { update_result.try_set(Some(Ok(r))); },
-                Err(e) => { update_result.try_set(Some(Err(e))); },
+                Ok(r) => {
+                    update_result.try_set(Some(Ok(r)));
+                }
+                Err(e) => {
+                    update_result.try_set(Some(Err(e)));
+                }
             }
             updating.try_set(false);
         });

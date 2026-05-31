@@ -1,4 +1,5 @@
 mod composition;
+mod credential_persist;
 mod dataplane;
 mod domain_usage_sync;
 mod infra;
@@ -190,9 +191,63 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ServerConfig::from_args();
     let state = Arc::new(AppState::new());
-    state.reconcile_upstream_from_gateway().await;
-    state.sync_profile_secrets_from_gateway().await;
-    crate::oauth_codex::prepare_auth_dir(&state).await;
+
+    // PG connect + hydrate run in background so HTTP bind is never blocked on Postgres.
+    {
+        let init_state = Arc::clone(&state);
+        let pg_configured = state.pg_pending_config.read().is_some();
+        tokio::spawn(async move {
+            loop {
+                let pending = init_state.pg_pending_config.read().clone();
+                let Some((url, pool_size, migrate)) = pending else {
+                    break;
+                };
+                if AppState::try_connect_pg(&init_state, &url, pool_size, migrate).await {
+                    info!("PostgreSQL connected at startup");
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+
+            if init_state.pg_store.read().is_some() {
+                if init_state.hydrate_profile_secrets_from_pg().await {
+                    info!("Profile key pools hydrated from PostgreSQL");
+                }
+                if crate::credential_persist::hydrate_credentials_from_pg(&init_state).await {
+                    info!("OAuth credentials hydrated from PostgreSQL");
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
+                let pg = init_state.pg_store.read().clone();
+                if let Some(pg) = pg {
+                    if let Ok(pg_snapshots) = pg.load_metric_snapshots_since(cutoff).await {
+                        let sqlite_count = init_state.metrics_history.read().sample_count();
+                        if pg_snapshots.len() > sqlite_count {
+                            let mut hist = init_state.metrics_history.write();
+                            *hist = crate::metrics_history::MetricsHistory::new();
+                            for s in &pg_snapshots {
+                                hist.append(s.clone());
+                            }
+                            info!(
+                                hydrated = hist.sample_count(),
+                                "Metrics history restored from PostgreSQL"
+                            );
+                        }
+                    }
+                }
+            }
+            init_state.reconcile_upstream_from_gateway().await;
+            init_state.sync_profile_secrets_from_gateway().await;
+            crate::oauth_codex::prepare_auth_dir(&init_state).await;
+            init_state.push_all_profile_pools_to_gateway().await;
+        });
+        if pg_configured {
+            info!("Background PG init started (non-blocking + 30s retry)");
+        }
+    }
 
     {
         let metrics_state = Arc::clone(&state);
@@ -222,26 +277,6 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         info!(interval_secs, "Metrics history sampler started");
-    }
-
-    // Background PG init retry: if PG was configured but unavailable at startup,
-    // retry every 30s until connected, then run migration and hydrate metrics.
-    if state.pg_pending_config.read().is_some() {
-        let retry_state = Arc::clone(&state);
-        tokio::spawn(async move {
-            loop {
-                let pending = retry_state.pg_pending_config.read().clone();
-                let Some((url, pool_size, migrate)) = pending else {
-                    break;
-                };
-                if AppState::try_connect_pg(&retry_state, &url, pool_size, migrate).await {
-                    info!("PostgreSQL fully initialized");
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            }
-        });
-        info!("Background PG init started (immediate + 30s retry)");
     }
 
     // Hydrate metrics history from SQLite if PG did not provide data.

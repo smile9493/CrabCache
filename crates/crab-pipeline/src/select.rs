@@ -51,8 +51,7 @@ pub fn select_request_pipeline(
     // also override the upstream profile so the request uses the correct endpoints and key pool.
     let upstream_profile_id =
         if reason == PipelineSelectionReason::ModelAlias && ctx.model_alias_pipeline.is_some() {
-            profile_for_pipeline(pipeline, profiles)
-                .unwrap_or(upstream_profile_id)
+            profile_for_pipeline(pipeline, profiles).unwrap_or(upstream_profile_id)
         } else {
             upstream_profile_id
         };
@@ -70,9 +69,8 @@ fn pipeline_override_matches_model(override_pipe: PipelineOverride, model: &str)
     let implied = model_prefix_to_profile(model);
     match override_pipe {
         PipelineOverride::Auto => true,
-        PipelineOverride::MimoTokenPlanRelay | PipelineOverride::MimoPaygRelay => {
-            implied == "mimo"
-        }
+        PipelineOverride::MimoTokenPlanRelay | PipelineOverride::MimoPaygRelay => implied == "mimo",
+        PipelineOverride::CodexMimo => implied == "mimo",
         PipelineOverride::CodexRelay => implied == "openai",
         PipelineOverride::CodexDeepSeek
         | PipelineOverride::CursorDeepSeekV4
@@ -102,7 +100,9 @@ fn profile_for_pipeline(
         RequestPipeline::CursorDeepSeekV4
         | RequestPipeline::DeepSeekLight
         | RequestPipeline::CodexDeepSeek => "deepseek",
-        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => "mimo",
+        RequestPipeline::MimoTokenPlanRelay
+        | RequestPipeline::MimoPaygRelay
+        | RequestPipeline::CodexMimo => "mimo",
         RequestPipeline::CodexRelay => {
             return profiles
                 .iter()
@@ -166,6 +166,13 @@ fn pipeline_from_override(
                 Some(RequestPipeline::GenericRelay)
             }
         }
+        PipelineOverride::CodexMimo => {
+            if provider == UpstreamProvider::Mimo {
+                Some(RequestPipeline::CodexMimo)
+            } else {
+                Some(RequestPipeline::GenericRelay)
+            }
+        }
     }
 }
 
@@ -186,12 +193,14 @@ fn auto_pipeline_with_reason(
     let reason = match pipeline {
         RequestPipeline::CursorDeepSeekV4 => PipelineSelectionReason::CursorSignals,
         RequestPipeline::DeepSeekLight => PipelineSelectionReason::DeepSeekNonV4,
-        RequestPipeline::MimoTokenPlanRelay
-        | RequestPipeline::MimoPaygRelay => PipelineSelectionReason::MimoProvider,
+        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
+            PipelineSelectionReason::MimoProvider
+        }
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
         RequestPipeline::CodexRelay => PipelineSelectionReason::CodexProvider,
-        // CodexDeepSeek is only selected via model alias; legacy never produces it.
-        RequestPipeline::CodexDeepSeek => PipelineSelectionReason::CodexDeepSeekModelAlias,
+        // Codex* bridge pipelines are selected by model alias or Responses upgrade.
+        RequestPipeline::CodexDeepSeek => PipelineSelectionReason::CodexDeepSeekProvider,
+        RequestPipeline::CodexMimo => PipelineSelectionReason::CodexMimoProvider,
     };
     (pipeline, reason)
 }
@@ -208,6 +217,7 @@ fn resolve_alias_pipeline(alias_pipe: PipelineOverride) -> Option<RequestPipelin
         PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
         PipelineOverride::CodexRelay => Some(RequestPipeline::CodexRelay),
         PipelineOverride::CodexDeepSeek => Some(RequestPipeline::CodexDeepSeek),
+        PipelineOverride::CodexMimo => Some(RequestPipeline::CodexMimo),
         PipelineOverride::Auto => None,
     }
 }
@@ -255,10 +265,11 @@ pub fn validate_pipeline_override(
         }
         PipelineOverride::MimoTokenPlanRelay
         | PipelineOverride::MimoPaygRelay
+        | PipelineOverride::CodexMimo
             if provider != UpstreamProvider::Mimo =>
         {
             Some(
-                "mimo_token_plan_relay / mimo_payg_relay require a mimo upstream profile",
+                "mimo_token_plan_relay, mimo_payg_relay, and codex_mimo require a mimo upstream profile",
             )
         }
         PipelineOverride::CodexRelay if provider != UpstreamProvider::Codex => {

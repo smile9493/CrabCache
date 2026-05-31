@@ -1,4 +1,8 @@
 //! Admin API proxy for gateway upstream profiles.
+//!
+//! **Cold storage policy**: every profile key pool mutation (Replace / Append / Patch / Delete)
+//! must persist to PostgreSQL (`upstream_profile_secrets`) before pushing to Gateway.
+//! Gateway Redis holds runtime hot state only; PG is the long-term source of truth.
 
 use crate::persist::PersistedUpstreamPoolSecret;
 use crate::state::{AppState, UpstreamPoolSecret};
@@ -10,7 +14,9 @@ use crate::types::{
     put_upstream_profile_keys_to_control, upstream_key_view_from_control,
 };
 use axum::Json;
+use crab_admin_types::upstream::UpstreamKeyView;
 use crab_control::{PutUpstreamProfileRequest, UpstreamProfileView, UpstreamProfilesResponse};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
@@ -77,6 +83,17 @@ pub async fn get_profile_keys(
     state: &Arc<AppState>,
     id: &str,
 ) -> Result<UpstreamProfileKeysAdminView, String> {
+    if crate::oauth_codex::profile_is_codex_like(state, id) {
+        crate::oauth_codex::materialize_codex_profile_pool(state, id).await;
+    }
+
+    let admin_pool = state
+        .upstream_profile_secrets
+        .read()
+        .get(id)
+        .cloned()
+        .unwrap_or_default();
+
     let view = state
         .gateway
         .get_upstream_profile_keys(id)
@@ -85,26 +102,85 @@ pub async fn get_profile_keys(
     let models_probe = crate::upstream::probe_profile_key_models_internal(state, id)
         .await
         .ok();
-    let mut keys: Vec<_> = view
-        .keys
-        .into_iter()
-        .map(|k| {
-            let mut mapped = upstream_key_view_from_control(k);
-            if let Some(probe) = &models_probe {
+
+    let mut keys: Vec<_> = if !admin_pool.is_empty() {
+        profile_keys_from_admin_pool(&admin_pool, &view.keys, models_probe.as_ref())
+    } else {
+        view.keys
+            .into_iter()
+            .map(|k| {
+                let mut mapped = upstream_key_view_from_control(k);
+                if let Some(probe) = &models_probe {
+                    if let Some(entry) = probe.keys.iter().find(|e| e.key_id == mapped.id) {
+                        mapped = crate::types::enrich_upstream_key_view(mapped, entry);
+                    }
+                }
+                mapped
+            })
+            .collect()
+    };
+    if crate::oauth_codex::profile_is_codex_like(state, id) {
+        crate::oauth_codex::enrich_upstream_keys_from_credentials(state, &mut keys).await;
+        keys.retain(|k| !k.id.starts_with("codex-auto-") && !k.account_id.starts_with("auto-"));
+    }
+    Ok(UpstreamProfileKeysAdminView {
+        profile_id: view.profile_id,
+        keys,
+    })
+}
+
+fn key_preview(secret: &str) -> String {
+    if secret.len() <= 10 {
+        secret.to_string()
+    } else {
+        format!("{}...", &secret[..8])
+    }
+}
+
+fn profile_keys_from_admin_pool(
+    admin_pool: &[UpstreamPoolSecret],
+    gateway_keys: &[crab_control::UpstreamKeyView],
+    models_probe: Option<&crab_control::UpstreamProfileKeysModelsView>,
+) -> Vec<UpstreamKeyView> {
+    use std::collections::HashMap;
+
+    let gw_by_id: HashMap<String, crab_control::UpstreamKeyView> = gateway_keys
+        .iter()
+        .map(|k| (k.id.clone(), k.clone()))
+        .collect();
+
+    admin_pool
+        .iter()
+        .map(|slot| {
+            let mut mapped = if let Some(gk) = gw_by_id.get(&slot.id) {
+                let mut view = upstream_key_view_from_control(gk.clone());
+                view.enabled = slot.enabled;
+                if !slot.account_id.is_empty() {
+                    view.account_id = slot.account_id.clone();
+                }
+                view
+            } else {
+                UpstreamKeyView {
+                    id: slot.id.clone(),
+                    preview: key_preview(&slot.secret),
+                    account_id: slot.account_id.clone(),
+                    enabled: slot.enabled,
+                    inflight: 0,
+                    cooldown_remaining_secs: 0,
+                    email: None,
+                    plan_type: None,
+                    models: Vec::new(),
+                    quota: None,
+                }
+            };
+            if let Some(probe) = models_probe {
                 if let Some(entry) = probe.keys.iter().find(|e| e.key_id == mapped.id) {
                     mapped = crate::types::enrich_upstream_key_view(mapped, entry);
                 }
             }
             mapped
         })
-        .collect();
-    if crate::oauth_codex::profile_is_codex_like(state, id) {
-        crate::oauth_codex::enrich_upstream_keys_from_credentials(state, &mut keys).await;
-    }
-    Ok(UpstreamProfileKeysAdminView {
-        profile_id: view.profile_id,
-        keys,
-    })
+        .collect()
 }
 
 pub async fn put_profile_keys(
@@ -118,7 +194,7 @@ pub async fn put_profile_keys(
     } else {
         UpstreamKeysPutMode::Append
     };
-    let secrets: Vec<UpstreamPoolSecret> = keys
+    let incoming: Vec<UpstreamPoolSecret> = keys
         .iter()
         .filter(|k| !k.secret.is_empty())
         .map(|k| UpstreamPoolSecret {
@@ -134,7 +210,21 @@ pub async fn put_profile_keys(
         .collect();
     {
         let mut map = state.upstream_profile_secrets.write();
-        map.insert(id.to_string(), secrets);
+        if replace {
+            map.insert(id.to_string(), incoming);
+        } else {
+            let mut merged = map.get(id).cloned().unwrap_or_default();
+            let mut seen: std::collections::HashSet<String> =
+                merged.iter().map(|s| s.secret.clone()).collect();
+            for s in incoming {
+                if s.secret.is_empty() || seen.contains(&s.secret) {
+                    continue;
+                }
+                seen.insert(s.secret.clone());
+                merged.push(s);
+            }
+            map.insert(id.to_string(), merged);
+        }
     }
 
     // Persist key pool to PostgreSQL (Admin DB) when available (best-effort).
@@ -367,6 +457,7 @@ pub async fn put_profile_keys_upsert(
     profile_id: &str,
     secret: &str,
     account_id: &str,
+    preferred_key_id: Option<&str>,
 ) -> Result<(), (axum::http::StatusCode, String)> {
     let normalized_account = normalize_pool_account_id(account_id);
 
@@ -376,11 +467,22 @@ pub async fn put_profile_keys_upsert(
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    let cached_secrets = state
+    let cached_secrets: HashMap<String, String> = state
         .upstream_profile_secrets
         .read()
         .get(profile_id)
-        .cloned()
+        .map(|pool| {
+            pool.iter()
+                .map(|s| (s.id.clone(), s.secret.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let export_secrets: HashMap<String, String> = state
+        .gateway
+        .export_upstream_profile_keys(profile_id)
+        .await
+        .map(|export| export.keys.into_iter().map(|k| (k.id, k.secret)).collect())
         .unwrap_or_default();
 
     let mut matched_key_id: Option<String> = None;
@@ -401,9 +503,15 @@ pub async fn put_profile_keys_upsert(
                     secret.to_string()
                 } else {
                     cached_secrets
-                        .iter()
-                        .find(|s| s.id == k.id)
-                        .map(|s| s.secret.clone())
+                        .get(&k.id)
+                        .filter(|s| !s.trim().is_empty())
+                        .cloned()
+                        .or_else(|| {
+                            export_secrets
+                                .get(&k.id)
+                                .filter(|s| !s.trim().is_empty())
+                                .cloned()
+                        })
                         .unwrap_or_default()
                 };
                 UpstreamKeyInput {
@@ -420,7 +528,14 @@ pub async fn put_profile_keys_upsert(
             .collect();
 
         if keys.iter().any(|k| k.id == key_id && k.secret.is_empty()) {
-            return put_profile_keys_append(state, profile_id, secret, account_id).await;
+            return put_profile_keys_append(
+                state,
+                profile_id,
+                secret,
+                account_id,
+                preferred_key_id,
+            )
+            .await;
         }
 
         put_profile_keys(state, profile_id, keys, true)
@@ -429,7 +544,7 @@ pub async fn put_profile_keys_upsert(
         return Ok(());
     }
 
-    put_profile_keys_append(state, profile_id, secret, account_id).await
+    put_profile_keys_append(state, profile_id, secret, account_id, preferred_key_id).await
 }
 
 fn normalize_pool_account_id(raw: &str) -> String {
@@ -447,9 +562,10 @@ pub async fn put_profile_keys_append(
     profile_id: &str,
     secret: &str,
     account_id: &str,
+    preferred_key_id: Option<&str>,
 ) -> Result<(), (axum::http::StatusCode, String)> {
     let key_input = UpstreamKeyInput {
-        id: String::new(),
+        id: preferred_key_id.unwrap_or_default().to_string(),
         secret: secret.to_string(),
         enabled: true,
         account_id: account_id.to_string(),

@@ -62,9 +62,17 @@ impl CodexTranslator {
 pub fn resolve_codex_upstream_model(model: &str) -> &str {
     let model = crab_pipeline::resolve_codex_display_alias(model).unwrap_or(model);
     match model {
-        "gpt-5" | "gpt-5-codex" | "gpt-5-codex-mini" | "gpt-5.1" | "gpt-5.1-codex"
-        | "gpt-5.1-codex-max" | "gpt-5.1-codex-mini" | "gpt-5.2" | "gpt-5.2-codex"
-        | "gpt-5.3-codex" | "gpt-5.3-codex-spark" => "gpt-5.5",
+        "gpt-5"
+        | "gpt-5-codex"
+        | "gpt-5-codex-mini"
+        | "gpt-5.1"
+        | "gpt-5.1-codex"
+        | "gpt-5.1-codex-max"
+        | "gpt-5.1-codex-mini"
+        | "gpt-5.2"
+        | "gpt-5.2-codex"
+        | "gpt-5.3-codex"
+        | "gpt-5.3-codex-spark" => "gpt-5.5",
         other => other,
     }
 }
@@ -114,7 +122,10 @@ fn resolve_codex_session_id(payload: &Value, opts: &CodexPrepareOptions<'_>) -> 
         .or_else(|| opts.stable_session_id.map(str::to_string))
 }
 
-fn resolve_codex_prompt_cache_key(payload: &Value, opts: &CodexPrepareOptions<'_>) -> Option<String> {
+fn resolve_codex_prompt_cache_key(
+    payload: &Value,
+    opts: &CodexPrepareOptions<'_>,
+) -> Option<String> {
     non_empty_str(payload.get("prompt_cache_key").and_then(|v| v.as_str()))
         .or(opts.prompt_cache_key)
         .map(str::to_string)
@@ -207,8 +218,9 @@ fn codex_payload_has_required_input(out: &Value) -> bool {
     if input.is_empty() {
         return false;
     }
-    input.iter().any(|item| {
-        match item.get("type").and_then(|t| t.as_str()) {
+    input
+        .iter()
+        .any(|item| match item.get("type").and_then(|t| t.as_str()) {
             Some("message") => item
                 .get("content")
                 .and_then(|c| c.as_array())
@@ -216,8 +228,7 @@ fn codex_payload_has_required_input(out: &Value) -> bool {
             Some("function_call") | Some("function_call_output") => false,
             Some(_) => true,
             None => false,
-        }
-    })
+        })
 }
 
 fn prepare_codex_responses_passthrough(
@@ -539,23 +550,19 @@ fn append_content_value(content: &Value, role: &str, part_type: &str, out: &mut 
                                     .and_then(|v| v.as_str())
                                     .filter(|s| !s.is_empty())
                                 {
-                                    let mapped = if item_type == "output_text" || role == "assistant"
-                                    {
-                                        "output_text"
-                                    } else {
-                                        "input_text"
-                                    };
+                                    let mapped =
+                                        if item_type == "output_text" || role == "assistant" {
+                                            "output_text"
+                                        } else {
+                                            "input_text"
+                                        };
                                     out.push(json!({ "type": mapped, "text": text }));
                                 }
                             }
                             "image_url" | "input_image" if role == "user" => {
-                                let url = obj
-                                    .get("image_url")
-                                    .and_then(|v| {
-                                        v.as_str().or_else(|| {
-                                            v.get("url").and_then(|u| u.as_str())
-                                        })
-                                    });
+                                let url = obj.get("image_url").and_then(|v| {
+                                    v.as_str().or_else(|| v.get("url").and_then(|u| u.as_str()))
+                                });
                                 if let Some(url) = url.filter(|s| !s.is_empty()) {
                                     out.push(json!({ "type": "input_image", "image_url": url }));
                                 }
@@ -1112,10 +1119,7 @@ mod tests {
         assert_eq!(input[0]["content"][0]["text"], "hello from cursor");
         assert_eq!(prepared.payload["prompt_cache_key"], "client:abc");
         assert!(prepared.payload.get("conversation_id").is_none());
-        assert_eq!(
-            prepared.payload["tools"].as_array().unwrap().len(),
-            1
-        );
+        assert_eq!(prepared.payload["tools"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -1146,7 +1150,8 @@ mod tests {
                 "content": [{"type": "input_text", "text": "hello"}],
             }],
         });
-        let prepared = prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
+        let prepared =
+            prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
         let input = prepared.payload["input"].as_array().unwrap();
         assert_eq!(input[0]["content"][0]["type"], "input_text");
         assert_eq!(input[0]["content"][0]["text"], "hello");
@@ -1189,10 +1194,14 @@ mod tests {
                 }]},
             ],
         });
-        let prepared = prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
+        let prepared =
+            prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
         let input = prepared.payload["input"].as_array().unwrap();
         // Empty user messages are skipped, but a synthetic fallback is injected to avoid Codex 400.
-        let message_items: Vec<_> = input.iter().filter(|item| item.get("type") == Some(&json!("message"))).collect();
+        let message_items: Vec<_> = input
+            .iter()
+            .filter(|item| item.get("type") == Some(&json!("message")))
+            .collect();
         assert_eq!(message_items.len(), 1);
         assert!(prepared.payload.get("conversation_id").is_none());
         assert_eq!(prepared.payload["prompt_cache_key"], "c1");
@@ -1205,7 +1214,8 @@ mod tests {
             "prompt_cache_key": "pck-1",
             "messages": [],
         });
-        let prepared = prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
+        let prepared =
+            prepare_codex_request(&payload, "gpt-5-codex", CodexPrepareOptions::default());
         assert!(prepared.payload.get("conversation_id").is_none());
         assert_eq!(prepared.payload["prompt_cache_key"], "pck-1");
     }
@@ -1264,14 +1274,23 @@ mod tests {
             CodexPrepareOptions::default(),
         );
         assert_eq!(prepared.model, "gpt-5.4-mini");
-        assert!(prepared.payload.get("input").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()));
+        assert!(
+            prepared
+                .payload
+                .get("input")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty())
+        );
     }
 
     #[test]
     fn resolve_codex_maps_legacy_slug_to_gpt_5_5() {
         assert_eq!(resolve_codex_upstream_model("gpt-5-codex"), "gpt-5.5");
         assert_eq!(resolve_codex_upstream_model("gpt-5.3-codex"), "gpt-5.5");
-        assert_eq!(resolve_codex_upstream_model("gpt-5.3-codex-spark"), "gpt-5.5");
+        assert_eq!(
+            resolve_codex_upstream_model("gpt-5.3-codex-spark"),
+            "gpt-5.5"
+        );
     }
 
     #[test]

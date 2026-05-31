@@ -484,9 +484,15 @@ pub struct ConnectionRuntimeView {
     pub upstream_connection_timeout_secs: u64,
 }
 
-fn default_upstream_request_timeout_secs() -> u64 { 300 }
-fn default_upstream_write_timeout_secs() -> u64 { 300 }
-fn default_upstream_connection_timeout_secs() -> u64 { 60 }
+fn default_upstream_request_timeout_secs() -> u64 {
+    300
+}
+fn default_upstream_write_timeout_secs() -> u64 {
+    300
+}
+fn default_upstream_connection_timeout_secs() -> u64 {
+    60
+}
 
 /// Trace logging runtime config (Management API).
 #[derive(Debug, Clone, Serialize, Deserialize)]

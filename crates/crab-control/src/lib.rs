@@ -1,5 +1,6 @@
 mod backends;
 mod client;
+pub mod codex_wham;
 mod error;
 mod types;
 mod upstream_url;
@@ -10,6 +11,7 @@ pub use client::GatewayAdminClient;
 pub use error::ControlError;
 pub use types::*;
 pub use upstream_url::{UpstreamBaseUrl, parse_upstream_base_url};
+pub use codex_wham::CodexQuotaWindowItem;
 pub use validate::{
     KeyQuotaInfo, ModelApplyRequest, ModelDetectResult, UpstreamTestRequest, UpstreamTestResult,
     validate_deepseek_key, validate_upstream_key,

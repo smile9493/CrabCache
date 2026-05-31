@@ -94,7 +94,8 @@ fn from_pg_bigint(v: i64) -> u64 {
     v.max(0) as u64
 }
 
-const TRACE_LOGS_SELECT: &str = "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
+const TRACE_LOGS_SELECT: &str =
+    "SELECT request_hash, timestamp_ms, content_length, semantic_cluster,
                     model, prompt_tokens, latency_ms, cache_hit,
                     conversation_id, consumer, domain, project_id,
                     upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
@@ -166,7 +167,9 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         limit_source: row.get(45),
         cache_decision: row.get(46),
         upstream_result: row.get(47),
-        phase_durations_ms: row.get::<_, Option<serde_json::Value>>(48).and_then(|v| serde_json::from_value(v).ok()),
+        phase_durations_ms: row
+            .get::<_, Option<serde_json::Value>>(48)
+            .and_then(|v| serde_json::from_value(v).ok()),
     }
 }
 
@@ -361,8 +364,38 @@ impl PgStore {
                     key_id     TEXT NOT NULL,
                     secret     TEXT NOT NULL,
                     enabled    BOOLEAN NOT NULL DEFAULT true,
+                    account_id TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (profile_id, key_id)
                 )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "ALTER TABLE upstream_profile_secrets
+                 ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS oauth_credentials (
+                    id          TEXT PRIMARY KEY,
+                    provider    TEXT NOT NULL,
+                    profile_id  TEXT NOT NULL DEFAULT 'codex',
+                    payload     JSONB NOT NULL,
+                    updated_at  BIGINT NOT NULL DEFAULT 0
+                )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_oauth_credentials_profile
+                 ON oauth_credentials (profile_id)",
                 &[],
             )
             .await?;
@@ -1045,14 +1078,17 @@ impl PgStore {
 
         let stmt = tx
             .prepare_cached(
-                "INSERT INTO upstream_profile_secrets (profile_id, key_id, secret, enabled)
-                 VALUES ($1, $2, $3, $4)",
+                "INSERT INTO upstream_profile_secrets (profile_id, key_id, secret, enabled, account_id)
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .await?;
 
         for s in secrets {
-            tx.execute(&stmt, &[&profile_id, &s.id, &s.secret, &s.enabled])
-                .await?;
+            tx.execute(
+                &stmt,
+                &[&profile_id, &s.id, &s.secret, &s.enabled, &s.account_id],
+            )
+            .await?;
         }
 
         tx.commit().await?;
@@ -1065,7 +1101,7 @@ impl PgStore {
         let client = self.pool.get().await?;
         let rows = client
             .query(
-                "SELECT profile_id, key_id, secret, enabled
+                "SELECT profile_id, key_id, secret, enabled, account_id
                  FROM upstream_profile_secrets ORDER BY profile_id, key_id",
                 &[],
             )
@@ -1080,10 +1116,90 @@ impl PgStore {
                     id: row.get(1),
                     secret: row.get(2),
                     enabled: row.get(3),
-                    account_id: String::new(),
+                    account_id: row.get(4),
                 });
         }
         Ok(map)
+    }
+
+    // -----------------------------------------------------------------------
+    // oauth_credentials CRUD (Codex OAuth cold store — full TokenRecord JSON)
+    // -----------------------------------------------------------------------
+
+    pub async fn upsert_oauth_credential(
+        &self,
+        record: &crab_auth::types::TokenRecord,
+    ) -> Result<()> {
+        let profile_id = record
+            .metadata
+            .get("profile_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("codex")
+            .to_string();
+        let provider = serde_json::to_string(&record.provider)
+            .unwrap_or_else(|_| "\"codex\"".to_string())
+            .trim_matches('"')
+            .to_string();
+        let payload = serde_json::to_value(record).context("serialize oauth credential")?;
+        let updated_at = chrono::Utc::now().timestamp();
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO oauth_credentials (id, provider, profile_id, payload, updated_at)
+                 VALUES ($1, $2, $3, $4::jsonb, $5)
+                 ON CONFLICT (id) DO UPDATE
+                 SET provider = EXCLUDED.provider,
+                     profile_id = EXCLUDED.profile_id,
+                     payload = EXCLUDED.payload,
+                     updated_at = EXCLUDED.updated_at",
+                &[&record.id, &provider, &profile_id, &payload, &updated_at],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn load_oauth_credential(
+        &self,
+        id: &str,
+    ) -> Result<Option<crab_auth::types::TokenRecord>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT payload FROM oauth_credentials WHERE id = $1",
+                &[&id],
+            )
+            .await?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let payload: serde_json::Value = row.get(0);
+        Ok(serde_json::from_value(payload).ok())
+    }
+
+    pub async fn load_oauth_credentials(&self) -> Result<Vec<crab_auth::types::TokenRecord>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT payload FROM oauth_credentials ORDER BY profile_id, id",
+                &[],
+            )
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: serde_json::Value = row.get(0);
+            if let Ok(rec) = serde_json::from_value::<crab_auth::types::TokenRecord>(payload) {
+                out.push(rec);
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_oauth_credential(&self, id: &str) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute("DELETE FROM oauth_credentials WHERE id = $1", &[&id])
+            .await?;
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -1368,17 +1484,15 @@ impl PgStore {
             };
             let input_tokens = e.input_tokens.map(to_pg_bigint);
             let output_tokens = e.output_tokens.map(to_pg_bigint);
-            let phase_durations_pg: Option<Json<serde_json::Value>> =
-                match &e.phase_durations_ms {
-                    Some(v) => Some(Json(
-                        serde_json::to_value(v).context("serialize phase_durations jsonb")?,
-                    )),
-                    None => None,
-                };
+            let phase_durations_pg: Option<Json<serde_json::Value>> = match &e.phase_durations_ms {
+                Some(v) => Some(Json(
+                    serde_json::to_value(v).context("serialize phase_durations jsonb")?,
+                )),
+                None => None,
+            };
             let retired_prefix_messages = e.retired_prefix_messages.map(|v| v as i32);
             let upstream_outbound_bytes = e.upstream_outbound_bytes.map(|v| v as i32);
-            let request_passthrough_prefix_len =
-                e.request_passthrough_prefix_len.map(|v| v as i32);
+            let request_passthrough_prefix_len = e.request_passthrough_prefix_len.map(|v| v as i32);
             let status_code = e.status_code.map(|v| v as i32);
             tx.execute(
                 &stmt,
@@ -1656,7 +1770,10 @@ impl PgStore {
     }
 
     /// Find the most recent trace log entry for a bare request_hash (legacy list IDs).
-    pub async fn find_trace_log_by_hash(&self, request_hash: &str) -> Result<Option<TraceLogEntry>> {
+    pub async fn find_trace_log_by_hash(
+        &self,
+        request_hash: &str,
+    ) -> Result<Option<TraceLogEntry>> {
         let client = self.pool.get().await?;
         let sql = format!(
             "{TRACE_LOGS_SELECT} FROM trace_logs WHERE request_hash = $1 \
@@ -1679,10 +1796,7 @@ impl PgStore {
     }
 
     /// Query top errors from trace_logs since a timestamp (for dataplane error attribution).
-    pub async fn query_top_errors_since(
-        &self,
-        since_ms: u64,
-    ) -> Result<Vec<serde_json::Value>> {
+    pub async fn query_top_errors_since(&self, since_ms: u64) -> Result<Vec<serde_json::Value>> {
         let client = self.pool().get().await?;
         let rows = client
             .query(
@@ -2272,32 +2386,17 @@ impl PgStore {
             .await?;
         Ok(rows
             .into_iter()
-            .map(|r| {
-                (
-                    r.get(0),
-                    r.get(1),
-                    r.get(2),
-                    r.get(3),
-                    r.get(4),
-                )
-            })
+            .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4)))
             .collect())
     }
 
     /// Delete model peak hour data.
     /// If `hour_bucket` is 0, deletes all data for the given model.
-    pub async fn delete_model_peak_hours(
-        &self,
-        model: &str,
-        hour_bucket: i64,
-    ) -> Result<u64> {
+    pub async fn delete_model_peak_hours(&self, model: &str, hour_bucket: i64) -> Result<u64> {
         let client = self.pool.get().await?;
         let count = if hour_bucket == 0 {
             client
-                .execute(
-                    "DELETE FROM model_peak_hours WHERE model = $1",
-                    &[&model],
-                )
+                .execute("DELETE FROM model_peak_hours WHERE model = $1", &[&model])
                 .await?
         } else {
             client
@@ -2404,12 +2503,8 @@ mod tests {
         );
         assert!(sql.contains("latency_ms >= $1"));
         assert!(sql.contains("latency_ms <= $2"));
-        assert!(sql.contains(
-            "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) >= $3"
-        ));
-        assert!(sql.contains(
-            "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) <= $4"
-        ));
+        assert!(sql.contains("COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) >= $3"));
+        assert!(sql.contains("COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) <= $4"));
         assert_eq!(params.len(), 4);
         assert_eq!(idx, 5);
     }

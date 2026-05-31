@@ -28,8 +28,12 @@ pub fn LogsManagePage() -> impl IntoView {
         let usage = usage;
         leptos::task::spawn_local(async move {
             match api::fetch_log_disk_usage().await {
-                Ok(v) => { usage.try_set(Some(Ok(v))); },
-                Err(e) => { usage.try_set(Some(Err(e))); },
+                Ok(v) => {
+                    usage.try_set(Some(Ok(v)));
+                }
+                Err(e) => {
+                    usage.try_set(Some(Err(e)));
+                }
             }
         });
     }
@@ -37,8 +41,12 @@ pub fn LogsManagePage() -> impl IntoView {
         let retention = retention;
         leptos::task::spawn_local(async move {
             match api::fetch_retention_policy().await {
-                Ok(v) => { retention.try_set(Some(Ok(v))); },
-                Err(e) => { retention.try_set(Some(Err(e))); },
+                Ok(v) => {
+                    retention.try_set(Some(Ok(v)));
+                }
+                Err(e) => {
+                    retention.try_set(Some(Err(e)));
+                }
             }
         });
     }
@@ -231,8 +239,12 @@ fn RetentionPolicyCard(
         let feedback = feedback;
         leptos::task::spawn_local(async move {
             match api::update_retention_policy(&req).await {
-                Ok(_) => { feedback.try_set(t.logs_manage_retention_saved().to_string()); },
-                Err(e) => { feedback.try_set(e); },
+                Ok(_) => {
+                    feedback.try_set(t.logs_manage_retention_saved().to_string());
+                }
+                Err(e) => {
+                    feedback.try_set(e);
+                }
             }
             saving.try_set(false);
         });
@@ -388,8 +400,12 @@ fn ManualClearCard(
                     // Reload disk usage
                     leptos::task::spawn_local(async move {
                         match api::fetch_log_disk_usage().await {
-                            Ok(v) => { usage.try_set(Some(Ok(v))); },
-                            Err(e) => { usage.try_set(Some(Err(e))); },
+                            Ok(v) => {
+                                usage.try_set(Some(Ok(v)));
+                            }
+                            Err(e) => {
+                                usage.try_set(Some(Err(e)));
+                            }
                         }
                     });
                 }

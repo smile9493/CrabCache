@@ -9,8 +9,9 @@
 | 响应缓存 L0 | Moka 热缓存 | 进程内存 | 不共享（设计如此） |
 | 响应缓存 L1 | 精确命中条目 | Redis `cache:{key}` | 共享 |
 | 响应缓存 L2 | 语义向量 | Qdrant | 共享 |
-| 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、连接参数、上游 relay、**域策略** | Redis `crab:state:*` | 共享（必选） |
-| 上游密钥池 | DeepSeek `sk-ds-*` | Redis `crab:state:upstream_keys` **+** `admin-state.json` v4 | 共享（`Some([])` 可清空池） |
+| 控制面 | 客户端 `sk-cc-*`、TTL、指纹、路由、连接参数、上游 relay、**域策略** | Redis `crab:state:*`（**热管道**）+ Admin PG 冷存 | 共享（必选） |
+| 上游密钥池 | Profile Key + OAuth 凭证 | Admin PG `upstream_profile_secrets` / `oauth_credentials`（**冷存权威**）→ push Gateway Redis | Admin PG 备份必选 |
+| 上游密钥池（旧） | DeepSeek `sk-ds-*` 镜像 | `admin-state.json` v4 + Redis | 见 [ADMIN_COLD_STORAGE.md](./ADMIN_COLD_STORAGE.md) |
 | 域用量计数 | `domain_usage`（当月 token/成本累计） | PostgreSQL `domain_usage` 表 + 进程内存 | PG 持久化，Admin 代理同步 |
 | 消费者月度用量 | `consumer_usage_monthly`（聚合 token/请求数） | PostgreSQL `consumer_usage_monthly` 表 | PG 持久化，从 trace_logs 聚合 |
 | 审计日志 | 管理操作记录（密钥创建/吊销/策略变更等） | PostgreSQL `audit_log` 表 | PG 持久化 |
@@ -102,11 +103,24 @@ docker compose up -d --scale gateway=2
 docker compose --profile admin up -d
 ```
 
-`admin_data` 卷挂载 `/app/data`，保存 `admin-state.json`（含 `keys_meta` 配额字段和 `upstream_pool_secrets`）。
+`admin_data` 卷挂载 `/app/data`，保存 `admin-state.json` 与 `auths/`（**PG 镜像**，非权威）。
 
-**上游 Key 双副本**：Admin 的 `upstream_pool_secrets`（default deepseek profile）同时写入 `admin-state.json` v4 和 Gateway Redis `crab:state:upstream_keys`。**运行时权威**为 Redis；Admin 重启时若 Redis 池为空，会从 `admin-state.json` 回推到 Gateway。上游 Key 通过 Dashboard → Upstream → Save Key Pool 配置，**无需**在 `.env` 中设置真实 Key。
+### 冷存 vs 热管道（Key / 凭证 / 账号）
 
-**双源说明**：Admin 的 `domain_policies` 也写入 `admin-state.json`，并在启动时 `sync_domain_policies_to_gateway` 推到 Gateway。**运行时权威**为 Gateway Redis `crab:state:domain_policies`；多 Gateway 副本以 Redis 为准，Admin 重启后应从 Management `GET /v1/domains/policies` 对齐（勿只在 Admin 本地改策略而不同步网关）。
+**完整规范见 [ADMIN_COLD_STORAGE.md](./ADMIN_COLD_STORAGE.md)。**
+
+| 数据 | 冷存（长期权威） | 热管道（运行时） |
+|------|------------------|------------------|
+| Profile 上游 Key 池 | PostgreSQL `upstream_profile_secrets` | Gateway Redis + 内存 |
+| Codex OAuth 凭证（含 refresh_token） | PostgreSQL `oauth_credentials` | `auth_dir` JSON 镜像 |
+| 客户端 `sk-cc-*` 元数据 | PostgreSQL `keys_meta` | Redis `crab:state:keys` |
+| 默认 DeepSeek 上游 Key | PostgreSQL `upstream_pool_secrets` | Redis `crab:state:upstream_keys` |
+
+启用 Admin PG：`CRADMIN_PG_URL=postgres://...`。所有 Key 池增量/改造 **必须先写 PG，再 push Gateway**。
+
+**旧说明（已过时）**：~~Admin 的 upstream 密钥运行时权威为 Redis~~ → 现 **PG 为 Admin 权威**，Redis 仅为 Gateway 热管道；Admin 重启从 PG hydrate 并 push Gateway。
+
+**双源说明**：Admin 的 `domain_policies` 写入 PG 与 `admin-state.json`，并在启动时 `sync_domain_policies_to_gateway` 推到 Gateway。**Gateway 运行时**仍读 Redis；策略冷存以 PG 为准。
 
 ## 备份
 

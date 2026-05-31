@@ -268,7 +268,14 @@ mod tests {
                 100.0,
                 false,
             ),
-            SimulatedTraceEntry::from_request("Query A", Some("c1".to_string()), "m", 10, 5.0, true),
+            SimulatedTraceEntry::from_request(
+                "Query A",
+                Some("c1".to_string()),
+                "m",
+                10,
+                5.0,
+                true,
+            ),
             SimulatedTraceEntry::from_request("Query B", None, "m", 10, 100.0, false),
             SimulatedTraceEntry::from_request("Query C", None, "m", 10, 100.0, false),
         ];

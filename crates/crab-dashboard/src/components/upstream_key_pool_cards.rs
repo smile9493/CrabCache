@@ -1,5 +1,5 @@
 use crate::locale::use_translations;
-use crate::types::{KeyQuotaInfo, UpstreamKeyView};
+use crate::types::{CodexQuotaWindowItem, KeyQuotaInfo, UpstreamKeyView};
 use leptos::prelude::*;
 
 fn short_account_id(account_id: &str) -> String {
@@ -21,12 +21,55 @@ fn plan_badge_class(plan: &str) -> &'static str {
     }
 }
 
+/// Format a Unix timestamp (seconds) as `MM/DD HH:mm` using JS local time.
+fn format_reset_at(secs: i64) -> String {
+    let ms = (secs as f64) * 1000.0;
+    let js_date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms));
+    let month = js_date.get_month() + 1;
+    let day = js_date.get_date();
+    let hour = js_date.get_hours();
+    let minute = js_date.get_minutes();
+    format!("{:02}/{:02} {:02}:{:02}", month, day, hour, minute)
+}
+
+/// Map a window id to a localized label string.
+fn window_label(t: &crate::locale::Translations, window: &CodexQuotaWindowItem) -> String {
+    match window.id.as_str() {
+        "five-hour" => t.codex_quota_window_five_hour().to_string(),
+        "weekly" => t.codex_quota_window_weekly().to_string(),
+        "code-review-five-hour" => t.codex_quota_window_code_review_five_hour().to_string(),
+        "code-review-weekly" => t.codex_quota_window_code_review_weekly().to_string(),
+        _ => window.label.clone(),
+    }
+}
+
 #[component]
 fn CodexRateQuotaBar(
-    label: &'static str,
+    label: String,
     used_percent: Option<f64>,
-    reset_secs: Option<u64>,
+    reset_at_secs: Option<i64>,
 ) -> impl IntoView {
+    let has_data = used_percent.is_some();
+    let label_no_data = label.clone();
+    let label_data = label;
+
+    if !has_data {
+        // No data: show placeholder without progress bar
+        return view! {
+            <div class="upstream-quota-row">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-xs text-theme-muted">{label_no_data}</span>
+                    <span class="text-xs font-mono text-theme-muted">{"--"}</span>
+                </div>
+                <div class="upstream-quota-track opacity-30">
+                    <div class="upstream-quota-fill upstream-quota-fill-high" style="width: 0%"></div>
+                </div>
+                <div class="text-[10px] text-theme-muted mt-0.5 font-mono">{"-"}</div>
+            </div>
+        }
+        .into_any();
+    }
+
     let used = used_percent.unwrap_or(0.0).clamp(0.0, 100.0);
     let remaining = (100.0 - used).clamp(0.0, 100.0);
     let bar_color = if remaining >= 30.0 {
@@ -36,12 +79,12 @@ fn CodexRateQuotaBar(
     } else {
         "upstream-quota-fill-low"
     };
-    let reset_label = reset_secs.map(|s| format!("{s}s"));
+    let reset_label = reset_at_secs.map(format_reset_at);
 
     view! {
         <div class="upstream-quota-row">
             <div class="flex items-center justify-between gap-2 mb-1">
-                <span class="text-xs text-theme-muted">{label}</span>
+                <span class="text-xs text-theme-muted">{label_data}</span>
                 <span class="text-xs font-mono">{format!("{remaining:.0}%")}</span>
             </div>
             <div class="upstream-quota-track">
@@ -52,23 +95,48 @@ fn CodexRateQuotaBar(
             })}
         </div>
     }
+    .into_any()
 }
 
 #[component]
 fn KeyQuotaSection(quota: KeyQuotaInfo) -> impl IntoView {
     let t = use_translations();
+
+    // Dynamic window list from codex_windows (CPA full window list)
+    if let Some(windows) = &quota.codex_windows {
+        if !windows.is_empty() {
+            let items = windows.clone();
+            return view! {
+                <div class="space-y-2 mt-3">
+                    {items.into_iter().map(|w| {
+                        let label = window_label(&t, &w);
+                        view! {
+                            <CodexRateQuotaBar
+                                label=label
+                                used_percent=w.used_percent
+                                reset_at_secs=w.reset_at_secs
+                            />
+                        }
+                    }).collect_view()}
+                </div>
+            }
+            .into_any();
+        }
+    }
+
+    // Fallback: legacy primary/secondary two-bar display
     if quota.primary_used_percent.is_some() || quota.secondary_used_percent.is_some() {
         return view! {
             <div class="space-y-2 mt-3">
                 <CodexRateQuotaBar
-                    label=t.upstream_pool_quota_primary()
+                    label=t.upstream_pool_quota_primary().to_string()
                     used_percent=quota.primary_used_percent
-                    reset_secs=quota.primary_reset_after_secs
+                    reset_at_secs=quota.primary_reset_at_secs
                 />
                 <CodexRateQuotaBar
-                    label=t.upstream_pool_quota_secondary()
+                    label=t.upstream_pool_quota_secondary().to_string()
                     used_percent=quota.secondary_used_percent
-                    reset_secs=quota.secondary_reset_after_secs
+                    reset_at_secs=quota.secondary_reset_at_secs
                 />
             </div>
         }
@@ -86,7 +154,9 @@ fn KeyTestStatus(
     key_id: String,
     enabled: bool,
     key_testing: ReadSignal<std::collections::HashMap<String, bool>>,
-    key_test_results: ReadSignal<std::collections::HashMap<String, crate::types::UpstreamTestResult>>,
+    key_test_results: ReadSignal<
+        std::collections::HashMap<String, crate::types::UpstreamTestResult>,
+    >,
 ) -> impl IntoView {
     let t = use_translations();
     move || {
@@ -139,7 +209,9 @@ pub fn UpstreamKeyPoolCards(
     on_test: Callback<String>,
     on_delete_confirm: Callback<String>,
     key_testing: ReadSignal<std::collections::HashMap<String, bool>>,
-    key_test_results: ReadSignal<std::collections::HashMap<String, crate::types::UpstreamTestResult>>,
+    key_test_results: ReadSignal<
+        std::collections::HashMap<String, crate::types::UpstreamTestResult>,
+    >,
     delete_confirm_id: RwSignal<Option<String>>,
     key_deleting: ReadSignal<std::collections::HashMap<String, bool>>,
 ) -> impl IntoView {
@@ -165,12 +237,16 @@ pub fn UpstreamKeyPoolCards(
                 } else {
                     "upstream-key-card upstream-key-card-disabled"
                 };
+                let card_title = email
+                    .clone()
+                    .filter(|e| e.contains('@'))
+                    .unwrap_or_else(|| key_id.clone());
                 view! {
                     <div class=card_class>
                         <div class="flex items-start justify-between gap-2 mb-2">
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="upstream-key-card-id">{key_id.clone()}</span>
+                                    <span class="upstream-key-card-id">{card_title.clone()}</span>
                                     {plan.as_ref().map(|p| view! {
                                         <span class=plan_badge_class(p)>{p.clone()}</span>
                                     })}
@@ -179,8 +255,8 @@ pub fn UpstreamKeyPoolCards(
                                     </span>
                                 </div>
                                 <div class="text-xs text-theme-muted font-mono mt-1 truncate">{k.preview.clone()}</div>
-                                {email.map(|em| view! {
-                                    <div class="text-xs text-theme-muted mt-1 truncate">{em}</div>
+                                {(card_title != key_id).then(|| view! {
+                                    <div class="text-[11px] text-theme-muted font-mono mt-1 truncate">{key_id.clone()}</div>
                                 })}
                                 <div class="text-[11px] text-theme-muted font-mono mt-1">
                                     {t.upstream_pool_col_account()}: {account_short}

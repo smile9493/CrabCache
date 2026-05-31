@@ -16,9 +16,9 @@ pub use profile::{model_prefix_to_profile, resolve_upstream_profile_id};
 pub use select::{select_request_pipeline, validate_pipeline_override};
 pub use signals::cursor_agent_signals;
 pub use types::{
-    PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext, PipelineSelection,
-    PipelineSelectionReason, ProfileDescriptor, RequestPipeline, UpstreamProvider,
-    CODEX_STATIC_MODELS,
+    CODEX_STATIC_MODELS, PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext,
+    PipelineSelection, PipelineSelectionReason, ProfileDescriptor, RequestPipeline,
+    UpstreamProvider,
 };
 
 pub fn is_deepseek_v4_model(model: &str) -> bool {

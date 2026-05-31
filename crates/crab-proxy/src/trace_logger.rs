@@ -656,32 +656,97 @@ pub fn compute_phase_durations(
     let mut map = serde_json::Map::new();
     let mut any = false;
 
-    let check = |name: &str, ts: Option<std::time::Instant>, map: &mut serde_json::Map<String, serde_json::Value>, any: &mut bool| {
+    let check = |name: &str,
+                 ts: Option<std::time::Instant>,
+                 map: &mut serde_json::Map<String, serde_json::Value>,
+                 any: &mut bool| {
         if let Some(t) = ts {
             let ms = t.duration_since(start).as_secs_f64() * 1000.0;
-            map.insert(name.to_string(), serde_json::Value::Number(
-                serde_json::Number::from_f64(ms).unwrap_or(serde_json::Number::from(0))
-            ));
+            map.insert(
+                name.to_string(),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(ms).unwrap_or(serde_json::Number::from(0)),
+                ),
+            );
             *any = true;
         }
     };
 
-    check("body_read_start", timeline.body_read_start, &mut map, &mut any);
-    check("body_read_done", timeline.body_read_done, &mut map, &mut any);
-    check("json_parse_done", timeline.json_parse_done, &mut map, &mut any);
-    check("pipeline_select_done", timeline.pipeline_select_done, &mut map, &mut any);
-    check("cache_lookup_done", timeline.cache_lookup_done, &mut map, &mut any);
-    check("upstream_connect_done", timeline.upstream_connect_done, &mut map, &mut any);
-    check("upstream_headers_sent", timeline.upstream_headers_sent, &mut map, &mut any);
-    check("upstream_body_sent", timeline.upstream_body_sent, &mut map, &mut any);
-    check("upstream_response_headers", timeline.upstream_response_headers, &mut map, &mut any);
+    check(
+        "body_read_start",
+        timeline.body_read_start,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "body_read_done",
+        timeline.body_read_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "json_parse_done",
+        timeline.json_parse_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "pipeline_select_done",
+        timeline.pipeline_select_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "cache_lookup_done",
+        timeline.cache_lookup_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "upstream_connect_done",
+        timeline.upstream_connect_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "upstream_headers_sent",
+        timeline.upstream_headers_sent,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "upstream_body_sent",
+        timeline.upstream_body_sent,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "upstream_response_headers",
+        timeline.upstream_response_headers,
+        &mut map,
+        &mut any,
+    );
     check("ttft", timeline.ttft, &mut map, &mut any);
     check("prefill_done", timeline.prefill_done, &mut map, &mut any);
-    check("upstream_body_done", timeline.upstream_body_done, &mut map, &mut any);
-    check("cache_write_done", timeline.cache_write_done, &mut map, &mut any);
+    check(
+        "upstream_body_done",
+        timeline.upstream_body_done,
+        &mut map,
+        &mut any,
+    );
+    check(
+        "cache_write_done",
+        timeline.cache_write_done,
+        &mut map,
+        &mut any,
+    );
     check("logging_done", timeline.logging_done, &mut map, &mut any);
 
-    if any { Some(serde_json::Value::Object(map)) } else { None }
+    if any {
+        Some(serde_json::Value::Object(map))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

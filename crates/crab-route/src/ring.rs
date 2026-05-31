@@ -348,7 +348,11 @@ impl LbRouter {
         let score_a = score_fn(&meta_a.name);
         let score_b = score_fn(&meta_b.name);
 
-        let winner = if score_a <= score_b { (pb_a, meta_a) } else { (pb_b, meta_b) };
+        let winner = if score_a <= score_b {
+            (pb_a, meta_a)
+        } else {
+            (pb_b, meta_b)
+        };
         Some(SelectedBackend {
             addr: match winner.0.addr {
                 PSocketAddr::Inet(a) => a,

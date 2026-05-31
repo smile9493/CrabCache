@@ -103,7 +103,6 @@ pub(crate) async fn run(
                 )
                 .await;
 
-
                 if sent_ok {
                     ctx.cache_tier = Some(tier);
                     ctx.cache_hit = Some(entry.clone());
@@ -229,7 +228,6 @@ pub(crate) async fn run(
                                 "Follower found cached response after leader completed"
                             );
                             global_metrics().record_coalesce_follower("hit");
-
 
                             let sent_ok = send_cached_response(
                                 session,

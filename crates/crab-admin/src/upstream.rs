@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::types::{SyncResult, UpstreamModel, UpstreamModelsResponse, UpstreamTestResult};
-use crab_control::{parse_upstream_base_url, validate_upstream_key, UpstreamProfileKeysModelsView};
+use crab_control::{UpstreamProfileKeysModelsView, parse_upstream_base_url, validate_upstream_key};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 const CODEX_CHATGPT_BASE: &str = "https://chatgpt.com";
 const CODEX_MODELS_CLIENT_VERSION: &str = "0.133.0";
 const CODEX_ORIGINATOR: &str = "codex_cli_rs";
-const CODEX_USER_AGENT: &str =
-    "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9";
+const CODEX_USER_AGENT: &str = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9";
 
 pub async fn test_upstream_connection(base_url: &str, api_key: &str) -> UpstreamTestResult {
     if looks_like_codex_oauth_access_token(api_key) || base_url.contains("chatgpt.com") {
@@ -578,9 +577,10 @@ pub async fn sync_models_internal(
     state.flush_persist();
 
     let provider = profile_provider_async(state, profile_id).await;
-    let base_url = profile_base_url_async(state, profile_id).await.unwrap_or_default();
-    if provider.eq_ignore_ascii_case("codex")
-        || is_codex_upstream(&provider, profile_id, &base_url)
+    let base_url = profile_base_url_async(state, profile_id)
+        .await
+        .unwrap_or_default();
+    if provider.eq_ignore_ascii_case("codex") || is_codex_upstream(&provider, profile_id, &base_url)
     {
         let mut routing_catalog: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();

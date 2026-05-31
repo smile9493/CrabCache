@@ -1,9 +1,8 @@
 //! Conversation-level upstream key binding for MiMo pipeline.
 //!
 //! Once a conversation binds to a key, all subsequent requests from the same
-//! conversation use that key (no rotation) until:
-//! - The binding expires after `mimo_key_binding_ttl_secs` of idle time, or
-//! - The key's concurrency exceeds `mimo_key_max_inflight` (temporarily overflow).
+//! conversation use that key unless the key is permanently rejected or transient
+//! failures cross the configured failure threshold.
 //!
 //! Uses manual idle TTL checks in `get()` (moka `time_to_idle` requires a Tokio runtime at build).
 
@@ -23,6 +22,7 @@ pub struct KeyBinding {
     pub key_id: String,
     pub bound_at_ms: u64,
     pub last_used_ms: u64,
+    pub transient_failures: u32,
 }
 
 /// Thread-safe store mapping stable session id -> upstream key id.
@@ -33,6 +33,11 @@ pub struct KeyBindingStore {
 
 impl KeyBindingStore {
     pub fn new(ttl_secs: u64) -> Arc<Self> {
+        let ttl_secs = if ttl_secs == 0 {
+            0
+        } else {
+            ttl_secs.max(86_400)
+        };
         Arc::new(Self {
             cache: Cache::builder().max_capacity(50_000).build(),
             ttl_ms: ttl_secs.saturating_mul(1000),
@@ -59,6 +64,7 @@ impl KeyBindingStore {
                 key_id,
                 bound_at_ms: now,
                 last_used_ms: now,
+                transient_failures: 0,
             },
         );
     }
@@ -71,9 +77,39 @@ impl KeyBindingStore {
         }
     }
 
+    /// Count a transient upstream failure for the currently-bound key.
+    /// Returns the updated failure count when the binding still points to `key_id`.
+    pub fn record_failure(&self, session_id: &str, key_id: &str) -> Option<u32> {
+        let mut binding = self.cache.get(session_id)?;
+        if binding.key_id != key_id {
+            return None;
+        }
+        binding.last_used_ms = now_ms();
+        binding.transient_failures = binding.transient_failures.saturating_add(1);
+        let count = binding.transient_failures;
+        self.cache.insert(session_id.to_string(), binding);
+        Some(count)
+    }
+
+    /// Clear transient failure strikes after a successful upstream response.
+    pub fn reset_failures(&self, session_id: &str, key_id: &str) {
+        if let Some(mut binding) = self.cache.get(session_id) {
+            if binding.key_id == key_id {
+                binding.last_used_ms = now_ms();
+                binding.transient_failures = 0;
+                self.cache.insert(session_id.to_string(), binding);
+            }
+        }
+    }
+
     /// Remove a binding explicitly (e.g., after key 401 / permanent failure).
     pub fn remove(&self, session_id: &str) {
         self.cache.remove(session_id);
+    }
+
+    /// Namespace prefix so Codex and MiMo bindings on the same conversation id do not collide.
+    pub fn codex_session_key(session_id: &str) -> String {
+        format!("codex:{session_id}")
     }
 
     /// Number of active bindings (for diagnostics).

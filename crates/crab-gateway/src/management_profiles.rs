@@ -1,6 +1,5 @@
 //! Management API: multi-vendor upstream profiles.
 
-
 use axum::{
     Json,
     extract::{Path, State},
@@ -10,10 +9,9 @@ use axum::{
 use crab_control::{
     CircuitBreakerView, ErrorResponse, KeyQuotaInfo, PatchUpstreamKeyRequest,
     ProfileRoutingBackendView, ProfileRoutingView, PutUpstreamProfileKeysRequest,
-    PutUpstreamProfileRequest, RoutingKeyPoolSummary, UpstreamKeyInput,
-    UpstreamKeyModelsEntry, UpstreamKeyView, UpstreamKeysPutMode,
-    UpstreamProfileKeysExport, UpstreamProfileKeysModelsView, UpstreamProfileKeysView,
-    UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
+    PutUpstreamProfileRequest, RoutingKeyPoolSummary, UpstreamKeyInput, UpstreamKeyModelsEntry,
+    UpstreamKeyView, UpstreamKeysPutMode, UpstreamProfileKeysExport, UpstreamProfileKeysModelsView,
+    UpstreamProfileKeysView, UpstreamProfileView, UpstreamProfilesResponse, UpstreamTestResult,
     parse_upstream_base_url, validate_upstream_key,
 };
 use crab_proxy::{
@@ -55,6 +53,9 @@ async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo>
             secondary_used_percent: None,
             primary_reset_after_secs: None,
             secondary_reset_after_secs: None,
+            primary_reset_at_secs: None,
+            secondary_reset_at_secs: None,
+            codex_windows: None,
         });
     }
 
@@ -76,6 +77,9 @@ async fn parse_balance_response(resp: reqwest::Response) -> Option<KeyQuotaInfo>
             secondary_used_percent: None,
             primary_reset_after_secs: None,
             secondary_reset_after_secs: None,
+            primary_reset_at_secs: None,
+            secondary_reset_at_secs: None,
+            codex_windows: None,
         });
     }
 
@@ -88,10 +92,7 @@ async fn fetch_codex_wham_usage(
     api_key: &str,
     account_id: &str,
 ) -> Option<KeyQuotaInfo> {
-    let url = format!(
-        "{}/backend-api/wham/usage",
-        base_url.trim_end_matches('/')
-    );
+    let url = format!("{}/backend-api/wham/usage", base_url.trim_end_matches('/'));
     let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -109,73 +110,7 @@ async fn fetch_codex_wham_usage(
         return None;
     }
     let body: serde_json::Value = resp.json().await.ok()?;
-    let parse_f64 = |v: &serde_json::Value| -> Option<f64> {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
-    };
-    let parse_u64 = |v: &serde_json::Value| -> Option<u64> {
-        v.as_u64()
-            .or_else(|| v.as_i64().map(|n| n.max(0) as u64))
-            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-    };
-    let plan_type = body
-        .get("plan_type")
-        .or_else(|| body.get("planType"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let rate_limit = body.get("rate_limit").or_else(|| body.get("rateLimit"));
-    let primary = rate_limit
-        .and_then(|v| v.get("primary_window").or_else(|| v.get("primaryWindow")));
-    let secondary = rate_limit
-        .and_then(|v| v.get("secondary_window").or_else(|| v.get("secondaryWindow")));
-    let primary_used_percent = primary
-        .and_then(|v| v.get("used_percent").or_else(|| v.get("usedPercent")))
-        .and_then(parse_f64);
-    let secondary_used_percent = secondary
-        .and_then(|v| v.get("used_percent").or_else(|| v.get("usedPercent")))
-        .and_then(parse_f64);
-    let primary_reset_after_secs = primary
-        .and_then(|v| v.get("reset_after_seconds").or_else(|| v.get("resetAfterSeconds")))
-        .and_then(parse_u64);
-    let secondary_reset_after_secs = secondary
-        .and_then(|v| v.get("reset_after_seconds").or_else(|| v.get("resetAfterSeconds")))
-        .and_then(parse_u64);
-    let balance = body
-        .get("credit_balance")
-        .or_else(|| body.get("balance"))
-        .and_then(parse_f64);
-    let total_used = body
-        .get("used")
-        .or_else(|| body.get("total_used"))
-        .and_then(parse_f64);
-    let rate_allowed = rate_limit
-        .and_then(|v| v.get("allowed"))
-        .and_then(|v| v.as_bool());
-    let limit_reached = rate_limit
-        .and_then(|v| v.get("limit_reached").or_else(|| v.get("limitReached")))
-        .and_then(|v| v.as_bool());
-    let is_available = rate_allowed.or_else(|| limit_reached.map(|v| !v));
-
-    if plan_type.is_some()
-        || primary_used_percent.is_some()
-        || secondary_used_percent.is_some()
-        || balance.is_some()
-        || total_used.is_some()
-        || is_available.is_some()
-    {
-        return Some(KeyQuotaInfo {
-            is_available,
-            balance,
-            total_granted: None,
-            total_used,
-            plan_type,
-            primary_used_percent,
-            secondary_used_percent,
-            primary_reset_after_secs,
-            secondary_reset_after_secs,
-        });
-    }
-    None
+    crab_control::codex_wham::wham_to_key_quota_info(&body)
 }
 
 fn decode_codex_jwt_claims(token: &str) -> (Option<String>, Option<String>) {
@@ -610,6 +545,10 @@ pub async fn put_profile_keys(
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
         UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
     };
+    // Wire quota cache to the new pool before replacing
+    if let Some(qc) = &state.codex_quota_cache {
+        new_pool.set_quota_cache(qc.clone());
+    }
     state
         .runtime
         .replace_profile_pool(id, new_pool)
@@ -711,6 +650,10 @@ pub async fn delete_profile_key(
         )
             .into_response());
     };
+    // Wire quota cache to the new pool before replacing
+    if let Some(qc) = &state.codex_quota_cache {
+        new_pool.set_quota_cache(qc.clone());
+    }
     state
         .runtime
         .replace_profile_pool(profile_id, new_pool)
@@ -753,9 +696,7 @@ pub async fn test_upstream_profile(
 
     if profile.provider == crab_pipeline::UpstreamProvider::Codex {
         let start = std::time::Instant::now();
-        if account_id.is_empty()
-            || account_id == crab_proxy::DEFAULT_UPSTREAM_ACCOUNT_ID
-        {
+        if account_id.is_empty() || account_id == crab_proxy::DEFAULT_UPSTREAM_ACCOUNT_ID {
             return Ok(Json(UpstreamTestResult {
                 ok: false,
                 status_code: 0,
@@ -902,9 +843,7 @@ pub async fn test_upstream_profile_key(
 
     if profile.provider == crab_pipeline::UpstreamProvider::Codex {
         let start = std::time::Instant::now();
-        if account_id.is_empty()
-            || account_id == crab_proxy::DEFAULT_UPSTREAM_ACCOUNT_ID
-        {
+        if account_id.is_empty() || account_id == crab_proxy::DEFAULT_UPSTREAM_ACCOUNT_ID {
             return Ok(Json(UpstreamTestResult {
                 ok: false,
                 status_code: 0,

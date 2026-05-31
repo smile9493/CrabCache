@@ -2028,7 +2028,9 @@ impl Translations {
     pub fn session_backend_requests_fmt(self, count: u64, hit_pct: f64, latency_ms: f64) -> String {
         match self.locale {
             Locale::ZhCN => format!("请求 {count} · 命中 {hit_pct:.1}% · {latency_ms:.1}ms"),
-            Locale::EnUS => format!("requests: {count}  hit: {hit_pct:.1}%  latency: {latency_ms:.1}ms"),
+            Locale::EnUS => {
+                format!("requests: {count}  hit: {hit_pct:.1}%  latency: {latency_ms:.1}ms")
+            }
         }
     }
     pub fn session_drilldown_title(self) -> &'static str {
@@ -4581,8 +4583,12 @@ impl Translations {
     }
     pub fn upstream_pool_hint(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "格式: secret 或 account_id:secret (每行一个)。留空 account_id 将自动分配独立 ID。",
-            Locale::EnUS => "Format: secret or account_id:secret (one per line). Empty account_id gets auto-assigned.",
+            Locale::ZhCN => {
+                "格式: secret 或 account_id:secret (每行一个)。留空 account_id 将自动分配独立 ID。"
+            }
+            Locale::EnUS => {
+                "Format: secret or account_id:secret (one per line). Empty account_id gets auto-assigned."
+            }
         }
     }
     pub fn upstream_test_btn(self) -> &'static str {
@@ -4753,6 +4759,30 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "7 天窗口",
             Locale::EnUS => "7d window",
+        }
+    }
+    pub fn codex_quota_window_five_hour(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "5 小时窗口",
+            Locale::EnUS => "5h window",
+        }
+    }
+    pub fn codex_quota_window_weekly(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "7 天窗口",
+            Locale::EnUS => "7d window",
+        }
+    }
+    pub fn codex_quota_window_code_review_five_hour(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "代码审查 5h",
+            Locale::EnUS => "Code Review 5h",
+        }
+    }
+    pub fn codex_quota_window_code_review_weekly(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "代码审查 7d",
+            Locale::EnUS => "Code Review 7d",
         }
     }
     pub fn upstream_quota_available(self) -> &'static str {
@@ -5634,7 +5664,9 @@ impl Translations {
     pub fn upstream_codex_json_import_hint(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "粘贴 accounts[] 导出或 codex-*.json 内容；过期 token 将自动 refresh",
-            Locale::EnUS => "Paste accounts[] export or codex-*.json; expired tokens are auto-refreshed",
+            Locale::EnUS => {
+                "Paste accounts[] export or codex-*.json; expired tokens are auto-refreshed"
+            }
         }
     }
     pub fn upstream_codex_json_import_submit(self) -> &'static str {
@@ -5715,7 +5747,9 @@ impl Translations {
     pub fn dataplane_page_desc(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "实时数据平面可观测性：SLO、阶段延迟、错误归因",
-            Locale::EnUS => "Real-time data plane observability: SLO, phase latency, error attribution",
+            Locale::EnUS => {
+                "Real-time data plane observability: SLO, phase latency, error attribution"
+            }
         }
     }
     pub fn dataplane_cache_hit_rate(self) -> &'static str {

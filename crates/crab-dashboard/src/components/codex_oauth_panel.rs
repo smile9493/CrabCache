@@ -9,11 +9,11 @@ use crate::components::ui::*;
 use crate::locale::use_translations;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[component]
-pub fn CodexOAuthPanel(profile_id: String) -> impl IntoView {
+pub fn CodexOAuthPanel(profile_id: String, on_pool_changed: Callback<()>) -> impl IntoView {
     let t = use_translations();
     // Tab: 0 = Device Code, 1 = PKCE
     let tab: RwSignal<u8> = RwSignal::new(0);
@@ -51,10 +51,11 @@ pub fn CodexOAuthPanel(profile_id: String) -> impl IntoView {
             // Tab content
             {move || {
                 let pid = profile_id.clone();
+                let refresh = on_pool_changed;
                 if tab.get() == 0 {
-                    view! { <DeviceCodePanel profile_id=pid /> }.into_any()
+                    view! { <DeviceCodePanel profile_id=pid on_pool_changed=refresh /> }.into_any()
                 } else {
-                    view! { <PkcePanel profile_id=pid /> }.into_any()
+                    view! { <PkcePanel profile_id=pid on_pool_changed=refresh /> }.into_any()
                 }
             }}
         </div>
@@ -64,7 +65,7 @@ pub fn CodexOAuthPanel(profile_id: String) -> impl IntoView {
 // ─── Device Code Panel ────────────────────────────────────────────────────────
 
 #[component]
-fn DeviceCodePanel(profile_id: String) -> impl IntoView {
+fn DeviceCodePanel(profile_id: String, on_pool_changed: Callback<()>) -> impl IntoView {
     let t = use_translations();
 
     let session_id: RwSignal<Option<String>> = RwSignal::new(None);
@@ -93,7 +94,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::start_codex_device_login(&pid).await {
                 Ok(start) => {
-                    if !alive.load(Ordering::Relaxed) { return; }
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     session_id.set(Some(start.session_id));
                     user_code.set(Some(start.user_code));
                     verify_url.set(Some(start.verify_url));
@@ -102,7 +105,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                     copied.set(false);
                 }
                 Err(e) => {
-                    if !alive.load(Ordering::Relaxed) { return; }
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     error_msg.set(e);
                     flow_status.set("failed".to_string());
                 }
@@ -146,7 +151,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
     let alive_for_poll = Arc::clone(&alive);
     leptos::task::spawn_local(async move {
         loop {
-            if !alive_for_poll.load(Ordering::Relaxed) { break; }
+            if !alive_for_poll.load(Ordering::Relaxed) {
+                break;
+            }
             let status = flow_status.get_untracked();
             if status != "polling" {
                 TimeoutFuture::new(500).await;
@@ -158,7 +165,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
             if let Some(s) = sid {
                 match api::poll_codex_device_login(&pid, &s).await {
                     Ok(status_resp) => {
-                        if !alive.load(Ordering::Relaxed) { break; }
+                        if !alive.load(Ordering::Relaxed) {
+                            break;
+                        }
                         match status_resp.status.as_str() {
                             "pending" => {
                                 let interval = poll_interval.get_untracked();
@@ -166,14 +175,22 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                             }
                             "completed" => {
                                 flow_status.set("completed".to_string());
-                                if let Some(e) = status_resp.email { email.set(Some(e)); }
-                                if let Some(a) = status_resp.account_id { account_id.set(Some(a)); }
-                                if let Some(c) = status_resp.credential_id { credential_id.set(Some(c)); }
-                                crate::pages::upstream::signal_refresh_key_pool();
+                                if let Some(e) = status_resp.email {
+                                    email.set(Some(e));
+                                }
+                                if let Some(a) = status_resp.account_id {
+                                    account_id.set(Some(a));
+                                }
+                                if let Some(c) = status_resp.credential_id {
+                                    credential_id.set(Some(c));
+                                }
+                                on_pool_changed.run(());
                             }
                             "failed" | "expired" => {
                                 flow_status.set(status_resp.status.clone());
-                                if let Some(e) = status_resp.error { error_msg.set(e); }
+                                if let Some(e) = status_resp.error {
+                                    error_msg.set(e);
+                                }
                             }
                             _ => {
                                 flow_status.set("failed".to_string());
@@ -182,7 +199,9 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
                         }
                     }
                     Err(e) => {
-                        if !alive.load(Ordering::Relaxed) { break; }
+                        if !alive.load(Ordering::Relaxed) {
+                            break;
+                        }
                         error_msg.set(e);
                         flow_status.set("failed".to_string());
                     }
@@ -199,19 +218,26 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
         creds_loading.set(true);
         if let Ok(list) = api::list_codex_credentials(&pid_for_creds).await {
             if alive_for_creds.load(Ordering::Relaxed) {
-                credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
-                    id: c.id,
-                    email: c.email,
-                    plan_type: c.plan_type,
-                    expired_at: c.expired_at,
-                    disabled: c.disabled,
-                }).collect());
+                credentials.set(
+                    list.credentials
+                        .into_iter()
+                        .map(|c| CredentialEntry {
+                            id: c.id,
+                            email: c.email,
+                            plan_type: c.plan_type,
+                            expired_at: c.expired_at,
+                            disabled: c.disabled,
+                        })
+                        .collect(),
+                );
             }
         }
         creds_loading.set(false);
     });
 
-    on_cleanup(move || { alive.store(false, Ordering::Relaxed); });
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
+    });
 
     view! {
         <div class="space-y-3">
@@ -307,7 +333,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
             }}
 
             // Saved credentials
-            <CredentialList profile_id=profile_id.clone() credentials=credentials loading=creds_loading error_msg=error_msg />
+            <CredentialList profile_id=profile_id.clone() credentials=credentials loading=creds_loading error_msg=error_msg on_pool_changed=on_pool_changed />
         </div>
     }
 }
@@ -315,7 +341,7 @@ fn DeviceCodePanel(profile_id: String) -> impl IntoView {
 // ─── PKCE Panel ───────────────────────────────────────────────────────────────
 
 #[component]
-fn PkcePanel(profile_id: String) -> impl IntoView {
+fn PkcePanel(profile_id: String, on_pool_changed: Callback<()>) -> impl IntoView {
     let t = use_translations();
 
     let session_id: RwSignal<Option<String>> = RwSignal::new(None);
@@ -345,7 +371,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         leptos::task::spawn_local(async move {
             match api::start_codex_pkce_login(&pid).await {
                 Ok(resp) => {
-                    if !alive.load(Ordering::Relaxed) { return; }
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     session_id.set(Some(resp.session_id));
                     auth_url.set(Some(resp.auth_url));
                     pkce_mode.set(resp.mode.clone());
@@ -357,7 +385,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                     copied.set(false);
                 }
                 Err(e) => {
-                    if !alive.load(Ordering::Relaxed) { return; }
+                    if !alive.load(Ordering::Relaxed) {
+                        return;
+                    }
                     error_msg.set(e);
                     flow_status.set("failed".to_string());
                 }
@@ -396,7 +426,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
                         email.set(resp.email);
                         account_id.set(resp.account_id);
                         credential_id.set(resp.credential_id);
-                        crate::pages::upstream::signal_refresh_key_pool();
+                        on_pool_changed.run(());
                     } else {
                         flow_status.set("failed".to_string());
                         error_msg.set(resp.error.unwrap_or_else(|| "Exchange failed".into()));
@@ -431,7 +461,9 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
     let alive_for_poll = Arc::clone(&alive);
     leptos::task::spawn_local(async move {
         loop {
-            if !alive_for_poll.load(Ordering::Relaxed) { break; }
+            if !alive_for_poll.load(Ordering::Relaxed) {
+                break;
+            }
             let status = flow_status.get_untracked();
             if status != "polling" {
                 TimeoutFuture::new(500).await;
@@ -443,25 +475,33 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             if let Some(s) = sid {
                 match api::poll_codex_pkce_login(&pid, &s).await {
                     Ok(resp) => {
-                        if !alive.load(Ordering::Relaxed) { break; }
+                        if !alive.load(Ordering::Relaxed) {
+                            break;
+                        }
                         match resp.status.as_str() {
-                            "pending" => { TimeoutFuture::new(3000).await; }
+                            "pending" => {
+                                TimeoutFuture::new(3000).await;
+                            }
                             "completed" => {
                                 flow_status.set("completed".to_string());
                                 email.set(resp.email);
                                 account_id.set(resp.account_id);
                                 credential_id.set(resp.credential_id);
-                                crate::pages::upstream::signal_refresh_key_pool();
+                                on_pool_changed.run(());
                             }
                             "failed" | "expired" => {
                                 flow_status.set(resp.status.clone());
                                 error_msg.set(resp.error.unwrap_or_else(|| "Login failed".into()));
                             }
-                            _ => { TimeoutFuture::new(3000).await; }
+                            _ => {
+                                TimeoutFuture::new(3000).await;
+                            }
                         }
                     }
                     Err(e) => {
-                        if !alive.load(Ordering::Relaxed) { break; }
+                        if !alive.load(Ordering::Relaxed) {
+                            break;
+                        }
                         error_msg.set(e);
                         flow_status.set("failed".to_string());
                     }
@@ -479,19 +519,26 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
         creds_loading.set(true);
         if let Ok(list) = api::list_codex_credentials(&pid_for_creds).await {
             if alive_for_creds.load(Ordering::Relaxed) {
-                credentials.set(list.credentials.into_iter().map(|c| CredentialEntry {
-                    id: c.id,
-                    email: c.email,
-                    plan_type: c.plan_type,
-                    expired_at: c.expired_at,
-                    disabled: c.disabled,
-                }).collect());
+                credentials.set(
+                    list.credentials
+                        .into_iter()
+                        .map(|c| CredentialEntry {
+                            id: c.id,
+                            email: c.email,
+                            plan_type: c.plan_type,
+                            expired_at: c.expired_at,
+                            disabled: c.disabled,
+                        })
+                        .collect(),
+                );
             }
         }
         creds_loading.set(false);
     });
 
-    on_cleanup(move || { alive.store(false, Ordering::Relaxed); });
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
+    });
 
     view! {
         <div class="space-y-3">
@@ -621,7 +668,7 @@ fn PkcePanel(profile_id: String) -> impl IntoView {
             }}
 
             // Saved credentials
-            <CredentialList profile_id=profile_id.clone() credentials=credentials loading=creds_loading error_msg=error_msg />
+            <CredentialList profile_id=profile_id.clone() credentials=credentials loading=creds_loading error_msg=error_msg on_pool_changed=on_pool_changed />
         </div>
     }
 }
@@ -643,6 +690,7 @@ fn CredentialList(
     credentials: RwSignal<Vec<CredentialEntry>>,
     loading: RwSignal<bool>,
     error_msg: RwSignal<String>,
+    on_pool_changed: Callback<()>,
 ) -> impl IntoView {
     let t = use_translations();
     let pid = profile_id.clone();
@@ -723,7 +771,7 @@ fn CredentialList(
                         error_msg.set(err_summary.join("; "));
                     }
                     json_input.set(String::new());
-                    crate::pages::upstream::signal_refresh_key_pool();
+                    on_pool_changed.run(());
                     let reload_pid = p.clone();
                     let credentials = credentials;
                     let loading = loading;
@@ -811,7 +859,7 @@ fn CredentialList(
                                                     if let Err(e) = api::import_codex_credential(&p, &id).await {
                                                         error_msg.set(e);
                                                     } else {
-                                                        crate::pages::upstream::signal_refresh_key_pool();
+                                                        on_pool_changed.run(());
                                                     }
                                                 });
                                             }

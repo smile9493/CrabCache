@@ -590,7 +590,10 @@ impl GatewayAdminClient {
 
     pub async fn delete_upstream_key(&self, key_id: &str) -> Result<(), ControlError> {
         let resp = self
-            .authed(reqwest::Method::DELETE, &format!("/v1/upstream/keys/{key_id}"))
+            .authed(
+                reqwest::Method::DELETE,
+                &format!("/v1/upstream/keys/{key_id}"),
+            )
             .send()
             .await?;
         Self::check(resp).await?;

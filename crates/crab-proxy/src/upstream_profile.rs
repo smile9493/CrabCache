@@ -23,7 +23,9 @@ pub struct UpstreamProfileRuntime {
 
 /// Validate that a fallback chain has no cycles.
 /// Returns `Ok(())` if no cycle, or `Err(profile_id)` if a cycle is detected.
-pub fn validate_fallback_chain(profiles: &std::collections::HashMap<String, Option<String>>) -> Result<(), String> {
+pub fn validate_fallback_chain(
+    profiles: &std::collections::HashMap<String, Option<String>>,
+) -> Result<(), String> {
     use std::collections::HashSet;
 
     for start_id in profiles.keys() {

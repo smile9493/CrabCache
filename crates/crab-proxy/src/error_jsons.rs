@@ -44,10 +44,7 @@ pub fn format_openai_error_sse_for_client(error_json: &[u8], model: &str) -> Vec
         }],
     });
 
-    format!(
-        "data: {content_chunk}\n\ndata: {finish_chunk}\n\ndata: [DONE]\n\n"
-    )
-    .into_bytes()
+    format!("data: {content_chunk}\n\ndata: {finish_chunk}\n\ndata: [DONE]\n\n").into_bytes()
 }
 
 /// OpenAI Responses API SSE error (Codex CLI wire).
@@ -118,9 +115,15 @@ pub fn format_upstream_error_responses_stream(body: &[u8], status: u16, model: &
 }
 
 /// Pick SSE error shape for downstream wire API.
-pub fn format_client_error_sse(error_json: &[u8], model: &str, wire: crate::context::ClientWireApi) -> Vec<u8> {
+pub fn format_client_error_sse(
+    error_json: &[u8],
+    model: &str,
+    wire: crate::context::ClientWireApi,
+) -> Vec<u8> {
     match wire {
-        crate::context::ClientWireApi::Responses => format_responses_error_sse_for_client(error_json),
+        crate::context::ClientWireApi::Responses => {
+            format_responses_error_sse_for_client(error_json)
+        }
         crate::context::ClientWireApi::ChatCompletions => {
             format_openai_error_sse_for_client(error_json, model)
         }
@@ -347,10 +350,12 @@ mod tests {
         let out = format_upstream_error_for_client(body, 400);
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["error"]["type"], "invalid_request_error");
-        assert!(v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("not supported"));
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not supported")
+        );
     }
 
     #[test]

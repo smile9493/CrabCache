@@ -216,7 +216,8 @@ impl RedisReasoningStore {
         let pattern = format!("{prefix}:*");
         let mut cursor: u64 = 0;
         let mut entries: Vec<(String, f64)> = Vec::new();
-        let fetch_budget = PRUNE_MAX_KEYS_PER_TICK.min(key_count.saturating_sub(max_rows) + SCAN_COUNT);
+        let fetch_budget =
+            PRUNE_MAX_KEYS_PER_TICK.min(key_count.saturating_sub(max_rows) + SCAN_COUNT);
 
         loop {
             let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")

@@ -131,6 +131,8 @@ pub struct GatewayMetrics {
     pub pipeline_backpressure: IntCounterVec,
     /// MiMo conversation-level key binding events (hit/miss/spill/expired).
     pub key_binding: IntCounterVec,
+    /// Codex quota preflight results (proceed/blocked/fail_open).
+    pub codex_quota_preflight: IntCounterVec,
     /// Client lockout triggers (brute-force protection).
     pub client_lockout_total: IntCounter,
     /// Model-level lockout triggers (per profile/backend/model).
@@ -663,12 +665,18 @@ impl GatewayMetrics {
             &["event"],
         )?;
 
-        let client_lockout_total = IntCounter::with_opts(
+        let codex_quota_preflight = IntCounterVec::new(
             Opts::new(
-                "gateway_client_lockout_total",
-                "Total number of client lockout triggers (brute-force protection)",
+                "gateway_codex_quota_preflight_total",
+                "Codex quota preflight results (proceed/blocked/fail_open)",
             ),
+            &["result"],
         )?;
+
+        let client_lockout_total = IntCounter::with_opts(Opts::new(
+            "gateway_client_lockout_total",
+            "Total number of client lockout triggers (brute-force protection)",
+        ))?;
 
         let model_lockout_total = IntCounterVec::new(
             Opts::new(
@@ -759,6 +767,7 @@ impl GatewayMetrics {
             rejection_by_source,
             pipeline_backpressure,
             key_binding,
+            codex_quota_preflight,
             client_lockout_total,
             model_lockout_total,
             fallback_decision_total,
@@ -838,6 +847,7 @@ impl GatewayMetrics {
         registry.register(Box::new(self.rejection_by_source.clone()))?;
         registry.register(Box::new(self.pipeline_backpressure.clone()))?;
         registry.register(Box::new(self.key_binding.clone()))?;
+        registry.register(Box::new(self.codex_quota_preflight.clone()))?;
         registry.register(Box::new(self.client_lockout_total.clone()))?;
         registry.register(Box::new(self.model_lockout_total.clone()))?;
         registry.register(Box::new(self.fallback_decision_total.clone()))?;
@@ -946,6 +956,12 @@ impl GatewayMetrics {
     ///          "spill" (overflow to another key), "expired" (binding released).
     pub fn record_key_binding_event(&self, event: &str) {
         self.key_binding.with_label_values(&[event]).inc();
+    }
+
+    /// Record a Codex quota preflight event.
+    /// `result`: "proceed" (key has quota), "blocked" (low remaining), "fail_open" (WHAM fetch failed).
+    pub fn record_codex_quota_preflight(&self, result: &str) {
+        self.codex_quota_preflight.with_label_values(&[result]).inc();
     }
 
     pub fn record_deepseek_user_id_concurrency_rejected(&self, tier: &str) {

@@ -1,9 +1,9 @@
 use crate::state::AppState;
 use crate::trace_log::{self, TraceLogEntry};
-use std::sync::Arc;
-use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 /// When gateway writes PG directly (`CRABCACHE_TRACE_PG_URL`), set to `false` on admin.

@@ -135,8 +135,13 @@ mod tests {
     #[test]
     fn test_tls_profile_from_env_default() {
         // When env var is not set, should default to Chrome130
-        unsafe { std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION"); }
-        assert_eq!(TlsEmulationProfile::from_env(), TlsEmulationProfile::Chrome130);
+        unsafe {
+            std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION");
+        }
+        assert_eq!(
+            TlsEmulationProfile::from_env(),
+            TlsEmulationProfile::Chrome130
+        );
     }
 
     #[test]
@@ -144,8 +149,13 @@ mod tests {
         unsafe {
             std::env::set_var("CRABCACHE_OAUTH_TLS_EMULATION", "chrome124");
         }
-        assert_eq!(TlsEmulationProfile::from_env(), TlsEmulationProfile::Chrome124);
-        unsafe { std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION"); }
+        assert_eq!(
+            TlsEmulationProfile::from_env(),
+            TlsEmulationProfile::Chrome124
+        );
+        unsafe {
+            std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION");
+        }
     }
 
     #[test]
@@ -153,8 +163,13 @@ mod tests {
         unsafe {
             std::env::set_var("CRABCACHE_OAUTH_TLS_EMULATION", "Chrome130");
         }
-        assert_eq!(TlsEmulationProfile::from_env(), TlsEmulationProfile::Chrome130);
-        unsafe { std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION"); }
+        assert_eq!(
+            TlsEmulationProfile::from_env(),
+            TlsEmulationProfile::Chrome130
+        );
+        unsafe {
+            std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION");
+        }
     }
 
     #[test]
@@ -162,8 +177,13 @@ mod tests {
         unsafe {
             std::env::set_var("CRABCACHE_OAUTH_TLS_EMULATION", "firefox99");
         }
-        assert_eq!(TlsEmulationProfile::from_env(), TlsEmulationProfile::Chrome130);
-        unsafe { std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION"); }
+        assert_eq!(
+            TlsEmulationProfile::from_env(),
+            TlsEmulationProfile::Chrome130
+        );
+        unsafe {
+            std::env::remove_var("CRABCACHE_OAUTH_TLS_EMULATION");
+        }
     }
 
     #[test]

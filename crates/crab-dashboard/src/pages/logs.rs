@@ -165,7 +165,10 @@ pub fn LogsPage() -> impl IntoView {
             }
             page_generation.try_update(|g| *g += 1);
             let request_id = page_generation.try_get().unwrap_or(0);
-            let query = active_filter.try_get().unwrap_or_default().to_query(100, cursor);
+            let query = active_filter
+                .try_get()
+                .unwrap_or_default()
+                .to_query(100, cursor);
             let alive = Arc::clone(&alive);
             let load_detail = Arc::clone(&load_detail);
             leptos::task::spawn_local(async move {

@@ -14,6 +14,8 @@ pub enum RequestPipeline {
     CodexRelay,
     /// Codex client → DeepSeek upstream: Responses API ↔ Chat Completions with DeepSeek normalization.
     CodexDeepSeek,
+    /// Codex client → MiMo upstream: Responses API ↔ Chat Completions with MiMo normalization.
+    CodexMimo,
 }
 
 impl RequestPipeline {
@@ -26,6 +28,7 @@ impl RequestPipeline {
             RequestPipeline::GenericRelay => "generic_relay",
             RequestPipeline::CodexRelay => "codex_relay",
             RequestPipeline::CodexDeepSeek => "codex_deepseek",
+            RequestPipeline::CodexMimo => "codex_mimo",
         }
     }
 }
@@ -84,6 +87,7 @@ pub enum PipelineOverride {
     GenericRelay,
     CodexRelay,
     CodexDeepSeek,
+    CodexMimo,
 }
 
 impl PipelineOverride {
@@ -97,6 +101,7 @@ impl PipelineOverride {
             "generic_relay" => Self::GenericRelay,
             "codex_relay" => Self::CodexRelay,
             "codex_deepseek" => Self::CodexDeepSeek,
+            "codex_mimo" => Self::CodexMimo,
             _ => Self::Auto,
         }
     }
@@ -111,6 +116,7 @@ impl PipelineOverride {
             PipelineOverride::GenericRelay => "generic_relay",
             PipelineOverride::CodexRelay => "codex_relay",
             PipelineOverride::CodexDeepSeek => "codex_deepseek",
+            PipelineOverride::CodexMimo => "codex_mimo",
         }
     }
 }
@@ -152,7 +158,8 @@ pub enum PipelineSelectionReason {
     MimoProvider,
     CodexProvider,
     ModelAlias,
-    CodexDeepSeekModelAlias,
+    CodexDeepSeekProvider,
+    CodexMimoProvider,
 }
 
 impl PipelineSelectionReason {
@@ -168,7 +175,8 @@ impl PipelineSelectionReason {
             PipelineSelectionReason::MimoProvider => "mimo_provider",
             PipelineSelectionReason::CodexProvider => "codex_provider",
             PipelineSelectionReason::ModelAlias => "model_alias",
-            PipelineSelectionReason::CodexDeepSeekModelAlias => "codex_deepseek_model_alias",
+            PipelineSelectionReason::CodexDeepSeekProvider => "codex_deepseek_provider",
+            PipelineSelectionReason::CodexMimoProvider => "codex_mimo_provider",
         }
     }
 }

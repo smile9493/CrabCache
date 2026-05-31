@@ -76,7 +76,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
     });
 
     view! {
-        <div class="glass-card">
+        <div>
             // L3 prefix affinity hint
             {move || {
                 let t = use_translations();

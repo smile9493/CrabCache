@@ -70,8 +70,16 @@ fn disabled_guardrails_from_body(payload: &Value) -> HashSet<String> {
     };
     collect(payload.get("disabledGuardrails"));
     collect(payload.get("disabled_guardrails"));
-    collect(payload.get("metadata").and_then(|v| v.get("disabledGuardrails")));
-    collect(payload.get("metadata").and_then(|v| v.get("disabled_guardrails")));
+    collect(
+        payload
+            .get("metadata")
+            .and_then(|v| v.get("disabledGuardrails")),
+    );
+    collect(
+        payload
+            .get("metadata")
+            .and_then(|v| v.get("disabled_guardrails")),
+    );
     out
 }
 
@@ -225,7 +233,9 @@ pub fn evaluate_request_guardrails(payload: &Value, headers: &HeaderMap) -> Guar
     let mut labels = Vec::new();
 
     if !disabled.contains("prompt-injection")
-        && injection_patterns().iter().any(|needle| text.contains(needle))
+        && injection_patterns()
+            .iter()
+            .any(|needle| text.contains(needle))
     {
         labels.push("prompt-injection".to_string());
     }
@@ -378,6 +388,9 @@ mod tests {
         let patterns = vec!["/health".to_string(), "debug".to_string()];
         assert!(path_matches_bypass_skip_pattern("/health", &patterns));
         assert!(path_matches_bypass_skip_pattern("/debug/test", &patterns));
-        assert!(!path_matches_bypass_skip_pattern("/v1/chat/completions", &patterns));
+        assert!(!path_matches_bypass_skip_pattern(
+            "/v1/chat/completions",
+            &patterns
+        ));
     }
 }

@@ -15,6 +15,7 @@ use crate::sse::parse_sse_chunk;
 
 /// Upstream path for OpenAI-compatible chat backends (DeepSeek, MiMo, …).
 const CHAT_COMPLETIONS_UPSTREAM_PATH: &str = "/v1/chat/completions";
+const MIXED_MODE_REASONING_PLACEHOLDER: &str = "(this turn ran without thinking mode)";
 
 /// Three independent data-plane profiles — never share session sanitizers or chain namespaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +24,7 @@ pub enum ResponsesWireProfile {
     Codex,
     /// `CodexDeepSeek` / `CursorDeepSeekV4` / `DeepSeekLight` → api.deepseek.com.
     DeepSeek,
-    /// `MimoTokenPlanRelay` / `MimoPaygRelay` → MiMo OpenAI-compatible API.
+    /// `CodexMimo` / `MimoTokenPlanRelay` / `MimoPaygRelay` → MiMo OpenAI-compatible API.
     Mimo,
 }
 
@@ -45,9 +46,11 @@ pub fn responses_wire_profile(ctx: &GatewayContext) -> Option<ResponsesWireProfi
             | RequestPipeline::CursorDeepSeekV4
             | RequestPipeline::DeepSeekLight,
         ) => Some(ResponsesWireProfile::DeepSeek),
-        Some(RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay) => {
-            Some(ResponsesWireProfile::Mimo)
-        }
+        Some(
+            RequestPipeline::CodexMimo
+            | RequestPipeline::MimoTokenPlanRelay
+            | RequestPipeline::MimoPaygRelay,
+        ) => Some(ResponsesWireProfile::Mimo),
         _ => None,
     }
 }
@@ -63,12 +66,6 @@ pub enum ResponsesWireTarget {
 
 pub fn responses_wire_target(ctx: &GatewayContext) -> ResponsesWireTarget {
     match responses_wire_profile(ctx) {
-        // Responses→Chat for Codex: preserve tool messages; chain store owns history alignment.
-        Some(ResponsesWireProfile::Mimo)
-            if ctx.client_wire_api == ClientWireApi::Responses =>
-        {
-            ResponsesWireTarget::DeepSeek
-        }
         Some(ResponsesWireProfile::Mimo) => ResponsesWireTarget::Mimo,
         _ => ResponsesWireTarget::DeepSeek,
     }
@@ -176,7 +173,12 @@ fn responses_output_item_to_input(item: &Value) -> Option<Value> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("{}"),
         })),
-        "reasoning" => None,
+        "reasoning" => Some(json!({
+            "type": "reasoning",
+            "id": item.get("id").cloned().unwrap_or(Value::Null),
+            "summary": item.get("summary").cloned().unwrap_or(Value::Array(vec![])),
+            "encrypted_content": item.get("encrypted_content").cloned().unwrap_or(Value::Null),
+        })),
         _ => None,
     }
 }
@@ -200,12 +202,7 @@ pub fn store_responses_chain_output_for_ctx(
     response_id: &str,
     output: Vec<Value>,
 ) {
-    store_responses_chain_output(
-        store,
-        responses_chain_namespace(ctx),
-        response_id,
-        output,
-    );
+    store_responses_chain_output(store, responses_chain_namespace(ctx), response_id, output);
 }
 
 /// Convert a Responses API request body into Chat Completions JSON for upstream relay.
@@ -307,7 +304,10 @@ fn finalize_responses_messages_for_target(
 ) -> Vec<Value> {
     match target {
         ResponsesWireTarget::DeepSeek => strip_dangling_assistant_tool_calls(&messages),
-        ResponsesWireTarget::Mimo => filter_orphaned_tool_messages(&messages),
+        ResponsesWireTarget::Mimo => {
+            let filtered = filter_orphaned_tool_messages(&messages);
+            backfill_missing_assistant_reasoning(filtered)
+        }
     }
 }
 
@@ -365,7 +365,9 @@ fn sanitize_responses_input_item_ids(item: &Value) -> Value {
     let mut next = obj.clone();
     if (item_type == "function_call" || item_type == "function_call_output")
         && let Some(name) = next.get("name").and_then(|v| v.as_str())
-        && (!name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && (!name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             || name.len() > 128)
     {
         next.insert("name".into(), Value::String(sanitize_function_name(name)));
@@ -386,6 +388,67 @@ fn sanitize_responses_input_item_ids(item: &Value) -> Value {
     Value::Object(next)
 }
 
+fn reasoning_item_text(item: &Value) -> String {
+    if let Some(text) = item
+        .get("encrypted_content")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return text.to_string();
+    }
+    item.get("summary")
+        .and_then(|v| v.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("summary_text"))
+                .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn append_reasoning_to_assistant(current: &mut Option<Map<String, Value>>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+    let entry = current.get_or_insert_with(|| {
+        let mut m = Map::new();
+        m.insert("role".into(), json!("assistant"));
+        m.insert("content".into(), Value::String(String::new()));
+        m
+    });
+    let merged = entry
+        .get("reasoning_content")
+        .and_then(|v| v.as_str())
+        .map(|existing| format!("{existing}{text}"))
+        .unwrap_or(text);
+    entry.insert("reasoning_content".into(), Value::String(merged));
+}
+
+fn backfill_missing_assistant_reasoning(mut messages: Vec<Value>) -> Vec<Value> {
+    for msg in &mut messages {
+        if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            continue;
+        }
+        if msg
+            .get("reasoning_content")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+        {
+            continue;
+        }
+        if let Some(obj) = msg.as_object_mut() {
+            obj.insert(
+                "reasoning_content".into(),
+                Value::String(MIXED_MODE_REASONING_PLACEHOLDER.to_string()),
+            );
+        }
+    }
+    messages
+}
+
 /// Group `function_call` items into assistant `tool_calls` turns (OmniRoute-compatible).
 fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
@@ -404,13 +467,31 @@ fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
             .or_else(|| item.get("role").map(|_| "message"));
 
         match item_type {
-            Some("reasoning") => continue,
+            Some("reasoning") => {
+                append_reasoning_to_assistant(&mut current_assistant, reasoning_item_text(item));
+            }
             Some("message") => {
-                flush_assistant(&mut messages, &mut current_assistant);
                 let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
                 let content = responses_content_to_chat(item.get("content"), role);
-                if content_is_nonempty(&content) {
-                    messages.push(json!({ "role": role, "content": content }));
+                if role == "assistant" {
+                    if current_assistant
+                        .as_ref()
+                        .and_then(|m| m.get("content"))
+                        .is_some()
+                    {
+                        flush_assistant(&mut messages, &mut current_assistant);
+                    }
+                    let entry = current_assistant.get_or_insert_with(|| {
+                        let mut m = Map::new();
+                        m.insert("role".into(), json!("assistant"));
+                        m
+                    });
+                    entry.insert("content".into(), content);
+                } else {
+                    flush_assistant(&mut messages, &mut current_assistant);
+                    if content_is_nonempty(&content) {
+                        messages.push(json!({ "role": role, "content": content }));
+                    }
                 }
             }
             Some("function_call") => {
@@ -435,6 +516,9 @@ fn convert_responses_input_to_messages(items: &[Value]) -> Vec<Value> {
                     m.insert("tool_calls".into(), json!([]));
                     m
                 });
+                if !entry.get("tool_calls").and_then(|v| v.as_array()).is_some() {
+                    entry.insert("tool_calls".into(), json!([]));
+                }
                 if let Some(arr) = entry.get_mut("tool_calls").and_then(|v| v.as_array_mut()) {
                     arr.push(json!({
                         "id": call_id,
@@ -572,10 +656,7 @@ fn responses_content_to_chat(content: Option<&Value>, role: &str) -> Value {
                 }
             }
             if out_parts.len() == 1
-                && out_parts[0]
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    == Some("text")
+                && out_parts[0].get("type").and_then(|t| t.as_str()) == Some("text")
             {
                 Value::String(
                     out_parts[0]
@@ -772,6 +853,7 @@ impl ChatToResponsesSseTranslator {
                 "id": rs_id,
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": self.reasoning_text }],
+                "encrypted_content": self.reasoning_text,
             }));
         }
         if self.msg_item_added {
@@ -801,11 +883,7 @@ impl ChatToResponsesSseTranslator {
         self.upstream_sse_remainder.extend_from_slice(chunk);
         let mut out = Vec::new();
         self.maybe_emit_keepalive(&mut out);
-        while let Some(pos) = self
-            .upstream_sse_remainder
-            .iter()
-            .position(|b| *b == b'\n')
-        {
+        while let Some(pos) = self.upstream_sse_remainder.iter().position(|b| *b == b'\n') {
             let line_with_nl: Vec<u8> = self.upstream_sse_remainder.drain(..=pos).collect();
             let mut line = line_with_nl.as_slice();
             if line.ends_with(b"\n") {
@@ -857,7 +935,11 @@ impl ChatToResponsesSseTranslator {
 
             if !self.started {
                 self.started = true;
-                if let Some(id) = value.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                if let Some(id) = value
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
                     self.response_id = format!("resp_{id}");
                 }
                 self.emit(
@@ -934,7 +1016,10 @@ impl ChatToResponsesSseTranslator {
                 }
             }
 
-            if let Some(tool_calls) = delta.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_array()) {
+            if let Some(tool_calls) = delta
+                .and_then(|d| d.get("tool_calls"))
+                .and_then(|v| v.as_array())
+            {
                 self.close_message(&mut out, idx);
                 for tc in tool_calls {
                     self.handle_tool_call_delta(&mut out, tc);
@@ -1228,13 +1313,16 @@ impl ChatToResponsesSseTranslator {
             self.tool_calls.remove(&tc_idx);
         }
 
-        let entry = self.tool_calls.entry(tc_idx).or_insert_with(|| ToolCallState {
-            call_id: String::new(),
-            name: String::new(),
-            args_buf: String::new(),
-            item_added: false,
-            item_done: false,
-        });
+        let entry = self
+            .tool_calls
+            .entry(tc_idx)
+            .or_insert_with(|| ToolCallState {
+                call_id: String::new(),
+                name: String::new(),
+                args_buf: String::new(),
+                item_added: false,
+                item_done: false,
+            });
 
         if let Some(name) = normalized_name {
             entry.name = name;
@@ -1251,11 +1339,7 @@ impl ChatToResponsesSseTranslator {
         let add_item = !entry.item_added && !entry.call_id.is_empty();
         let add_payload = if add_item {
             entry.item_added = true;
-            Some((
-                entry.call_id.clone(),
-                entry.name.clone(),
-                tc_idx,
-            ))
+            Some((entry.call_id.clone(), entry.name.clone(), tc_idx))
         } else {
             None
         };
@@ -1353,6 +1437,7 @@ impl ChatToResponsesSseTranslator {
                 "id": rs_id,
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": self.reasoning_text }],
+                "encrypted_content": self.reasoning_text,
             }));
         }
         if self.msg_item_added {
@@ -1391,7 +1476,10 @@ impl ChatToResponsesSseTranslator {
                 obj.insert("usage".into(), chat_usage_to_responses(&usage));
             }
         }
-        self.emit(out, json!({ "type": "response.completed", "response": response }));
+        self.emit(
+            out,
+            json!({ "type": "response.completed", "response": response }),
+        );
         if !self.done_marker_sent {
             append_done_marker(out);
             self.done_marker_sent = true;
@@ -1425,10 +1513,14 @@ pub fn chat_completions_json_to_responses(body: &Value, model: &str) -> Value {
             json!({
                 "type": "reasoning",
                 "summary": [{ "type": "summary_text", "text": reasoning }],
+                "encrypted_content": reasoning,
             }),
         );
     }
-    if let Some(tool_calls) = message.and_then(|m| m.get("tool_calls")).and_then(|v| v.as_array()) {
+    if let Some(tool_calls) = message
+        .and_then(|m| m.get("tool_calls"))
+        .and_then(|v| v.as_array())
+    {
         for tc in tool_calls {
             output.push(json!({
                 "type": "function_call",
@@ -1472,7 +1564,10 @@ pub fn translate_client_bytes_for_responses_wire(
         tr.bootstrap_stream();
         *translator = Some(tr);
     }
-    let out = translator.as_mut().expect("initialized").translate_chunk(&data);
+    let out = translator
+        .as_mut()
+        .expect("initialized")
+        .translate_chunk(&data);
     if out.is_empty() {
         None
     } else {
@@ -1481,7 +1576,7 @@ pub fn translate_client_bytes_for_responses_wire(
 }
 
 /// Initialize Responses SSE translator at upstream headers (prefill bootstrap for Codex CLI).
-    pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
+pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
     if ctx.stream.responses_translator.is_some() {
         return;
     }
@@ -1635,7 +1730,10 @@ fn responses_stream_needs_completed_event(ctx: &GatewayContext) -> bool {
 }
 
 fn responses_stream_needs_done_marker(ctx: &GatewayContext) -> bool {
-    !ctx.stream.client_sse_body.windows(6).any(|w| w == b"[DONE]")
+    !ctx.stream
+        .client_sse_body
+        .windows(6)
+        .any(|w| w == b"[DONE]")
 }
 
 fn upstream_ok_for_graceful_responses_finalize(ctx: &GatewayContext) -> bool {
@@ -1859,8 +1957,7 @@ fn clean_tool_call_arguments(raw: &str) -> String {
         return raw.to_string();
     };
     obj.retain(|_, v| {
-        !(v.as_str().is_some_and(|s| s.is_empty())
-            || v.as_array().is_some_and(|a| a.is_empty()))
+        !(v.as_str().is_some_and(|s| s.is_empty()) || v.as_array().is_some_and(|a| a.is_empty()))
     });
     serde_json::to_string(obj).unwrap_or_else(|_| raw.to_string())
 }
@@ -1907,9 +2004,88 @@ mod tests {
     }
 
     #[test]
+    fn mimo_responses_reasoning_round_trips_to_chat_reasoning_content() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "input": [
+                { "type": "message", "role": "user", "content": "search for cats" },
+                {
+                    "type": "reasoning",
+                    "summary": [{ "type": "summary_text", "text": "I should call search" }],
+                    "encrypted_content": "FULL reasoning trace"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "search",
+                    "arguments": "{\"q\":\"cats\"}"
+                },
+                { "type": "function_call_output", "call_id": "call_1", "output": "5 results" },
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "parameters": { "type": "object" }
+            }]
+        });
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let messages = chat["messages"].as_array().unwrap();
+        let assistant = messages
+            .iter()
+            .find(|m| {
+                m.get("role").and_then(|r| r.as_str()) == Some("assistant")
+                    && m.get("reasoning_content")
+                        .and_then(|v| v.as_str())
+                        .is_some()
+            })
+            .expect("assistant message");
+        assert_eq!(
+            assistant.get("reasoning_content").and_then(|v| v.as_str()),
+            Some("FULL reasoning trace")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.get("tool_calls").and_then(|v| v.as_array()).is_some()),
+            "function call history must remain available: {}",
+            serde_json::to_string_pretty(&messages).unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn stored_responses_reasoning_expands_back_into_followup_input() {
+        let item = json!({
+            "type": "reasoning",
+            "summary": [{ "type": "summary_text", "text": "summary" }],
+            "encrypted_content": "full"
+        });
+        let input = responses_output_item_to_input(&item).expect("reasoning preserved");
+        assert_eq!(input["type"], "reasoning");
+        assert_eq!(input["encrypted_content"], "full");
+    }
+
+    #[test]
+    fn translator_completed_output_preserves_full_reasoning_for_next_turn() {
+        let sse = concat!(
+            "data: ",
+            "{\"id\":\"1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+            "data: ",
+            "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        );
+        let mut tr = ChatToResponsesSseTranslator::new("mimo-v2.5-pro");
+        let _ = tr.translate_chunk(sse.as_bytes());
+        let output = tr.completed_output();
+        let reasoning = output
+            .iter()
+            .find(|item| item.get("type").and_then(|v| v.as_str()) == Some("reasoning"))
+            .expect("reasoning output");
+        assert_eq!(reasoning["encrypted_content"], "think");
+    }
+
+    #[test]
     fn upstream_uri_rewrites_to_chat_completions() {
-        let mut req =
-            RequestHeader::build("POST", b"/v1/responses", None).expect("request header");
+        let mut req = RequestHeader::build("POST", b"/v1/responses", None).expect("request header");
         apply_responses_wire_upstream_request(&mut req);
         assert_eq!(req.uri.path(), "/v1/chat/completions");
     }
@@ -2007,11 +2183,7 @@ mod tests {
 
     #[tokio::test]
     async fn responses_chain_expands_previous_response_id() {
-        let store = ResponsesChainStore::new_l0_only(
-            16,
-            60,
-            tokio::runtime::Handle::current(),
-        );
+        let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
         store_responses_chain_output(
             &store,
             "deepseek",
@@ -2061,8 +2233,7 @@ mod tests {
                 },
             ],
         });
-        let chat =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
         let messages = chat["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "assistant");
@@ -2088,8 +2259,7 @@ mod tests {
                 },
             ],
         });
-        let chat =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
         let messages = chat["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
@@ -2162,7 +2332,12 @@ mod tests {
             crate::sse::sse_bytes_contains_event(&tail, "response.completed"),
             "tail must contain response.completed"
         );
-        assert!(ctx.stream.responses_translator.as_ref().is_some_and(|t| t.is_completed()));
+        assert!(
+            ctx.stream
+                .responses_translator
+                .as_ref()
+                .is_some_and(|t| t.is_completed())
+        );
     }
 
     #[tokio::test]
@@ -2179,7 +2354,9 @@ mod tests {
         arm_responses_wire_stream(&mut ctx, &model);
         ctx.stream.responses_wire_bootstrap = None;
         ctx.stream.responses_wire_bootstrap_sent = true;
-        ctx.stream.client_sse_body.extend_from_slice(b"event: ping\n\n");
+        ctx.stream
+            .client_sse_body
+            .extend_from_slice(b"event: ping\n\n");
 
         let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
         let tail = build_graceful_responses_stream_tail(&mut ctx, store.as_ref());
@@ -2214,8 +2391,7 @@ mod tests {
                 },
             ],
         });
-        let chat =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
         let names: Vec<_> = chat["tools"]
             .as_array()
             .unwrap()
@@ -2245,8 +2421,7 @@ mod tests {
                 },
             ],
         });
-        let chat =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
         let names: Vec<_> = chat["tools"]
             .as_array()
             .unwrap()
@@ -2295,8 +2470,7 @@ mod tests {
                 "arguments": "{}",
             }],
         });
-        let chat =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let chat = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
         let name = chat["messages"][0]["tool_calls"][0]["function"]["name"]
             .as_str()
             .unwrap();
@@ -2305,11 +2479,7 @@ mod tests {
 
     #[tokio::test]
     async fn chain_avoids_duplicating_full_resend_input() {
-        let store = ResponsesChainStore::new_l0_only(
-            16,
-            60,
-            tokio::runtime::Handle::current(),
-        );
+        let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
         store_responses_chain_output(
             &store,
             "deepseek",
@@ -2357,12 +2527,9 @@ mod tests {
                 },
             ],
         });
-        let mimo =
-            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
-        let codex = responses_payload_to_chat_completions_for(
-            &payload,
-            ResponsesWireTarget::DeepSeek,
-        );
+        let mimo = responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::Mimo);
+        let codex =
+            responses_payload_to_chat_completions_for(&payload, ResponsesWireTarget::DeepSeek);
         let tool_count = |v: &Value| {
             v["messages"]
                 .as_array()
@@ -2379,11 +2546,7 @@ mod tests {
 
     #[tokio::test]
     async fn responses_chain_namespaces_do_not_cross_pipelines() {
-        let store = ResponsesChainStore::new_l0_only(
-            16,
-            60,
-            tokio::runtime::Handle::current(),
-        );
+        let store = ResponsesChainStore::new_l0_only(16, 60, tokio::runtime::Handle::current());
         store_responses_chain_output(
             &store,
             "mimo",

@@ -14,8 +14,8 @@ use axum::{
 };
 use crab_control::{
     CreateGatewayKeyRequest, CursorModelsConfigView, FingerprintConfigRequest,
-    InvalidateCacheRequest, ModelPricingView, PricingConfigView, PutTtlConfigRequest, constant_time_eq_str, parse_upstream_base_url,
-    validate_deepseek_key,
+    InvalidateCacheRequest, ModelPricingView, PricingConfigView, PutTtlConfigRequest,
+    constant_time_eq_str, parse_upstream_base_url, validate_deepseek_key,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -263,8 +263,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id",
-            get(crate::oauth_codex::poll_pkce_status)
-                .delete(crate::oauth_codex::cancel_pkce_login),
+            get(crate::oauth_codex::poll_pkce_status).delete(crate::oauth_codex::cancel_pkce_login),
         )
         .route(
             "/api/admin/upstream/profiles/:id/oauth/codex/pkce/:session_id/exchange",
@@ -417,7 +416,9 @@ fn dashboard_build_info() -> serde_json::Value {
 }
 
 fn dashboard_dist_present() -> bool {
-    FilePath::new(DASHBOARD_DIST_PATH).join("index.html").is_file()
+    FilePath::new(DASHBOARD_DIST_PATH)
+        .join("index.html")
+        .is_file()
 }
 
 /// Version information including the latest GitHub release if reachable.
@@ -2410,7 +2411,9 @@ async fn get_log_detail(
 
     let trace_path = crate::trace_log::trace_log_path();
     if let Some(entry) = state.find_trace_entry(&id, &trace_path).await {
-        return Ok(Json(crate::trace_log::trace_entry_to_request_detail(&entry)));
+        return Ok(Json(crate::trace_log::trace_entry_to_request_detail(
+            &entry,
+        )));
     }
 
     Err(StatusCode::NOT_FOUND)
@@ -2790,9 +2793,19 @@ async fn get_cache_pricing_config(State(state): State<Arc<AppState>>) -> Json<Pr
     Json(PricingConfigView {
         default_input_price_per_million: p.default_input_price_per_million,
         default_output_price_per_million: p.default_output_price_per_million,
-        model_overrides: p.model_overrides.into_iter().map(|(k, v)| {
-            (k, ModelPricingView { input: v.input, output: v.output })
-        }).collect(),
+        model_overrides: p
+            .model_overrides
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    ModelPricingView {
+                        input: v.input,
+                        output: v.output,
+                    },
+                )
+            })
+            .collect(),
     })
 }
 
@@ -2803,17 +2816,37 @@ async fn update_cache_pricing_config(
     let mut p = state.pricing_config.write();
     p.default_input_price_per_million = req.default_input_price_per_million;
     p.default_output_price_per_million = req.default_output_price_per_million;
-    p.model_overrides = req.model_overrides.into_iter().map(|(k, v)| {
-        (k, StoredModelPricing { input: v.input, output: v.output })
-    }).collect();
+    p.model_overrides = req
+        .model_overrides
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                StoredModelPricing {
+                    input: v.input,
+                    output: v.output,
+                },
+            )
+        })
+        .collect();
     state.flush_persist();
     let p2 = p.clone();
     Json(PricingConfigView {
         default_input_price_per_million: p2.default_input_price_per_million,
         default_output_price_per_million: p2.default_output_price_per_million,
-        model_overrides: p2.model_overrides.into_iter().map(|(k, v)| {
-            (k, ModelPricingView { input: v.input, output: v.output })
-        }).collect(),
+        model_overrides: p2
+            .model_overrides
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    ModelPricingView {
+                        input: v.input,
+                        output: v.output,
+                    },
+                )
+            })
+            .collect(),
     })
 }
 
@@ -2885,7 +2918,9 @@ async fn update_features_config(
     })
 }
 
-async fn get_trace_logging_config(State(state): State<Arc<AppState>>) -> Json<TraceLoggingConfigView> {
+async fn get_trace_logging_config(
+    State(state): State<Arc<AppState>>,
+) -> Json<TraceLoggingConfigView> {
     let c = state.trace_logging_config.read().clone();
     Json(TraceLoggingConfigView {
         max_lines: c.max_lines,
@@ -3234,17 +3269,18 @@ async fn update_upstream_config(
     *state.gateway_reachable.write() = true;
 
     let default_profile = state.default_profile_id();
-    let sync: Option<crate::types::SyncResult> = if state.pick_sync_api_key(&default_profile).is_some() {
-        match crate::upstream::sync_models_internal(&state, &default_profile).await {
-            Ok(s) => Some(s),
-            Err(e) => {
-                tracing::warn!(error = %e, "Auto model sync after upstream save failed");
-                None
+    let sync: Option<crate::types::SyncResult> =
+        if state.pick_sync_api_key(&default_profile).is_some() {
+            match crate::upstream::sync_models_internal(&state, &default_profile).await {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Auto model sync after upstream save failed");
+                    None
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     state.flush_persist();
 
@@ -3328,8 +3364,7 @@ async fn get_key_concurrency(
     axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyConcurrencyResponse>, StatusCode> {
     let window_secs = query.window_secs;
-    let entries =
-        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let filtered: Vec<KeyConcurrencyEntry> = entries
         .iter()
@@ -3411,8 +3446,7 @@ async fn get_key_routing(
     axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyRoutingResponse>, StatusCode> {
     let window_secs = query.window_secs;
-    let entries =
-        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let key_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3513,8 +3547,7 @@ async fn get_session_timeline(
     axum::extract::Path(fingerprint): axum::extract::Path<String>,
 ) -> Result<Json<SessionTimelineResponse>, StatusCode> {
     let window_secs: u32 = 900;
-    let entries =
-        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
 
     let mut session_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3581,8 +3614,7 @@ async fn get_live_metrics(
     let key_id = query.key_id.clone();
     let session_fingerprint = query.session_fingerprint.clone();
     let group_by = query.group_by.clone();
-    let entries =
-        crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
     let trace_available = crate::trace_log::trace_source_available(&path, pg.as_ref());
     // Use the cache's consumer HashSet instead of scanning the full entries list.
     let available_consumers = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
@@ -4107,16 +4139,11 @@ async fn get_model_peak_hours(
         })
         .collect();
 
-    let last_agg = pg
-        .peak_hours_watermark()
-        .await
-        .ok()
-        .flatten()
-        .map(|ms| {
-            chrono::DateTime::from_timestamp_millis(ms)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default()
-        });
+    let last_agg = pg.peak_hours_watermark().await.ok().flatten().map(|ms| {
+        chrono::DateTime::from_timestamp_millis(ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default()
+    });
 
     Ok(Json(serde_json::json!({
         "models": models_set.into_iter().collect::<Vec<_>>(),
@@ -4149,7 +4176,10 @@ async fn delete_model_peak_hour(
     audit_log(
         &state,
         "peak_hours.delete",
-        Some(&format!("model={}, bucket={}", query.model, query.hour_bucket)),
+        Some(&format!(
+            "model={}, bucket={}",
+            query.model, query.hour_bucket
+        )),
         None,
     )
     .await;

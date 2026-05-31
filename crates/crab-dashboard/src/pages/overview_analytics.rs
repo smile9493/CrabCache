@@ -242,8 +242,12 @@ pub fn InfraOverviewModule(
         leptos::task::spawn_local(async move {
             let result = api::fetch_infra_snapshot().await;
             match result {
-                Ok(s) => { snapshot.try_set(Some(Ok(s))); }
-                Err(e) => { snapshot.try_set(Some(Err(e))); }
+                Ok(s) => {
+                    snapshot.try_set(Some(Ok(s)));
+                }
+                Err(e) => {
+                    snapshot.try_set(Some(Err(e)));
+                }
             }
         });
     };
@@ -266,72 +270,74 @@ pub fn InfraOverviewModule(
     }
 
     let body = move || match snapshot.get() {
-                None => view! {
-                    <div class="text-xs text-theme-muted">"Loading infrastructure snapshot..."</div>
-                }.into_any(),
-                Some(Err(e)) => view! {
-                    <div class="text-xs text-warning">{format!("Infra snapshot unavailable: {e}")}</div>
-                }.into_any(),
-                Some(Ok(s)) => {
-                    let summary = summarize_infra(&s);
-                    let mut top_containers = s.containers.clone();
-                    top_containers.sort_by(|a, b| {
-                        let a_cpu = a.cpu_percent.unwrap_or(0.0);
-                        let b_cpu = b.cpu_percent.unwrap_or(0.0);
-                        b_cpu.partial_cmp(&a_cpu).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    top_containers.truncate(3);
-                    let collection_error = s.collection_error.clone();
-                    let all_containers = s.containers.clone();
-                    let host_disks = s.host_disks.clone();
-                    let volumes = s.volumes.clone();
-                    let compose_project = s.compose_project.clone();
-                    let docker_connected = s.docker_connected;
-                    let collected_at = s.collected_at;
-                    let mem_pct = if summary.mem_limit_bytes > 0 {
-                        summary.mem_used_bytes as f64 / summary.mem_limit_bytes as f64 * 100.0
-                    } else {
-                        0.0
-                    };
-                    let disk_pct = if summary.disk_total_bytes > 0 {
-                        summary.disk_used_bytes as f64 / summary.disk_total_bytes as f64 * 100.0
-                    } else {
-                        summary.max_disk_pct
-                    };
-                    let rx_display = if summary.rx_bps > 0.0 {
-                        fmt_rate(Some(summary.rx_bps))
-                    } else {
-                        "—".to_string()
-                    };
-                    let tx_display = if summary.tx_bps > 0.0 {
-                        fmt_rate(Some(summary.tx_bps))
-                    } else {
-                        "—".to_string()
-                    };
-                    let active_display = format!(
-                        "{}/{}",
-                        summary.active_containers, summary.total_containers
-                    );
-                    let mem_display = fmt_bytes(summary.mem_used_bytes);
-                    let disk_display = if summary.disk_total_bytes > 0 {
-                        fmt_bytes(summary.disk_used_bytes)
-                    } else {
-                        format!("{:.1}%", summary.max_disk_pct)
-                    };
-                    let docker_label = t.sidebar_infra();
-                    let docker_value = if docker_connected {
-                        "OK".to_string()
-                    } else {
-                        "—".to_string()
-                    };
-                    let details_meta = format!(
-                        "{} · {} · {}",
-                        summary.total_containers,
-                        host_disks.len(),
-                        volumes.len()
-                    );
+        None => view! {
+            <div class="text-xs text-theme-muted">"Loading infrastructure snapshot..."</div>
+        }
+        .into_any(),
+        Some(Err(e)) => view! {
+            <div class="text-xs text-warning">{format!("Infra snapshot unavailable: {e}")}</div>
+        }
+        .into_any(),
+        Some(Ok(s)) => {
+            let summary = summarize_infra(&s);
+            let mut top_containers = s.containers.clone();
+            top_containers.sort_by(|a, b| {
+                let a_cpu = a.cpu_percent.unwrap_or(0.0);
+                let b_cpu = b.cpu_percent.unwrap_or(0.0);
+                b_cpu
+                    .partial_cmp(&a_cpu)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            top_containers.truncate(3);
+            let collection_error = s.collection_error.clone();
+            let all_containers = s.containers.clone();
+            let host_disks = s.host_disks.clone();
+            let volumes = s.volumes.clone();
+            let compose_project = s.compose_project.clone();
+            let docker_connected = s.docker_connected;
+            let collected_at = s.collected_at;
+            let mem_pct = if summary.mem_limit_bytes > 0 {
+                summary.mem_used_bytes as f64 / summary.mem_limit_bytes as f64 * 100.0
+            } else {
+                0.0
+            };
+            let disk_pct = if summary.disk_total_bytes > 0 {
+                summary.disk_used_bytes as f64 / summary.disk_total_bytes as f64 * 100.0
+            } else {
+                summary.max_disk_pct
+            };
+            let rx_display = if summary.rx_bps > 0.0 {
+                fmt_rate(Some(summary.rx_bps))
+            } else {
+                "—".to_string()
+            };
+            let tx_display = if summary.tx_bps > 0.0 {
+                fmt_rate(Some(summary.tx_bps))
+            } else {
+                "—".to_string()
+            };
+            let active_display =
+                format!("{}/{}", summary.active_containers, summary.total_containers);
+            let mem_display = fmt_bytes(summary.mem_used_bytes);
+            let disk_display = if summary.disk_total_bytes > 0 {
+                fmt_bytes(summary.disk_used_bytes)
+            } else {
+                format!("{:.1}%", summary.max_disk_pct)
+            };
+            let docker_label = t.sidebar_infra();
+            let docker_value = if docker_connected {
+                "OK".to_string()
+            } else {
+                "—".to_string()
+            };
+            let details_meta = format!(
+                "{} · {} · {}",
+                summary.total_containers,
+                host_disks.len(),
+                volumes.len()
+            );
 
-                    view! {
+            view! {
                         <div class="space-y-3">
                             <div class="infra-overview-meta">
                                 {compose_project}
@@ -453,7 +459,7 @@ pub fn InfraOverviewModule(
                             </details>
                         </div>
                     }.into_any()
-                }
+        }
     };
 
     view! {

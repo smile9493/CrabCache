@@ -62,9 +62,7 @@ async fn main() {
 fn default_auth_dir() -> PathBuf {
     env::var("CRABCACHE_AUTH_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs_home().join(".crabcache").join("auths")
-        })
+        .unwrap_or_else(|_| dirs_home().join(".crabcache").join("auths"))
 }
 
 fn dirs_home() -> PathBuf {

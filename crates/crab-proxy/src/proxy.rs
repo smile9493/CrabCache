@@ -16,7 +16,7 @@ use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub struct GatewayProxy {
     pub(crate) state: Arc<GatewayState>,
@@ -38,13 +38,16 @@ impl GatewayProxy {
     /// [`ResponsesChainStore`]. Running session store merge on converted `messages[]` fights
     /// that chain and causes prefix-break misalignment (not intentional turn truncation).
     pub(crate) fn mimo_session_store_applies(ctx: &GatewayContext) -> bool {
-        ctx.request_pipeline
-            .is_some_and(Self::is_mimo_pipeline)
+        ctx.request_pipeline.is_some_and(Self::is_mimo_pipeline)
             && ctx.client_wire_api == crate::context::ClientWireApi::ChatCompletions
     }
 
     pub(crate) fn is_codex_relay_pipeline(p: RequestPipeline) -> bool {
         matches!(p, RequestPipeline::CodexRelay)
+    }
+
+    pub(crate) fn is_codex_upstream_pipeline(p: RequestPipeline) -> bool {
+        crate::codex_rate_limit::is_codex_upstream_pipeline(Some(p))
     }
 
     pub(crate) fn is_deepseek_upstream_pipeline(p: RequestPipeline) -> bool {
@@ -278,32 +281,19 @@ impl GatewayProxy {
                                 return true;
                             }
                         }
-                        // Bound key full or unavailable: overflow to another key.
-                        if let Some(guard) = pool.acquire_excluding_key(&binding.key_id) {
-                            ctx.upstream.miss = true;
-                            ctx.upstream.key_guard = Some(guard);
-                            global_metrics().record_key_binding_event("spill");
-                            tracing::debug!(
-                                request_id = %ctx.request_id,
-                                session_id = %sid,
-                                bound_key_id = %binding.key_id,
-                                overflow_key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                                "MiMo key binding overflow: bound key full, using alternative"
-                            );
-                            return true;
-                        }
-                        // All other keys exhausted too.
                         tracing::warn!(
                             request_id = %ctx.request_id,
                             session_id = %sid,
-                            "MiMo key binding: all keys exhausted (bound + overflow)"
+                            bound_key_id = %binding.key_id,
+                            "MiMo key binding: bound key unavailable; refusing random key switch"
                         );
                         global_metrics().record_rejected("upstream_key_exhausted");
                         global_metrics().record_rejection_by_source("upstream");
                         return false;
                     }
                     // No binding for this session: create one.
-                    if let Some(guard) = pool.acquire_for_upstream_model(&upstream_model, false)
+                    if let Some(guard) = pool
+                        .acquire_for_upstream_model(&upstream_model, false)
                         .or_else(|| pool.acquire())
                     {
                         let kid = guard.key_id().to_string();
@@ -333,9 +323,62 @@ impl GatewayProxy {
             }
         }
 
-        // Default acquire logic (Codex, non-MiMo, or MiMo without key binding).
+        // Codex conversation-level key binding (session → account affinity + overflow spill).
+        if ctx
+            .request_pipeline
+            .map_or(false, Self::is_codex_upstream_pipeline)
+            && features.codex_key_binding
+        {
+            if let Some(ref binding_store) = self.state.key_binding_store {
+                let stable_session = ctx
+                    .conversation_id
+                    .as_deref()
+                    .or(ctx.prompt_cache_key.as_deref())
+                    .or(ctx.session_fingerprint.as_deref())
+                    .or(ctx.client_key_fingerprint.as_deref());
+
+                if let Some(sid) = stable_session {
+                    let bind_key = crate::key_binding::KeyBindingStore::codex_session_key(sid);
+                    let fill_first = features.codex_acquire_fill_first;
+                    let scope = crate::codex_rate_limit::codex_model_scope(&upstream_model);
+                    if let Some(binding) = binding_store.get(&bind_key) {
+                        let max_inflight = features.codex_key_max_inflight;
+                        if max_inflight == 0 || pool.inflight_of(&binding.key_id) < max_inflight {
+                            if let Some(guard) =
+                                pool.acquire_specific_scoped(&binding.key_id, Some(scope))
+                            {
+                                binding_store.touch(&bind_key);
+                                ctx.upstream.miss = true;
+                                ctx.upstream.key_guard = Some(guard);
+                                global_metrics().record_key_binding_event("codex_hit");
+                                return true;
+                            }
+                        }
+                        global_metrics().record_rejected("upstream_key_exhausted");
+                        global_metrics().record_rejection_by_source("upstream");
+                        return false;
+                    }
+                    if let Some(guard) = pool
+                        .acquire_codex_for_model(&upstream_model, None, fill_first)
+                        .or_else(|| pool.acquire_codex_oauth())
+                    {
+                        let kid = guard.key_id().to_string();
+                        binding_store.put(bind_key, kid);
+                        ctx.upstream.miss = true;
+                        ctx.upstream.key_guard = Some(guard);
+                        global_metrics().record_key_binding_event("codex_miss");
+                        return true;
+                    }
+                    global_metrics().record_rejected("upstream_key_exhausted");
+                    global_metrics().record_rejection_by_source("upstream");
+                    return false;
+                }
+            }
+        }
+
+        // Default acquire logic (Codex, non-MiMo, or pipelines without key binding).
         let guard = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
-            pool.acquire_for_upstream_model(&upstream_model, true)
+            pool.acquire_codex_for_model(&upstream_model, None, features.codex_acquire_fill_first)
                 .or_else(|| pool.acquire_codex_oauth())
         } else {
             pool.acquire_for_upstream_model(&upstream_model, false)
@@ -362,6 +405,221 @@ impl GatewayProxy {
                 global_metrics().record_rejection_by_source("upstream");
                 false
             }
+        }
+    }
+
+    /// Codex quota-aware upstream key selection with preflight WHAM check.
+    ///
+    /// Mirrors OmniRoute `getProviderCredentialsWithQuotaPreflight`:
+    /// 1. Try key binding first (hit/spill/miss) but skip exhausted keys
+    /// 2. Acquire a key → fetch WHAM → if remaining <= threshold, exclude & retry
+    /// 3. All blocked → return false (caller sends 503)
+    pub(crate) async fn try_acquire_codex_with_preflight(&self, ctx: &mut GatewayContext) -> bool {
+        if ctx.upstream.key_guard.is_some() {
+            return true;
+        }
+
+        let profile = self.active_upstream_profile(ctx);
+        let pool = profile.resolve_upstream_pool();
+        let base_url = profile.base_url.clone();
+
+        let canonical_model = ctx
+            .upstream_model
+            .as_deref()
+            .map(crab_pipeline::canonicalize_client_model)
+            .unwrap_or_else(|| crab_pipeline::canonicalize_client_model(&ctx.model));
+        let upstream_model = crate::codex::resolve_codex_upstream_model(&canonical_model);
+
+        let min_remaining;
+        {
+            let f = self.state.features.read();
+            min_remaining = f.codex_quota_min_remaining_percent;
+        }
+
+        let quota_cache = match pool.quota_cache() {
+            Some(cache) => Arc::clone(cache),
+            None => {
+                // No quota cache configured — fall through to sync path
+                return self.try_acquire_upstream_key(ctx);
+            }
+        };
+
+        // Step 1: Try key binding (but skip exhausted keys)
+        let codex_key_binding;
+        {
+            let f = self.state.features.read();
+            codex_key_binding = f.codex_key_binding;
+        }
+        if ctx
+            .request_pipeline
+            .map_or(false, Self::is_codex_upstream_pipeline)
+            && codex_key_binding
+        {
+            if let Some(ref binding_store) = self.state.key_binding_store {
+                let stable_session = ctx
+                    .conversation_id
+                    .as_deref()
+                    .or(ctx.prompt_cache_key.as_deref())
+                    .or(ctx.session_fingerprint.as_deref())
+                    .or(ctx.client_key_fingerprint.as_deref());
+
+                if let Some(sid) = stable_session {
+                    let bind_key = crate::key_binding::KeyBindingStore::codex_session_key(sid);
+                    if let Some(binding) = binding_store.get(&bind_key) {
+                        // Skip if bound key is exhausted
+                        if !quota_cache.is_exhausted(&binding.key_id, min_remaining) {
+                            let scope = crate::codex_rate_limit::codex_model_scope(upstream_model);
+                            if let Some(guard) =
+                                pool.acquire_specific_scoped(&binding.key_id, Some(scope))
+                            {
+                                binding_store.touch(&bind_key);
+                                ctx.upstream.miss = true;
+                                ctx.upstream.key_guard = Some(guard);
+                                global_metrics().record_key_binding_event("codex_hit");
+                                return true;
+                            }
+                        }
+                        // Bound key exhausted or unavailable — will fall through to preflight loop
+                    }
+                }
+            }
+        }
+
+        // Step 2: Preflight loop — acquire → WHAM check → exclude if blocked
+        let mut exclude_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut exclude_account: Option<String> = None;
+        let fill_first;
+        {
+            let f = self.state.features.read();
+            fill_first = f.codex_acquire_fill_first;
+        }
+
+        loop {
+            let guard = if let Some(ref excl_acct) = exclude_account {
+                pool.acquire_codex_for_model_excluding(
+                    upstream_model,
+                    Some(excl_acct),
+                    fill_first,
+                    &exclude_keys,
+                )
+            } else {
+                pool.acquire_codex_for_model(upstream_model, None, fill_first)
+            };
+
+            let guard = match guard {
+                Some(g) => g,
+                None => {
+                    // No more keys available
+                    global_metrics().record_rejected("upstream_key_exhausted");
+                    global_metrics().record_rejection_by_source("upstream");
+                    return false;
+                }
+            };
+
+            let key_id = guard.key_id().to_string();
+            let account_id = guard.account_id().to_string();
+
+            // Check cache first (avoid WHAM fetch if already cached)
+            let cached_headroom = quota_cache.headroom_percent(&key_id);
+            if let Some(headroom) = cached_headroom {
+                if headroom <= min_remaining {
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        key_id = %key_id,
+                        headroom = headroom,
+                        min_remaining = min_remaining,
+                        "codex quota preflight: key blocked by cache (low headroom)"
+                    );
+                    global_metrics().record_codex_quota_preflight("blocked");
+                    exclude_keys.insert(key_id);
+                    if !account_id.is_empty()
+                        && account_id != crate::upstream_pool::DEFAULT_UPSTREAM_ACCOUNT_ID
+                    {
+                        exclude_account = Some(account_id);
+                    }
+                    continue;
+                }
+                // Cached data shows sufficient headroom — use this key
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    key_id = %key_id,
+                    headroom = headroom,
+                    "codex quota preflight: key accepted (cached headroom)"
+                );
+                ctx.upstream.miss = true;
+                ctx.upstream.key_guard = Some(guard);
+                global_metrics().record_codex_quota_preflight("proceed");
+                return true;
+            }
+
+            // No cached data — fetch WHAM
+            let secret = guard.bearer_secret().to_string();
+            let acct_id = account_id.clone();
+
+            // Release the guard before async WHAM fetch (we'll re-acquire if it passes)
+            drop(guard);
+
+            let snapshot = quota_cache
+                .fetch_and_update(&key_id, &base_url, &secret, &acct_id)
+                .await;
+
+            let snapshot = match snapshot {
+                Some(s) => s,
+                None => {
+                    // WHAM fetch failed — fail-open (proceed with this key)
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        key_id = %key_id,
+                        "codex quota preflight: WHAM fetch failed, proceeding (fail-open)"
+                    );
+                    global_metrics().record_codex_quota_preflight("fail_open");
+                    // Re-acquire the key
+                    if let Some(guard) = pool.acquire_specific(&key_id) {
+                        ctx.upstream.miss = true;
+                        ctx.upstream.key_guard = Some(guard);
+                        return true;
+                    }
+                    // Re-acquire failed (race condition) — skip this key
+                    exclude_keys.insert(key_id);
+                    continue;
+                }
+            };
+
+            let remaining = snapshot.min_remaining_percent().unwrap_or(100.0);
+            if snapshot.is_exhausted(min_remaining) || remaining <= min_remaining {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    key_id = %key_id,
+                    remaining = remaining,
+                    limit_reached = snapshot.limit_reached,
+                    "codex quota preflight: key blocked (low remaining from WHAM)"
+                );
+                global_metrics().record_codex_quota_preflight("blocked");
+                exclude_keys.insert(key_id);
+                if !acct_id.is_empty()
+                    && acct_id != crate::upstream_pool::DEFAULT_UPSTREAM_ACCOUNT_ID
+                {
+                    exclude_account = Some(acct_id);
+                }
+                continue;
+            }
+
+            // WHAM check passed — re-acquire and use this key
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                key_id = %key_id,
+                remaining = remaining,
+                "codex quota preflight: key accepted (WHAM check passed)"
+            );
+            if let Some(guard) = pool.acquire_specific(&key_id) {
+                ctx.upstream.miss = true;
+                ctx.upstream.key_guard = Some(guard);
+                global_metrics().record_codex_quota_preflight("proceed");
+                return true;
+            }
+
+            // Re-acquire failed — skip and retry
+            exclude_keys.insert(key_id);
         }
     }
 
@@ -505,6 +763,189 @@ impl GatewayProxy {
         );
         false
     }
+
+    pub(crate) fn rotate_upstream_key_for_same_request_retry(
+        &self,
+        ctx: &mut GatewayContext,
+        reason: &'static str,
+        disable_current: bool,
+        cooldown_current_secs: Option<u64>,
+    ) -> Option<String> {
+        let prepared_body = ctx.upstream.prepared_body_for_retry.clone()?;
+        if ctx.upstream.retry_budget == 0 {
+            global_metrics().record_upstream_key_retry("budget_exhausted");
+            return None;
+        }
+
+        let profile = self.active_upstream_profile(ctx);
+        let pool = profile.resolve_upstream_pool();
+        let old_key = ctx
+            .upstream
+            .key_guard
+            .as_ref()
+            .map(|g| (g.key_id().to_string(), g.account_id().to_string()));
+        let stable_session = Self::stable_mimo_session_id(ctx).map(str::to_string);
+        let transient_failures = old_key
+            .as_ref()
+            .map(|(old_id, _)| {
+                self.record_mimo_transient_failure(ctx, old_id, "same_request_retry")
+            })
+            .unwrap_or(0);
+
+        if let Some((ref old_id, _)) = old_key {
+            if disable_current {
+                pool.report_unauthorized(old_id);
+                global_metrics().record_upstream_key_request(old_id, "error");
+            } else if transient_failures >= 3
+                && let Some(cooldown) = cooldown_current_secs
+            {
+                pool.report_rate_limited_for(old_id, cooldown.max(1), None);
+            }
+        }
+
+        // Drop the old guard before re-acquiring so per-key inflight is released.
+        ctx.upstream.key_guard = None;
+        let new_guard = if !disable_current && transient_failures < 3 {
+            old_key
+                .as_ref()
+                .and_then(|(old_id, _)| pool.acquire_specific(old_id))
+        } else {
+            let excluded_account = old_key.as_ref().map(|(_, account)| account.as_str());
+            pool.acquire_excluding_account(excluded_account)
+                .or_else(|| {
+                    if disable_current {
+                        None
+                    } else {
+                        pool.acquire()
+                    }
+                })
+        }?;
+        let new_key_id = new_guard.key_id().to_string();
+
+        ctx.upstream.retry_budget -= 1;
+        ctx.upstream.key_guard = Some(new_guard);
+        ctx.new_request_body = Some(prepared_body);
+        ctx.upstream.prepared_upstream_body_emitted = false;
+        ctx.upstream.error_passthrough = false;
+        ctx.upstream.error_body_logged = false;
+        ctx.upstream.first_body_chunk_logged = false;
+        ctx.upstream.http_status = None;
+        ctx.upstream.headers_at = None;
+        ctx.upstream.response_decompress.reset();
+        ctx.upstream_outbound_body_len = 0;
+        ctx.upstream.backend_name = None;
+        ctx.upstream.backend_overload_state = None;
+        ctx.upstream.host = None;
+        ctx.backend_permit = None;
+
+        if let Some(ref binding_store) = self.state.key_binding_store {
+            if let Some(sid) = stable_session.as_deref() {
+                if disable_current || transient_failures >= 3 {
+                    binding_store.remove(sid);
+                    binding_store
+                        .remove(&crate::key_binding::KeyBindingStore::codex_session_key(sid));
+                }
+            }
+        }
+
+        global_metrics().record_upstream_key_retry(reason);
+        Some(new_key_id)
+    }
+
+    fn stable_mimo_session_id(ctx: &GatewayContext) -> Option<&str> {
+        ctx.conversation_id
+            .as_deref()
+            .or(ctx.prompt_cache_key.as_deref())
+            .or(ctx.session_fingerprint.as_deref())
+            .or(ctx.client_key_fingerprint.as_deref())
+    }
+
+    fn is_mimo_upload_pipe_closed(e: &pingora_core::Error) -> bool {
+        let text = e.to_string();
+        text.contains("Failed to send upstream task Body to pipe cause: channel closed")
+            || text
+                .contains("Failed to send upstream task Body (end) to pipe cause: channel closed")
+    }
+
+    fn record_mimo_transient_failure(
+        &self,
+        ctx: &mut GatewayContext,
+        key_id: &str,
+        reason: &'static str,
+    ) -> u32 {
+        if ctx
+            .request_pipeline
+            .is_none_or(|pipeline| !Self::is_mimo_pipeline(pipeline))
+        {
+            return 0;
+        }
+
+        let mut transient_failures = 0u32;
+        if let (Some(binding_store), Some(sid)) = (
+            self.state.key_binding_store.as_ref(),
+            Self::stable_mimo_session_id(ctx),
+        ) {
+            transient_failures = binding_store.record_failure(sid, key_id).unwrap_or(0);
+            let codex_sid = crate::key_binding::KeyBindingStore::codex_session_key(sid);
+            transient_failures = transient_failures.max(
+                binding_store
+                    .record_failure(&codex_sid, key_id)
+                    .unwrap_or(0),
+            );
+        }
+
+        if transient_failures >= 3 {
+            let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
+            pool.report_rate_limited_for(key_id, 30, None);
+
+            if let (Some(binding_store), Some(sid)) = (
+                self.state.key_binding_store.as_ref(),
+                Self::stable_mimo_session_id(ctx),
+            ) {
+                binding_store.remove(sid);
+                binding_store.remove(&crate::key_binding::KeyBindingStore::codex_session_key(sid));
+            }
+
+            if let (Some(model), Some(backend_name)) = (
+                ctx.upstream_model.as_deref(),
+                ctx.upstream.backend_name.as_deref(),
+            ) {
+                let profile_id = ctx.upstream_profile_id.as_deref().unwrap_or("default");
+                self.state.model_lockouts.record_failure(
+                    profile_id,
+                    backend_name,
+                    model,
+                    reason,
+                    Duration::from_secs(30),
+                    1,
+                );
+                global_metrics().record_model_lockout(profile_id, backend_name, model);
+            }
+        }
+
+        transient_failures
+    }
+
+    fn should_retry_mimo_upload_error(
+        &self,
+        session: &Session,
+        e: &pingora_core::Error,
+        ctx: &GatewayContext,
+    ) -> bool {
+        if session.response_written().is_some() {
+            return false;
+        }
+        if ctx
+            .request_pipeline
+            .is_none_or(|pipeline| !Self::is_mimo_pipeline(pipeline))
+        {
+            return false;
+        }
+        if ctx.upstream.prepared_body_for_retry.is_none() || ctx.upstream.retry_budget == 0 {
+            return false;
+        }
+        Self::is_mimo_upload_pipe_closed(e)
+    }
 }
 
 #[async_trait::async_trait]
@@ -647,9 +1088,58 @@ impl ProxyHttp for GatewayProxy {
         _session: &Session,
         ctx: &mut Self::CTX,
     ) -> Result<Option<bytes::Bytes>> {
-        Ok(
-            crate::responses_wire::poll_responses_wire_keepalive(ctx).map(bytes::Bytes::from),
-        )
+        Ok(crate::responses_wire::poll_responses_wire_keepalive(ctx).map(bytes::Bytes::from))
+    }
+
+    fn error_while_proxy(
+        &self,
+        peer: &HttpPeer,
+        session: &mut Session,
+        e: Box<pingora_core::Error>,
+        ctx: &mut Self::CTX,
+        client_reused: bool,
+    ) -> Box<pingora_core::Error> {
+        let should_retry = self.should_retry_mimo_upload_error(session, e.as_ref(), ctx);
+        let is_mimo_upload_pipe_closed = Self::is_mimo_upload_pipe_closed(e.as_ref())
+            && ctx.request_pipeline.is_some_and(Self::is_mimo_pipeline);
+        let mut e = e.more_context(format!("Peer: {}", peer));
+        if should_retry {
+            if let Some(new_key_id) = self.rotate_upstream_key_for_same_request_retry(
+                ctx,
+                "mimo_upload_pipe_closed_rotate",
+                false,
+                Some(30),
+            ) {
+                e.set_retry(true);
+                warn!(
+                    request_id = %ctx.request_id,
+                    new_key_id = %new_key_id,
+                    "retrying MiMo upload after upstream body pipe closed"
+                );
+                return e;
+            }
+        }
+        if is_mimo_upload_pipe_closed
+            && let Some(key_id) = ctx
+                .upstream
+                .key_guard
+                .as_ref()
+                .map(|guard| guard.key_id().to_string())
+        {
+            let transient_failures =
+                self.record_mimo_transient_failure(ctx, &key_id, "mimo_upload_pipe_closed");
+            warn!(
+                request_id = %ctx.request_id,
+                key_id = %key_id,
+                transient_failures,
+                response_written = session.response_written().is_some(),
+                retry_budget = ctx.upstream.retry_budget,
+                "recorded MiMo upload pipe failure without retry"
+            );
+        }
+        e.retry
+            .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
+        e
     }
 }
 

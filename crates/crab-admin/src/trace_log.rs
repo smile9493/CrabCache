@@ -255,10 +255,7 @@ pub fn trace_entry_to_request_detail(e: &TraceLogEntry) -> crab_admin_types::Req
         cache_path,
         request_payload,
         response_body,
-        route_backend: e
-            .backend_name
-            .clone()
-            .unwrap_or_else(|| "—".to_string()),
+        route_backend: e.backend_name.clone().unwrap_or_else(|| "—".to_string()),
         upstream_latency_ms: e.upstream_latency_ms,
         ttft_ms: e.ttft_ms,
         input_tokens: e.input_tokens,
@@ -770,7 +767,9 @@ async fn load_live_trace_entries_from_pg(
 ) -> Arc<Vec<TraceLogEntry>> {
     {
         let guard = cache.read();
-        if guard.parsed_at.is_some_and(|t| t.elapsed() < live_trace_cache_ttl())
+        if guard
+            .parsed_at
+            .is_some_and(|t| t.elapsed() < live_trace_cache_ttl())
             && guard.window_secs == window_secs
         {
             return Arc::clone(&guard.cached_arc);
@@ -1428,8 +1427,8 @@ mod tests {
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
-            request_passthrough: false,
-            request_passthrough_prefix_len: None,
+                request_passthrough: false,
+                request_passthrough_prefix_len: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -1473,8 +1472,8 @@ mod tests {
                 session_store: None,
                 stable_session_kind: None,
                 upstream_outbound_bytes: None,
-            request_passthrough: false,
-            request_passthrough_prefix_len: None,
+                request_passthrough: false,
+                request_passthrough_prefix_len: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);

@@ -132,6 +132,26 @@ pub struct KeyQuotaInfo {
     pub primary_reset_after_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary_reset_after_secs: Option<u64>,
+    /// Primary (5h) window absolute reset time as Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reset_at_secs: Option<i64>,
+    /// Secondary (weekly) window absolute reset time as Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_reset_at_secs: Option<i64>,
+    /// Full list of Codex quota windows (5h, weekly, code_review, additional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_windows: Option<Vec<CodexQuotaWindowItem>>,
+}
+
+/// A single Codex quota window for dashboard display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CodexQuotaWindowItem {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_at_secs: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

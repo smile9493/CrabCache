@@ -1,8 +1,8 @@
 //! Phase: upstream peer selection — Ketama affinity routing + connection pre-warm.
 
 use crate::connection_prewarm::spawn_direct_prewarm_if_new_session;
-use crate::context::GatewayContext;
 use crate::context::BackendRouteStrategy;
+use crate::context::GatewayContext;
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
 use crab_metrics::global_metrics;
@@ -124,7 +124,12 @@ pub(crate) async fn run(
     let mut selected_found = false;
     for candidate in ranked_backends {
         // Skip backends whose circuit breaker is OPEN (not allowing requests).
-        if !proxy.state.circuit_breakers.can_execute(&candidate.name).await {
+        if !proxy
+            .state
+            .circuit_breakers
+            .can_execute(&candidate.name)
+            .await
+        {
             debug!(
                 request_id = %ctx.request_id,
                 backend = %candidate.name,
@@ -135,11 +140,11 @@ pub(crate) async fn run(
 
         // Skip backends whose model is locked out (per-model quota/failure cooldown).
         if let Some(ref model) = ctx.upstream_model {
-            if proxy.state.model_lockouts.is_locked(
-                &profile.id,
-                &candidate.name,
-                model,
-            ) {
+            if proxy
+                .state
+                .model_lockouts
+                .is_locked(&profile.id, &candidate.name, model)
+            {
                 debug!(
                     request_id = %ctx.request_id,
                     backend = %candidate.name,
@@ -159,10 +164,11 @@ pub(crate) async fn run(
             continue;
         }
         if features.backend_concurrency_limit_enabled {
-            let Some(permit) = proxy
-                .state
-                .backend_load
-                .try_acquire(&profile.id, &candidate.name, max_inflight)
+            let Some(permit) =
+                proxy
+                    .state
+                    .backend_load
+                    .try_acquire(&profile.id, &candidate.name, max_inflight)
             else {
                 continue;
             };
@@ -222,7 +228,18 @@ pub(crate) async fn run(
 
     let conn_config = proxy.state.runtime.conn_config.read().clone();
 
-    crate::responses_wire::try_send_responses_wire_ttfb_prefill(session, ctx).await;
+    if !ctx
+        .request_pipeline
+        .is_some_and(crate::proxy::GatewayProxy::is_mimo_pipeline)
+    {
+        crate::responses_wire::try_send_responses_wire_ttfb_prefill(session, ctx).await;
+    } else {
+        debug!(
+            request_id = %ctx.request_id,
+            pipeline = ?ctx.request_pipeline,
+            "Skipping Responses TTFB prefill for MiMo so upload failures remain safely retryable"
+        );
+    }
 
     Ok(Box::new(peer))
 }
@@ -269,9 +286,9 @@ fn rank_backends(
             let first = stable_backend_hash(&format!("{affinity_key}:p2c:first"), affinity_key)
                 as usize
                 % backends.len();
-            let mut second = stable_backend_hash(&format!("{affinity_key}:p2c:second"), affinity_key)
-                as usize
-                % backends.len();
+            let mut second =
+                stable_backend_hash(&format!("{affinity_key}:p2c:second"), affinity_key) as usize
+                    % backends.len();
             if second == first {
                 second = (second + 1) % backends.len();
             }
@@ -315,8 +332,24 @@ fn rank_backends(
         }
         BackendRouteStrategy::WeightedKetama => {
             backends.sort_by(|a, b| {
-                let sa = backend_load.score_backend(profile_id, &a.name, max_inflight, 0, score_weights, true, 0.5);
-                let sb = backend_load.score_backend(profile_id, &b.name, max_inflight, 0, score_weights, true, 0.5);
+                let sa = backend_load.score_backend(
+                    profile_id,
+                    &a.name,
+                    max_inflight,
+                    0,
+                    score_weights,
+                    true,
+                    0.5,
+                );
+                let sb = backend_load.score_backend(
+                    profile_id,
+                    &b.name,
+                    max_inflight,
+                    0,
+                    score_weights,
+                    true,
+                    0.5,
+                );
                 sb.score
                     .partial_cmp(&sa.score)
                     .unwrap_or(std::cmp::Ordering::Equal)

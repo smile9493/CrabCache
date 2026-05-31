@@ -24,6 +24,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 - **Prometheus 可观测性**：Token 成本追踪、延迟监控、成本节省估算
 - **Trace 日志**：结构化 JSONL 文件记录，支持加载分析和命中率模拟
 - **Admin Dashboard**：Leptos WASM 前端 + Axum 后端，提供图形化管理界面
+- **Admin 冷存储**：上游 Key 池、OAuth 凭证、客户端 Key 元数据等 **冷数据以 PostgreSQL 为权威**（见 [docs/ADMIN_COLD_STORAGE.md](docs/ADMIN_COLD_STORAGE.md)）；Gateway Redis 仅为热管道
 - **数据面优化（可选 `[features]`）**：
   - **Prefix-aware L0**：共享消息前缀仅更新索引并继续上游（不短路返回完整缓存）
   - **连接池直预热**：`connection_prewarm` 通过 Pingora 共享 `Connector` 做 TCP+TLS 握手入池（无 loopback HTTP）；新 `session_fingerprint` 在 `upstream_peer` 选路后触发

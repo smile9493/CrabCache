@@ -71,7 +71,6 @@ pub(crate) async fn run_upstream_request_filter(
         smooth_upstream_client_headers(upstream_request, ctx.is_streaming);
     }
 
-
     if let Some(guard) = ctx.upstream.key_guard.as_ref() {
         // Xiaomi MiMo Token Plan uses `api-key: tp-...` (not Bearer).
         // Pay-as-you-go keys may still use Bearer semantics depending on upstream.
@@ -102,7 +101,12 @@ pub(crate) async fn run_upstream_request_filter(
                 .filter(|s| !s.is_empty())
                 .or(ctx.conversation_id.as_deref())
                 .or(ctx.prompt_cache_key.as_deref());
-            apply_codex_upstream_request(upstream_request, account_id, ctx.is_streaming, session_id);
+            apply_codex_upstream_request(
+                upstream_request,
+                account_id,
+                ctx.is_streaming,
+                session_id,
+            );
         }
     } else if crate::responses_wire::needs_responses_wire_translate(ctx) {
         crate::responses_wire::apply_responses_wire_upstream_request(upstream_request);
@@ -190,8 +194,9 @@ pub(crate) async fn run_request_body_filter(
                 *body = None;
                 return Ok(());
             }
-            let quick =
-                crate::body_quick_parse::quick_parse_request_fields(&ctx.request_passthrough.buffer);
+            let quick = crate::body_quick_parse::quick_parse_request_fields(
+                &ctx.request_passthrough.buffer,
+            );
             if let Some(stream) = quick.stream {
                 ctx.is_streaming = stream;
             }
@@ -297,9 +302,17 @@ mod tests {
     fn inject_strict_requires_stream_true() {
         let body = br#"{"model":"mimo-v2.5","messages":[]}"#;
         let out = inject_stream_options_include_usage(body.to_vec(), false);
-        assert!(!std::str::from_utf8(&out).unwrap().contains("stream_options"));
+        assert!(
+            !std::str::from_utf8(&out)
+                .unwrap()
+                .contains("stream_options")
+        );
         let body = br#"{"model":"mimo-v2.5","stream":true,"messages":[]}"#;
         let out = inject_stream_options_include_usage(body.to_vec(), false);
-        assert!(std::str::from_utf8(&out).unwrap().contains("stream_options"));
+        assert!(
+            std::str::from_utf8(&out)
+                .unwrap()
+                .contains("stream_options")
+        );
     }
 }

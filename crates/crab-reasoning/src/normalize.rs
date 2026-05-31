@@ -14,6 +14,18 @@ use tracing::debug;
 static CURSOR_THINKING_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:<(?:think|thinking)\b[^>]*>[\s\S]*?(?:</(?:think|thinking)>|$)|<details\b[^>]*>\s*<summary\b[^>]*>\s*Thinking\s*</summary>[\s\S]*?(?:</details>|$))\s*").unwrap()
 });
+static ANSI_ESCAPE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").unwrap());
+
+const MIMO_CODEX_TOOL_RESULT_MAX_CHARS: usize = 1_200;
+const MIMO_CODEX_TOOL_RESULT_MAX_LINES: usize = 36;
+const MIMO_CODEX_TOOL_RESULT_LINE_MAX_CHARS: usize = 220;
+const MIMO_CODEX_COMPRESSION_TRIGGER_BYTES: usize = 1_000_000;
+const MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD: usize = 160;
+const MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD: usize = 48;
+const MIMO_CODEX_STRUCTURAL_KEEP_RECENT_MESSAGES: usize = 24;
+const MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_CHARS: usize = 6_000;
+const MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_LINES: usize = 48;
 
 const SUPPORTED_REQUEST_FIELDS: &[&str] = &[
     "model",
@@ -269,6 +281,31 @@ pub fn sanitize_mimo_tool_calls_in_messages(messages: Vec<Value>) -> (Vec<Value>
         })
         .collect();
     (out, repaired)
+}
+
+/// MiMo's OpenAI-compatible endpoint is stricter than OpenAI/Codex on chat
+/// message content. Keep tool-call structure, but collapse multimodal/array
+/// content to plain text and avoid `content: null` on assistant tool-call
+/// messages.
+pub fn sanitize_mimo_message_content_in_messages(messages: &mut [Value]) -> usize {
+    let mut changed = 0usize;
+    for msg in messages {
+        let Some(obj) = msg.as_object_mut() else {
+            continue;
+        };
+        let replacement = match obj.get("content") {
+            Some(Value::String(_)) => None,
+            Some(Value::Null) | None => Some(Value::String(String::new())),
+            Some(other) => Some(Value::String(
+                extract_text_content(other).unwrap_or_default(),
+            )),
+        };
+        if let Some(content) = replacement {
+            obj.insert("content".into(), content);
+            changed += 1;
+        }
+    }
+    changed
 }
 
 fn normalize_tool(tool: &Value) -> Value {
@@ -1172,7 +1209,9 @@ fn normalize_message_roles_in_place(map: &mut serde_json::Map<String, Value>) {
     if let Some(tools) = map.get("tools").and_then(|v| v.as_array()) {
         map.insert(
             "tools".into(),
-            Value::Array(crate::codex_tools::normalize_codex_tools_for_upstream(tools)),
+            Value::Array(crate::codex_tools::normalize_codex_tools_for_upstream(
+                tools,
+            )),
         );
     }
     crate::codex_tools::ensure_codex_file_tools_from_context(map);
@@ -1259,6 +1298,374 @@ pub struct GenericPreparedRequest {
     pub serialized_body: Option<Vec<u8>>,
 }
 
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in input.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out
+}
+
+fn is_actionable_tool_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "error",
+        "failed",
+        "failure",
+        "fail ",
+        "panic",
+        "exception",
+        "traceback",
+        "assert",
+        "warning",
+        "warn",
+        "mismatch",
+        "expected",
+        "actual",
+        "diff",
+        "modified",
+        "created",
+        "deleted",
+        "renamed",
+        "exit code",
+        "status",
+        "request_id",
+        "channel closed",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn compress_mimo_codex_tool_output(content: &str) -> Option<String> {
+    let no_ansi = ANSI_ESCAPE_RE.replace_all(content, "").to_string();
+    if no_ansi.chars().count() <= MIMO_CODEX_TOOL_RESULT_MAX_CHARS {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    let mut previous = "";
+    let mut repeated = 0usize;
+    for line in no_ansi.lines() {
+        let trimmed_end = line.trim_end();
+        if trimmed_end == previous {
+            repeated += 1;
+            continue;
+        }
+        if repeated > 0 {
+            lines.push(format!("[{} repeated lines omitted]", repeated));
+            repeated = 0;
+        }
+        let truncated = if trimmed_end.chars().count() > MIMO_CODEX_TOOL_RESULT_LINE_MAX_CHARS {
+            format!(
+                "{} ... [line truncated]",
+                truncate_chars(trimmed_end, MIMO_CODEX_TOOL_RESULT_LINE_MAX_CHARS)
+            )
+        } else {
+            trimmed_end.to_string()
+        };
+        lines.push(truncated);
+        previous = trimmed_end;
+    }
+    if repeated > 0 {
+        lines.push(format!("[{} repeated lines omitted]", repeated));
+    }
+
+    let head = lines.iter().take(8).cloned();
+    let actionable = lines
+        .iter()
+        .filter(|line| is_actionable_tool_line(line))
+        .cloned();
+    let tail_start = lines.len().saturating_sub(16);
+    let tail = lines.iter().skip(tail_start).cloned();
+
+    let mut selected = Vec::<String>::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for line in head.chain(actionable).chain(tail) {
+        if selected.len() >= MIMO_CODEX_TOOL_RESULT_MAX_LINES {
+            break;
+        }
+        if seen.insert(line.clone()) {
+            selected.push(line);
+        }
+    }
+
+    let mut body = selected.join("\n");
+    if body.chars().count() > MIMO_CODEX_TOOL_RESULT_MAX_CHARS {
+        body = truncate_chars(&body, MIMO_CODEX_TOOL_RESULT_MAX_CHARS);
+        body.push_str("\n...[compressed output truncated]");
+    }
+
+    Some(format!(
+        "[crabcache rtk-compressed tool output]\noriginal_chars={} original_lines={} kept_lines={}\n{}",
+        no_ansi.chars().count(),
+        lines.len(),
+        selected.len(),
+        body
+    ))
+}
+
+fn compress_mimo_codex_tool_results_in_messages(messages: &mut [Value]) -> usize {
+    let mut compressed = 0usize;
+    for msg in messages {
+        let Some(obj) = msg.as_object_mut() else {
+            continue;
+        };
+        if obj.get("role").and_then(|r| r.as_str()) != Some("tool") {
+            continue;
+        }
+        let Some(content) = obj.get("content").and_then(|c| c.as_str()) else {
+            continue;
+        };
+        if let Some(compacted) = compress_mimo_codex_tool_output(content) {
+            obj.insert("content".into(), Value::String(compacted));
+            compressed += 1;
+        }
+    }
+    compressed
+}
+
+fn has_tool_calls(msg: &Value) -> bool {
+    msg.get("tool_calls")
+        .and_then(|tc| tc.as_array())
+        .is_some_and(|tc| !tc.is_empty())
+}
+
+fn message_role(msg: &Value) -> Option<&str> {
+    msg.get("role").and_then(|r| r.as_str())
+}
+
+fn count_mimo_codex_tool_turns(messages: &[Value]) -> usize {
+    messages
+        .iter()
+        .filter(|msg| message_role(msg) == Some("tool") || has_tool_calls(msg))
+        .count()
+}
+
+fn compact_excerpt(content: &str, max_chars: usize) -> String {
+    let no_ansi = ANSI_ESCAPE_RE.replace_all(content, "").to_string();
+    let mut lines = Vec::new();
+    for line in no_ansi.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if is_actionable_tool_line(trimmed) || lines.len() < 4 {
+            lines.push(trimmed.to_string());
+        }
+        if lines.len() >= 10 {
+            break;
+        }
+    }
+    let joined = if lines.is_empty() {
+        no_ansi.trim().to_string()
+    } else {
+        lines.join(" | ")
+    };
+    if joined.chars().count() > max_chars {
+        format!("{} ...", truncate_chars(&joined, max_chars))
+    } else {
+        joined
+    }
+}
+
+fn append_summary_line(summary: &mut Vec<String>, line: String, used_chars: &mut usize) {
+    if summary.len() >= MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_LINES {
+        return;
+    }
+    let line_chars = line.chars().count();
+    if *used_chars + line_chars > MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_CHARS {
+        if !summary
+            .last()
+            .is_some_and(|last| last == "...[historical summary truncated]")
+        {
+            summary.push("...[historical summary truncated]".to_string());
+        }
+        *used_chars = MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_CHARS;
+        return;
+    }
+    *used_chars += line_chars;
+    summary.push(line);
+}
+
+fn collect_tool_call_names(msg: &Value, names: &mut HashMap<String, String>) {
+    let Some(tool_calls) = msg.get("tool_calls").and_then(|tc| tc.as_array()) else {
+        return;
+    };
+    for call in tool_calls {
+        let id = call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let name = call
+            .pointer("/function/name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown_tool")
+            .to_string();
+        names.insert(id, name);
+    }
+}
+
+fn summarize_mimo_codex_history(messages: &[Value]) -> String {
+    let assistant_tool_turns = messages.iter().filter(|msg| has_tool_calls(msg)).count();
+    let tool_outputs = messages
+        .iter()
+        .filter(|msg| message_role(msg) == Some("tool"))
+        .count();
+    let mut summary = vec![
+        "CrabCache MiMo Codex historical tool-chain summary.".to_string(),
+        "Older tool-call transcript was structure-compressed to keep the real MiMo upstream stable; current top-level tools/tool_choice were preserved.".to_string(),
+        format!(
+            "Compressed historical messages: {}; assistant tool-call turns: {}; tool outputs: {}.",
+            messages.len(),
+            assistant_tool_turns,
+            tool_outputs
+        ),
+    ];
+    let mut used_chars = summary.iter().map(|s| s.chars().count()).sum::<usize>();
+    let mut tool_names = HashMap::<String, String>::new();
+    let mut user_lines = Vec::<String>::new();
+    let mut assistant_lines = Vec::<String>::new();
+    let mut tool_lines = Vec::<String>::new();
+
+    for msg in messages {
+        collect_tool_call_names(msg, &mut tool_names);
+        match message_role(msg) {
+            Some("user") => {
+                if let Some(content) = msg.get("content").and_then(extract_text_content) {
+                    let excerpt = compact_excerpt(&content, 700);
+                    if !excerpt.is_empty() {
+                        user_lines.push(format!("User: {excerpt}"));
+                    }
+                }
+            }
+            Some("assistant") if !has_tool_calls(msg) => {
+                if let Some(content) = msg.get("content").and_then(extract_text_content) {
+                    let excerpt = compact_excerpt(&content, 700);
+                    if !excerpt.is_empty() {
+                        assistant_lines.push(format!("Assistant: {excerpt}"));
+                    }
+                }
+            }
+            Some("tool") => {
+                let tool_call_id = msg
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let tool_name = tool_names
+                    .get(tool_call_id)
+                    .map(String::as_str)
+                    .unwrap_or("tool");
+                if let Some(content) = msg.get("content").and_then(extract_text_content) {
+                    let excerpt = compact_excerpt(&content, 900);
+                    if !excerpt.is_empty() {
+                        tool_lines.push(format!("Tool {tool_name}: {excerpt}"));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    append_summary_line(
+        &mut summary,
+        "Recent historical user requests:".to_string(),
+        &mut used_chars,
+    );
+    for line in user_lines
+        .iter()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        append_summary_line(&mut summary, format!("- {line}"), &mut used_chars);
+    }
+    append_summary_line(
+        &mut summary,
+        "Recent historical assistant notes:".to_string(),
+        &mut used_chars,
+    );
+    for line in assistant_lines
+        .iter()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        append_summary_line(&mut summary, format!("- {line}"), &mut used_chars);
+    }
+    append_summary_line(
+        &mut summary,
+        "Important historical tool observations:".to_string(),
+        &mut used_chars,
+    );
+    for line in tool_lines
+        .iter()
+        .rev()
+        .take(20)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        append_summary_line(&mut summary, format!("- {line}"), &mut used_chars);
+    }
+    summary.join("\n")
+}
+
+fn compact_mimo_codex_historical_tool_chain(messages: &mut Vec<Value>) -> usize {
+    let tool_turns = count_mimo_codex_tool_turns(messages);
+    if messages.len() <= MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD
+        && tool_turns <= MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD
+    {
+        return 0;
+    }
+
+    let prefix_end = messages
+        .iter()
+        .take_while(|msg| message_role(msg) == Some("system"))
+        .count();
+    let mut split = messages
+        .len()
+        .saturating_sub(MIMO_CODEX_STRUCTURAL_KEEP_RECENT_MESSAGES)
+        .max(prefix_end);
+
+    // Do not start the retained tail with orphaned tool outputs.
+    while split < messages.len() && message_role(&messages[split]) == Some("tool") {
+        split += 1;
+    }
+    if split <= prefix_end || split >= messages.len() {
+        return 0;
+    }
+
+    let historical = messages[prefix_end..split].to_vec();
+    if historical.is_empty() {
+        return 0;
+    }
+    let summary = summarize_mimo_codex_history(&historical);
+    let mut compacted = Vec::with_capacity(prefix_end + 1 + messages.len().saturating_sub(split));
+    compacted.extend_from_slice(&messages[..prefix_end]);
+    compacted.push(serde_json::json!({
+        "role": "system",
+        "content": summary,
+    }));
+    compacted.extend_from_slice(&messages[split..]);
+    let removed = historical.len().saturating_sub(1);
+    *messages = compacted;
+    removed
+}
+
+fn estimated_prepared_body_bytes(prepared: &serde_json::Map<String, Value>) -> usize {
+    serde_json::to_vec(&Value::Object(prepared.clone()))
+        .map(|body| body.len())
+        .unwrap_or(usize::MAX)
+}
+
 /// True when MiMo prepare only filtered unsupported top-level fields or normalized `model`.
 fn mimo_prepare_changes_wire_body(
     payload: &Value,
@@ -1312,12 +1719,59 @@ pub fn normalize_mimo_model(model: &str) -> String {
     lower
 }
 
+fn mimo_model_defaults_to_thinking_enabled(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    !lower.ends_with("mimo-v2-flash") && !lower.ends_with("/mimo-v2-flash")
+}
+
+fn mimo_model_fixes_temperature_in_thinking(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    lower.ends_with("mimo-v2.5-pro")
+        || lower.ends_with("/mimo-v2.5-pro")
+        || lower.ends_with("mimo-v2.5")
+        || lower.ends_with("/mimo-v2.5")
+}
+
 /// MiMo relay: field filter + OpenAI model id normalization; optional turn-based prefix retirement.
 pub fn prepare_mimo_request(
     payload: &Value,
     fallback_model: &str,
     retire_prefix: bool,
     keep_recent_turns: usize,
+) -> GenericPreparedRequest {
+    prepare_mimo_request_inner(
+        payload,
+        fallback_model,
+        retire_prefix,
+        keep_recent_turns,
+        false,
+    )
+}
+
+/// Codex CLI tends to send very large historical tool-call transcripts. Follow
+/// OmniRoute/RTK's approach: preserve message/tool structure and compress noisy
+/// tool outputs instead of dropping the conversation context.
+pub fn prepare_codex_mimo_request(
+    payload: &Value,
+    fallback_model: &str,
+    retire_prefix: bool,
+    keep_recent_turns: usize,
+) -> GenericPreparedRequest {
+    prepare_mimo_request_inner(
+        payload,
+        fallback_model,
+        retire_prefix,
+        keep_recent_turns,
+        true,
+    )
+}
+
+fn prepare_mimo_request_inner(
+    payload: &Value,
+    fallback_model: &str,
+    retire_prefix: bool,
+    keep_recent_turns: usize,
+    compress_codex_tool_results: bool,
 ) -> GenericPreparedRequest {
     let raw = payload
         .get("model")
@@ -1333,9 +1787,24 @@ pub fn prepare_mimo_request(
     };
     let mut prepared = filter_supported_request_fields(payload);
     prepared.insert("model".into(), Value::String(model.clone()));
+    if compress_codex_tool_results
+        && !prepared.contains_key("thinking")
+        && mimo_model_defaults_to_thinking_enabled(&model)
+    {
+        prepared.insert("thinking".into(), serde_json::json!({ "type": "enabled" }));
+    }
+    if prepared
+        .get("thinking")
+        .and_then(|v| v.get("type"))
+        .and_then(|v| v.as_str())
+        == Some("enabled")
+        && mimo_model_fixes_temperature_in_thinking(&model)
+    {
+        prepared.remove("temperature");
+    }
 
     let mut retired_prefix_messages = 0usize;
-    if retire_prefix {
+    if retire_prefix && !compress_codex_tool_results {
         if let Some(messages) = prepared.get("messages").and_then(|m| m.as_array()) {
             // Session store already tail-capped upstream; avoid injecting another [crabcache] notice.
             if messages.len() > 48 {
@@ -1350,7 +1819,30 @@ pub fn prepare_mimo_request(
     }
 
     let mut tool_calls_repaired = 0usize;
+    let mut message_content_repaired = 0usize;
+    let mut tool_results_compressed = 0usize;
+    let mut structural_messages_compacted = 0usize;
+    let should_compress_tool_results = compress_codex_tool_results
+        && (estimated_prepared_body_bytes(&prepared) > MIMO_CODEX_COMPRESSION_TRIGGER_BYTES
+            || prepared
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .is_some_and(|messages| {
+                    messages.len() > MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD
+                        || count_mimo_codex_tool_turns(messages)
+                            > MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD
+                }));
     if let Some(messages) = prepared.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        if should_compress_tool_results {
+            tool_results_compressed = compress_mimo_codex_tool_results_in_messages(messages);
+        }
+        if compress_codex_tool_results {
+            structural_messages_compacted = compact_mimo_codex_historical_tool_chain(messages);
+        }
+        if compress_codex_tool_results && structural_messages_compacted > 0 {
+            tool_results_compressed += compress_mimo_codex_tool_results_in_messages(messages);
+        }
+        message_content_repaired = sanitize_mimo_message_content_in_messages(messages);
         let taken = std::mem::take(messages);
         let (sanitized, repaired) = sanitize_mimo_tool_calls_in_messages(taken);
         tool_calls_repaired = repaired;
@@ -1360,6 +1852,9 @@ pub fn prepare_mimo_request(
     let payload_value = Value::Object(prepared);
     let serialized_body = if retired_prefix_messages > 0
         || tool_calls_repaired > 0
+        || message_content_repaired > 0
+        || tool_results_compressed > 0
+        || structural_messages_compacted > 0
         || mimo_prepare_changes_wire_body(payload, payload_value.as_object().expect("object"))
     {
         Some(serde_json::to_vec(&payload_value).unwrap_or_default())
@@ -1371,6 +1866,24 @@ pub fn prepare_mimo_request(
         debug!(
             tool_calls_repaired,
             "MiMo prepare: repaired tool call arguments JSON"
+        );
+    }
+    if message_content_repaired > 0 {
+        debug!(
+            message_content_repaired,
+            "MiMo prepare: normalized message content"
+        );
+    }
+    if tool_results_compressed > 0 {
+        debug!(
+            tool_results_compressed,
+            "MiMo Codex prepare: compressed historical tool outputs"
+        );
+    }
+    if structural_messages_compacted > 0 {
+        debug!(
+            structural_messages_compacted,
+            "MiMo Codex prepare: structure-compressed historical tool chain"
         );
     }
 
@@ -2021,6 +2534,80 @@ mod tests {
             .map(|a| a.len())
             .unwrap_or(0);
         assert!(out_msgs < 24);
+    }
+
+    #[test]
+    fn prepare_codex_mimo_structure_compresses_long_tool_history() {
+        let mut messages = vec![serde_json::json!({
+            "role": "system",
+            "content": "Use tools carefully."
+        })];
+        for i in 0..80 {
+            messages.push(serde_json::json!({
+                "role": "user",
+                "content": format!("request-{i}")
+            }));
+            messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": format!("call_{i}"),
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"echo hi\"}"
+                    }
+                }]
+            }));
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": format!("call_{i}"),
+                "content": format!("status ok\nmodified file-{i}.rs\n{}", "noise\n".repeat(20))
+            }));
+        }
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": "current request"
+        }));
+        let payload = serde_json::json!({
+            "model": "mimo-v2.5-pro",
+            "stream": true,
+            "messages": messages,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "parameters": { "type": "object" }
+                }
+            }]
+        });
+
+        let result = prepare_codex_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let out = result.payload["messages"].as_array().unwrap();
+        assert!(
+            out.len() < 120,
+            "long Codex MiMo history should be structurally compacted"
+        );
+        assert_eq!(out[0]["role"].as_str(), Some("system"));
+        assert!(
+            out.iter().any(|msg| msg["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("historical tool-chain summary"))),
+            "semantic summary must preserve old tool context"
+        );
+        assert!(
+            result.payload["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["function"]["name"].as_str() == Some("exec_command")),
+            "top-level tools must remain available for Codex"
+        );
+        assert!(
+            out.iter()
+                .any(|msg| msg["content"].as_str() == Some("current request")),
+            "latest user request must remain intact"
+        );
     }
 
     #[test]

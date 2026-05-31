@@ -128,10 +128,7 @@ fn deduplicate_consecutive_roles(messages: &mut Vec<Value>) -> usize {
         if let Some(last) = merged.last_mut() {
             let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("");
             if last_role == role && role != "system" && role != "developer" {
-                let new_content = msg
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                let new_content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                 if let Some(last_content) = last.get_mut("content") {
                     if let Some(existing) = last_content.as_str() {
                         let merged_content = format!("{existing}\n{new_content}");

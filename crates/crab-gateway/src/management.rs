@@ -78,6 +78,8 @@ pub struct ManagementState {
     pub webhook_store: crate::webhook::WebhookStore,
     /// HTTP client for webhook delivery.
     pub webhook_client: reqwest::Client,
+    /// Codex quota cache (shared with gateway runtime for background refresh).
+    pub codex_quota_cache: Option<Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]

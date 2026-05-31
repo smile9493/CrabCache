@@ -64,8 +64,12 @@ pub fn KeysPage() -> impl IntoView {
     let load_keys = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_keys().await {
-                Ok(k) => { keys.try_set(Some(Ok(k))); },
-                Err(e) => { keys.try_set(Some(Err(e))); },
+                Ok(k) => {
+                    keys.try_set(Some(Ok(k)));
+                }
+                Err(e) => {
+                    keys.try_set(Some(Err(e)));
+                }
             }
         });
     };
@@ -74,8 +78,12 @@ pub fn KeysPage() -> impl IntoView {
         network_info.set(None);
         leptos::task::spawn_local(async move {
             match api::fetch_network_info().await {
-                Ok(info) => { network_info.try_set(Some(Ok(info))); },
-                Err(e) => { network_info.try_set(Some(Err(e))); },
+                Ok(info) => {
+                    network_info.try_set(Some(Ok(info)));
+                }
+                Err(e) => {
+                    network_info.try_set(Some(Err(e)));
+                }
             }
         });
     };
@@ -361,7 +369,9 @@ pub fn KeysPage() -> impl IntoView {
                         edit_success.try_set(false);
                     });
                 }
-                Err(e) => { edit_error.try_set(e); },
+                Err(e) => {
+                    edit_error.try_set(e);
+                }
             }
         });
     };

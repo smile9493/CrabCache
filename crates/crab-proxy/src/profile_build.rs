@@ -76,9 +76,25 @@ pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>,
     Ok(backends)
 }
 
+/// True when a profile may reuse the default / legacy DeepSeek key pool on empty explicit keys.
+fn profile_may_share_default_key_pool(runtime: &RuntimeConfig, profile_id: &str) -> bool {
+    let default_id = runtime.default_upstream_profile_id();
+    if profile_id == default_id {
+        return true;
+    }
+    let Some(profile) = runtime.profile(profile_id) else {
+        return false;
+    };
+    let Some(default_profile) = runtime.profile(&default_id) else {
+        return false;
+    };
+    profile.provider == default_profile.provider
+}
+
 /// Resolve key specs for a profile with fallback to existing/default/legacy pools.
 ///
 /// Priority: `explicit` > existing profile pool > default profile pool > legacy `runtime.upstream_pool()` > empty.
+/// Cross-provider inheritance (e.g. Codex inheriting DeepSeek `sk-*` keys) is never allowed.
 pub fn resolve_profile_key_specs(
     explicit: Vec<UpstreamKeySpec>,
     runtime: &RuntimeConfig,
@@ -99,7 +115,14 @@ pub fn resolve_profile_key_specs(
             return specs;
         }
     }
-    // 2) Default profile pool (if this is not the default, inherit its keys).
+    if !profile_may_share_default_key_pool(runtime, profile_id) {
+        warn!(
+            profile_id,
+            "No upstream keys for profile; skipping default/legacy pool inheritance (provider mismatch)"
+        );
+        return Vec::new();
+    }
+    // 2) Default profile pool (same provider family only).
     let default_id = runtime.default_upstream_profile_id();
     if let Some(default_profile) = runtime.profile(&default_id) {
         let specs = default_profile.resolve_upstream_pool().to_specs();

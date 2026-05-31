@@ -202,14 +202,21 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
     if !entry.model.is_empty() {
         *slot.model_counts.entry(entry.model.clone()).or_insert(0) += 1;
     }
-    if let Some(kid) = entry.upstream_key_id.as_deref().or(entry.client_key_id.as_deref()) {
+    if let Some(kid) = entry
+        .upstream_key_id
+        .as_deref()
+        .or(entry.client_key_id.as_deref())
+    {
         if !kid.is_empty() {
             *slot.upstream_key_counts.entry(kid.to_string()).or_insert(0) += 1;
         }
     }
     if let Some(cons) = entry.consumer.as_deref() {
         if !cons.is_empty() {
-            *slot.downstream_key_counts.entry(cons.to_string()).or_insert(0) += 1;
+            *slot
+                .downstream_key_counts
+                .entry(cons.to_string())
+                .or_insert(0) += 1;
         }
     }
 

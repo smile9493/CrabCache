@@ -115,7 +115,10 @@ pub fn enrich_upstream_key_view(
         .plan_type
         .clone()
         .or_else(|| entry.quota.as_ref().and_then(|q| q.plan_type.clone()));
-    key.quota = entry.quota.as_ref().map(|q| key_quota_from_control(q.clone()));
+    key.quota = entry
+        .quota
+        .as_ref()
+        .map(|q| key_quota_from_control(q.clone()));
     key
 }
 
@@ -140,6 +143,18 @@ fn key_quota_from_control(q: crab_control::KeyQuotaInfo) -> KeyQuotaInfo {
         secondary_used_percent: q.secondary_used_percent,
         primary_reset_after_secs: q.primary_reset_after_secs,
         secondary_reset_after_secs: q.secondary_reset_after_secs,
+        primary_reset_at_secs: q.primary_reset_at_secs,
+        secondary_reset_at_secs: q.secondary_reset_at_secs,
+        codex_windows: q.codex_windows.map(|ws| {
+            ws.into_iter()
+                .map(|w| CodexQuotaWindowItem {
+                    id: w.id,
+                    label: w.label,
+                    used_percent: w.used_percent,
+                    reset_at_secs: w.reset_at_secs,
+                })
+                .collect()
+        }),
     }
 }
 

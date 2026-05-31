@@ -15,8 +15,12 @@ pub fn PipelinePage() -> impl IntoView {
     let reload = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_pipeline_runtime().await {
-                Ok(c) => { config.try_set(Some(Ok(c))); },
-                Err(e) => { config.try_set(Some(Err(e))); },
+                Ok(c) => {
+                    config.try_set(Some(Ok(c)));
+                }
+                Err(e) => {
+                    config.try_set(Some(Err(e)));
+                }
             }
         });
     };

@@ -694,11 +694,8 @@ impl AppState {
         let pg_cfg = crate::pg::PgConfig::from_env();
         if pg_cfg.enabled() {
             if let Some(url) = &pg_cfg.url {
-                *state.pg_pending_config.write() = Some((
-                    url.clone(),
-                    pg_cfg.max_pool_size,
-                    pg_cfg.migrate_from_json,
-                ));
+                *state.pg_pending_config.write() =
+                    Some((url.clone(), pg_cfg.max_pool_size, pg_cfg.migrate_from_json));
             }
         }
 
@@ -720,33 +717,111 @@ impl AppState {
                         tracing::info!("JSON state imported into PostgreSQL");
                     }
                 }
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let cutoff = now.saturating_sub(crate::metrics_history::MAX_RETENTION_SECS);
-                if let Ok(pg_snapshots) = pg.load_metric_snapshots_since(cutoff).await {
-                    let sqlite_count = state.metrics_history.read().sample_count();
-                    if pg_snapshots.len() > sqlite_count {
-                        let mut hist = state.metrics_history.write();
-                        *hist = MetricsHistory::new();
-                        for s in &pg_snapshots {
-                            hist.append(s.clone());
-                        }
-                        tracing::info!(
-                            hydrated = hist.sample_count(),
-                            "Metrics history restored from PostgreSQL (supersedes SQLite)"
-                        );
-                    }
-                }
+                tracing::debug!("Assigning PostgreSQL store handle");
                 *state.pg_store.write() = Some(pg);
                 *state.pg_pending_config.write() = None;
+                tracing::debug!("PostgreSQL store handle assigned");
                 true
             }
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to initialize PostgreSQL");
                 false
             }
+        }
+    }
+
+    /// Restore profile key pools from PostgreSQL into memory (PG is authoritative when enabled).
+    pub async fn hydrate_profile_secrets_from_pg(&self) -> bool {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return false;
+        };
+        match pg.load_profile_secrets().await {
+            Ok(map) if !map.is_empty() => {
+                let profile_count = map.len();
+                let mut secrets_map = std::collections::HashMap::new();
+                for (profile_id, secrets) in map {
+                    secrets_map.insert(
+                        profile_id,
+                        secrets
+                            .into_iter()
+                            .map(|s| UpstreamPoolSecret {
+                                id: s.id,
+                                secret: s.secret,
+                                enabled: s.enabled,
+                                account_id: s.account_id,
+                            })
+                            .collect(),
+                    );
+                }
+                *self.upstream_profile_secrets.write() = secrets_map;
+                self.flush_persist();
+                tracing::info!(
+                    profiles = profile_count,
+                    "Profile key pools restored from PostgreSQL"
+                );
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load profile secrets from PostgreSQL");
+                false
+            }
+        }
+    }
+
+    /// Push all cached profile key pools to Gateway (after PG hydration or recovery).
+    pub async fn push_all_profile_pools_to_gateway(&self) {
+        let profile_ids: Vec<String> = self
+            .upstream_profile_secrets
+            .read()
+            .keys()
+            .cloned()
+            .collect();
+        for profile_id in profile_ids {
+            if let Err(e) = crate::upstream_profiles::sync_profile_pool_to_gateway(
+                self,
+                &profile_id,
+                crate::types::UpstreamKeysPutMode::Replace,
+            )
+            .await
+            {
+                tracing::warn!(
+                    profile_id = %profile_id,
+                    error = %e,
+                    "Failed to push profile pool to gateway after PG hydrate"
+                );
+            }
+        }
+    }
+
+    /// Persist one profile's key pool to PostgreSQL (best-effort).
+    pub async fn persist_profile_secrets_to_pg(&self, profile_id: &str) {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return;
+        };
+        let persisted: Vec<persist::PersistedUpstreamPoolSecret> = self
+            .upstream_profile_secrets
+            .read()
+            .get(profile_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| persist::PersistedUpstreamPoolSecret {
+                id: s.id,
+                secret: s.secret,
+                enabled: s.enabled,
+                account_id: s.account_id,
+            })
+            .collect();
+        let _guard = self.pg_write_lock.lock().await;
+        if let Err(e) = pg.replace_profile_secrets(profile_id, &persisted).await {
+            tracing::warn!(
+                error = %e,
+                profile_id = %profile_id,
+                "PG persist upstream profile keys failed (non-fatal)"
+            );
         }
     }
 
@@ -1045,6 +1120,7 @@ impl AppState {
         let Ok(resp) = self.gateway.list_upstream_profiles().await else {
             return;
         };
+        let pg_authoritative = self.pg_store.read().is_some();
         let mut any_updated = false;
         for profile in resp.profiles {
             let profile_id = profile.id;
@@ -1060,6 +1136,17 @@ impl AppState {
                 .get(&profile_id)
                 .cloned()
                 .unwrap_or_default();
+            if pg_authoritative && !current.is_empty() {
+                let incomplete = current.iter().any(|s| s.secret.is_empty());
+                if !incomplete {
+                    continue;
+                }
+            }
+            if crate::oauth_codex::profile_is_codex_like(self, &profile_id)
+                && crate::oauth_codex::codex_oauth_secret_count(&current) > 0
+            {
+                continue;
+            }
             let needs_sync = export.keys.len() != current.len()
                 || current.iter().any(|s| s.secret.is_empty())
                 || export.keys.iter().any(|ek| {

@@ -40,7 +40,11 @@ pub fn audit_responses_tool_registry(payload: &Value) -> ResponsesToolRegistryAu
         .get("instructions")
         .and_then(|v| v.as_str())
         .is_some_and(|s| s.contains("apply_patch"));
-    build_registry_audit(registered_tool_names, tool_search_count, instructions_mention_apply_patch)
+    build_registry_audit(
+        registered_tool_names,
+        tool_search_count,
+        instructions_mention_apply_patch,
+    )
 }
 
 pub fn audit_chat_tool_registry(payload: &Value) -> ResponsesToolRegistryAudit {
@@ -59,13 +63,14 @@ pub fn audit_chat_tool_registry(payload: &Value) -> ResponsesToolRegistryAudit {
         .filter(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("system"))
         .filter_map(|msg| msg.get("content").and_then(|c| c.as_str()))
         .any(|s| s.contains("apply_patch"));
-    build_registry_audit(registered_tool_names, tool_search_count, instructions_mention_apply_patch)
+    build_registry_audit(
+        registered_tool_names,
+        tool_search_count,
+        instructions_mention_apply_patch,
+    )
 }
 
-pub fn audit_mimo_tool_pipeline(
-    chat_before: &Value,
-    chat_after: &Value,
-) -> MimoToolPipelineAudit {
+pub fn audit_mimo_tool_pipeline(chat_before: &Value, chat_after: &Value) -> MimoToolPipelineAudit {
     let before_tools = chat_before
         .get("tools")
         .and_then(|t| t.as_array())
@@ -342,9 +347,9 @@ mod tests {
         let chat = responses_payload_to_chat_completions(&payload);
         let tools = chat["tools"].as_array().unwrap();
         assert!(
-            !tools.iter().any(|t| {
-                t.get("type").and_then(|ty| ty.as_str()) == Some("tool_search")
-            }),
+            !tools
+                .iter()
+                .any(|t| { t.get("type").and_then(|ty| ty.as_str()) == Some("tool_search") }),
             "tool_search is dropped before upstream relay"
         );
         assert!(
@@ -368,10 +373,7 @@ mod tests {
         names.sort_unstable();
         assert_eq!(
             names,
-            vec![
-                "exec_command".to_string(),
-                "write_stdin".to_string(),
-            ]
+            vec!["exec_command".to_string(), "write_stdin".to_string(),]
         );
     }
 

@@ -232,6 +232,53 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
     }
 }
 
+/// Wire `CodexQuotaCache` to all Codex profile key pools.
+fn wire_codex_quota_caches(
+    runtime: &Arc<RuntimeConfig>,
+    cache: &Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>,
+) {
+    let map = runtime.upstream_profiles.read();
+    for profile in map.values() {
+        if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+            let pool_arc = profile.upstream_pool.read().clone();
+            pool_arc.set_quota_cache(cache.clone());
+        }
+    }
+}
+
+/// Refresh quotas for all enabled Codex keys (background task).
+async fn refresh_codex_quotas(
+    runtime: &Arc<RuntimeConfig>,
+    cache: &Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>,
+) {
+    let profiles = {
+        let map = runtime.upstream_profiles.read();
+        map.values()
+            .filter(|p| p.provider == crab_pipeline::UpstreamProvider::Codex)
+            .map(|p| {
+                let pool = p.upstream_pool.read().clone();
+                let base_url = p.base_url.clone();
+                (pool, base_url)
+            })
+            .collect::<Vec<_>>()
+    };
+    for (pool, base_url) in profiles {
+        for spec in pool.to_specs() {
+            if !spec.enabled {
+                continue;
+            }
+            if spec.account_id.is_empty()
+                || spec.account_id == crab_proxy::DEFAULT_UPSTREAM_ACCOUNT_ID
+            {
+                continue;
+            }
+            cache
+                .refresh_key(&spec.id, &base_url, &spec.secret, &spec.account_id)
+                .await;
+        }
+    }
+}
+
 fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|panic_info| {
         let location = panic_info
@@ -890,6 +937,9 @@ fn main() -> Result<()> {
     ));
     let model_lockouts = Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default());
 
+    // Create Codex quota cache (shared between gateway runtime and management)
+    let codex_quota_cache = Arc::new(crab_proxy::codex_quota_cache::CodexQuotaCache::new());
+
     // Initialize event bus and webhook delivery
     let event_bus = Arc::new(crab_proxy::event_bus::EventBus::new(1024));
     let webhook_store = crab_gateway::webhook::WebhookStore::new();
@@ -924,6 +974,7 @@ fn main() -> Result<()> {
         model_lockouts: model_lockouts.clone(),
         webhook_store: webhook_store.clone(),
         webhook_client: webhook_client.clone(),
+        codex_quota_cache: Some(codex_quota_cache.clone()),
     };
 
     let mgmt_listen_thread = mgmt_listen.clone();
@@ -1016,7 +1067,7 @@ fn main() -> Result<()> {
         model_lockouts,
         client_lockouts,
         event_bus: Arc::new(crab_proxy::event_bus::EventBus::new(1024)),
-        codex_quota_cache: Arc::new(crab_proxy::codex_quota_cache::CodexQuotaCache::new()),
+        codex_quota_cache: codex_quota_cache.clone(),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -1030,10 +1081,23 @@ fn main() -> Result<()> {
         });
     }
 
-    // Codex quota background refresh is handled lazily in codex_quota_cache
-    // (60s TTL + refresh on acquire). No background task needed for v1 —
-    // keys are refreshed on-demand via fetch_and_update(), and 429-marked
-    // entries auto-clear after EXHAUSTED_TTL_SECS (5 min).
+    // Codex quota: wire cache to all Codex profile key pools + spawn background refresh
+    {
+        let quota_cache = state.codex_quota_cache.clone();
+        wire_codex_quota_caches(&state.runtime, &quota_cache);
+
+        // Background refresh: every 60s, refresh all enabled Codex key quotas
+        let runtime_bg = state.runtime.clone();
+        let cache_bg = quota_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                refresh_codex_quotas(&runtime_bg, &cache_bg).await;
+            }
+        });
+    }
 
     let proxy = GatewayProxy::new(state.clone());
     let proxy_obj = http_proxy(&server.configuration, proxy);

@@ -312,8 +312,12 @@ pub fn InfraPage() -> impl IntoView {
         }
         leptos::task::spawn_local(async move {
             match api::fetch_infra_timeseries(&window, Some(&container_id)).await {
-                Ok(ts) => { timeseries.try_set(Some(ts)); },
-                Err(_) => { timeseries.try_set(None); },
+                Ok(ts) => {
+                    timeseries.try_set(Some(ts));
+                }
+                Err(_) => {
+                    timeseries.try_set(None);
+                }
             }
         });
     };
@@ -343,7 +347,9 @@ pub fn InfraPage() -> impl IntoView {
                             });
                         }
                     },
-                    Err(e) => { speed_message.try_set(e); },
+                    Err(e) => {
+                        speed_message.try_set(e);
+                    }
                 }
                 speed_testing.try_set(false);
             });
@@ -363,7 +369,9 @@ pub fn InfraPage() -> impl IntoView {
                     last_collected.try_set(status.last_collected_at);
                     history_samples.try_set(status.history_sample_count);
                 }
-                Err(_) => { docker_connected.try_set(false); },
+                Err(_) => {
+                    docker_connected.try_set(false);
+                }
             }
             if load_gen.try_get() != Some(req_id) {
                 return;
@@ -382,7 +390,10 @@ pub fn InfraPage() -> impl IntoView {
                     snapshot.try_set(Some(Ok(snap)));
                     error.try_set(None);
 
-                    if selected_container.try_get_untracked().unwrap_or_default().is_empty()
+                    if selected_container
+                        .try_get_untracked()
+                        .unwrap_or_default()
+                        .is_empty()
                         && let Some(id) = first_id.clone()
                     {
                         selected_container.try_set(id);

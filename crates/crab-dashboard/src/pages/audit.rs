@@ -81,7 +81,9 @@ pub fn AuditLogPage() -> impl IntoView {
                         entries.try_set(Some(Ok(new_entries)));
                     }
                 }
-                Err(e) => { entries.try_set(Some(Err(e))); },
+                Err(e) => {
+                    entries.try_set(Some(Err(e)));
+                }
             }
             loading.try_set(false);
         });

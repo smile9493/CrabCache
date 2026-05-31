@@ -129,15 +129,17 @@ fn DomainPolicyEditor(
             let saved_msg = saved_msg.clone();
             leptos::task::spawn_local(async move {
                 match api::upsert_domain_policy(policy).await {
-                Ok(_) => {
-                    feedback.try_set(saved_msg);
-                    if let Some(n) = after_save {
-                        n.try_update(|v| *v += 1);
+                    Ok(_) => {
+                        feedback.try_set(saved_msg);
+                        if let Some(n) = after_save {
+                            n.try_update(|v| *v += 1);
+                        }
+                    }
+                    Err(e) => {
+                        feedback.try_set(e);
                     }
                 }
-                Err(e) => { feedback.try_set(e); }
-            }
-            saving.try_set(false);
+                saving.try_set(false);
             });
         }
     };

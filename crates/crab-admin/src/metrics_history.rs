@@ -1305,7 +1305,11 @@ pub fn percentile_from_buckets(
                 0.0
             };
             let result = (prev_le + bucket_range * fraction) * 1000.0;
-            return if result.is_finite() { result } else { prev_le * 1000.0 };
+            return if result.is_finite() {
+                result
+            } else {
+                prev_le * 1000.0
+            };
         }
         if le.is_finite() {
             last_finite_le = le;
