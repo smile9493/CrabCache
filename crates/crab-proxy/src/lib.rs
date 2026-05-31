@@ -1,23 +1,25 @@
-mod client_key_limiter;
-mod client_key_rate_limiter;
 pub mod backend_state;
 pub mod circuit_breaker;
-mod codex;
-pub mod debug_log;
-mod responses_tool_registry;
-mod responses_wire;
-mod context;
+mod client_key_limiter;
+mod client_key_rate_limiter;
 pub mod client_lockout;
+mod codex;
+pub mod codex_quota_cache;
+mod codex_rate_limit;
+mod context;
+pub mod debug_log;
+mod error;
 pub mod event_bus;
 pub mod fallback_policy;
-mod error;
 mod guardrails;
-pub mod model_lockout;
 mod masking;
+pub mod model_lockout;
 mod phases;
 mod profile_build;
 mod proxy;
 pub mod raw_capture;
+mod responses_tool_registry;
+mod responses_wire;
 mod runtime;
 mod sse;
 mod stored_key;
@@ -41,15 +43,15 @@ mod connection_helpers;
 pub mod connection_prewarm;
 mod error_jsons;
 mod helper_fns;
+pub mod key_binding;
 mod metrics_helpers;
+pub mod responses_chain_store;
 mod semantic_runtime;
 mod send_helpers;
-pub mod responses_chain_store;
 mod session_store;
 mod sse_pipeline;
 mod sse_rewrite;
 mod streaming_body_forward;
-pub mod key_binding;
 
 pub use cache_helpers::{
     build_cache_entry, build_cache_entry_with_sse, build_semantic_query_text,
@@ -61,11 +63,11 @@ pub use cache_response::{
 };
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimiter};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
-pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use context::{
     BackendRouteStrategy, ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState,
     ModelPricing, PricingConfig, ReasoningConfig,
 };
+pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
 pub use event_bus::{
     CacheInvalidatedEvent, EventBus, GatewayEvent, KeyCreatedEvent, KeyRevokedEvent,

@@ -48,3 +48,4 @@ bb8.workspace = true
 bb8-redis.workspace = true
 redis.workspace = true
 once_cell.workspace = true
+reqwest.workspace = true

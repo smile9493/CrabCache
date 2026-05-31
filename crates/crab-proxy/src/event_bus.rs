@@ -5,8 +5,8 @@
 //! by background tasks (webhook delivery, future extensions).
 
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::broadcast;
 
 /// Gateway event types published through the event bus.

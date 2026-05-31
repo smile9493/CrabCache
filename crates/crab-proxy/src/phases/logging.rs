@@ -59,7 +59,6 @@ pub(crate) async fn run(
         {
             guard.mark_failed();
         }
-
     } else {
         info!(
             request_id = %ctx.request_id,
@@ -99,7 +98,10 @@ pub(crate) async fn run(
                 input_tokens: Some(ctx.tokens.last_input),
                 output_tokens: Some(ctx.tokens.last_output),
                 upstream_status: ctx.upstream.http_status,
-                pipeline: ctx.request_pipeline.as_ref().map(|p| p.as_str().to_string()),
+                pipeline: ctx
+                    .request_pipeline
+                    .as_ref()
+                    .map(|p| p.as_str().to_string()),
                 backend_name: ctx.upstream.backend_name.clone(),
                 client_ip: ctx.client_ip.clone(),
                 timestamp: now_secs(),
@@ -116,12 +118,22 @@ pub(crate) async fn run(
                     let output = t.completed_output();
                     let types: Vec<String> = output
                         .iter()
-                        .filter_map(|item| item.get("type").and_then(|v| v.as_str()).map(str::to_string))
+                        .filter_map(|item| {
+                            item.get("type")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        })
                         .collect();
                     let tools: Vec<String> = output
                         .iter()
-                        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
-                        .filter_map(|item| item.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                        .filter(|item| {
+                            item.get("type").and_then(|v| v.as_str()) == Some("function_call")
+                        })
+                        .filter_map(|item| {
+                            item.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(str::to_string)
+                        })
                         .collect();
                     (tools, types)
                 })
@@ -147,7 +159,12 @@ pub(crate) async fn run(
                 .unwrap_or(0);
             let unregistered: Vec<String> = tool_names
                 .iter()
-                .filter(|n| !ctx.stream.client_responses_tool_names.iter().any(|r| r == *n))
+                .filter(|n| {
+                    !ctx.stream
+                        .client_responses_tool_names
+                        .iter()
+                        .any(|r| r == *n)
+                })
                 .cloned()
                 .collect();
             // #region agent log
@@ -314,15 +331,13 @@ pub(crate) async fn run(
                 entry.guardrail_labels = ctx.guardrail_hits.clone();
                 entry.client_ip = ctx.client_ip.clone();
                 entry.client_peer_addr = ctx.client_peer_addr.clone();
-                entry.body_read_duration_ms = match (
-                    ctx.timeline.body_read_start,
-                    ctx.timeline.body_read_done,
-                ) {
-                    (Some(start), Some(done)) => {
-                        Some(done.duration_since(start).as_secs_f64() * 1000.0)
-                    }
-                    _ => None,
-                };
+                entry.body_read_duration_ms =
+                    match (ctx.timeline.body_read_start, ctx.timeline.body_read_done) {
+                        (Some(start), Some(done)) => {
+                            Some(done.duration_since(start).as_secs_f64() * 1000.0)
+                        }
+                        _ => None,
+                    };
                 entry.upload_bytes_per_sec = entry.body_read_duration_ms.and_then(|ms| {
                     if ms > 0.0 {
                         Some((ctx.content_length as f64) / (ms / 1000.0))
@@ -371,7 +386,10 @@ pub(crate) async fn run(
                     "hit"
                 } else if ctx.is_coalesced_follower {
                     "skip_coalesced"
-                } else if ctx.request_pipeline == Some(crab_pipeline::RequestPipeline::MimoTokenPlanRelay) && ctx.request_passthrough.armed_prefix_len > 0  {
+                } else if ctx.request_pipeline
+                    == Some(crab_pipeline::RequestPipeline::MimoTokenPlanRelay)
+                    && ctx.request_passthrough.armed_prefix_len > 0
+                {
                     "skip_passthrough"
                 } else {
                     "miss"
@@ -386,13 +404,13 @@ pub(crate) async fn run(
                         s if s >= 500 => "5xx_error",
                         s if s >= 400 => "4xx_error",
                         _ => "unknown",
-                    }.to_string()
+                    }
+                    .to_string()
                 });
                 // phase_durations_ms: compute from timeline watermarks
-                if let Some(phases) = crate::trace_logger::compute_phase_durations(
-                    &ctx.request_start,
-                    &ctx.timeline,
-                ) {
+                if let Some(phases) =
+                    crate::trace_logger::compute_phase_durations(&ctx.request_start, &ctx.timeline)
+                {
                     entry.phase_durations_ms = Some(phases);
                 }
                 if let Some(backend) = &ctx.upstream.backend_name {

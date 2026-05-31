@@ -12,9 +12,9 @@ use crab_control::{
     ClearReasoningCacheResponse, ClientEndpointView, ConnectionRuntimeView,
     CreateGatewayKeyRequest, CreateGatewayKeyResponse, CursorModelAliasView,
     CursorModelsConfigView, DomainPolicySpec, DomainUsageEntry, DomainUsageResponse, ErrorResponse,
-    GATEWAY_ADMIN_KEY_HEADER,     GatewayStatus, PatchGatewayKeyRequest, PatchUpstreamKeyRequest,
-    PipelineProfileView, PipelineRuntimeConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
-    LimitsConfigView, ModelPricingView, PricingConfigView, FeaturesConfigView,
+    FeaturesConfigView, GATEWAY_ADMIN_KEY_HEADER, GatewayStatus, LimitsConfigView,
+    ModelPricingView, PatchGatewayKeyRequest, PatchUpstreamKeyRequest, PipelineProfileView,
+    PipelineRuntimeConfigView, PricingConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
     PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
     RoutingSummaryView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
@@ -25,16 +25,16 @@ use crab_pipeline::{
     CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
 };
 use crab_proxy::{
-    ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig, ReasoningConfig,
-    RuntimeConfig, StoredKey, UpstreamKeyPool, UpstreamKeySpec,
+    ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig, ReasoningConfig, RuntimeConfig,
+    StoredKey, UpstreamKeyPool, UpstreamKeySpec,
 };
 use crab_proxy::{SemanticRuntimeState, SharedSemanticRuntime};
 use crab_reasoning::ReasoningBackend;
 use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -74,6 +74,10 @@ pub struct ManagementState {
     pub client_lockouts: Arc<crab_proxy::client_lockout::ClientLockoutRegistry>,
     /// Model-level lockout registry (per-profile/backend/model cooldowns).
     pub model_lockouts: Arc<crab_proxy::model_lockout::ModelLockoutRegistry>,
+    /// Webhook store for managing webhook configurations.
+    pub webhook_store: crate::webhook::WebhookStore,
+    /// HTTP client for webhook delivery.
+    pub webhook_client: reqwest::Client,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -246,15 +250,13 @@ pub fn router(state: ManagementState) -> Router {
             get(management_profiles::get_profile_routing),
         )
         .route("/v1/routing/summary", get(get_routing_summary))
-        .route(
-            "/v1/resilience/lockouts",
-            get(get_lockouts),
-        )
+        .route("/v1/resilience/lockouts", get(get_lockouts))
         .route(
             "/v1/resilience/lockouts/model/{profile}/{backend}/{model}",
             delete(clear_model_lockout),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
+        .merge(crate::webhook_admin::build_webhook_routes())
         .with_state(state)
 }
 
@@ -855,34 +857,12 @@ async fn put_upstream_keys(
                 .into_response()
         })?;
 
-    // 2) Fan-out: sync the same specs to every other profile pool (inflight/cooldown isolated).
-    let profile_ids: Vec<String> = {
-        let profiles = state.runtime.upstream_profiles.read();
-        profiles.keys().cloned().collect()
-    };
-    let mut profiles_updated = vec![default_id.clone()];
-    for pid in &profile_ids {
-        if *pid == default_id {
-            continue;
-        }
-        if let Some(profile) = state.runtime.profile(pid) {
-            let peer_current = profile.resolve_upstream_pool();
-            let peer_pool = match req.mode {
-                UpstreamKeysPutMode::Append => {
-                    UpstreamKeyPool::merge_append(&peer_current, specs.clone())
-                }
-                UpstreamKeysPutMode::Replace => {
-                    UpstreamKeyPool::hot_replace(&peer_current, specs.clone())
-                }
-            };
-            if let Err(e) = state.runtime.replace_profile_pool(pid, peer_pool) {
-                tracing::warn!(profile_id = %pid, error = %e, "Failed to sync keys to profile");
-            } else {
-                profiles_updated.push(pid.clone());
-            }
-        }
-    }
-    tracing::info!(profiles = ?profiles_updated, "Upstream keys synced to profile pools");
+    tracing::info!(
+        profile_id = %default_id,
+        mode = ?req.mode,
+        key_count = specs.len(),
+        "Updated default upstream profile key pool (other profiles unchanged)"
+    );
 
     schedule_persist_state(&state);
     Ok(Json(upstream_keys_view(&state.runtime)))
@@ -914,21 +894,6 @@ async fn patch_upstream_key(
                 }),
             )
                 .into_response());
-        }
-        // Fan-out: sync enabled status to all other profile pools.
-        let profile_ids: Vec<String> = {
-            let profiles = state.runtime.upstream_profiles.read();
-            profiles.keys().cloned().collect()
-        };
-        let default_id = state.runtime.default_upstream_profile_id();
-        for pid in &profile_ids {
-            if *pid == default_id {
-                continue;
-            }
-            if let Some(profile) = state.runtime.profile(pid) {
-                let peer_pool = profile.resolve_upstream_pool();
-                peer_pool.set_enabled(&id, enabled);
-            }
         }
     }
     if req.secret.is_some() {
@@ -1498,7 +1463,10 @@ async fn get_limits_config(
     Ok(Json(LimitsConfigView {
         max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
         max_concurrent_requests: state.max_concurrent_requests,
-        legacy_api_key_as_client_auth: state.runtime.legacy_api_key_as_client_auth.load(Ordering::Relaxed),
+        legacy_api_key_as_client_auth: state
+            .runtime
+            .legacy_api_key_as_client_auth
+            .load(Ordering::Relaxed),
         cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
     }))
 }
@@ -1509,13 +1477,23 @@ async fn put_limits_config(
     Json(req): Json<LimitsConfigView>,
 ) -> Result<Json<LimitsConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
-    state.max_request_body_bytes.store(req.max_request_body_bytes, Ordering::Relaxed);
-    state.cors_enabled.store(req.cors_enabled, Ordering::Relaxed);
-    state.runtime.legacy_api_key_as_client_auth.store(req.legacy_api_key_as_client_auth, Ordering::Relaxed);
+    state
+        .max_request_body_bytes
+        .store(req.max_request_body_bytes, Ordering::Relaxed);
+    state
+        .cors_enabled
+        .store(req.cors_enabled, Ordering::Relaxed);
+    state
+        .runtime
+        .legacy_api_key_as_client_auth
+        .store(req.legacy_api_key_as_client_auth, Ordering::Relaxed);
     Ok(Json(LimitsConfigView {
         max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
         max_concurrent_requests: state.max_concurrent_requests,
-        legacy_api_key_as_client_auth: state.runtime.legacy_api_key_as_client_auth.load(Ordering::Relaxed),
+        legacy_api_key_as_client_auth: state
+            .runtime
+            .legacy_api_key_as_client_auth
+            .load(Ordering::Relaxed),
         cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
     }))
 }
@@ -1538,15 +1516,19 @@ async fn put_pricing_config(
     let mut pricing = state.pricing.write();
     pricing.default_input_price_per_million = req.default_input_price_per_million;
     pricing.default_output_price_per_million = req.default_output_price_per_million;
-    pricing.model_overrides = req.model_overrides.into_iter().map(|(k, v)| {
-        (
-            k,
-            crab_proxy::ModelPricing {
-                input_price_per_million: v.input,
-                output_price_per_million: v.output,
-            },
-        )
-    }).collect();
+    pricing.model_overrides = req
+        .model_overrides
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                crab_proxy::ModelPricing {
+                    input_price_per_million: v.input,
+                    output_price_per_million: v.output,
+                },
+            )
+        })
+        .collect();
     Ok(Json(pricing_view(&pricing)))
 }
 
@@ -1554,15 +1536,19 @@ fn pricing_view(p: &PricingConfig) -> PricingConfigView {
     PricingConfigView {
         default_input_price_per_million: p.default_input_price_per_million,
         default_output_price_per_million: p.default_output_price_per_million,
-        model_overrides: p.model_overrides.iter().map(|(k, v)| {
-            (
-                k.clone(),
-                ModelPricingView {
-                    input: v.input_price_per_million,
-                    output: v.output_price_per_million,
-                },
-            )
-        }).collect(),
+        model_overrides: p
+            .model_overrides
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    ModelPricingView {
+                        input: v.input_price_per_million,
+                        output: v.output_price_per_million,
+                    },
+                )
+            })
+            .collect(),
     }
 }
 

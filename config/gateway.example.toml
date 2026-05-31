@@ -331,6 +331,16 @@ max_files = 5
 # mimo_key_binding = false              # Conversation-level upstream key binding for MiMo (lock key per conversation)
 # mimo_key_binding_ttl_secs = 300       # Idle TTL (seconds) for key bindings; 5 minutes default
 # mimo_key_max_inflight = 3             # Max concurrent requests per bound key (0 = unlimited)
+# codex_key_binding = false             # Session → Codex OAuth account binding (overflow spill on saturation)
+# codex_key_binding_ttl_secs = 300
+# codex_key_max_inflight = 3
+# codex_key_overflow_wait_ms = 200      # Wait on bound key before spill (ms)
+# codex_acquire_fill_first = true         # Deprioritize keys with recent 429/capacity strikes
+# codex_retry_budget_max = 3              # Same-request retries scale with min(pool-1, this cap)
+# codex_quota_preflight = true            # Check WHAM before acquiring upstream key (quota-aware selection)
+# codex_quota_min_remaining_percent = 2.0 # Minimum remaining % to keep using a key (OmniRoute default)
+# codex_quota_cache_ttl_secs = 60         # WHAM cache TTL in seconds (0 = always re-fetch)
+# codex_quota_background_refresh = true   # Background refresh of WHAM quota data for active keys
 
 # ── Multi-Layer Resilience (Circuit Breaker / Lockout) ───────────
 # Inspired by OmniRoute's 4-layer resilience architecture.
@@ -394,3 +404,15 @@ max_files = 5
 #   POST /api/admin/logs/clear
 # Disk usage:
 #   GET /api/admin/logs/usage
+
+# ── Event Bus & Webhooks ─────────────────────────────────────
+# Event bus for gateway-wide pub/sub notifications (webhook delivery, etc.)
+# [event_bus]
+# capacity = 1024              # Event bus channel capacity
+
+# Webhook delivery configuration
+# [webhook]
+# enabled = true
+# delivery_timeout_secs = 10   # HTTP delivery timeout
+# max_retries = 3              # Max retry attempts
+# retry_base_delay_ms = 1000   # Base delay for exponential backoff

@@ -258,11 +258,7 @@ fn main() -> Result<()> {
     }));
 
     std::fs::create_dir_all("./logs").ok();
-    crab_proxy::init_debug_log(
-        std::env::var("CRABCACHE_DEBUG_LOG_PATH")
-            .ok()
-            .as_deref(),
-    );
+    crab_proxy::init_debug_log(std::env::var("CRABCACHE_DEBUG_LOG_PATH").ok().as_deref());
 
     let file_appender = tracing_appender::rolling::daily("./logs", "gateway.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -291,7 +287,6 @@ fn main() -> Result<()> {
         .init();
 
     let (config_path, clear_reasoning_cache) = parse_cli_args();
-
 
     let config = GatewayConfig::load(&config_path)?;
     info!(config_path = %config_path, "Configuration loaded");
@@ -348,7 +343,6 @@ fn main() -> Result<()> {
     }
     info!("Configuration validated successfully");
 
-
     let mut server = Server::new(None)?;
     server.bootstrap();
 
@@ -365,7 +359,6 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-
 
     let upstream_profiles = config.build_upstream_profile_runtimes(&rt)?;
     let default_profile_id = config.gateway.default_upstream_profile.clone();
@@ -466,7 +459,9 @@ fn main() -> Result<()> {
             .await
         }) {
             Ok(store) => {
-                tracing::info!("Responses chain store enabled (Moka L0 + Redis L1 crab:responses_chain:*)");
+                tracing::info!(
+                    "Responses chain store enabled (Moka L0 + Redis L1 crab:responses_chain:*)"
+                );
                 store
             }
             Err(e) => {
@@ -488,7 +483,6 @@ fn main() -> Result<()> {
             background_handle,
         )
     };
-
 
     let semantic_cache = if config.semantic.enabled {
         let pool = EmbedderPool::load(
@@ -864,11 +858,20 @@ fn main() -> Result<()> {
     let max_request_body_bytes_state =
         Arc::new(AtomicUsize::new(config.limits.max_request_body_bytes));
 
-    // MiMo conversation-level key binding store (created if feature enabled).
-    let key_binding_store = if config.features.mimo_key_binding {
-        Some(crab_proxy::key_binding::KeyBindingStore::new(
-            config.features.mimo_key_binding_ttl_secs,
-        ))
+    // MiMo / Codex conversation-level key binding store (created if either feature enabled).
+    let key_binding_store = if config.features.mimo_key_binding || config.features.codex_key_binding
+    {
+        let ttl = if config.features.mimo_key_binding && config.features.codex_key_binding {
+            config
+                .features
+                .mimo_key_binding_ttl_secs
+                .max(config.features.codex_key_binding_ttl_secs)
+        } else if config.features.codex_key_binding {
+            config.features.codex_key_binding_ttl_secs
+        } else {
+            config.features.mimo_key_binding_ttl_secs
+        };
+        Some(crab_proxy::key_binding::KeyBindingStore::new(ttl))
     } else {
         None
     };
@@ -877,11 +880,23 @@ fn main() -> Result<()> {
     let client_lockouts = Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::new(
         crab_proxy::client_lockout::ClientLockoutConfig {
             max_attempts: config.features.client_lockout_max_attempts,
-            lockout_duration: std::time::Duration::from_secs(config.features.client_lockout_duration_secs),
-            attempt_window: std::time::Duration::from_secs(config.features.client_lockout_attempt_window_secs),
+            lockout_duration: std::time::Duration::from_secs(
+                config.features.client_lockout_duration_secs,
+            ),
+            attempt_window: std::time::Duration::from_secs(
+                config.features.client_lockout_attempt_window_secs,
+            ),
         },
     ));
     let model_lockouts = Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default());
+
+    // Initialize event bus and webhook delivery
+    let event_bus = Arc::new(crab_proxy::event_bus::EventBus::new(1024));
+    let webhook_store = crab_gateway::webhook::WebhookStore::new();
+    let webhook_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("Failed to create webhook HTTP client");
 
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
@@ -907,8 +922,9 @@ fn main() -> Result<()> {
         client_endpoint: client_endpoint.clone(),
         client_lockouts: client_lockouts.clone(),
         model_lockouts: model_lockouts.clone(),
+        webhook_store: webhook_store.clone(),
+        webhook_client: webhook_client.clone(),
     };
-
 
     let mgmt_listen_thread = mgmt_listen.clone();
     std::thread::spawn(move || {
@@ -919,7 +935,6 @@ fn main() -> Result<()> {
             }
         });
     });
-
 
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(
         config.limits.max_concurrent_requests,
@@ -944,6 +959,23 @@ fn main() -> Result<()> {
     let startup_global_rate = Arc::new(pingora_limits::rate::Rate::new(
         std::time::Duration::from_secs(1),
     ));
+
+    // Spawn webhook delivery background task
+    {
+        let webhook_rx = event_bus.subscribe();
+        let webhook_delivery = crab_gateway::webhook::WebhookDelivery::new(
+            webhook_store.clone(),
+            3,    // max_retries
+            1000, // retry_base_delay_ms
+        );
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("webhook delivery runtime");
+            rt.block_on(async move {
+                webhook_delivery.start(webhook_rx).await;
+            });
+        });
+    }
+
     let state = Arc::new(GatewayState {
         runtime,
         tiered_cache,
@@ -984,6 +1016,7 @@ fn main() -> Result<()> {
         model_lockouts,
         client_lockouts,
         event_bus: Arc::new(crab_proxy::event_bus::EventBus::new(1024)),
+        codex_quota_cache: Arc::new(crab_proxy::codex_quota_cache::CodexQuotaCache::new()),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
@@ -996,6 +1029,11 @@ fn main() -> Result<()> {
             }
         });
     }
+
+    // Codex quota background refresh is handled lazily in codex_quota_cache
+    // (60s TTL + refresh on acquire). No background task needed for v1 —
+    // keys are refreshed on-demand via fetch_and_update(), and 429-marked
+    // entries auto-clear after EXHAUSTED_TTL_SECS (5 min).
 
     let proxy = GatewayProxy::new(state.clone());
     let proxy_obj = http_proxy(&server.configuration, proxy);

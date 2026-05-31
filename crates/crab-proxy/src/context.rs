@@ -47,9 +47,7 @@ pub fn is_client_responses_path(path: &str) -> bool {
 
 /// Paths that accept LLM POST bodies (`model` in JSON).
 pub fn is_llm_completion_path(path: &str) -> bool {
-    path == "/v1/chat/completions"
-        || path == "/chat/completions"
-        || is_client_responses_path(path)
+    path == "/v1/chat/completions" || path == "/chat/completions" || is_client_responses_path(path)
 }
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, PreparedRequest, ReasoningBackend, StreamAccumulator,
@@ -58,8 +56,8 @@ use crab_semantic::SemanticCache;
 use pingora_core::connectors::http::Connector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -712,6 +710,33 @@ pub struct FeaturesConfig {
     /// another key. Protects prefix-cache affinity while bounding tail latency.
     #[serde(default = "default_mimo_key_overflow_wait_ms")]
     pub mimo_key_overflow_wait_ms: u64,
+    /// Conversation-level upstream key binding for Codex pipelines (OAuth account affinity).
+    #[serde(default)]
+    pub codex_key_binding: bool,
+    #[serde(default = "default_codex_key_binding_ttl_secs")]
+    pub codex_key_binding_ttl_secs: u64,
+    #[serde(default = "default_codex_key_max_inflight")]
+    pub codex_key_max_inflight: usize,
+    #[serde(default = "default_codex_key_overflow_wait_ms")]
+    pub codex_key_overflow_wait_ms: u64,
+    /// Deprioritize keys with recent 429/capacity strikes when selecting Codex OAuth keys.
+    #[serde(default = "default_true")]
+    pub codex_acquire_fill_first: bool,
+    /// Max same-request retries after rate limit (actual budget scales with pool size).
+    #[serde(default = "default_codex_retry_budget_max")]
+    pub codex_retry_budget_max: u8,
+    /// Enable Codex quota preflight: check WHAM before acquiring upstream key.
+    #[serde(default = "default_true")]
+    pub codex_quota_preflight: bool,
+    /// Minimum remaining percent to keep using a key (OmniRoute DEFAULT_MIN_REMAINING_PERCENT = 2).
+    #[serde(default = "default_codex_quota_min_remaining_percent")]
+    pub codex_quota_min_remaining_percent: f64,
+    /// WHAM cache TTL in seconds (0 = always re-fetch, not recommended).
+    #[serde(default = "default_codex_quota_cache_ttl_secs")]
+    pub codex_quota_cache_ttl_secs: u64,
+    /// Enable background refresh of WHAM quota data for active keys.
+    #[serde(default = "default_true")]
+    pub codex_quota_background_refresh: bool,
     /// Weights for multi-factor weighted Ketama routing (used when backend_route_strategy = weighted_ketama).
     #[serde(default)]
     pub score_weights: ScoreWeightsConfig,
@@ -796,6 +821,16 @@ impl Default for FeaturesConfig {
             mimo_key_binding_ttl_secs: default_mimo_key_binding_ttl_secs(),
             mimo_key_max_inflight: default_mimo_key_max_inflight(),
             mimo_key_overflow_wait_ms: default_mimo_key_overflow_wait_ms(),
+            codex_key_binding: false,
+            codex_key_binding_ttl_secs: default_codex_key_binding_ttl_secs(),
+            codex_key_max_inflight: default_codex_key_max_inflight(),
+            codex_key_overflow_wait_ms: default_codex_key_overflow_wait_ms(),
+            codex_acquire_fill_first: true,
+            codex_retry_budget_max: default_codex_retry_budget_max(),
+            codex_quota_preflight: default_true(),
+            codex_quota_min_remaining_percent: default_codex_quota_min_remaining_percent(),
+            codex_quota_cache_ttl_secs: default_codex_quota_cache_ttl_secs(),
+            codex_quota_background_refresh: default_true(),
             score_weights: ScoreWeightsConfig::default(),
             preflight: PreflightConfig::default(),
             client_lockout_enabled: default_true(),
@@ -875,6 +910,30 @@ fn default_mimo_key_overflow_wait_ms() -> u64 {
     200
 }
 
+fn default_codex_key_binding_ttl_secs() -> u64 {
+    300
+}
+
+fn default_codex_key_max_inflight() -> usize {
+    3
+}
+
+fn default_codex_key_overflow_wait_ms() -> u64 {
+    200
+}
+
+fn default_codex_retry_budget_max() -> u8 {
+    3
+}
+
+fn default_codex_quota_min_remaining_percent() -> f64 {
+    2.0 // OmniRoute DEFAULT_MIN_REMAINING_PERCENT
+}
+
+fn default_codex_quota_cache_ttl_secs() -> u64 {
+    60 // OmniRoute CACHE_TTL_MS / 1000
+}
+
 fn default_true() -> bool {
     true
 }
@@ -909,13 +968,25 @@ impl Default for ScoreWeightsConfig {
 
 impl From<crate::backend_state::ScoreWeights> for ScoreWeightsConfig {
     fn from(w: crate::backend_state::ScoreWeights) -> Self {
-        Self { health: w.health, latency_inv: w.latency_inv, load_inv: w.load_inv, affinity_hit: w.affinity_hit, rate_429_inv: w.rate_429_inv }
+        Self {
+            health: w.health,
+            latency_inv: w.latency_inv,
+            load_inv: w.load_inv,
+            affinity_hit: w.affinity_hit,
+            rate_429_inv: w.rate_429_inv,
+        }
     }
 }
 
 impl From<&ScoreWeightsConfig> for crate::backend_state::ScoreWeights {
     fn from(c: &ScoreWeightsConfig) -> Self {
-        crate::backend_state::ScoreWeights::from_config(c.health, c.latency_inv, c.load_inv, c.affinity_hit, c.rate_429_inv)
+        crate::backend_state::ScoreWeights::from_config(
+            c.health,
+            c.latency_inv,
+            c.load_inv,
+            c.affinity_hit,
+            c.rate_429_inv,
+        )
     }
 }
 
@@ -970,6 +1041,8 @@ pub struct GatewayState {
     pub client_lockouts: std::sync::Arc<crate::client_lockout::ClientLockoutRegistry>,
     /// Event bus for gateway-wide pub/sub notifications (webhook delivery, etc.).
     pub event_bus: Arc<crate::event_bus::EventBus>,
+    /// Codex quota cache for quota-aware key selection (WHAM data per key_id).
+    pub codex_quota_cache: Arc<crate::codex_quota_cache::CodexQuotaCache>,
 }
 
 #[cfg(test)]
