@@ -166,6 +166,11 @@ pub trait ProxyHttp {
         Ok(None)
     }
 
+    /// When Responses wire emits `[DONE]`, mark the next downstream body chunk as terminal.
+    fn take_force_downstream_body_end_of_stream(&self, _ctx: &mut Self::CTX) -> bool {
+        false
+    }
+
     /// Handle the incoming request body.
     ///
     /// This function will be called every time a piece of request body is received. The `body` is

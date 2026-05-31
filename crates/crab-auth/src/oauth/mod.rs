@@ -34,8 +34,10 @@ pub struct LoginOptions {
 pub enum AuthError {
     #[error("oauth error: {0}")]
     OAuth(String),
-    #[error("network error: {0}")]
+    #[error("network error (reqwest): {0}")]
     Network(#[from] reqwest::Error),
+    #[error("network error (wreq): {0}")]
+    WreqNetwork(#[from] wreq::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]

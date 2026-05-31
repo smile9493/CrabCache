@@ -35,8 +35,27 @@
   --sidebar-width: 230px;
   --radius-sm: 6px;
   --radius-md: 10px;
+  --radius-lg: 16px;
   --transition-speed: 180ms;
   --transition-curve: cubic-bezier(0.16, 1, 0.3, 1);
+  
+  /* Card sizes */
+  --cc-card-height-sm: 6rem;
+  --cc-card-height-md: 8rem;
+  --cc-card-height-lg: 11rem;
+  
+  /* Spacing */
+  --cc-spacing-xs: 0.25rem;
+  --cc-spacing-sm: 0.5rem;
+  --cc-spacing-md: 0.75rem;
+  --cc-spacing-lg: 1rem;
+  --cc-spacing-xl: 1.5rem;
+  
+  /* Responsive breakpoints */
+  --cc-breakpoint-sm: 640px;
+  --cc-breakpoint-md: 768px;
+  --cc-breakpoint-lg: 1024px;
+  --cc-breakpoint-xl: 1280px;
 }
 
 .theme-light {

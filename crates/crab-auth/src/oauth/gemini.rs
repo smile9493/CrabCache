@@ -84,7 +84,8 @@ impl Authenticator for GeminiAuthenticator {
         }
 
         let redirect_uri = format!("http://localhost:{port}{CALLBACK_PATH}");
-        let client = reqwest::Client::new();
+        let proxy = opts.proxy_url.as_deref();
+        let client = crate::http_client::build_anti_detect_client(proxy)?;
         let client_id = get_client_id();
         let client_secret = get_client_secret();
         let params = [
@@ -95,7 +96,9 @@ impl Authenticator for GeminiAuthenticator {
             ("grant_type", "authorization_code"),
         ];
 
-        let resp = client.post(TOKEN_URL).form(&params).send().await?;
+        let req = client.post(TOKEN_URL).form(&params).build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
@@ -162,7 +165,7 @@ impl Authenticator for GeminiAuthenticator {
             .as_ref()
             .ok_or_else(|| AuthError::OAuth("no refresh token available".into()))?;
 
-        let client = reqwest::Client::new();
+        let client = crate::http_client::build_anti_detect_client(None)?;
         let client_id = get_client_id();
         let client_secret = get_client_secret();
         let params = [
@@ -172,7 +175,9 @@ impl Authenticator for GeminiAuthenticator {
             ("refresh_token", refresh_token.as_str()),
         ];
 
-        let resp = client.post(TOKEN_URL).form(&params).send().await?;
+        let req = client.post(TOKEN_URL).form(&params).build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
@@ -220,13 +225,14 @@ impl Authenticator for GeminiAuthenticator {
     }
 }
 
-async fn fetch_user_email(client: &reqwest::Client, access_token: &str) -> Option<String> {
-    let resp = client
+async fn fetch_user_email(client: &wreq::Client, access_token: &str) -> Option<String> {
+    let req = client
         .get(USERINFO_URL)
         .bearer_auth(access_token)
-        .send()
-        .await
+        .build()
         .ok()?;
+    let req = crate::http_client::scrub_request_headers(req);
+    let resp = client.execute(req).await.ok()?;
     if !resp.status().is_success() {
         return None;
     }

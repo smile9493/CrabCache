@@ -89,7 +89,7 @@ tcp_keepalive_interval_secs = 10
 tcp_keepalive_count = 3
 idle_timeout_secs = 90
 # Upstream HTTP/2 ALPN when false; h2_ping applies when force_http1 = false
-upstream_force_http1 = false
+upstream_force_http1 = true
 # Keepalive reduces per-request TLS handshakes (MiMo pre-header latency).
 upstream_disable_keepalive = false
 h2_ping_interval_secs = 30

@@ -406,6 +406,14 @@ pub struct StreamState {
     pub(crate) responses_wire_bootstrap: Option<Vec<u8>>,
     /// Bootstrap already merged into the first downstream body chunk.
     pub(crate) responses_wire_bootstrap_sent: bool,
+    /// Downstream 200 + bootstrap sent while waiting for upstream TTFB (Codex idle guard).
+    pub(crate) responses_ttfb_prefill_sent: bool,
+    /// Force `end=true` on the next downstream body chunk ([DONE] emitted, upstream may abort).
+    pub(crate) responses_wire_force_downstream_eos: bool,
+    /// Codex CLI registered `exec_command` without native file tools (`apply_patch`, etc.).
+    pub(crate) responses_exec_only_surface: bool,
+    /// Tool names the client registered on `/v1/responses` (for downstream SSE validation).
+    pub(crate) client_responses_tool_names: Vec<String>,
 }
 
 /// Early-connect passthrough: overlap upstream TCP/TLS while the client body uploads.
@@ -710,6 +718,21 @@ pub struct FeaturesConfig {
     /// Pre-flight backend health checks before upstream (quota preflight).
     #[serde(default)]
     pub preflight: PreflightConfig,
+    /// Enable client-level lockout (brute-force login protection).
+    #[serde(default = "default_true")]
+    pub client_lockout_enabled: bool,
+    /// Max failed auth attempts before client lockout.
+    #[serde(default = "default_client_lockout_max_attempts")]
+    pub client_lockout_max_attempts: u32,
+    /// Client lockout duration in seconds.
+    #[serde(default = "default_client_lockout_duration_secs")]
+    pub client_lockout_duration_secs: u64,
+    /// Client attempt window in seconds (sliding window for counting failures).
+    #[serde(default = "default_client_lockout_attempt_window_secs")]
+    pub client_lockout_attempt_window_secs: u64,
+    /// Enable model-level lockout (per-profile/backend/model cooldowns).
+    #[serde(default = "default_true")]
+    pub model_lockout_enabled: bool,
 }
 
 /// Configuration for quota preflight / backend health gating.
@@ -775,6 +798,11 @@ impl Default for FeaturesConfig {
             mimo_key_overflow_wait_ms: default_mimo_key_overflow_wait_ms(),
             score_weights: ScoreWeightsConfig::default(),
             preflight: PreflightConfig::default(),
+            client_lockout_enabled: default_true(),
+            client_lockout_max_attempts: default_client_lockout_max_attempts(),
+            client_lockout_duration_secs: default_client_lockout_duration_secs(),
+            client_lockout_attempt_window_secs: default_client_lockout_attempt_window_secs(),
+            model_lockout_enabled: default_true(),
         }
     }
 }
@@ -845,6 +873,22 @@ fn default_mimo_key_max_inflight() -> usize {
 
 fn default_mimo_key_overflow_wait_ms() -> u64 {
     200
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_client_lockout_max_attempts() -> u32 {
+    5
+}
+
+fn default_client_lockout_duration_secs() -> u64 {
+    900 // 15 minutes
+}
+
+fn default_client_lockout_attempt_window_secs() -> u64 {
+    300 // 5 minutes
 }
 
 /// Serializable config for multi-factor weighted routing scores.

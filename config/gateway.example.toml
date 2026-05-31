@@ -334,25 +334,20 @@ max_files = 5
 
 # ── Multi-Layer Resilience (Circuit Breaker / Lockout) ───────────
 # Inspired by OmniRoute's 4-layer resilience architecture.
-# [resilience]
-# circuit_breaker_enabled = true
-# failure_threshold = 12             # 408/500/502/503/504 failures before OPEN
-# degradation_threshold = 7          # ceil(failure_threshold * 0.6) — warning zone
-# reset_timeout_secs = 30            # base cooldown before OPEN → HALF_OPEN
-# max_backoff_multiplier = 4         # max backoff = reset_timeout * multiplier
-# backoff_escalation_count = 3       # OPEN cycles before backoff escalation
-# # Per-kind cooldown overrides
-# rate_limit_cooldown_secs = 60      # 429 with rate limit body
-# quota_exhausted_cooldown_secs = 3600  # 429 with quota/billing body
-# # Model-level lockout (per-profile/backend/model)
-# model_lockout_enabled = true
-# model_lockout_base_cooldown_secs = 60
-# model_lockout_max_backoff_level = 5
-# # Client-level lockout (brute-force auth protection)
-# client_lockout_enabled = true
-# client_lockout_max_attempts = 5
-# client_lockout_duration_secs = 900   # 15 minutes
-# client_lockout_attempt_window_secs = 300  # 5 minutes
+# These flags live under [features]:
+# client_lockout_enabled = true          # Client-level lockout (brute-force auth protection)
+# client_lockout_max_attempts = 5        # Max failed attempts before lockout
+# client_lockout_duration_secs = 900     # Lockout duration (15 minutes)
+# client_lockout_attempt_window_secs = 300  # Sliding window for counting failures (5 minutes)
+# model_lockout_enabled = true           # Model-level lockout (per-profile/backend/model cooldowns)
+
+# ── OAuth TLS Fingerprint Emulation ──────────────────────────────
+# OAuth outbounds (Claude/Gemini/xAI/Codex token exchange) use wreq + Chrome
+# browser TLS/HTTP2 fingerprint (JA3/JA4 level). Configure via env var:
+#   CRABCACHE_OAUTH_TLS_EMULATION=chrome130  (default, aligns with wreq-util current)
+#   CRABCACHE_OAUTH_TLS_EMULATION=chrome124  (aligns with OmniRoute's wreq-js)
+# Note: main proxy upstream (chat/completions) uses Pingora BoringSSL, NOT wreq;
+#       its TLS is controlled by [connection] upstream_tls_curves, not JA3/JA4.
 
 # ── Token Compression Pipeline (SSE Stream) ─────────────────────
 # [compression]

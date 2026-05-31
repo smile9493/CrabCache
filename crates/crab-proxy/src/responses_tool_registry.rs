@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn full_pipeline_injects_apply_patch_for_exec_only_codex_session() {
+    fn exec_only_pipeline_keeps_exec_command_only_upstream_tools() {
         let payload = codex_exec_only_responses_payload();
         let chat = responses_payload_to_chat_completions(&payload);
         let mimo = prepare_mimo_request(&chat, "xiaomi/mimo-v2.5-pro", false, 6);
@@ -314,11 +314,11 @@ mod tests {
             .iter()
             .filter_map(|t| t["function"]["name"].as_str())
             .collect();
-        assert!(
-            names.contains(&"apply_patch"),
-            "expected apply_patch injected for current Codex exec-only sessions"
-        );
         assert!(names.contains(&"exec_command"));
+        assert!(
+            !names.contains(&"apply_patch"),
+            "exec-only Codex sessions must not inject apply_patch upstream"
+        );
     }
 
     #[test]
@@ -350,12 +350,12 @@ mod tests {
         assert!(
             tools
                 .iter()
-                .any(|t| t["function"]["name"].as_str() == Some("apply_patch")),
-            "apply_patch should be injected from instructions"
+                .any(|t| t["function"]["name"].as_str() == Some("exec_command")),
+            "exec_command should remain for exec-only Codex sessions"
         );
         let audit = audit_chat_tool_registry(&chat);
         assert_eq!(audit.tool_search_count, 0);
-        assert!(audit.has_apply_patch_tool);
+        assert!(!audit.has_apply_patch_tool);
     }
 
     #[test]
@@ -369,7 +369,6 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "apply_patch".to_string(),
                 "exec_command".to_string(),
                 "write_stdin".to_string(),
             ]

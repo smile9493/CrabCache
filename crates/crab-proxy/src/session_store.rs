@@ -119,18 +119,6 @@ impl SessionStore {
             return None;
         }
         if Self::messages_match(&stored[stored.len() - n..], &client[client.len() - n..]) {
-            // #region agent log
-            crate::debug_log::debug_agent_log(
-                "A2",
-                "session_store.rs:try_tail_anchor_merge",
-                "tail anchor merge hit",
-                serde_json::json!({
-                    "stored_len": stored.len(),
-                    "client_len": client.len(),
-                    "anchor_len": n,
-                }),
-            );
-            // #endregion
             return Some(client.to_vec());
         }
         None
@@ -156,18 +144,6 @@ impl SessionStore {
             let max_offset = client.len() - stored.len();
             for offset in (0..=max_offset).rev() {
                 if Self::messages_match(stored, &client[offset..offset + stored.len()]) {
-                    // #region agent log
-                    crate::debug_log::debug_agent_log(
-                        "A",
-                        "session_store.rs:merge_messages",
-                        "suffix merge hit",
-                        serde_json::json!({
-                            "stored_len": stored.len(),
-                            "client_len": client.len(),
-                            "suffix_offset": offset,
-                        }),
-                    );
-                    // #endregion
                     return Ok(client.to_vec());
                 }
             }
@@ -224,24 +200,10 @@ impl SessionStore {
         messages: Vec<Value>,
         keep_recent_turns: usize,
     ) -> Vec<Value> {
-        let before = messages.len();
         let (trimmed, _, _) =
             crab_reasoning::retire_prefix_messages_by_turns(&messages, keep_recent_turns);
         let mut sanitized = crate::responses_wire::sanitize_tool_message_chain(trimmed);
         Self::truncate_oversized_tool_content(&mut sanitized, 32_768);
-        // #region agent log
-        crate::debug_log::debug_agent_log(
-            "G",
-            "session_store.rs:prepare_mimo_upstream",
-            "turn-based upstream sanitize",
-            serde_json::json!({
-                "client_len": before,
-                "upstream_len": sanitized.len(),
-                "upstream_bytes": serde_json::to_vec(&sanitized).map(|v| v.len()).unwrap_or(0),
-                "keep_recent_turns": keep_recent_turns,
-            }),
-        );
-        // #endregion
         sanitized
     }
 
@@ -380,20 +342,6 @@ pub async fn apply_mimo_session_store(
             features.mimo_session_store_ttl_secs,
             features.mimo_session_store_max_messages,
         );
-        // #region agent log
-        crate::debug_log::debug_agent_log(
-            "C",
-            "session_store.rs:long_session",
-            "long session turn-based upstream",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "session_id": session_id,
-                "client_len": client_messages.len(),
-                "upstream_messages": upstream.len(),
-                "upstream_bytes": upstream_bytes,
-            }),
-        );
-        // #endregion
         warn!(
             request_id = %ctx.request_id,
             session_id = %session_id,
@@ -417,21 +365,8 @@ pub async fn apply_mimo_session_store(
                     client_messages.clone(),
                     features.mimo_keep_recent_turns,
                 );
-                let upstream_bytes =
+                let _upstream_bytes =
                     SessionStore::set_upstream_messages(ctx, payload, upstream.clone());
-                // #region agent log
-                crate::debug_log::debug_agent_log(
-                    "C",
-                    "session_store.rs:miss_turn_shrink",
-                    "miss turn-based upstream",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "client_len": n,
-                        "upstream_messages": upstream.len(),
-                        "upstream_bytes": upstream_bytes,
-                    }),
-                );
-                // #endregion
             }
             debug!(
                 request_id = %ctx.request_id,
@@ -498,22 +433,6 @@ pub async fn apply_mimo_session_store(
                         features.mimo_session_store_ttl_secs,
                         features.mimo_session_store_max_messages,
                     );
-                    // #region agent log
-                    crate::debug_log::debug_agent_log(
-                        "E",
-                        "session_store.rs:prefix_break",
-                        "prefix break tail cap upstream",
-                        serde_json::json!({
-                            "request_id": ctx.request_id,
-                            "session_id": session_id,
-                            "stored_len": stored_len,
-                            "client_len": client_len,
-                            "persist_tail_len": ctx.session_persist_base.as_ref().map(|m| m.len()),
-                            "upstream_messages": upstream.len(),
-                            "upstream_bytes": upstream_bytes,
-                        }),
-                    );
-                    // #endregion
                     warn!(
                         request_id = %ctx.request_id,
                         session_id = %session_id,

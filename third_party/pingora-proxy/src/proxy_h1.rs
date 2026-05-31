@@ -500,6 +500,11 @@ where
                             continue;
                         }
 
+                        if session.response_written().is_some() {
+                            filtered_tasks
+                                .retain(|t| !matches!(t, HttpTask::Header(_, _)));
+                        }
+
                         // set to downstream
                         let upgraded = session.was_upgraded();
                         let response_done = session.write_response_tasks(filtered_tasks).await?;

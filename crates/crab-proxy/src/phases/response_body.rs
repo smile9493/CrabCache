@@ -284,6 +284,13 @@ pub(crate) fn run(
                     );
                     result.client_bytes =
                         crate::responses_wire::prepend_responses_wire_bootstrap(ctx, result.client_bytes);
+                    if let Some(ref bytes) = result.client_bytes {
+                        ctx.stream.client_sse_body.extend_from_slice(bytes);
+                    }
+                    if ctx.stream.responses_translator.as_ref().is_some_and(|t| t.done_marker_sent())
+                    {
+                        ctx.stream.responses_wire_force_downstream_eos = true;
+                    }
                 }
                 *body = result.client_bytes;
             } else {
@@ -530,8 +537,14 @@ pub(crate) fn run(
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
             let chain_ns = crate::responses_wire::responses_chain_namespace(ctx);
             if let Some(translator) = ctx.stream.responses_translator.as_mut() {
+                let remainder = translator.flush_upstream_remainder();
+                if !remainder.is_empty() {
+                    ctx.stream.client_sse_body.extend_from_slice(&remainder);
+                    *body = Some(bytes::Bytes::from(remainder));
+                }
                 let tail = translator.flush();
                 if !tail.is_empty() {
+                    ctx.stream.client_sse_body.extend_from_slice(&tail);
                     *body = Some(bytes::Bytes::from(tail));
                 }
                 if translator.is_completed() {
@@ -546,8 +559,14 @@ pub(crate) fn run(
                 let model = ctx.model.clone();
                 crate::responses_wire::arm_responses_wire_stream(ctx, &model);
                 if let Some(translator) = ctx.stream.responses_translator.as_mut() {
+                    let remainder = translator.flush_upstream_remainder();
+                    if !remainder.is_empty() {
+                        ctx.stream.client_sse_body.extend_from_slice(&remainder);
+                        *body = Some(bytes::Bytes::from(remainder));
+                    }
                     let tail = translator.flush();
                     if !tail.is_empty() {
+                        ctx.stream.client_sse_body.extend_from_slice(&tail);
                         *body = Some(bytes::Bytes::from(tail));
                     }
                     if translator.is_completed() {

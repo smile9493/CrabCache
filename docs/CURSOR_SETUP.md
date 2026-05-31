@@ -251,7 +251,7 @@ Cursor 可使用：
 - `User-Agent: curl/8.7.1`、`Accept-Encoding: gzip, deflate, br`（网关在上游响应侧解压，见 `upstream_response_decompress.rs`）
 - 流式：`Accept: text/event-stream`；非流式：`Accept: application/json`
 
-**JA3 / TLS 指纹**：一般无需改；若 TE/CL 与请求头顺滑后仍断连，再考虑上游 TLS 套件调优（最后手段）。
+**JA3 / TLS 指纹**：主网关上游（chat/completions）由 Pingora BoringSSL 控制，仅支持曲线顺序调优（`[connection] upstream_tls_curves`），无法模拟完整浏览器 JA3/JA4。OAuth 出站（Claude/Gemini/xAI/Codex token exchange）已统一使用 `wreq` Chrome 浏览器仿真（JA3/JA4 级），可通过 `CRABCACHE_OAUTH_TLS_EMULATION` 环境变量切换预设（默认 `chrome130`，可选 `chrome124` 对齐 OmniRoute）。若 TE/CL 与请求头顺滑后仍断连，再考虑上游 TLS 套件调优（最后手段）。
 
 确认修复（`CRABCACHE_DEBUG_LOG_PATH`）：
 

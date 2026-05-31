@@ -873,6 +873,16 @@ fn main() -> Result<()> {
         None
     };
 
+    // Shared lockout registries (created once, shared between GatewayState and ManagementState).
+    let client_lockouts = Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::new(
+        crab_proxy::client_lockout::ClientLockoutConfig {
+            max_attempts: config.features.client_lockout_max_attempts,
+            lockout_duration: std::time::Duration::from_secs(config.features.client_lockout_duration_secs),
+            attempt_window: std::time::Duration::from_secs(config.features.client_lockout_attempt_window_secs),
+        },
+    ));
+    let model_lockouts = Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default());
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -895,6 +905,8 @@ fn main() -> Result<()> {
         pricing: pricing_shared.clone(),
         features: features_shared.clone(),
         client_endpoint: client_endpoint.clone(),
+        client_lockouts: client_lockouts.clone(),
+        model_lockouts: model_lockouts.clone(),
     };
 
 
@@ -969,8 +981,8 @@ fn main() -> Result<()> {
         key_binding_store,
         responses_chain_store,
         circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
-        model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::default()),
-        client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),
+        model_lockouts,
+        client_lockouts,
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)

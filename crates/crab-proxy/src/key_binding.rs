@@ -5,11 +5,10 @@
 //! - The binding expires after `mimo_key_binding_ttl_secs` of idle time, or
 //! - The key's concurrency exceeds `mimo_key_max_inflight` (temporarily overflow).
 //!
-//! Uses moka's `time_to_idle` for automatic expiration without background cleanup.
+//! Uses manual idle TTL checks in `get()` (moka `time_to_idle` requires a Tokio runtime at build).
 
 use moka::sync::Cache;
 use std::sync::Arc;
-use std::time::Duration;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -27,26 +26,28 @@ pub struct KeyBinding {
 }
 
 /// Thread-safe store mapping stable session id -> upstream key id.
-///
-/// Backed by moka with `time_to_idle` expiration: each `get()` call
-/// resets the idle timer, so active conversations stay bound indefinitely.
 pub struct KeyBindingStore {
     cache: Cache<String, KeyBinding>,
+    ttl_ms: u64,
 }
 
 impl KeyBindingStore {
     pub fn new(ttl_secs: u64) -> Arc<Self> {
         Arc::new(Self {
-            cache: Cache::builder()
-                .time_to_idle(Duration::from_secs(ttl_secs))
-                .build(),
+            cache: Cache::builder().max_capacity(50_000).build(),
+            ttl_ms: ttl_secs.saturating_mul(1000),
         })
     }
 
     /// Look up the bound key for a session. Returns `None` if no binding
     /// exists or if the binding has expired (idle TTL exceeded).
     pub fn get(&self, session_id: &str) -> Option<KeyBinding> {
-        self.cache.get(session_id)
+        let binding = self.cache.get(session_id)?;
+        if self.ttl_ms > 0 && now_ms().saturating_sub(binding.last_used_ms) > self.ttl_ms {
+            self.cache.remove(session_id);
+            return None;
+        }
+        Some(binding)
     }
 
     /// Create or update a binding: session_id -> key_id.

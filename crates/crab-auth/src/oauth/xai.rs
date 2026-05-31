@@ -42,8 +42,10 @@ struct OidcConfig {
 
 /// Fetch OIDC discovery and validate endpoints
 async fn fetch_oidc_config() -> Result<OidcConfig, AuthError> {
-    let client = reqwest::Client::new();
-    let resp = client.get(OIDC_DISCOVERY_URL).send().await?;
+    let client = crate::http_client::build_anti_detect_client(None)?;
+    let req = client.get(OIDC_DISCOVERY_URL).build()?;
+    let req = crate::http_client::scrub_request_headers(req);
+    let resp = client.execute(req).await?;
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -146,7 +148,7 @@ impl Authenticator for XaiAuthenticator {
             });
         }
 
-        let client = reqwest::Client::new();
+        let client = crate::http_client::build_anti_detect_client(opts.proxy_url.as_deref())?;
         let params = [
             ("grant_type", "authorization_code"),
             ("code", result.code.as_str()),
@@ -155,11 +157,12 @@ impl Authenticator for XaiAuthenticator {
             ("code_verifier", verifier.as_str()),
         ];
 
-        let resp = client
+        let req = client
             .post(&oidc_config.token_endpoint)
             .form(&params)
-            .send()
-            .await?;
+            .build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
@@ -224,18 +227,19 @@ impl Authenticator for XaiAuthenticator {
         let oidc_config = fetch_oidc_config().await?;
         let client_id = get_client_id();
 
-        let client = reqwest::Client::new();
+        let client = crate::http_client::build_anti_detect_client(None)?;
         let params = [
             ("grant_type", "refresh_token"),
             ("client_id", client_id.as_str()),
             ("refresh_token", refresh_token.as_str()),
         ];
 
-        let resp = client
+        let req = client
             .post(&oidc_config.token_endpoint)
             .form(&params)
-            .send()
-            .await?;
+            .build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();

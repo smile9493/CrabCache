@@ -4345,6 +4345,60 @@ impl Translations {
             Locale::EnUS => "default",
         }
     }
+    pub fn upstream_search_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "搜索配置…",
+            Locale::EnUS => "Search profiles…",
+        }
+    }
+    pub fn upstream_filter_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部",
+            Locale::EnUS => "All",
+        }
+    }
+    pub fn upstream_filter_healthy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "正常",
+            Locale::EnUS => "Healthy",
+        }
+    }
+    pub fn upstream_filter_warning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "异常",
+            Locale::EnUS => "Warning",
+        }
+    }
+    pub fn upstream_status_connected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已连接",
+            Locale::EnUS => "Connected",
+        }
+    }
+    pub fn upstream_status_unreachable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "不可达",
+            Locale::EnUS => "Unreachable",
+        }
+    }
+    pub fn upstream_status_untested(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未测试",
+            Locale::EnUS => "Untested",
+        }
+    }
+    pub fn upstream_l3_affinity_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "关于 L3 前缀亲和",
+            Locale::EnUS => "About L3 Prefix Affinity",
+        }
+    }
+    pub fn upstream_new_profile_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "新建 Profile",
+            Locale::EnUS => "New Profile",
+        }
+    }
     pub fn upstream_base_url_label(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游 Base URL",
@@ -5110,6 +5164,34 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "分析",
             Locale::EnUS => "Analytics",
+        }
+    }
+
+    pub fn overview_tab_performance(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "性能",
+            Locale::EnUS => "Performance",
+        }
+    }
+
+    pub fn overview_tab_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存",
+            Locale::EnUS => "Cache",
+        }
+    }
+
+    pub fn overview_tab_consumers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "消费者",
+            Locale::EnUS => "Consumers",
+        }
+    }
+
+    pub fn overview_tab_infrastructure(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "基础设施",
+            Locale::EnUS => "Infrastructure",
         }
     }
 

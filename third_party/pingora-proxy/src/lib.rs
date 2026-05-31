@@ -398,9 +398,15 @@ where
                     .await?;
                 None
             }
-            HttpTask::Body(data, eos) | HttpTask::UpgradedBody(data, eos) => self
-                .inner
-                .upstream_response_body_filter(session, data, *eos, ctx)?,
+            HttpTask::Body(data, eos) | HttpTask::UpgradedBody(data, eos) => {
+                let duration = self
+                    .inner
+                    .upstream_response_body_filter(session, data, *eos, ctx)?;
+                if self.inner.take_force_downstream_body_end_of_stream(ctx) {
+                    *eos = true;
+                }
+                duration
+            }
             HttpTask::Trailer(Some(trailers)) => {
                 self.inner
                     .upstream_response_trailer_filter(session, trailers, ctx)?;

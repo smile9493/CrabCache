@@ -158,6 +158,17 @@ pub fn ensure_codex_file_tools_from_context(map: &mut Map<String, Value>) {
         .map(str::to_string)
         .collect();
 
+    // Codex exec-only sessions register `exec_command` but not native file tools. Injecting
+    // `apply_patch` upstream makes MiMo emit tool calls Codex cannot execute on the client.
+    let exec_only = existing.contains("exec_command")
+        && CODEX_FILE_TOOL_NAMES
+            .iter()
+            .all(|name| !existing.contains(*name));
+
+    if exec_only {
+        return;
+    }
+
     for name in mentioned_codex_file_tools(&context) {
         if existing.contains(name) {
             continue;
@@ -201,7 +212,33 @@ mod tests {
     }
 
     #[test]
-    fn ensure_injects_apply_patch_from_system_message() {
+    fn ensure_injects_apply_patch_when_not_exec_only() {
+        let mut map = Map::from_iter([
+            (
+                "messages".into(),
+                json!([{
+                    "role": "system",
+                    "content": "Use apply_patch to edit files."
+                }]),
+            ),
+            (
+                "tools".into(),
+                json!([{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]),
+            ),
+        ]);
+        ensure_codex_file_tools_from_context(&mut map);
+        let names: Vec<_> = map["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(chat_tool_name)
+            .collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"apply_patch"));
+    }
+
+    #[test]
+    fn ensure_skips_file_tool_injection_for_exec_only_surface() {
         let mut map = Map::from_iter([
             (
                 "messages".into(),
@@ -222,7 +259,6 @@ mod tests {
             .iter()
             .filter_map(chat_tool_name)
             .collect();
-        assert!(names.contains(&"exec_command"));
-        assert!(names.contains(&"apply_patch"));
+        assert_eq!(names, vec!["exec_command"]);
     }
 }

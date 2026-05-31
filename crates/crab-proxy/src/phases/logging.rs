@@ -41,23 +41,6 @@ pub(crate) async fn run(
     observe_request_timeline(ctx);
 
     if let Some(e) = error {
-        // #region agent log
-        crate::debug_log::debug_agent_log(
-            "B",
-            "logging.rs:run",
-            "request failed",
-            serde_json::json!({
-                "request_id": ctx.request_id,
-                "duration_ms": latency_ms,
-                "model": ctx.model,
-                "session_store": ctx.session_store_outcome,
-                "upstream_messages_len": ctx.session_upstream_messages_len,
-                "retry_buffer_truncated": ctx.upstream.retry_buffer_truncated,
-                "http_status": ctx.upstream.http_status,
-                "error": format!("{e}"),
-            }),
-        );
-        // #endregion
         warn!(
             request_id = %ctx.request_id,
             error = %e,
@@ -100,6 +83,74 @@ pub(crate) async fn run(
             pipeline = ?ctx.request_pipeline,
             "Request completed"
         );
+
+        if crate::responses_wire::needs_responses_wire_translate(ctx) {
+            let (tool_names, output_item_types) = ctx
+                .stream
+                .responses_translator
+                .as_ref()
+                .map(|t| {
+                    let output = t.completed_output();
+                    let types: Vec<String> = output
+                        .iter()
+                        .filter_map(|item| item.get("type").and_then(|v| v.as_str()).map(str::to_string))
+                        .collect();
+                    let tools: Vec<String> = output
+                        .iter()
+                        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
+                        .filter_map(|item| item.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                        .collect();
+                    (tools, types)
+                })
+                .unwrap_or((Vec::new(), Vec::new()));
+            let msg_text_len = ctx
+                .stream
+                .responses_translator
+                .as_ref()
+                .map(|t| {
+                    t.completed_output()
+                        .iter()
+                        .find(|item| item.get("type").and_then(|v| v.as_str()) == Some("message"))
+                        .and_then(|item| {
+                            item.get("content")
+                                .and_then(|c| c.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|p| p.get("text"))
+                                .and_then(|t| t.as_str())
+                                .map(str::len)
+                        })
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0);
+            let unregistered: Vec<String> = tool_names
+                .iter()
+                .filter(|n| !ctx.stream.client_responses_tool_names.iter().any(|r| r == *n))
+                .cloned()
+                .collect();
+            // #region agent log
+            crate::debug_log::debug_agent_log(
+                "K",
+                "logging.rs:run",
+                "responses wire success summary",
+                serde_json::json!({
+                    "request_id": ctx.request_id,
+                    "duration_ms": latency_ms,
+                    "exec_only_surface": ctx.stream.responses_exec_only_surface,
+                    "client_tools": ctx.stream.client_responses_tool_names,
+                    "downstream_tool_names": tool_names,
+                    "output_item_types": output_item_types,
+                    "unregistered_tools": unregistered,
+                    "message_text_len": msg_text_len,
+                    "has_response_completed": crate::sse::sse_bytes_contains_event(
+                        &ctx.stream.client_sse_body,
+                        "response.completed",
+                    ),
+                    "has_done_marker": ctx.stream.client_sse_body.windows(6).any(|w| w == b"[DONE]"),
+                    "client_sse_len": ctx.stream.client_sse_body.len(),
+                }),
+            );
+            // #endregion
+        }
 
         if let Some(pipeline) = ctx.request_pipeline
             && proxy.state.features.read().mimo_session_store

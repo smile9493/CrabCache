@@ -83,7 +83,8 @@ impl Authenticator for ClaudeAuthenticator {
         }
 
         let redirect_uri = format!("http://localhost:{port}{CALLBACK_PATH}");
-        let client = reqwest::Client::new();
+        let proxy = opts.proxy_url.as_deref();
+        let client = crate::http_client::build_anti_detect_client(proxy)?;
         let body = serde_json::json!({
             "grant_type": "authorization_code",
             "code": result.code,
@@ -93,7 +94,9 @@ impl Authenticator for ClaudeAuthenticator {
             "code_verifier": verifier,
         });
 
-        let resp = client.post(TOKEN_URL).json(&body).send().await?;
+        let req = client.post(TOKEN_URL).json(&body).build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
@@ -113,14 +116,16 @@ impl Authenticator for ClaudeAuthenticator {
             .as_ref()
             .ok_or_else(|| AuthError::OAuth("no refresh token available".into()))?;
 
-        let client = reqwest::Client::new();
+        let client = crate::http_client::build_anti_detect_client(None)?;
         let body = serde_json::json!({
             "client_id": get_client_id(),
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         });
 
-        let resp = client.post(TOKEN_URL).json(&body).send().await?;
+        let req = client.post(TOKEN_URL).json(&body).build()?;
+        let req = crate::http_client::scrub_request_headers(req);
+        let resp = client.execute(req).await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();

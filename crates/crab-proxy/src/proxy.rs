@@ -608,16 +608,22 @@ impl ProxyHttp for GatewayProxy {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> Result<Option<bytes::Bytes>> {
-        if session.response_written().is_none() {
+        if !session.response_written().is_some() {
             return Ok(None);
         }
-        Ok(
-            crate::responses_wire::build_graceful_responses_stream_tail(
-                ctx,
-                self.state.responses_chain_store.as_ref(),
-            )
-            .map(bytes::Bytes::from),
-        )
+        let tail = crate::responses_wire::build_graceful_responses_stream_tail(
+            ctx,
+            self.state.responses_chain_store.as_ref(),
+        );
+        Ok(tail.map(bytes::Bytes::from))
+    }
+
+    fn take_force_downstream_body_end_of_stream(&self, ctx: &mut Self::CTX) -> bool {
+        if !ctx.stream.responses_wire_force_downstream_eos {
+            return false;
+        }
+        ctx.stream.responses_wire_force_downstream_eos = false;
+        true
     }
 
     /// Prefill keepalive: send Responses bootstrap right after upstream 200 headers.
@@ -626,10 +632,7 @@ impl ProxyHttp for GatewayProxy {
         _session: &Session,
         ctx: &mut Self::CTX,
     ) -> Result<Option<bytes::Bytes>> {
-        Ok(
-            crate::responses_wire::take_early_responses_wire_bootstrap(ctx)
-                .map(bytes::Bytes::from),
-        )
+        Ok(crate::responses_wire::take_early_responses_wire_bootstrap(ctx).map(bytes::Bytes::from))
     }
 
     /// Idle upstream: push `response.in_progress` heartbeats so Codex does not drop the SSE socket.

@@ -132,6 +132,23 @@ pub(crate) async fn run(
             );
             continue;
         }
+
+        // Skip backends whose model is locked out (per-model quota/failure cooldown).
+        if let Some(ref model) = ctx.upstream_model {
+            if proxy.state.model_lockouts.is_locked(
+                &profile.id,
+                &candidate.name,
+                model,
+            ) {
+                debug!(
+                    request_id = %ctx.request_id,
+                    backend = %candidate.name,
+                    model = %model,
+                    "Skipping backend with model lockout"
+                );
+                continue;
+            }
+        }
         let candidate_state = proxy.state.backend_load.overload_state(
             &profile.id,
             &candidate.name,
@@ -204,6 +221,8 @@ pub(crate) async fn run(
     }
 
     let conn_config = proxy.state.runtime.conn_config.read().clone();
+
+    crate::responses_wire::try_send_responses_wire_ttfb_prefill(session, ctx).await;
 
     Ok(Box::new(peer))
 }

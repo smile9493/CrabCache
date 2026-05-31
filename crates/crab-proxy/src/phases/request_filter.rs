@@ -642,30 +642,9 @@ async fn run_post_body_phases(
                     &registry_audit,
                     Some(&mimo_audit),
                 );
-                // #region agent log
-                let final_body_bytes = ctx
-                    .new_request_body
-                    .as_ref()
-                    .map(|b| b.len())
-                    .unwrap_or_else(|| {
-                        serde_json::to_vec(&mimo.payload)
-                            .map(|v| v.len())
-                            .unwrap_or(0)
-                    });
-                crate::debug_log::debug_agent_log(
-                    "F",
-                    "request_filter.rs:mimo",
-                    "final upstream body after prepare_mimo",
-                    serde_json::json!({
-                        "request_id": ctx.request_id,
-                        "session_store": ctx.session_store_outcome,
-                        "upstream_messages_len": ctx.session_upstream_messages_len,
-                        "retired_prefix": mimo.retired_prefix_messages,
-                        "tool_calls_repaired": mimo.tool_calls_repaired,
-                        "final_body_bytes": final_body_bytes,
-                    }),
-                );
-                // #endregion
+                ctx.stream.responses_exec_only_surface = registry_audit.exec_only_surface;
+                ctx.stream.client_responses_tool_names =
+                    registry_audit.registered_tool_names.clone();
             }
             RequestPipeline::CodexRelay => {
                 let model = alias_upstream_model
@@ -1216,12 +1195,66 @@ pub(crate) async fn run(
     }
 
     if is_models_endpoint(&req_path, &req_method) {
+        // Client lockout pre-check for models endpoint.
+        let lockout = proxy.state.client_lockouts.check_lockout(&provided_key);
+        if lockout.locked {
+            let retry_after_secs = (lockout.remaining_ms / 1000).max(1);
+            let body = serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "Client locked out due to too many failed attempts. Retry after {}s.",
+                        retry_after_secs
+                    ),
+                    "type": "rate_limit_error",
+                    "code": "client_lockout"
+                }
+            });
+            if !send_json_error_with_retry_after(
+                session,
+                http::StatusCode::TOO_MANY_REQUESTS,
+                body.to_string().as_bytes(),
+                retry_after_secs,
+            )
+            .await
+            {
+                let _ = session.respond_error(429).await;
+            }
+            return Ok(true);
+        }
+
         let (is_authorized, consumer_from_key, domain_from_key, _, _, key_profile) =
             proxy.authorize_client(&provided_key, &auth);
         if !is_authorized {
-            let _ = session.respond_error(401).await;
+            let status = proxy.state.client_lockouts.record_failed_attempt(&provided_key);
+            if status.locked {
+                global_metrics().record_client_lockout();
+                let retry_after_secs = (status.remaining_ms / 1000).max(1);
+                let body = serde_json::json!({
+                    "error": {
+                        "message": format!(
+                            "Client locked out due to too many failed attempts. Retry after {}s.",
+                            retry_after_secs
+                        ),
+                        "type": "rate_limit_error",
+                        "code": "client_lockout"
+                    }
+                });
+                if !send_json_error_with_retry_after(
+                    session,
+                    http::StatusCode::TOO_MANY_REQUESTS,
+                    body.to_string().as_bytes(),
+                    retry_after_secs,
+                )
+                .await
+                {
+                    let _ = session.respond_error(429).await;
+                }
+            } else {
+                let _ = session.respond_error(401).await;
+            }
             return Ok(true);
         }
+        proxy.state.client_lockouts.record_success(&provided_key);
         ctx.consumer = consumer_from_key;
         ctx.domain = domain_from_key;
         ctx.upstream_profile_id =
@@ -1269,6 +1302,34 @@ pub(crate) async fn run(
     }
 
     // ─── Phase 2: Auth & Limits (key validation, RPM, concurrency, domain quota) ───
+
+    // Client lockout pre-check: reject brute-force clients before auth.
+    let lockout_status = proxy.state.client_lockouts.check_lockout(&provided_key);
+    if lockout_status.locked {
+        let retry_after_secs = (lockout_status.remaining_ms / 1000).max(1);
+        let body = serde_json::json!({
+            "error": {
+                "message": format!(
+                    "Client locked out due to too many failed attempts. Retry after {}s.",
+                    retry_after_secs
+                ),
+                "type": "rate_limit_error",
+                "code": "client_lockout"
+            }
+        });
+        if !send_json_error_with_retry_after(
+            session,
+            http::StatusCode::TOO_MANY_REQUESTS,
+            body.to_string().as_bytes(),
+            retry_after_secs,
+        )
+        .await
+        {
+            let _ = session.respond_error(429).await;
+        }
+        return Ok(true);
+    }
+
     let (
         is_authorized,
         consumer_from_key,
@@ -1280,9 +1341,39 @@ pub(crate) async fn run(
 
 
     if !is_authorized {
-        let _ = session.respond_error(401).await;
+        // Record failed attempt for brute-force protection.
+        let status = proxy.state.client_lockouts.record_failed_attempt(&provided_key);
+        if status.locked {
+            global_metrics().record_client_lockout();
+            let retry_after_secs = (status.remaining_ms / 1000).max(1);
+            let body = serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "Client locked out due to too many failed attempts. Retry after {}s.",
+                        retry_after_secs
+                    ),
+                    "type": "rate_limit_error",
+                    "code": "client_lockout"
+                }
+            });
+            if !send_json_error_with_retry_after(
+                session,
+                http::StatusCode::TOO_MANY_REQUESTS,
+                body.to_string().as_bytes(),
+                retry_after_secs,
+            )
+            .await
+            {
+                let _ = session.respond_error(429).await;
+            }
+        } else {
+            let _ = session.respond_error(401).await;
+        }
         return Ok(true);
     }
+
+    // Auth succeeded — clear any failed-attempt history for this client.
+    proxy.state.client_lockouts.record_success(&provided_key);
 
     // Per-key RPM rate limiting
     if let Some(stored_key) = proxy.state.runtime.keys.get(&provided_key) {

@@ -889,6 +889,15 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
 }
+@media (max-width: 639px) {
+  .overview-cards-hero {
+    grid-template-columns: 1fr;
+  }
+  .overview-cards-hero .bento-hit {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
 @media (min-width: 768px) {
   .overview-cards-hero {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -957,6 +966,13 @@ body {
 @media (min-width: 768px) {
   .overview-cards-detail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overview-cards-detail .detail-wide { grid-column: span 2; }
+  .overview-cards-detail .detail-full { grid-column: 1 / -1; }
+}
+@media (min-width: 1024px) {
+  .overview-cards-detail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .overview-cards-detail .detail-wide { grid-column: span 2; }
   .overview-cards-detail .detail-full { grid-column: 1 / -1; }
@@ -1063,6 +1079,46 @@ body {
 /* ── Overview Section Anchor ─────────────────────────────────────── */
 .overview-section-anchor {
   scroll-margin-top: calc(var(--topnav-height) + 3.5rem);
+}
+
+/* ── Overview Tab Navigation ─────────────────────────────────────── */
+.overview-tab-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.375rem;
+  background: var(--cc-bg-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.overview-tab-nav::-webkit-scrollbar { display: none; }
+.overview-tab-btn {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--cc-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md) - 4px);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.overview-tab-btn:hover {
+  color: var(--cc-text);
+  background: var(--cc-bg-elevated);
+}
+.overview-tab-btn.active {
+  color: var(--cc-accent);
+  background: color-mix(in srgb, var(--cc-accent) 10%, transparent);
+  font-weight: 600;
+}
+.overview-tab-content {
+  min-height: 200px;
 }
 
 /* ── DataPlane Diagnostics Inline Skeleton ───────────────────────── */
@@ -2922,12 +2978,17 @@ body {
   font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
+  opacity: 0.55;
   transition:
+    opacity 0.15s ease-out,
     color 0.15s ease-out,
     background-color 0.15s ease-out,
     border-color 0.15s ease-out;
   background: var(--cc-bg-elevated);
   border: 1px solid var(--cc-border);
+}
+.upstream-card:hover .upstream-card-delete {
+  opacity: 1;
 }
 .upstream-card-delete:hover {
   background: color-mix(in srgb, var(--cc-error) 12%, var(--cc-bg-elevated));
@@ -3659,7 +3720,7 @@ body {
   gap: 0.35rem;
 }
 .upstream-key-model-chip {
-  font-size: 10px;
+  font-size: 11px;
   font-family: var(--font-mono, ui-monospace, monospace);
   padding: 0.15rem 0.45rem;
   border-radius: 999px;
@@ -3690,6 +3751,26 @@ body {
 }
 .upstream-quota-fill-low {
   background: var(--cc-error, #ef4444);
+}
+
+.upstream-routing-section {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--cc-border-light);
+}
+.upstream-routing-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.upstream-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.upstream-filter-bar .input {
+  max-width: 260px;
+  flex-shrink: 0;
 }
 
 /* Respect user preference */

@@ -471,6 +471,11 @@ where
                             continue;
                         }
 
+                        if session.response_written().is_some() {
+                            filtered_tasks
+                                .retain(|t| !matches!(t, HttpTask::Header(_, _)));
+                        }
+
                         let response_done = session.write_response_tasks(filtered_tasks).await?;
                         try_initial_downstream_response_body(&self.inner, session, ctx).await?;
                         if session.was_upgraded() {
@@ -904,19 +909,15 @@ pub(crate) async fn pipe_up_to_down_response(
                      * misread as the terminating chunk */
                     continue;
                 }
-                let sent = tx
+                // Downstream may finish early (CrabCache Responses `[DONE]` force EOS) while
+                // upstream H2 still has trailing frames. Pipe close is not an error.
+                if tx
                     .send(HttpTask::Body(Some(data), eos))
                     .await
-                    .or_err(InternalError, "sending h2 body to pipe");
-                // If the if the response with content-length is sent to an HTTP1 downstream,
-                // bidirection_down_to_up() could decide that the body has finished and exit without
-                // waiting for this function to signal the eos. In this case tx being closed is not
-                // an sign of error. It should happen if the only thing left for the h2 to send is
-                // an empty data frame with eos set.
-                if sent.is_err() && eos && empty {
+                    .is_err()
+                {
                     return Ok(());
                 }
-                sent?;
             }
             Err(e) => {
                 // Similar to above, push the error to downstream and then quit

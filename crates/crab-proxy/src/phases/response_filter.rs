@@ -11,7 +11,7 @@ use http::header;
 use pingora_core::ErrorType;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Run the response_filter phase: handle status codes, key rotation, coalesce failure marking.
 pub(crate) async fn run(
@@ -49,6 +49,47 @@ pub(crate) async fn run(
             if let Some(ref backend_name) = ctx.upstream.backend_name {
                 let kind = crate::circuit_breaker::classify_failure(status, None);
                 proxy.state.circuit_breakers.on_failure(backend_name, kind).await;
+
+                // Fallback policy: classify error for structured cooldown decision.
+                let retry_after_hdr = upstream_response
+                    .headers
+                    .get(header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok());
+                let decision = crate::fallback_policy::check_fallback_error(
+                    status,
+                    None,
+                    retry_after_hdr,
+                );
+                if decision.should_fallback {
+                    debug!(
+                        request_id = %ctx.request_id,
+                        status,
+                        reason = %decision.reason,
+                        cooldown_ms = decision.cooldown.as_millis(),
+                        "Fallback decision from upstream error"
+                    );
+                    global_metrics().record_fallback_decision(
+                        match decision.failure_kind {
+                            crate::circuit_breaker::FailureKind::RateLimit => "rate_limit",
+                            crate::circuit_breaker::FailureKind::QuotaExhausted => "quota_exhausted",
+                            crate::circuit_breaker::FailureKind::Transient => "transient",
+                        },
+                    );
+                }
+
+                // Model-level lockout: exponential backoff for transient failures.
+                if let Some(ref model) = ctx.upstream_model {
+                    let profile_id = ctx.upstream_profile_id.as_deref().unwrap_or("default");
+                    proxy.state.model_lockouts.record_failure(
+                        profile_id,
+                        backend_name,
+                        model,
+                        &decision.reason,
+                        decision.cooldown,
+                        4,
+                    );
+                    global_metrics().record_model_lockout(profile_id, backend_name, model);
+                }
             }
         }
 
@@ -142,6 +183,27 @@ pub(crate) async fn run(
                 }
             }
         }
+        // Model-level lockout for 429: apply rate-limit cooldown via fallback_policy.
+        if let Some(ref model) = ctx.upstream_model {
+            let retry_after_hdr = upstream_response
+                .headers
+                .get(header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok());
+            let decision = crate::fallback_policy::check_fallback_error(429, None, retry_after_hdr);
+            let profile_id = ctx.upstream_profile_id.as_deref().unwrap_or("default");
+            if let Some(ref backend_name) = ctx.upstream.backend_name {
+                proxy.state.model_lockouts.record_failure(
+                    profile_id,
+                    backend_name,
+                    model,
+                    &decision.reason,
+                    decision.cooldown,
+                    4,
+                );
+                global_metrics().record_model_lockout(profile_id, backend_name, model);
+            }
+        }
+
         if let Some(guard) = &ctx.coalesce_guard
             && guard.is_leader()
         {
@@ -154,6 +216,21 @@ pub(crate) async fn run(
             pool.report_unauthorized(id);
             global_metrics().record_upstream_key_request(id, "error");
             warn!(upstream_key_id = %id, "Upstream key rejected with 401; disabled");
+        }
+        // Model-level lockout for 401: long cooldown (unauthorized = key invalid for this model).
+        if let Some(ref model) = ctx.upstream_model {
+            let profile_id = ctx.upstream_profile_id.as_deref().unwrap_or("default");
+            if let Some(ref backend_name) = ctx.upstream.backend_name {
+                proxy.state.model_lockouts.record_failure(
+                    profile_id,
+                    backend_name,
+                    model,
+                    "upstream key unauthorized",
+                    std::time::Duration::from_secs(86400),
+                    4,
+                );
+                global_metrics().record_model_lockout(profile_id, backend_name, model);
+            }
         }
         return Ok(());
     }

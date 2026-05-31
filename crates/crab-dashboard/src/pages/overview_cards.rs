@@ -18,6 +18,7 @@ use crate::api;
 use crate::components::peak_hours_heatmap::PeakHoursHeatmap;
 use crate::time_utils::format_number;
 use crate::pages::overview_analytics::{infra_container_headline, InfraOverviewModule};
+use wasm_bindgen::JsCast;
 use crate::types::{
     GatewayHealth, MetricsSnapshot, OverviewOpsMetrics, OverviewSuggestion, PrefixCacheMetricsSnapshot,
     SemanticConfig, TimeSeriesPoint, TraceSummary,
@@ -104,6 +105,49 @@ pub fn OverviewCardGrid(
     #[prop(optional)] peak_hours_error: Option<RwSignal<Option<String>>>,
 ) -> impl IntoView {
     let t = use_translations();
+
+    // Keyboard shortcuts for segment navigation (1-4)
+    {
+        let handler = move |ev: web_sys::KeyboardEvent| {
+            if let Some(target) = ev.target() {
+                if target.dyn_ref::<web_sys::HtmlInputElement>().is_some() {
+                    return;
+                }
+            }
+            let section_id = match ev.key().as_str() {
+                "1" => Some("ov-hero"),
+                "2" => Some("ov-ts"),
+                "3" => Some("ov-detail"),
+                "4" => Some("ov-diag"),
+                _ => None,
+            };
+            if let Some(id) = section_id {
+                if let Some(el) = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.get_element_by_id(id))
+                {
+                    el.scroll_into_view_with_bool(true);
+                }
+            }
+        };
+        let handler = std::sync::Arc::new(std::cell::RefCell::new(handler));
+        let handler_clone = handler.clone();
+        Effect::new(move |_| {
+            let Some(window) = web_sys::window() else { return; };
+            let h = handler_clone.clone();
+            let closure = wasm_bindgen::closure::Closure::wrap(
+                Box::new(move |ev: web_sys::KeyboardEvent| {
+                    let h = h.borrow();
+                    (h)(ev);
+                }) as Box<dyn FnMut(_)>,
+            );
+            let _ = window.add_event_listener_with_callback(
+                "keydown",
+                closure.as_ref().unchecked_ref(),
+            );
+            closure.forget();
+        });
+    }
 
     let open_health = RwSignal::new(false);
     let open_keys = RwSignal::new(false);
@@ -329,46 +373,9 @@ pub fn OverviewCardGrid(
 
                                 <TraceCompareBanner trace=trace.clone() metrics=metrics.clone() />
 
-                                // Section: Key Metrics
+                                // Section: Key Metrics (Core indicators - always visible)
                                 <div id="ov-hero" class="overview-section-anchor">
                                     <div class="overview-cards-hero">
-                                    <div class="bento-h1">
-                                    <OverviewMetricCard
-                                        label=t.overview_health_title().to_string()
-                                        headline=health_headline
-                                        open=open_health
-                                        on_open=on_open_health
-                                        preview=move || {
-                                            view! {
-                                                <span class=if healthy { "online-dot" } else { "w-2 h-2 rounded-full bg-error" }></span>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! {
-                                                <OverviewHealthStrip health=health.clone() error_rate=metrics.error_rate_5m />
-                                            }.into_any()
-                                        }
-                                    />
-                                    </div>
-                                    <div class="bento-h2">
-                                    <OverviewMetricCard
-                                        label=t.overview_health_upstream_keys().to_string()
-                                        headline=keys_headline
-                                        open=open_keys
-                                        on_open=on_open_keys
-                                        preview=move || {
-                                            let v = Signal::derive(move || keys_pct);
-                                            view! {
-                                                <ProgressBar label="" value=v max=100.0 />
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! {
-                                                <UpstreamKeyStrip ops=ops_keys.clone() />
-                                            }.into_any()
-                                        }
-                                    />
-                                    </div>
                                     <div class="bento-hit">
                                     <OverviewMetricCard
                                         label=t.overview_hit_rate_5m().to_string()
@@ -387,7 +394,12 @@ pub fn OverviewCardGrid(
                                             view! {
                                                 <div class="flex items-center justify-between gap-2 w-full">
                                                     {trend_view.unwrap_or_else(|| ().into_any())}
-                                                    <MiniTierDonut metrics=metrics_hit_preview.clone() />
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-[10px] font-mono text-theme-muted">
+                                                            {format!("{:.1}%", metrics.hit_rate_5m * 100.0)}
+                                                        </span>
+                                                        <MiniTierDonut metrics=metrics_hit_preview.clone() />
+                                                    </div>
                                                 </div>
                                             }.into_any()
                                         }
@@ -401,7 +413,30 @@ pub fn OverviewCardGrid(
                                         }
                                     />
                                     </div>
-                                    <div class="bento-h3">
+                                    <div class="bento-h1">
+                                    <OverviewMetricCard
+                                        label=t.overview_health_title().to_string()
+                                        headline=health_headline
+                                        open=open_health
+                                        on_open=on_open_health
+                                        preview=move || {
+                                            view! {
+                                                <div class="flex items-center justify-between w-full">
+                                                    <span class=if healthy { "online-dot" } else { "w-2 h-2 rounded-full bg-error" }></span>
+                                                    <span class="text-[10px] font-mono text-theme-muted">
+                                                        {if healthy { "100%" } else { "0%" }}
+                                                    </span>
+                                                </div>
+                                            }.into_any()
+                                        }
+                                        detail=move || {
+                                            view! {
+                                                <OverviewHealthStrip health=health.clone() error_rate=metrics.error_rate_5m />
+                                            }.into_any()
+                                        }
+                                    />
+                                    </div>
+                                    <div class="bento-h2">
                                     <OverviewMetricCard
                                         label=t.overview_qps_5m().to_string()
                                         headline=qps_headline
@@ -423,12 +458,17 @@ pub fn OverviewCardGrid(
                                             });
                                             view! {
                                                 <div class="flex flex-col gap-1 w-full">
-                                                    {trend_view.unwrap_or_else(|| ().into_any())}
+                                                    <div class="flex items-center justify-between">
+                                                        {trend_view.unwrap_or_else(|| ().into_any())}
+                                                        <span class="text-[10px] font-mono text-theme-muted">
+                                                            {format!("{:.2} req/s", metrics.qps_5m)}
+                                                        </span>
+                                                    </div>
                                                     <Sparkline
                                                         values=spark
                                                         color="var(--cc-accent)"
                                                         width=120
-                                                        height=28
+                                                        height=48
                                                     />
                                                 </div>
                                             }.into_any()
@@ -446,24 +486,6 @@ pub fn OverviewCardGrid(
                                     </div>
                                     <div class="bento-b1">
                                     <OverviewMetricCard
-                                        label=t.overview_cost_saved_5m().to_string()
-                                        headline=cost_headline
-                                        open=open_cost
-                                        on_open=on_open_cost
-                                        preview=move || {
-                                            view! {
-                                                <span class="text-xs text-theme-muted font-mono">
-                                                    {format!("Σ ${:.2}", ops_cost.cost_saved_usd_total)}
-                                                </span>
-                                            }.into_any()
-                                        }
-                                        detail=move || {
-                                            view! { <CostSavingsSection ops=ops_cost.clone() /> }.into_any()
-                                        }
-                                    />
-                                    </div>
-                                    <div class="bento-b2">
-                                    <OverviewMetricCard
                                         label=t.overview_error_rate_title().to_string()
                                         headline=err_headline
                                         open=open_error
@@ -471,13 +493,18 @@ pub fn OverviewCardGrid(
                                         preview=move || {
                                             let warn = metrics.error_rate_5m > 0.01;
                                             view! {
-                                                <span class=if warn { "text-warning text-xs" } else { "text-accent text-xs" }>
-                                                    {if warn {
-                                                        t.overview_error_elevated()
-                                                    } else {
-                                                        t.overview_error_normal()
-                                                    }}
-                                                </span>
+                                                <div class="flex items-center justify-between w-full">
+                                                    <span class=if warn { "text-warning text-xs" } else { "text-accent text-xs" }>
+                                                        {if warn {
+                                                            t.overview_error_elevated()
+                                                        } else {
+                                                            t.overview_error_normal()
+                                                        }}
+                                                    </span>
+                                                    <span class="text-[10px] font-mono text-theme-muted">
+                                                        {format!("{:.2}%", metrics.error_rate_5m * 100.0)}
+                                                    </span>
+                                                </div>
                                             }.into_any()
                                         }
                                         detail=move || {

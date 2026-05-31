@@ -70,6 +70,10 @@ pub struct ManagementState {
     pub features: Arc<parking_lot::RwLock<FeaturesConfig>>,
     /// Auto-discovered client Base URL (FRP / OpenResty / Pingora observed headers).
     pub client_endpoint: Arc<RwLock<ClientEndpointSnapshot>>,
+    /// Client-level lockout registry (brute-force protection).
+    pub client_lockouts: Arc<crab_proxy::client_lockout::ClientLockoutRegistry>,
+    /// Model-level lockout registry (per-profile/backend/model cooldowns).
+    pub model_lockouts: Arc<crab_proxy::model_lockout::ModelLockoutRegistry>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -242,6 +246,14 @@ pub fn router(state: ManagementState) -> Router {
             get(management_profiles::get_profile_routing),
         )
         .route("/v1/routing/summary", get(get_routing_summary))
+        .route(
+            "/v1/resilience/lockouts",
+            get(get_lockouts),
+        )
+        .route(
+            "/v1/resilience/lockouts/model/{profile}/{backend}/{model}",
+            delete(clear_model_lockout),
+        )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .with_state(state)
 }
@@ -261,6 +273,36 @@ struct InvalidateResponse {
 struct InvalidateStatusResponse {
     all_in_progress: bool,
     job: Option<InvalidateJobSnapshot>,
+}
+
+/// Response type for lockout snapshots.
+#[derive(serde::Serialize)]
+struct LockoutsResponse {
+    client_lockouts: Vec<crab_proxy::client_lockout::ClientLockoutSnapshot>,
+    model_lockouts: Vec<crab_proxy::model_lockout::ModelLockoutSnapshot>,
+}
+
+/// GET /v1/resilience/lockouts — list all active lockouts.
+async fn get_lockouts(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<LockoutsResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    Ok(Json(LockoutsResponse {
+        client_lockouts: state.client_lockouts.snapshots(),
+        model_lockouts: state.model_lockouts.snapshots(),
+    }))
+}
+
+/// DELETE /v1/resilience/lockouts/model/{profile}/{backend}/{model} — clear a model lockout.
+async fn clear_model_lockout(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path((profile, backend, model)): Path<(String, String, String)>,
+) -> Result<StatusCode, Response> {
+    authorize(&headers, &state.admin_key)?;
+    state.model_lockouts.clear(&profile, &backend, &model);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn now_secs() -> u64 {
@@ -1434,6 +1476,7 @@ async fn put_connection_runtime(
     conn.upstream_write_timeout_secs = Some(req.upstream_write_timeout_secs);
     conn.upstream_connection_timeout_secs = Some(req.upstream_connection_timeout_secs);
     *state.runtime.conn_config.write() = Arc::new(conn);
+    schedule_persist_state(&state);
     Ok(Json(req))
 }
 

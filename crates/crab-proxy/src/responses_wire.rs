@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use crab_pipeline::RequestPipeline;
-use http::Uri;
+use http::{self, Uri};
 use pingora_http::RequestHeader;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -652,6 +652,11 @@ pub struct ChatToResponsesSseTranslator {
     pending_usage: Option<Value>,
     model: String,
     last_emit_at: Option<Instant>,
+    /// Incomplete upstream SSE line buffered across TCP chunks (MiMo passthrough splits).
+    upstream_sse_remainder: Vec<u8>,
+    done_marker_sent: bool,
+    /// Remap MiMo `apply_patch`/`read_file`/`list_dir` → `exec_command` for Codex exec-only clients.
+    exec_only_surface: bool,
 }
 
 const RESPONSES_SSE_KEEPALIVE: Duration = Duration::from_secs(2);
@@ -683,6 +688,25 @@ impl ChatToResponsesSseTranslator {
             pending_usage: None,
             model: model.to_string(),
             last_emit_at: None,
+            upstream_sse_remainder: Vec::new(),
+            done_marker_sent: false,
+            exec_only_surface: false,
+        }
+    }
+
+    pub fn set_exec_only_surface(&mut self, exec_only: bool) {
+        self.exec_only_surface = exec_only;
+    }
+
+    fn normalize_downstream_tool_name(&self, name: &str) -> String {
+        if self.exec_only_surface
+            && crab_reasoning::CODEX_FILE_TOOL_NAMES
+                .iter()
+                .any(|n| *n == name)
+        {
+            "exec_command".to_string()
+        } else {
+            name.to_string()
         }
     }
 
@@ -692,6 +716,14 @@ impl ChatToResponsesSseTranslator {
 
     pub fn is_completed(&self) -> bool {
         self.completed_sent
+    }
+
+    pub(crate) fn upstream_sse_remainder_len(&self) -> usize {
+        self.upstream_sse_remainder.len()
+    }
+
+    pub(crate) fn done_marker_sent(&self) -> bool {
+        self.done_marker_sent
     }
 
     /// Emit `response.created` + `response.in_progress` before upstream body (Codex prefill keepalive).
@@ -766,13 +798,45 @@ impl ChatToResponsesSseTranslator {
     }
 
     pub fn translate_chunk(&mut self, chunk: &[u8]) -> Vec<u8> {
+        self.upstream_sse_remainder.extend_from_slice(chunk);
         let mut out = Vec::new();
         self.maybe_emit_keepalive(&mut out);
-        for event in parse_sse_chunk(chunk) {
+        while let Some(pos) = self
+            .upstream_sse_remainder
+            .iter()
+            .position(|b| *b == b'\n')
+        {
+            let line_with_nl: Vec<u8> = self.upstream_sse_remainder.drain(..=pos).collect();
+            let mut line = line_with_nl.as_slice();
+            if line.ends_with(b"\n") {
+                line = &line[..line.len() - 1];
+            }
+            if line.ends_with(b"\r") {
+                line = &line[..line.len() - 1];
+            }
+            if line.is_empty() {
+                continue;
+            }
+            out.extend(self.translate_sse_line(line));
+        }
+        out
+    }
+
+    /// Flush a trailing upstream line without a newline when upstream closes.
+    pub fn flush_upstream_remainder(&mut self) -> Vec<u8> {
+        if self.upstream_sse_remainder.is_empty() {
+            return Vec::new();
+        }
+        let tail = std::mem::take(&mut self.upstream_sse_remainder);
+        self.translate_sse_line(&tail)
+    }
+
+    fn translate_sse_line(&mut self, line: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for event in parse_sse_chunk(line) {
             if event.is_done() {
                 self.close_all(&mut out);
                 self.emit_completed(&mut out);
-                append_done_marker(&mut out);
                 continue;
             }
             let Ok(value) = serde_json::from_str::<Value>(event.data) else {
@@ -892,10 +956,22 @@ impl ChatToResponsesSseTranslator {
     pub fn flush(&mut self) -> Vec<u8> {
         let mut out = Vec::new();
         self.close_all(&mut out);
-        self.emit_completed(&mut out);
-        if self.completed_sent {
-            append_done_marker(&mut out);
+        if !self.completed_sent {
+            self.emit_completed(&mut out);
+        } else {
+            out.extend(self.append_done_if_missing());
         }
+        out
+    }
+
+    /// Append `data: [DONE]` when stream completed mid-chunk but marker not yet sent.
+    pub fn append_done_if_missing(&mut self) -> Vec<u8> {
+        if self.done_marker_sent {
+            return Vec::new();
+        }
+        self.done_marker_sent = true;
+        let mut out = Vec::new();
+        append_done_marker(&mut out);
         out
     }
 
@@ -1140,6 +1216,10 @@ impl ChatToResponsesSseTranslator {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
+        let normalized_name = func_name
+            .as_ref()
+            .map(|name| self.normalize_downstream_tool_name(name));
+
         if let Some(entry) = self.tool_calls.get(&tc_idx)
             && let Some(ref new_id) = new_call_id
             && entry.call_id != *new_id
@@ -1156,7 +1236,7 @@ impl ChatToResponsesSseTranslator {
             item_done: false,
         });
 
-        if let Some(name) = func_name {
+        if let Some(name) = normalized_name {
             entry.name = name;
         }
         if entry.call_id.is_empty() {
@@ -1312,6 +1392,10 @@ impl ChatToResponsesSseTranslator {
             }
         }
         self.emit(out, json!({ "type": "response.completed", "response": response }));
+        if !self.done_marker_sent {
+            append_done_marker(out);
+            self.done_marker_sent = true;
+        }
     }
 }
 
@@ -1397,11 +1481,13 @@ pub fn translate_client_bytes_for_responses_wire(
 }
 
 /// Initialize Responses SSE translator at upstream headers (prefill bootstrap for Codex CLI).
-pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
+    pub fn arm_responses_wire_stream(ctx: &mut GatewayContext, model: &str) {
     if ctx.stream.responses_translator.is_some() {
         return;
     }
+    let exec_only = ctx.stream.responses_exec_only_surface;
     let mut tr = ChatToResponsesSseTranslator::new(model);
+    tr.set_exec_only_surface(exec_only);
     let bootstrap = tr.bootstrap_stream();
     if !bootstrap.is_empty() {
         ctx.stream.responses_wire_bootstrap = Some(bootstrap.clone());
@@ -1425,6 +1511,63 @@ pub fn prepend_responses_wire_bootstrap(
         merged.extend_from_slice(&data);
     }
     Some(Bytes::from(merged))
+}
+
+/// Send Responses SSE bootstrap immediately after upstream peer selection (before MiMo TTFB).
+///
+/// Keeps Codex CLI alive during long prefill on large chain-expanded bodies; enables the
+/// Pingora keepalive tick (`response_written` must be set first).
+pub async fn try_send_responses_wire_ttfb_prefill(
+    session: &mut pingora_proxy::Session,
+    ctx: &mut GatewayContext,
+) -> bool {
+    if !ctx.is_streaming
+        || !needs_responses_wire_translate(ctx)
+        || ctx.client_wire_api != ClientWireApi::Responses
+        || ctx.stream.responses_wire_bootstrap_sent
+        || session.response_written().is_some()
+    {
+        return false;
+    }
+    let model = ctx.model.clone();
+    arm_responses_wire_stream(ctx, &model);
+    let Some(bootstrap) = ctx.stream.responses_wire_bootstrap.take() else {
+        return false;
+    };
+    ctx.stream.responses_wire_bootstrap_sent = true;
+    ctx.stream.responses_ttfb_prefill_sent = true;
+
+    let mut header = match pingora_http::ResponseHeader::build(http::StatusCode::OK, Some(8)) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let _ = header.insert_header(http::header::CONTENT_TYPE, "text/event-stream");
+    let _ = header.insert_header(http::header::CACHE_CONTROL, "no-cache");
+    let _ = header.insert_header("X-Accel-Buffering", "no");
+    let _ = header.insert_header("x-request-id", ctx.request_id.clone());
+    let _ = header.insert_header("x-cache-status", "miss");
+
+    if session
+        .write_response_header(Box::new(header), false)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    ctx.stream.client_sse_body.extend_from_slice(&bootstrap);
+    if session
+        .write_response_body(Some(bytes::Bytes::from(bootstrap.clone())), false)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    tracing::info!(
+        request_id = %ctx.request_id,
+        bytes = bootstrap.len(),
+        "Responses wire TTFB prefill flushed before upstream headers"
+    );
+    true
 }
 
 /// Flush `response.created` / `response.in_progress` immediately after upstream headers (prefill).
@@ -1491,6 +1634,10 @@ fn responses_stream_needs_completed_event(ctx: &GatewayContext) -> bool {
     !crate::sse::sse_bytes_contains_event(&ctx.stream.client_sse_body, "response.completed")
 }
 
+fn responses_stream_needs_done_marker(ctx: &GatewayContext) -> bool {
+    !ctx.stream.client_sse_body.windows(6).any(|w| w == b"[DONE]")
+}
+
 fn upstream_ok_for_graceful_responses_finalize(ctx: &GatewayContext) -> bool {
     match ctx.upstream.http_status {
         Some(status) if status >= 400 => false,
@@ -1510,7 +1657,7 @@ pub fn should_attempt_graceful_responses_finalize(ctx: &GatewayContext) -> bool 
         && needs_responses_wire_translate(ctx)
         && ctx.client_wire_api == ClientWireApi::Responses
         && upstream_ok_for_graceful_responses_finalize(ctx)
-        && responses_stream_needs_completed_event(ctx)
+        && (responses_stream_needs_completed_event(ctx) || responses_stream_needs_done_marker(ctx))
 }
 
 /// Whether a Codex Responses stream still needs a graceful `response.completed` tail.
@@ -1521,6 +1668,16 @@ pub fn should_graceful_finalize_responses_stream(ctx: &GatewayContext) -> bool {
             .responses_translator
             .as_ref()
             .is_some_and(|t| t.is_completed())
+}
+
+/// Stream already sent `response.completed` + `[DONE]` but upstream aborted before downstream EOS.
+pub fn needs_downstream_stream_finish(ctx: &GatewayContext) -> bool {
+    ctx.is_streaming
+        && needs_responses_wire_translate(ctx)
+        && ctx.client_wire_api == ClientWireApi::Responses
+        && ctx.stream.responses_wire_bootstrap_sent
+        && !responses_stream_needs_completed_event(ctx)
+        && !responses_stream_needs_done_marker(ctx)
 }
 
 fn append_synthetic_responses_completed(out: &mut Vec<u8>, ctx: &GatewayContext) {
@@ -1596,9 +1753,13 @@ pub fn build_graceful_responses_stream_tail(
     chain_store: &ResponsesChainStore,
 ) -> Option<Vec<u8>> {
     if !should_attempt_graceful_responses_finalize(ctx) {
+        if needs_downstream_stream_finish(ctx) {
+            return Some(Vec::new());
+        }
         return None;
     }
     let chain_ns = responses_chain_namespace(ctx);
+    let needs_completed = responses_stream_needs_completed_event(ctx);
     let mut out = Vec::new();
     if !ctx.stream.responses_wire_bootstrap_sent {
         if ctx.stream.responses_translator.is_none() {
@@ -1611,7 +1772,12 @@ pub fn build_graceful_responses_stream_tail(
         }
     }
     if let Some(translator) = ctx.stream.responses_translator.as_mut() {
-        out.extend_from_slice(&translator.flush());
+        out.extend_from_slice(&translator.flush_upstream_remainder());
+        if needs_completed {
+            out.extend_from_slice(&translator.flush());
+        } else {
+            out.extend_from_slice(&translator.append_done_if_missing());
+        }
         if translator.is_completed() {
             store_responses_chain_output(
                 chain_store,
@@ -1771,6 +1937,7 @@ mod tests {
         assert!(text.contains("event: response.completed"));
         assert!(text.contains("\"sequence_number\""));
         assert!(text.contains("\"text\":\"Hello\""));
+        assert!(text.contains("data: [DONE]"));
     }
 
     #[test]
@@ -1803,7 +1970,26 @@ mod tests {
     }
 
     #[test]
-    fn flush_appends_done_marker() {
+    fn chat_sse_translates_split_across_chunks() {
+        let line = concat!(
+            "data: ",
+            "{\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: ",
+            "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        );
+        let split = line.find("choices").expect("marker");
+        let mut tr = ChatToResponsesSseTranslator::new("mimo-v2.5-pro");
+        let mut out = tr.translate_chunk(line[..split].as_bytes());
+        assert!(out.is_empty() || tr.upstream_sse_remainder_len() > 0);
+        out.extend(tr.translate_chunk(line[split..].as_bytes()));
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("event: response.output_text.delta"));
+        assert!(text.contains("event: response.completed"));
+        assert_eq!(tr.upstream_sse_remainder_len(), 0);
+    }
+
+    #[test]
+    fn finish_reason_emits_done_marker_without_extra_flush() {
         let sse = concat!(
             "data: ",
             "{\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
@@ -1811,10 +1997,12 @@ mod tests {
             "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
         );
         let mut tr = ChatToResponsesSseTranslator::new("gpt-5.4-mini");
-        let _ = tr.translate_chunk(sse.as_bytes());
-        let tail = tr.flush();
-        let text = String::from_utf8_lossy(&tail);
+        let out = tr.translate_chunk(sse.as_bytes());
+        let text = String::from_utf8_lossy(&out);
         assert!(text.contains("data: [DONE]"));
+        assert!(tr.done_marker_sent());
+        let tail = tr.flush();
+        assert!(!String::from_utf8_lossy(&tail).contains("data: [DONE]"));
     }
 
     #[tokio::test]
@@ -2067,9 +2255,32 @@ mod tests {
             .collect();
         assert!(names.contains(&"exec_command"));
         assert!(
-            names.contains(&"apply_patch"),
-            "expected apply_patch injected from instructions"
+            !names.contains(&"apply_patch"),
+            "exec-only Codex sessions must not inject apply_patch upstream"
         );
+    }
+
+    #[test]
+    fn exec_only_downstream_remaps_apply_patch_to_exec_command() {
+        let mut tr = ChatToResponsesSseTranslator::new("mimo-v2.5-pro");
+        tr.set_exec_only_surface(true);
+        tr.bootstrap_stream();
+        let chunk = json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_abc",
+                        "function": { "name": "apply_patch", "arguments": "{\"input\":\"patch\"}" }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let out = tr.translate_chunk(format!("data: {chunk}\n\n").as_bytes());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\"name\":\"exec_command\""), "{text}");
+        assert!(!text.contains("\"name\":\"apply_patch\""), "{text}");
     }
 
     #[test]

@@ -21,6 +21,13 @@ connection is torn down.
 - `src/proxy_trait.rs`: new hook default `None`
 - `src/proxy_h1.rs` / `src/proxy_h2.rs`: call hook before `finish_body`; convert `Failed` → `Body` when tail returned
 
+## 1d. H2 pipe drain after downstream early finish (CrabCache Responses)
+
+When CrabCache forces downstream EOS after Responses `[DONE]`, `bidirection_down_to_up` may
+close the H2→downstream pipe while MiMo upstream still has trailing DATA frames.
+`pipe_up_to_down_response` treats any failed `Body` send on a closed channel as success (drain
+and exit) instead of surfacing `InternalError: channel closed`.
+
 ## 1b. Streaming defer + trailing empty EOS (CrabCache)
 
 `ProxyHttp::defer_upstream_request_body` / `skip_upstream_trailing_empty_eos` (implemented on

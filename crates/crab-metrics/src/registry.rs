@@ -131,6 +131,12 @@ pub struct GatewayMetrics {
     pub pipeline_backpressure: IntCounterVec,
     /// MiMo conversation-level key binding events (hit/miss/spill/expired).
     pub key_binding: IntCounterVec,
+    /// Client lockout triggers (brute-force protection).
+    pub client_lockout_total: IntCounter,
+    /// Model-level lockout triggers (per profile/backend/model).
+    pub model_lockout_total: IntCounterVec,
+    /// Fallback decisions from upstream errors (by failure kind).
+    pub fallback_decision_total: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -657,6 +663,29 @@ impl GatewayMetrics {
             &["event"],
         )?;
 
+        let client_lockout_total = IntCounter::with_opts(
+            Opts::new(
+                "gateway_client_lockout_total",
+                "Total number of client lockout triggers (brute-force protection)",
+            ),
+        )?;
+
+        let model_lockout_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_model_lockout_total",
+                "Total number of model-level lockout triggers",
+            ),
+            &["profile", "backend", "model"],
+        )?;
+
+        let fallback_decision_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_fallback_decision_total",
+                "Total number of fallback decisions from upstream errors",
+            ),
+            &["failure_kind"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -730,6 +759,9 @@ impl GatewayMetrics {
             rejection_by_source,
             pipeline_backpressure,
             key_binding,
+            client_lockout_total,
+            model_lockout_total,
+            fallback_decision_total,
         })
     }
 
@@ -806,6 +838,9 @@ impl GatewayMetrics {
         registry.register(Box::new(self.rejection_by_source.clone()))?;
         registry.register(Box::new(self.pipeline_backpressure.clone()))?;
         registry.register(Box::new(self.key_binding.clone()))?;
+        registry.register(Box::new(self.client_lockout_total.clone()))?;
+        registry.register(Box::new(self.model_lockout_total.clone()))?;
+        registry.register(Box::new(self.fallback_decision_total.clone()))?;
         Ok(())
     }
 
@@ -1384,6 +1419,25 @@ impl GatewayMetrics {
     /// Record the global RPS estimate from pingora-limits::Rate.
     pub fn record_global_rps(&self, rps: f64) {
         self.global_rps.set(rps);
+    }
+
+    /// Record a client lockout trigger (brute-force protection).
+    pub fn record_client_lockout(&self) {
+        self.client_lockout_total.inc();
+    }
+
+    /// Record a model-level lockout trigger.
+    pub fn record_model_lockout(&self, profile: &str, backend: &str, model: &str) {
+        self.model_lockout_total
+            .with_label_values(&[profile, backend, model])
+            .inc();
+    }
+
+    /// Record a fallback decision from upstream error.
+    pub fn record_fallback_decision(&self, failure_kind: &str) {
+        self.fallback_decision_total
+            .with_label_values(&[failure_kind])
+            .inc();
     }
 }
 
