@@ -108,26 +108,31 @@ impl ServerConfig {
     }
 }
 
-/// Wait for SIGTERM/SIGINT, flush admin state, then allow the server to exit.
-async fn shutdown_signal(state: Arc<AppState>) {
-    let ctrl_c = tokio::signal::ctrl_c();
-    #[cfg(unix)]
-    {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => info!("Received SIGINT (Ctrl-C), flushing state…"),
-            _ = sigterm.recv() => info!("Received SIGTERM, flushing state…"),
+/// Spawn a background task that flushes admin state on SIGTERM/SIGINT.
+/// Unlike `with_graceful_shutdown`, this does NOT stop the server from
+/// accepting connections — it only persists state so a subsequent restart
+/// (e.g. docker restart during hot-update) never loses key-pool edits.
+fn spawn_shutdown_flusher(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = ctrl_c => info!("Received SIGINT (Ctrl-C), flushing state…"),
+                _ = sigterm.recv() => info!("Received SIGTERM, flushing state…"),
+            }
         }
-    }
-    #[cfg(not(unix))]
-    {
-        ctrl_c.await.ok();
-        info!("Received Ctrl-C, flushing state…");
-    }
-    state.flush_persist();
-    info!("Admin state persisted, shutting down");
+        #[cfg(not(unix))]
+        {
+            ctrl_c.await.ok();
+            info!("Received Ctrl-C, flushing state…");
+        }
+        state.flush_persist();
+        info!("Admin state persisted, shutting down");
+    });
 }
 
 #[tokio::main]
@@ -163,7 +168,6 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let admin_key = std::env::var("CRABCACHE_ADMIN_KEY").unwrap_or_else(|_| {
@@ -189,7 +193,6 @@ async fn main() -> anyhow::Result<()> {
     state.reconcile_upstream_from_gateway().await;
     state.sync_profile_secrets_from_gateway().await;
     crate::oauth_codex::prepare_auth_dir(&state).await;
-
 
     {
         let metrics_state = Arc::clone(&state);
@@ -466,7 +469,7 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    let app = routes::router(state)
+    let app = routes::router(Arc::clone(&state))
         .layer(middleware::from_fn(api_no_cache_headers))
         .layer(cors)
         .layer(CompressionLayer::new())
@@ -479,6 +482,9 @@ async fn main() -> anyhow::Result<()> {
         protocol = protocol,
         "CrabCache Admin Dashboard starting"
     );
+
+    // Spawn background SIGTERM/SIGINT handler to persist state before exit.
+    spawn_shutdown_flusher(Arc::clone(&state));
 
     if config.is_https() {
         let cert_path = config.cert_path.unwrap();
@@ -495,26 +501,12 @@ async fn main() -> anyhow::Result<()> {
 
         let addr: std::net::SocketAddr = config.listen_addr.parse()?;
 
-        let handle = axum_server::Handle::new();
-        let shutdown_state = Arc::clone(&state);
-        let server_handle = handle.clone();
-        tokio::spawn(async move {
-            shutdown_signal(shutdown_state).await;
-            server_handle.graceful_shutdown(None);
-        });
-
         axum_server::bind_rustls(addr, tls_config)
-            .handle(handle)
             .serve(app.into_make_service())
             .await?;
     } else {
         let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
-
-        // Graceful shutdown: flush state on SIGTERM/SIGINT before exit.
-        let shutdown_state = Arc::clone(&state);
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal(shutdown_state))
-            .await?;
+        axum::serve(listener, app).await?;
     }
 
     Ok(())

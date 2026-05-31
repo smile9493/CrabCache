@@ -165,7 +165,16 @@ impl PersistHandle {
             let _ = std::fs::create_dir_all(parent);
         }
         let write_ok = if let Ok(json) = serde_json::to_string_pretty(file) {
-            std::fs::write(&self.path, json).is_ok()
+            // Atomic write: write to tmp file then rename to avoid corruption
+            // if the process is killed mid-write (e.g. docker restart).
+            let tmp_path = self.path.with_extension("json.tmp");
+            let ok = std::fs::write(&tmp_path, &json).is_ok()
+                && std::fs::rename(&tmp_path, &self.path).is_ok();
+            // Best-effort cleanup of tmp file if rename failed.
+            if !ok {
+                let _ = std::fs::remove_file(&tmp_path);
+            }
+            ok
         } else {
             false
         };

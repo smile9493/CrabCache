@@ -5,13 +5,13 @@
 
 use crate::state::{AppState, UpstreamPoolSecret};
 use crate::upstream_profiles;
-use axum::extract::{Path as AxumPath, State};
 use axum::Json;
+use axum::extract::{Path as AxumPath, State};
 use chrono::Utc;
 use crab_admin_types::oauth::*;
 use crab_auth::oauth::codex::CodexAuthenticator;
-use crab_auth::oauth::{ensure_fresh_codex_token, parse_codex_import_documents};
 use crab_auth::oauth::codex::decode_codex_access_token_claims;
+use crab_auth::oauth::{ensure_fresh_codex_token, parse_codex_import_documents};
 use crab_auth::store::{FileTokenStore, TokenStore};
 use crab_auth::types::{Provider, TokenRecord};
 use std::collections::{HashMap, HashSet};
@@ -63,6 +63,11 @@ pub async fn prepare_auth_dir(state: &AppState) {
         return;
     }
     let migrated = migrate_legacy_auth_dirs(auth_dir).await;
+
+    // Step 1: Recover key pool from credential files if pool was lost
+    // (e.g. admin-state.json corrupted or missing after a hot-update).
+    let recovered = recover_codex_pool_from_credentials(state).await;
+
     let profile_secrets = state.upstream_profile_secrets.read().clone();
     let codex_profiles = codex_like_profile_ids(state, &profile_secrets);
     let mut synced = 0usize;
@@ -72,10 +77,124 @@ pub async fn prepare_auth_dir(state: &AppState) {
     tracing::info!(
         path = %auth_dir.display(),
         migrated,
+        recovered,
         synced,
         codex_profiles = ?codex_profiles,
         "Codex auth directory ready"
     );
+}
+
+/// If a codex-like profile's key pool is empty but credential files exist on
+/// disk, rebuild the key pool from those credentials. This handles the case
+/// where `admin-state.json` was lost/corrupted between hot-updates while
+/// credential JSON files in `auth_dir` survived (different persistence path).
+async fn recover_codex_pool_from_credentials(state: &AppState) -> usize {
+    let store = FileTokenStore::new(&state.auth_dir);
+    let Ok(records) = store.list().await else {
+        return 0;
+    };
+    let codex_records: Vec<&TokenRecord> = records
+        .iter()
+        .filter(|r| r.provider == Provider::Codex && !r.access_token.is_empty())
+        .collect();
+    if codex_records.is_empty() {
+        return 0;
+    }
+
+    let providers = state.upstream_profile_providers.read().clone();
+    let mut recovered = 0usize;
+
+    // Group credentials by profile_id.
+    let mut by_profile: HashMap<String, Vec<&TokenRecord>> = HashMap::new();
+    for rec in &codex_records {
+        let profile_id = rec
+            .metadata
+            .get("profile_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("codex")
+            .to_string();
+        by_profile.entry(profile_id).or_default().push(rec);
+    }
+
+    for (profile_id, creds) in &by_profile {
+        // Only recover for codex-like profiles.
+        let is_codex = providers
+            .get(profile_id)
+            .map(|p| p == "codex" || p == "openai")
+            .unwrap_or_else(|| profile_id == "codex");
+        if !is_codex {
+            continue;
+        }
+
+        // Only recover if the pool is currently empty.
+        let pool_empty = state
+            .upstream_profile_secrets
+            .read()
+            .get(profile_id)
+            .map(|p| p.is_empty())
+            .unwrap_or(true);
+        if !pool_empty {
+            continue;
+        }
+
+        let secrets: Vec<UpstreamPoolSecret> = creds
+            .iter()
+            .map(|rec| {
+                let account_id = rec
+                    .metadata
+                    .get("account_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                UpstreamPoolSecret {
+                    id: rec
+                        .metadata
+                        .get("key_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| rec.id.clone()),
+                    secret: rec.access_token.clone(),
+                    enabled: !rec.disabled,
+                    account_id,
+                }
+            })
+            .collect();
+
+        if secrets.is_empty() {
+            continue;
+        }
+
+        let count = secrets.len();
+        state
+            .upstream_profile_secrets
+            .write()
+            .insert(profile_id.clone(), secrets.clone());
+        recovered += count;
+        tracing::info!(
+            profile_id = %profile_id,
+            count,
+            "Recovered key pool from credential files"
+        );
+        if let Err(e) = crate::upstream_profiles::sync_profile_pool_to_gateway(
+            state,
+            profile_id,
+            crate::types::UpstreamKeysPutMode::Replace,
+        )
+        .await
+        {
+            tracing::warn!(
+                profile_id = %profile_id,
+                error = %e,
+                "Recovered Codex keys in admin state but failed to push to gateway"
+            );
+        }
+    }
+
+    if recovered > 0 {
+        state.flush_persist();
+    }
+
+    recovered
 }
 
 /// True when profile uses Codex OAuth key pool semantics.
@@ -93,11 +212,7 @@ pub async fn reconcile_codex_credentials_with_pool(state: &AppState, profile_id:
         return 0;
     }
 
-    let Ok(keys_view) = state
-        .gateway
-        .get_upstream_profile_keys(profile_id)
-        .await
-    else {
+    let Ok(keys_view) = state.gateway.get_upstream_profile_keys(profile_id).await else {
         return 0;
     };
 
@@ -105,13 +220,7 @@ pub async fn reconcile_codex_credentials_with_pool(state: &AppState, profile_id:
         .gateway
         .export_upstream_profile_keys(profile_id)
         .await
-        .map(|export| {
-            export
-                .keys
-                .into_iter()
-                .map(|k| (k.id, k.secret))
-                .collect()
-        })
+        .map(|export| export.keys.into_iter().map(|k| (k.id, k.secret)).collect())
         .unwrap_or_default();
 
     let cached_secrets: HashMap<String, String> = state
@@ -192,10 +301,9 @@ pub async fn reconcile_codex_credentials_with_pool(state: &AppState, profile_id:
             serde_json::Value::String(key.id.clone()),
         );
         if let Some(plan) = jwt_plan {
-            record.metadata.insert(
-                "plan_type".to_string(),
-                serde_json::Value::String(plan),
-            );
+            record
+                .metadata
+                .insert("plan_type".to_string(), serde_json::Value::String(plan));
         }
 
         if store.save(&record).await.is_ok() {
@@ -349,7 +457,6 @@ async fn import_codex_record_to_profile(
         )
     })?;
 
-
     let account_id = fresh
         .metadata
         .get("account_id")
@@ -358,13 +465,8 @@ async fn import_codex_record_to_profile(
         .to_string();
     let email = fresh.email.clone();
 
-    upstream_profiles::put_profile_keys_upsert(
-        state,
-        profile_id,
-        &fresh.access_token,
-        &account_id,
-    )
-    .await?;
+    upstream_profiles::put_profile_keys_upsert(state, profile_id, &fresh.access_token, &account_id)
+        .await?;
 
     reconcile_codex_credentials_with_pool(state, profile_id).await;
 
@@ -423,8 +525,7 @@ pub async fn start_pkce_login(
     State(state): State<Arc<AppState>>,
     AxumPath(profile_id): AxumPath<String>,
 ) -> Result<Json<CodexPkceStartResponse>, (axum::http::StatusCode, String)> {
-    let (verifier, _challenge, state_param, auth_url) =
-        crab_auth::oauth::codex::start_pkce_login();
+    let (verifier, _challenge, state_param, auth_url) = crab_auth::oauth::codex::start_pkce_login();
 
     let session_id = Uuid::new_v4();
     let redirect_uri = format!("http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}");
@@ -591,15 +692,12 @@ pub async fn exchange_pkce(
         )
     })?;
 
-    let entry = state
-        .codex_pkce_sessions
-        .get(&session_id)
-        .ok_or_else(|| {
-            (
-                axum::http::StatusCode::NOT_FOUND,
-                "PKCE session not found".to_string(),
-            )
-        })?;
+    let entry = state.codex_pkce_sessions.get(&session_id).ok_or_else(|| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            "PKCE session not found".to_string(),
+        )
+    })?;
 
     if entry.profile_id != profile_id {
         return Err((
@@ -612,15 +710,15 @@ pub async fn exchange_pkce(
         return Ok(Json(entry.into_status_response()));
     }
 
-    let (code, recv_state) =
-        crab_auth::oauth::codex::extract_code_from_callback_url(&req.callback_url).map_err(
-            |e| {
-                (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    format!("Invalid callback URL: {e}"),
-                )
-            },
-        )?;
+    let (code, recv_state) = crab_auth::oauth::codex::extract_code_from_callback_url(
+        &req.callback_url,
+    )
+    .map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Invalid callback URL: {e}"),
+        )
+    })?;
 
     if recv_state != entry.state {
         return Err((
@@ -738,10 +836,9 @@ fn urldecode(value: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 result.push(byte);
                 i += 3;
                 continue;
@@ -901,19 +998,18 @@ pub async fn poll_device_status(
         }
         crab_auth::oauth::CodexDevicePollResult::Ready { body } => {
             // Complete the exchange on the OAuth token endpoint (form-urlencoded).
-            let record =
-                CodexAuthenticator::complete_device_from_poll_with_url_and_proxy(
-                    &oauth_token_url,
-                    &body,
-                    proxy_url.as_deref(),
+            let record = CodexAuthenticator::complete_device_from_poll_with_url_and_proxy(
+                &oauth_token_url,
+                &body,
+                proxy_url.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    format!("Token exchange failed: {e}"),
                 )
-                .await
-                .map_err(|e| {
-                    (
-                        axum::http::StatusCode::BAD_GATEWAY,
-                        format!("Token exchange failed: {e}"),
-                    )
-                })?;
+            })?;
 
             let (credential_id, _refreshed, email, account_id) =
                 import_codex_record_to_profile(&state, &profile_id, record).await?;
@@ -1126,15 +1222,11 @@ pub async fn import_codex_bulk(
         )
     })?;
 
-
     let mut imported = Vec::new();
     let mut errors = Vec::new();
 
     for record in records {
-        let name = record
-            .email
-            .clone()
-            .unwrap_or_else(|| record.id.clone());
+        let name = record.email.clone().unwrap_or_else(|| record.id.clone());
         match import_codex_record_to_profile(&state, &profile_id, record).await {
             Ok((credential_id, refreshed, email, _)) => {
                 imported.push(CodexBulkImportItem {
@@ -1155,7 +1247,6 @@ pub async fn import_codex_bulk(
             format!("All imports failed: {}", errors[0].error),
         ));
     }
-
 
     Ok(Json(CodexBulkImportResponse {
         profile_id,

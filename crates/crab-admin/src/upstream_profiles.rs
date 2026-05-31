@@ -82,7 +82,9 @@ pub async fn get_profile_keys(
         .get_upstream_profile_keys(id)
         .await
         .map_err(|e| e.to_string())?;
-    let models_probe = crate::upstream::probe_profile_key_models_internal(state, id).await.ok();
+    let models_probe = crate::upstream::probe_profile_key_models_internal(state, id)
+        .await
+        .ok();
     let mut keys: Vec<_> = view
         .keys
         .into_iter()
@@ -116,27 +118,26 @@ pub async fn put_profile_keys(
     } else {
         UpstreamKeysPutMode::Append
     };
-        let secrets: Vec<UpstreamPoolSecret> = keys
-            .iter()
-            .filter(|k| !k.secret.is_empty())
-            .map(|k| UpstreamPoolSecret {
-                id: if k.id.is_empty() {
-                    uuid::Uuid::new_v4().to_string()
-                } else {
-                    k.id.clone()
-                },
-                secret: k.secret.clone(),
-                enabled: k.enabled,
-                account_id: k.account_id.clone(),
-            })
-            .collect();
+    let secrets: Vec<UpstreamPoolSecret> = keys
+        .iter()
+        .filter(|k| !k.secret.is_empty())
+        .map(|k| UpstreamPoolSecret {
+            id: if k.id.is_empty() {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                k.id.clone()
+            },
+            secret: k.secret.clone(),
+            enabled: k.enabled,
+            account_id: k.account_id.clone(),
+        })
+        .collect();
     {
         let mut map = state.upstream_profile_secrets.write();
         map.insert(id.to_string(), secrets);
     }
 
-
-    // Persist key pool to PostgreSQL (Admin DB) when available.
+    // Persist key pool to PostgreSQL (Admin DB) when available (best-effort).
     // Important: never hold a parking_lot lock guard across an `.await`.
     let pg = { state.pg_store.read().clone() };
     if let Some(pg) = pg {
@@ -155,10 +156,14 @@ pub async fn put_profile_keys(
                 account_id: s.account_id,
             })
             .collect();
-        pg.replace_profile_secrets(id, &persisted)
-            .await
-            .map_err(|e| format!("persist upstream keys to postgres: {e}"))?;
+        if let Err(e) = pg.replace_profile_secrets(id, &persisted).await {
+            tracing::warn!(error = %e, profile_id = %id, "PG persist upstream keys failed (non-fatal)");
+        }
     }
+
+    // Always flush in-memory state to admin-state.json BEFORE gateway call,
+    // so a restart mid-operation never loses the user's key edits.
+    state.flush_persist();
 
     let req = put_upstream_profile_keys_to_control(&keys, mode);
     let view = state
@@ -166,7 +171,6 @@ pub async fn put_profile_keys(
         .put_upstream_profile_keys(id, &req)
         .await
         .map_err(|e| e.to_string())?;
-    state.flush_persist();
     if crate::oauth_codex::profile_is_codex_like(state, id) {
         crate::oauth_codex::reconcile_codex_credentials_with_pool(state, id).await;
     }
@@ -192,48 +196,48 @@ pub async fn patch_profile_key(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Best-effort: reflect enabled toggle into Admin PG persistence when available.
+    // Best-effort: reflect enabled toggle into Admin in-memory + PG persistence.
     if let Some(enabled) = req.enabled {
-        let pg = { state.pg_store.read().clone() };
-        if let Some(pg) = pg {
-            let _guard = state.pg_write_lock.lock().await;
-            let mut updated: Vec<PersistedUpstreamPoolSecret> = state
-                .upstream_profile_secrets
-                .read()
-                .get(profile_id)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|s| {
-                    let id = s.id.clone();
-                    PersistedUpstreamPoolSecret {
-                        enabled: if id == key_id { enabled } else { s.enabled },
-                        id: s.id,
-                        secret: s.secret,
-                        account_id: s.account_id,
-                    }
-                })
-                .collect();
-            // If admin did not have this key cached, don't attempt to synthesize a secret.
-            if updated.iter().any(|s| s.id == key_id) {
-                pg.replace_profile_secrets(profile_id, &updated)
-                    .await
-                    .map_err(|e| format!("persist upstream key enabled to postgres: {e}"))?;
-                // keep in-memory cache aligned
-                {
-                    let mut map = state.upstream_profile_secrets.write();
-                    map.insert(
-                        profile_id.to_string(),
-                        updated
-                            .drain(..)
-                            .map(|p| UpstreamPoolSecret {
-                                id: p.id,
-                                secret: p.secret,
-                                enabled: p.enabled,
-                                account_id: p.account_id,
-                            })
-                            .collect(),
-                    );
+        let updated: Vec<PersistedUpstreamPoolSecret> = state
+            .upstream_profile_secrets
+            .read()
+            .get(profile_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| {
+                let id = s.id.clone();
+                PersistedUpstreamPoolSecret {
+                    enabled: if id == key_id { enabled } else { s.enabled },
+                    id: s.id,
+                    secret: s.secret,
+                    account_id: s.account_id,
+                }
+            })
+            .collect();
+        if updated.iter().any(|s| s.id == key_id) {
+            // Update in-memory cache immediately.
+            {
+                let mut map = state.upstream_profile_secrets.write();
+                map.insert(
+                    profile_id.to_string(),
+                    updated
+                        .iter()
+                        .map(|p| UpstreamPoolSecret {
+                            id: p.id.clone(),
+                            secret: p.secret.clone(),
+                            enabled: p.enabled,
+                            account_id: p.account_id.clone(),
+                        })
+                        .collect(),
+                );
+            }
+            // Best-effort PG write (non-fatal on failure).
+            let pg = { state.pg_store.read().clone() };
+            if let Some(pg) = pg {
+                let _guard = state.pg_write_lock.lock().await;
+                if let Err(e) = pg.replace_profile_secrets(profile_id, &updated).await {
+                    tracing::warn!(error = %e, profile_id = %profile_id, "PG persist key enabled failed (non-fatal)");
                 }
             }
         }
@@ -261,6 +265,10 @@ pub async fn delete_profile_key(
         }
     }
 
+    // Always flush in-memory state to admin-state.json (non-negotiable).
+    state.flush_persist();
+
+    // Best-effort PG sync (non-fatal on failure).
     let pg = { state.pg_store.read().clone() };
     if let Some(pg) = pg {
         let _guard = state.pg_write_lock.lock().await;
@@ -278,12 +286,11 @@ pub async fn delete_profile_key(
                 account_id: s.account_id,
             })
             .collect();
-        pg.replace_profile_secrets(profile_id, &persisted)
-            .await
-            .map_err(|e| format!("persist upstream key delete to postgres: {e}"))?;
+        if let Err(e) = pg.replace_profile_secrets(profile_id, &persisted).await {
+            tracing::warn!(error = %e, profile_id = %profile_id, "PG persist key delete failed (non-fatal)");
+        }
     }
 
-    state.flush_persist();
     Ok(())
 }
 
@@ -310,6 +317,39 @@ pub async fn test_profile_key(
         .await
         .map(upstream_test_from_control)
         .map_err(|e| e.to_string())
+}
+
+/// Push Admin's cached profile key pool to the gateway (used after credential recovery).
+pub async fn sync_profile_pool_to_gateway(
+    state: &AppState,
+    profile_id: &str,
+    mode: UpstreamKeysPutMode,
+) -> Result<(), String> {
+    let secrets = state
+        .upstream_profile_secrets
+        .read()
+        .get(profile_id)
+        .cloned()
+        .unwrap_or_default();
+    if secrets.is_empty() {
+        return Ok(());
+    }
+    let keys: Vec<UpstreamKeyInput> = secrets
+        .iter()
+        .map(|s| UpstreamKeyInput {
+            id: s.id.clone(),
+            secret: s.secret.clone(),
+            enabled: s.enabled,
+            account_id: s.account_id.clone(),
+        })
+        .collect();
+    let req = put_upstream_profile_keys_to_control(&keys, mode);
+    state
+        .gateway
+        .put_upstream_profile_keys(profile_id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub async fn list_profiles_json(
