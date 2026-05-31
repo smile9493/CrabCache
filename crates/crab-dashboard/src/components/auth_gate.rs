@@ -12,6 +12,7 @@ pub fn AuthGate() -> impl IntoView {
     let input = RwSignal::new(String::new());
     let error = RwSignal::new(String::new());
     let verifying = RwSignal::new(false);
+    let shake = RwSignal::new(false);
 
     let do_submit = {
         let t = t;
@@ -19,6 +20,7 @@ pub fn AuthGate() -> impl IntoView {
             let value = input.get().trim().to_string();
             if value.is_empty() {
                 error.set(t.auth_error_empty().to_string());
+                shake.set(true);
                 return;
             }
             if verifying.get_untracked() {
@@ -34,12 +36,19 @@ pub fn AuthGate() -> impl IntoView {
                             error.set(String::new());
                             admin_key.set(value);
                         }
-                        Err(msg) => error.set(msg),
+                        Err(msg) => {
+                            error.set(msg);
+                            shake.set(true);
+                        }
                     },
                     Err(e) if e == "invalid_admin_key" => {
                         error.set(t.auth_error_invalid().to_string());
+                        shake.set(true);
                     }
-                    Err(e) => error.set(e),
+                    Err(e) => {
+                        error.set(e);
+                        shake.set(true);
+                    }
                 }
                 verifying.set(false);
             });
@@ -61,57 +70,112 @@ pub fn AuthGate() -> impl IntoView {
     };
 
     view! {
-        <div class="auth-screen">
-            <div class="auth-screen-glow" aria-hidden="true"></div>
-            <div class="auth-card glass-card-raised">
-                <div class="auth-brand">
-                    <BrandLogo large=true />
-                    <div>
-                        <h1 class="auth-title brand-text">{Translations::sidebar_brand}</h1>
-                        <p class="auth-tagline">{t.auth_tagline()}</p>
+        <div class="auth-shell">
+            <div class="auth-ambient-glow" aria-hidden="true"></div>
+            <div class="auth-ambient-glow-secondary" aria-hidden="true"></div>
+
+            <div class="auth-container">
+                <div class="auth-brand-panel">
+                    <div class="auth-brand-content">
+                        <div class="auth-brand-mark">
+                            <BrandLogo large=true />
+                        </div>
+                        <h1 class="auth-brand-name">{Translations::sidebar_brand}</h1>
+                        <p class="auth-brand-tagline">{t.auth_tagline()}</p>
+                        <div class="auth-brand-divider" aria-hidden="true"></div>
+                        <div class="auth-brand-features">
+                            <div class="auth-brand-feature">
+                                <span class="auth-brand-feature-icon" aria-hidden="true">"◆"</span>
+                                <span class="auth-brand-feature-text">"LLM API Gateway"</span>
+                            </div>
+                            <div class="auth-brand-feature">
+                                <span class="auth-brand-feature-icon" aria-hidden="true">"◆"</span>
+                                <span class="auth-brand-feature-text">"Multi-Provider"</span>
+                            </div>
+                            <div class="auth-brand-feature">
+                                <span class="auth-brand-feature-icon" aria-hidden="true">"◆"</span>
+                                <span class="auth-brand-feature-text">"DeepSeek V4"</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="auth-form space-y-4">
-                    <div>
-                        <h2 class="text-base font-semibold text-theme">{t.auth_title()}</h2>
-                        <p class="mt-1 text-sm text-theme-muted">{t.auth_desc()}</p>
-                    </div>
-                    <div class="space-y-2">
-                        <label class="block text-xs text-theme-muted">{t.auth_key_label()}</label>
-                        <input
-                            type="password"
-                            class="input"
-                            placeholder=t.auth_key_placeholder()
-                            prop:value=move || input.get()
-                            on:input=move |ev| {
-                                input.set(event_target_value(&ev));
-                                error.set(String::new());
-                            }
-                            on:keydown=submit_keydown
-                        />
-                    </div>
-                    {move || {
-                        if error.get().is_empty() {
-                            ().into_any()
-                        } else {
-                            view! { <p class="text-sm text-error">{error.get()}</p> }.into_any()
-                        }
-                    }}
-                    <button
-                        type="button"
-                        class="btn btn-primary w-full"
-                        on:click=submit_click
-                        disabled=move || verifying.get()
-                    >
-                        {move || {
-                            if verifying.get() {
-                                t.auth_verifying().to_string()
+
+                <div class="auth-form-panel">
+                    <div
+                        class=move || {
+                            if shake.get() {
+                                "auth-form-card auth-shake"
                             } else {
-                                t.auth_submit().to_string()
+                                "auth-form-card"
                             }
-                        }}
-                    </button>
-                    <DevDefaultKeyButton admin_key=admin_key />
+                        }
+                        on:animationend=move |_| shake.set(false)
+                    >
+                        <div class="auth-form-header">
+                            <h2 class="auth-form-title">{t.auth_title()}</h2>
+                            <p class="auth-form-desc">{t.auth_desc()}</p>
+                        </div>
+
+                        <div class="auth-form-body">
+                            <div class="auth-input-group">
+                                <label class="auth-input-label" for="admin-key-input">
+                                    {t.auth_key_label()}
+                                </label>
+                                <div class="auth-input-wrap">
+                                    <input
+                                        id="admin-key-input"
+                                        type="password"
+                                        class="auth-input"
+                                        placeholder=t.auth_key_placeholder()
+                                        prop:value=move || input.get()
+                                        on:input=move |ev| {
+                                            input.set(event_target_value(&ev));
+                                            error.set(String::new());
+                                        }
+                                        on:keydown=submit_keydown
+                                        autocomplete="current-password"
+                                    />
+                                    <div class="auth-input-focus-line" aria-hidden="true"></div>
+                                </div>
+                            </div>
+
+                            {move || {
+                                if error.get().is_empty() {
+                                    ().into_any()
+                                } else {
+                                    view! {
+                                        <div class="auth-error" role="alert">
+                                            <span class="auth-error-icon" aria-hidden="true">"◉"</span>
+                                            <span>{error.get()}</span>
+                                        </div>
+                                    }.into_any()
+                                }
+                            }}
+
+                            <button
+                                type="button"
+                                class="auth-submit-btn"
+                                on:click=submit_click
+                                disabled=move || verifying.get()
+                            >
+                                {move || {
+                                    if verifying.get() {
+                                        view! {
+                                            <span class="auth-submit-spinner" aria-hidden="true"></span>
+                                            <span>{t.auth_verifying()}</span>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <span>{t.auth_submit()}</span>
+                                            <span class="auth-submit-arrow" aria-hidden="true">"→"</span>
+                                        }.into_any()
+                                    }
+                                }}
+                            </button>
+
+                            <DevDefaultKeyButton admin_key=admin_key />
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -142,16 +206,17 @@ fn DevDefaultKeyButton(admin_key: RwSignal<String>) -> impl IntoView {
         };
 
         return view! {
-            <div class="space-y-2 pt-2 border-t border-theme-light">
+            <div class="auth-dev-section">
                 {move || {
                     if error.get().is_empty() {
                         ().into_any()
                     } else {
-                        view! { <p class="text-sm text-error">{error.get()}</p> }.into_any()
+                        view! { <p class="auth-error">{error.get()}</p> }.into_any()
                     }
                 }}
-                <button type="button" class="btn btn-secondary w-full" on:click=use_dev_default>
-                    {t.auth_dev_default()}
+                <button type="button" class="auth-dev-btn" on:click=use_dev_default>
+                    <span class="auth-dev-icon" aria-hidden="true">"⚡"</span>
+                    <span>{t.auth_dev_default()}</span>
                 </button>
             </div>
         };

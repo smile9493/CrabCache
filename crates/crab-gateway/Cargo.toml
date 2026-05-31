@@ -8,6 +8,9 @@ license.workspace = true
 name = "crab_gateway"
 path = "src/lib.rs"
 
+[features]
+fault-injection = ["crab-proxy/fault-injection"]
+
 [[bin]]
 name = "crab-gateway"
 path = "src/main.rs"
