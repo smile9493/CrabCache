@@ -199,6 +199,10 @@ pub fn UpstreamPage() -> impl IntoView {
     let active_profile = RwSignal::new("deepseek".to_string());
     let gateway_reachable = RwSignal::new(true);
 
+    // Search/filter state
+    let search_query = RwSignal::new(String::new());
+    let status_filter = RwSignal::new("all");
+
     // Drawer-based navigation: Some(profile_id) opens drawer, None = list view
     let drawer_profile: RwSignal<Option<String>> = RwSignal::new(None);
     let drawer_creating: RwSignal<bool> = RwSignal::new(false);
@@ -248,6 +252,9 @@ pub fn UpstreamPage() -> impl IntoView {
     let delete_confirm_id: RwSignal<Option<String>> = RwSignal::new(None);
     let key_deleting: RwSignal<HashMap<String, bool>> = RwSignal::new(HashMap::new());
     let pool_delete_error = RwSignal::new(String::new());
+
+    // Per-profile connectivity test status: None = untested, Some(true) = connected, Some(false) = unreachable
+    let profile_test_status: RwSignal<HashMap<String, Option<bool>>> = RwSignal::new(HashMap::new());
 
     // Profile deletion state
     let show_delete_confirm = RwSignal::new(false);
@@ -472,16 +479,38 @@ pub fn UpstreamPage() -> impl IntoView {
                 })
                 .await
                 {
-                    Ok(r) => { test_result.try_set(Some(r)); },
-                    Err(e) => { test_error.try_set(e); },
+                    Ok(r) => {
+                        let r_ok = r.ok;
+                        test_result.try_set(Some(r));
+                        profile_test_status.try_update(|m| {
+                            m.insert(pid.clone(), Some(r_ok));
+                        });
+                    },
+                    Err(e) => {
+                        test_error.try_set(e);
+                        profile_test_status.try_update(|m| {
+                            m.insert(pid.clone(), Some(false));
+                        });
+                    },
                 }
             } else if pid == default_profile_id.try_get_untracked().unwrap_or_default()
                 || profiles.try_get().unwrap_or_default().iter().any(|p| p.id == pid)
             {
                 // Otherwise test saved profile keys
                 match api::test_upstream_profile(&pid).await {
-                    Ok(r) => { test_result.try_set(Some(r)); },
-                    Err(e) => { test_error.try_set(e); },
+                    Ok(r) => {
+                        let r_ok = r.ok;
+                        test_result.try_set(Some(r));
+                        profile_test_status.try_update(|m| {
+                            m.insert(pid.clone(), Some(r_ok));
+                        });
+                    },
+                    Err(e) => {
+                        test_error.try_set(e);
+                        profile_test_status.try_update(|m| {
+                            m.insert(pid.clone(), Some(false));
+                        });
+                    },
                 }
             } else {
                 test_error.try_set(
@@ -751,10 +780,6 @@ pub fn UpstreamPage() -> impl IntoView {
                 description=t.upstream_desc()
             />
 
-            <div class="glass-card text-sm text-theme-secondary">
-                {t.upstream_l3_affinity_hint()}
-            </div>
-
             {move || (!gateway_reachable.get()).then(|| view! {
                 <div class="glass-card text-warning text-sm">
                     {t.upstream_gateway_unreachable()}
@@ -786,7 +811,10 @@ pub fn UpstreamPage() -> impl IntoView {
                             let def_id = default_profile_id.get();
                             for p in list {
                                 let pid = p.id.clone();
+                                let pid_badge = p.id.clone();
+                                let pid_edit = p.id.clone();
                                 let pid3 = p.id.clone();
+                                let pid2 = p.id.clone();
                                 let badge_count = p.key_pool_count;
                                 let keys_available = p.keys_available;
                                 let is_default = p.id == def_id;
@@ -826,6 +854,19 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         {status_dot.map(|cls| view! {
                                                             <span class=format!("upstream-card-status-dot {cls}") title="Key pool status"></span>
                                                         })}
+                                                        {move || {
+                                                            let ts = profile_test_status.get();
+                                                            let pid_check = pid_badge.clone();
+                                                            match ts.get(&pid_check) {
+                                                                Some(Some(true)) => view! {
+                                                                    <span class="badge badge-success text-[10px]">{t.upstream_status_connected()}</span>
+                                                                }.into_any(),
+                                                                Some(Some(false)) => view! {
+                                                                    <span class="badge badge-error text-[10px]">{t.upstream_status_unreachable()}</span>
+                                                                }.into_any(),
+                                                                _ => view! { <span class="badge text-[10px]">{t.upstream_status_untested()}</span> }.into_any(),
+                                                            }
+                                                        }}
                                                     </div>
                                                     <div class="upstream-card-subtitle font-mono text-xs truncate max-w-[180px]">
                                                         {p.base_url.clone()}
@@ -852,6 +893,22 @@ pub fn UpstreamPage() -> impl IntoView {
                                                 <span class="upstream-card-stat">{p.endpoints.len()}</span>
                                                 " endpoints"
                                             </span>
+                                        </div>
+                                        <div class="flex items-center gap-2 mt-2 pt-2 border-t border-theme/10">
+                                            <button type="button" class="btn btn-secondary text-[10px] px-2 py-0.5"
+                                                on:click={
+                                                    let open = open_profile.clone();
+                                                    let pid_test = pid2.clone();
+                                                    move |ev| {
+                                                        ev.stop_propagation();
+                                                        active_profile.set(pid_test.clone());
+                                                        drawer_profile.set(Some(pid_test.clone()));
+                                                        drawer_tab.set(0);
+                                                        drawer_creating.set(false);
+                                                        open.clone()(pid_test.clone());
+                                                    }
+                                                }
+                                            >"Edit"</button>
                                         </div>
                                         {if !is_default {
                                             view! {
@@ -898,7 +955,8 @@ pub fn UpstreamPage() -> impl IntoView {
                     >
                         <div class="flex flex-col items-center justify-center h-full gap-2 text-theme-muted">
                             <span class="text-3xl leading-none">"+"</span>
-                            <span class="text-sm font-medium">{t.upstream_tab_new_profile()}</span>
+                            <span class="text-3xl leading-none">+</span>
+                            <span class="text-sm font-medium">{t.upstream_new_profile_label()}</span>
                         </div>
                     </div>
                 })}

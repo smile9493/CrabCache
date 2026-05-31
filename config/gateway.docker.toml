@@ -138,7 +138,7 @@ responses_chain_max_output_items = 64
 upstream_request_gzip = false
 upstream_request_gzip_min_bytes = 4096
 mimo_retire_prefix_messages = true
-mimo_keep_recent_turns = 6
+mimo_keep_recent_turns = 3
 # Conversation-level upstream key binding for MiMo (lock key per conversation).
 mimo_key_binding = true
 mimo_key_binding_ttl_secs = 300  # 5 minutes idle TTL

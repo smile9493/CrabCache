@@ -968,6 +968,8 @@ pub struct GatewayState {
     pub model_lockouts: std::sync::Arc<crate::model_lockout::ModelLockoutRegistry>,
     /// Client-level lockout registry (brute-force protection).
     pub client_lockouts: std::sync::Arc<crate::client_lockout::ClientLockoutRegistry>,
+    /// Event bus for gateway-wide pub/sub notifications (webhook delivery, etc.).
+    pub event_bus: Arc<crate::event_bus::EventBus>,
 }
 
 #[cfg(test)]

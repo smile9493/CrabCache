@@ -108,6 +108,28 @@ impl ServerConfig {
     }
 }
 
+/// Wait for SIGTERM/SIGINT, flush admin state, then allow the server to exit.
+async fn shutdown_signal(state: Arc<AppState>) {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => info!("Received SIGINT (Ctrl-C), flushing state…"),
+            _ = sigterm.recv() => info!("Received SIGTERM, flushing state…"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+        info!("Received Ctrl-C, flushing state…");
+    }
+    state.flush_persist();
+    info!("Admin state persisted, shutting down");
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Register a global panic hook that logs and aborts to prevent
@@ -473,12 +495,26 @@ async fn main() -> anyhow::Result<()> {
 
         let addr: std::net::SocketAddr = config.listen_addr.parse()?;
 
+        let handle = axum_server::Handle::new();
+        let shutdown_state = Arc::clone(&state);
+        let server_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal(shutdown_state).await;
+            server_handle.graceful_shutdown(None);
+        });
+
         axum_server::bind_rustls(addr, tls_config)
+            .handle(handle)
             .serve(app.into_make_service())
             .await?;
     } else {
         let listener = tokio::net::TcpListener::bind(&config.listen_addr).await?;
-        axum::serve(listener, app).await?;
+
+        // Graceful shutdown: flush state on SIGTERM/SIGINT before exit.
+        let shutdown_state = Arc::clone(&state);
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal(shutdown_state))
+            .await?;
     }
 
     Ok(())

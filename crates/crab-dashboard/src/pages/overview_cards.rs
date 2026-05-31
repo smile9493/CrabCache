@@ -84,7 +84,7 @@ fn MiniTierDonut(metrics: MetricsSnapshot) -> impl IntoView {
         <DonutChart
             segments=segments
             center_label=format!("{hit_rate:.0}%")
-            size=72
+            size=52
         />
     }
 }
@@ -318,8 +318,7 @@ pub fn OverviewCardGrid(
                         };
 
                         view! {
-                            <>
-                                // Segment navigation bar
+                            <div class="overview-compact space-y-2">
                                 <nav class="overview-segment-nav">
                                     <a class="overview-segment-link segment-active"
                                         href="#ov-hero"
@@ -371,12 +370,11 @@ pub fn OverviewCardGrid(
                                     >{t.overview_section_diagnostics()}</a>
                                 </nav>
 
-                                <TraceCompareBanner trace=trace.clone() metrics=metrics.clone() />
+                                <TraceCompareBanner trace=trace.clone() metrics=metrics.clone() compact=true />
 
                                 // Section: Key Metrics (Core indicators - always visible)
                                 <div id="ov-hero" class="overview-section-anchor">
                                     <div class="overview-cards-hero">
-                                    <div class="bento-hit">
                                     <OverviewMetricCard
                                         label=t.overview_hit_rate_5m().to_string()
                                         headline=hit_headline
@@ -392,14 +390,9 @@ pub fn OverviewCardGrid(
                                                 view! { <span class=cls>{text.clone()}</span> }.into_any()
                                             });
                                             view! {
-                                                <div class="flex items-center justify-between gap-2 w-full">
+                                                <div class="flex flex-col items-end gap-0.5">
                                                     {trend_view.unwrap_or_else(|| ().into_any())}
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="text-[10px] font-mono text-theme-muted">
-                                                            {format!("{:.1}%", metrics.hit_rate_5m * 100.0)}
-                                                        </span>
-                                                        <MiniTierDonut metrics=metrics_hit_preview.clone() />
-                                                    </div>
+                                                    <MiniTierDonut metrics=metrics_hit_preview.clone() />
                                                 </div>
                                             }.into_any()
                                         }
@@ -412,8 +405,6 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
-                                    </div>
-                                    <div class="bento-h1">
                                     <OverviewMetricCard
                                         label=t.overview_health_title().to_string()
                                         headline=health_headline
@@ -421,12 +412,7 @@ pub fn OverviewCardGrid(
                                         on_open=on_open_health
                                         preview=move || {
                                             view! {
-                                                <div class="flex items-center justify-between w-full">
-                                                    <span class=if healthy { "online-dot" } else { "w-2 h-2 rounded-full bg-error" }></span>
-                                                    <span class="text-[10px] font-mono text-theme-muted">
-                                                        {if healthy { "100%" } else { "0%" }}
-                                                    </span>
-                                                </div>
+                                                <span class=if healthy { "online-dot" } else { "w-2 h-2 rounded-full bg-error" }></span>
                                             }.into_any()
                                         }
                                         detail=move || {
@@ -435,8 +421,6 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
-                                    </div>
-                                    <div class="bento-h2">
                                     <OverviewMetricCard
                                         label=t.overview_qps_5m().to_string()
                                         headline=qps_headline
@@ -457,18 +441,13 @@ pub fn OverviewCardGrid(
                                                 view! { <span class=cls>{text.clone()}</span> }.into_any()
                                             });
                                             view! {
-                                                <div class="flex flex-col gap-1 w-full">
-                                                    <div class="flex items-center justify-between">
-                                                        {trend_view.unwrap_or_else(|| ().into_any())}
-                                                        <span class="text-[10px] font-mono text-theme-muted">
-                                                            {format!("{:.2} req/s", metrics.qps_5m)}
-                                                        </span>
-                                                    </div>
+                                                <div class="flex flex-col items-end gap-0.5">
+                                                    {trend_view.unwrap_or_else(|| ().into_any())}
                                                     <Sparkline
                                                         values=spark
                                                         color="var(--cc-accent)"
-                                                        width=120
-                                                        height=48
+                                                        width=88
+                                                        height=32
                                                     />
                                                 </div>
                                             }.into_any()
@@ -483,8 +462,6 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
-                                    </div>
-                                    <div class="bento-b1">
                                     <OverviewMetricCard
                                         label=t.overview_error_rate_title().to_string()
                                         headline=err_headline
@@ -493,18 +470,13 @@ pub fn OverviewCardGrid(
                                         preview=move || {
                                             let warn = metrics.error_rate_5m > 0.01;
                                             view! {
-                                                <div class="flex items-center justify-between w-full">
-                                                    <span class=if warn { "text-warning text-xs" } else { "text-accent text-xs" }>
-                                                        {if warn {
-                                                            t.overview_error_elevated()
-                                                        } else {
-                                                            t.overview_error_normal()
-                                                        }}
-                                                    </span>
-                                                    <span class="text-[10px] font-mono text-theme-muted">
-                                                        {format!("{:.2}%", metrics.error_rate_5m * 100.0)}
-                                                    </span>
-                                                </div>
+                                                <span class=if warn { "text-warning text-[10px]" } else { "text-accent text-[10px]" }>
+                                                    {if warn {
+                                                        t.overview_error_elevated()
+                                                    } else {
+                                                        t.overview_error_normal()
+                                                    }}
+                                                </span>
                                             }.into_any()
                                         }
                                         detail=move || {
@@ -522,26 +494,68 @@ pub fn OverviewCardGrid(
                                             }.into_any()
                                         }
                                     />
-                                </div>
+                                    </div>
                                 </div> // close ov-hero
 
-                                // Section: Trends
-                                <div id="ov-ts" class="overview-section-anchor">
-                                    <div class="overview-timeseries-wrap glass-card p-4">
-                                        <TimeSeriesChart
-                                            points=ts_points
-                                            selected_view=ts_window
-                                            suggestions=sugg.clone()
-                                        />
-                                    </div>
+                                <div id="ov-ts" class="overview-section-anchor overview-analytics-row">
+                                    <TimeSeriesChart
+                                        points=ts_points
+                                        selected_view=ts_window
+                                        suggestions=sugg.clone()
+                                        compact=true
+                                    />
+                                    {move || {
+                                        if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {
+                                            let resp = ph.get();
+                                            if let Some(err) = ph_err.get() {
+                                                view! {
+                                                    <div class="peak-hours-container peak-hours-side">
+                                                        <div class="peak-hours-header">
+                                                        <h3 class="peak-hours-title">"模型高峰时段"</h3>
+                                                    </div>
+                                                    <p class="text-xs text-theme-muted">
+                                                        {if err.contains("PG not available") || err.contains("503") {
+                                                            "PostgreSQL 未连接".to_string()
+                                                        } else {
+                                                            format!("加载失败: {err}")
+                                                        }}
+                                                    </p>
+                                                </div>
+                                            }.into_any()
+                                            } else if resp.models.is_empty() {
+                                                view! {
+                                                    <div class="peak-hours-container peak-hours-side">
+                                                        <div class="peak-hours-header">
+                                                            <h3 class="peak-hours-title">"模型高峰时段"</h3>
+                                                        </div>
+                                                        <p class="text-xs text-theme-muted">"暂无高峰期数据"</p>
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                let data_sig = Signal::derive(move || ph.get().data);
+                                                let models_sig = Signal::derive(move || ph.get().models);
+                                                let on_del = Callback::new(move |(model, bucket): (String, i64)| {
+                                                    leptos::task::spawn_local(async move {
+                                                        if api::delete_model_peak_hour(&model, bucket).await.is_ok() {
+                                                            if let Ok(resp) = api::fetch_model_peak_hours(7).await {
+                                                                ph.set(resp);
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                                view! {
+                                                    <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
+                                                }.into_any()
+                                            }
+                                        } else {
+                                            ().into_any()
+                                        }
+                                    }}
                                 </div>
 
-                                // Section: Details
+                                // Section: Details (single dense mosaic)
                                 <div id="ov-detail" class="overview-section-anchor">
-                                    <div class="overview-detail-zone">
-                                    <div class="overview-detail-zone-label">Performance</div>
-                                    <div class="overview-cards-detail">
-                                    <div class="detail-wide">
+                                    <div class="overview-cards-mosaic">
                                         <OverviewMetricCard
                                             label=t.overview_latency_title().to_string()
                                             headline=latency_headline
@@ -557,7 +571,7 @@ pub fn OverviewCardGrid(
                                                 ];
                                                 let max = stages.iter().copied().fold(1.0_f64, f64::max);
                                                 view! {
-                                                    <div class="flex flex-col gap-0.5 w-full">
+                                                    <div class="flex flex-col gap-0.5 w-full min-w-[4.5rem]">
                                                         {stages.into_iter().enumerate().map(|(i, v)| {
                                                             let pct = v / max * 100.0;
                                                             let color = match i {
@@ -579,8 +593,6 @@ pub fn OverviewCardGrid(
                                                 view! { <LatencySection metrics=metrics_latency.clone() /> }.into_any()
                                             }
                                         />
-                                    </div>
-                                    <div class="detail-wide">
                                         <OverviewMetricCard
                                             label=t.overview_token_stats().to_string()
                                             headline=token_headline
@@ -607,8 +619,6 @@ pub fn OverviewCardGrid(
                                                 }.into_any()
                                             }
                                         />
-                                    </div>
-                                    <div class="detail-wide">
                                         <OverviewMetricCard
                                             label=t.overview_consumer_table_title().to_string()
                                             headline=top_consumer
@@ -619,8 +629,8 @@ pub fn OverviewCardGrid(
                                                     <HorizontalBarChart
                                                         labels=consumer_labels
                                                         values=consumer_values
-                                                        width=200
-                                                        height_px=48
+                                                        width=120
+                                                        height_px=36
                                                         empty_message=t.overview_no_data()
                                                     />
                                                 }.into_any()
@@ -629,8 +639,6 @@ pub fn OverviewCardGrid(
                                                 view! { <ConsumerHitTable metrics=metrics_consumer.clone() /> }.into_any()
                                             }
                                         />
-                                    </div>
-                                    <div class="detail-wide">
                                         <OverviewMetricCard
                                             label=t.overview_domain_card_title().to_string()
                                             headline=top_domain
@@ -638,7 +646,7 @@ pub fn OverviewCardGrid(
                                             on_open=on_open_domain
                                             preview=move || {
                                                 view! {
-                                                    <span class="text-xs font-mono text-accent">
+                                                    <span class="text-[10px] font-mono text-accent whitespace-nowrap">
                                                         {t.overview_domain_hit_fmt(top_domain_hit_preview)}
                                                     </span>
                                                 }.into_any()
@@ -655,12 +663,6 @@ pub fn OverviewCardGrid(
                                                 }.into_any()
                                             }
                                         />
-                                    </div>
-                                    </div>
-                                    </div>
-                                    <div class="overview-detail-zone">
-                                    <div class="overview-detail-zone-label">Pipeline</div>
-                                    <div class="overview-cards-detail">
                                     <OverviewMetricCard
                                         label=t.overview_coalescing_title().to_string()
                                         headline=coalesce_headline
@@ -714,7 +716,7 @@ pub fn OverviewCardGrid(
                                         on_open=on_open_ops
                                         preview=move || {
                                             view! {
-                                                <div class="grid grid-cols-2 gap-1 text-[10px] font-mono text-theme-muted">
+                                                <div class="grid grid-cols-1 gap-0.5 text-[10px] font-mono text-theme-muted whitespace-nowrap">
                                                     <span>{format!("TTFT {:.0}ms", ops.ttft_ms)}</span>
                                                     <span>{format!("rej {:.0}", ops.rejected_5m)}</span>
                                                 </div>
@@ -724,135 +726,68 @@ pub fn OverviewCardGrid(
                                             view! { <OpsMetricsRow ops=ops.clone() /> }.into_any()
                                         }
                                     />
-                                    <div class="detail-wide">
-                                        <OverviewMetricCard
-                                            label=t.overview_prefix_cache_title().to_string()
-                                            headline=prefix_headline
-                                            open=open_prefix
-                                            on_open=on_open_prefix
-                                            preview=move || {
-                                                let total = prefix.hit_tokens + prefix.miss_tokens;
-                                                let pct = if total > 0 {
-                                                    prefix.hit_tokens as f64 / total as f64 * 100.0
-                                                } else {
-                                                    0.0
-                                                };
-                                                let v = Signal::derive(move || pct);
-                                                view! {
-                                                    <ProgressBar label="" value=v max=100.0 />
-                                                }.into_any()
-                                            }
-                                            detail=move || {
-                                                view! { <PrefixCacheCard prefix=prefix.clone() /> }.into_any()
-                                            }
-                                        />
-                                    </div>
-                                    </div>
-                                    </div>
-                                    <div class="overview-detail-zone">
-                                    <div class="overview-detail-zone-label">Prefix</div>
-                                    <div class="overview-cards-detail">
-                                    <div class="detail-wide">
-                                        <OverviewMetricCard
-                                            label=t.overview_prefix_health_title().to_string()
-                                            headline=prefix_break_headline
-                                            subtitle=t.overview_prefix_breaks_subtitle().to_string()
-                                            open=open_prefix_health
-                                            on_open=on_open_prefix_health
-                                            preview=move || {
-                                                let warn = ops_prefix.prefix_break_total > 0;
-                                                view! {
-                                                    <span class=if warn { "text-warning text-xs" } else { "text-theme-muted text-xs" }>
-                                                        {if warn {
-                                                            t.overview_prefix_breaks_detected()
-                                                        } else {
-                                                            t.overview_prefix_breaks_stable()
-                                                        }}
-                                                    </span>
-                                                }.into_any()
-                                            }
-                                            detail=move || {
-                                                view! { <PrefixHealthCard ops=ops_prefix.clone() /> }.into_any()
-                                            }
-                                        />
-                                    </div>
-                                    </div>
-                                    </div>
-                                    <div class="overview-detail-zone">
-                                    <div class="overview-detail-zone-label">Infrastructure</div>
-                                    <div class="overview-cards-detail">
-                                    <div class="detail-full">
-                                        <OverviewMetricCard
-                                            label=t.infra_title().to_string()
-                                            headline=infra_headline
-                                            subtitle=t.sidebar_infra().to_string()
-                                            open=open_infra
-                                            on_open=on_open_infra
-                                            preview=move || {
-                                                view! {
-                                                    <span class="text-xs text-theme-muted">{t.overview_card_infra_hint()}</span>
-                                                }.into_any()
-                                            }
-                                            detail=move || {
-                                                view! { <InfraOverviewModule embedded=true /> }.into_any()
-                                            }
-                                        />
-                                    </div>
-                                    </div>
-                                    </div>
+                                    <OverviewMetricCard
+                                        label=t.overview_prefix_cache_title().to_string()
+                                        headline=prefix_headline
+                                        open=open_prefix
+                                        on_open=on_open_prefix
+                                        preview=move || {
+                                            let total = prefix.hit_tokens + prefix.miss_tokens;
+                                            let pct = if total > 0 {
+                                                prefix.hit_tokens as f64 / total as f64 * 100.0
+                                            } else {
+                                                0.0
+                                            };
+                                            let v = Signal::derive(move || pct);
+                                            view! {
+                                                <ProgressBar label="" value=v max=100.0 />
+                                            }.into_any()
+                                        }
+                                        detail=move || {
+                                            view! { <PrefixCacheCard prefix=prefix.clone() /> }.into_any()
+                                        }
+                                    />
+                                    <OverviewMetricCard
+                                        label=t.overview_prefix_health_title().to_string()
+                                        headline=prefix_break_headline
+                                        subtitle=t.overview_prefix_breaks_subtitle().to_string()
+                                        open=open_prefix_health
+                                        on_open=on_open_prefix_health
+                                        preview=move || {
+                                            let warn = ops_prefix.prefix_break_total > 0;
+                                            view! {
+                                                <span class=if warn { "text-warning text-[10px]" } else { "text-theme-muted text-[10px]" }>
+                                                    {if warn {
+                                                        t.overview_prefix_breaks_detected()
+                                                    } else {
+                                                        t.overview_prefix_breaks_stable()
+                                                    }}
+                                                </span>
+                                            }.into_any()
+                                        }
+                                        detail=move || {
+                                            view! { <PrefixHealthCard ops=ops_prefix.clone() /> }.into_any()
+                                        }
+                                    />
+                                    <OverviewMetricCard
+                                        label=t.infra_title().to_string()
+                                        headline=infra_headline
+                                        subtitle=t.sidebar_infra().to_string()
+                                        open=open_infra
+                                        on_open=on_open_infra
+                                        preview=move || {
+                                            view! {
+                                                <span class="text-[10px] text-theme-muted">{t.overview_card_infra_hint()}</span>
+                                            }.into_any()
+                                        }
+                                        detail=move || {
+                                            view! { <InfraOverviewModule embedded=true /> }.into_any()
+                                        }
+                                    />
                                     </div>
                                 </div> // close ov-detail
                                 <DomainDetailDrawer domain=selected_domain />
-                                {move || {
-                                    if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {
-                                        let resp = ph.get();
-                                        if let Some(err) = ph_err.get() {
-                                            view! {
-                                                <div class="peak-hours-container">
-                                                    <div class="peak-hours-header">
-                                                        <h3 class="peak-hours-title">"Model Peak Hours"</h3>
-                                                    </div>
-                                                    <p class="text-sm text-theme-muted">
-                                                        {if err.contains("PG not available") || err.contains("503") {
-                                                            "PostgreSQL 未连接，请在 Admin 配置 CRADMIN_PG_URL 后重启。".to_string()
-                                                        } else {
-                                                            format!("加载失败: {err}")
-                                                        }}
-                                                    </p>
-                                                </div>
-                                            }.into_any()
-                                        } else if resp.models.is_empty() {
-                                            view! {
-                                                <div class="peak-hours-container">
-                                                    <div class="peak-hours-header">
-                                                        <h3 class="peak-hours-title">"Model Peak Hours"</h3>
-                                                    </div>
-                                                    <p class="text-sm text-theme-muted">
-                                                        "暂无高峰期数据，后台每 5 分钟从 trace 日志聚合，请稍候。"
-                                                    </p>
-                                                </div>
-                                            }.into_any()
-                                        } else {
-                                            let data_sig = Signal::derive(move || ph.get().data);
-                                            let models_sig = Signal::derive(move || ph.get().models);
-                                            let on_del = Callback::new(move |(model, bucket): (String, i64)| {
-                                                leptos::task::spawn_local(async move {
-                                                    if api::delete_model_peak_hour(&model, bucket).await.is_ok() {
-                                                        if let Ok(resp) = api::fetch_model_peak_hours(7).await {
-                                                            ph.set(resp);
-                                                        }
-                                                    }
-                                                });
-                                            });
-                                            view! {
-                                                <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
-                                            }.into_any()
-                                        }
-                                    } else {
-                                        ().into_any()
-                                    }
-                                }}
-                            </>
+                            </div>
                         }.into_any()
                     }
                     _ => ().into_any(),

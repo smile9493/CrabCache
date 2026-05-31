@@ -26,7 +26,9 @@ impl GatewayProxy {
     pub(crate) fn is_mimo_pipeline(p: RequestPipeline) -> bool {
         matches!(
             p,
-            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay
+            RequestPipeline::MimoTokenPlanRelay
+                | RequestPipeline::MimoPaygRelay
+                | RequestPipeline::CodexMimo
         )
     }
 
@@ -235,7 +237,11 @@ impl GatewayProxy {
         let pool = profile.resolve_upstream_pool();
         let available_before = pool.available_count();
         let total = pool.len();
-        let canonical_model = crab_pipeline::canonicalize_client_model(&ctx.model);
+        let canonical_model = ctx
+            .upstream_model
+            .as_deref()
+            .map(crab_pipeline::canonicalize_client_model)
+            .unwrap_or_else(|| crab_pipeline::canonicalize_client_model(&ctx.model));
         let upstream_model = if profile.provider == crab_pipeline::UpstreamProvider::Codex {
             crate::codex::resolve_codex_upstream_model(&canonical_model).to_string()
         } else {

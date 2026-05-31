@@ -8,6 +8,7 @@ mod responses_tool_registry;
 mod responses_wire;
 mod context;
 pub mod client_lockout;
+pub mod event_bus;
 pub mod fallback_policy;
 mod error;
 mod guardrails;
@@ -66,6 +67,10 @@ pub use context::{
     ModelPricing, PricingConfig, ReasoningConfig,
 };
 pub use error::ProxyError;
+pub use event_bus::{
+    CacheInvalidatedEvent, EventBus, GatewayEvent, KeyCreatedEvent, KeyRevokedEvent,
+    RateLimitHitEvent, RequestCompletedEvent, UpstreamErrorEvent, global_event_bus, now_secs,
+};
 pub use guardrails::{
     GuardrailConfig, GuardrailResult, evaluate_request_guardrails, mask_pii,
     maybe_handle_cursor_bypass, path_matches_bypass_skip_pattern,

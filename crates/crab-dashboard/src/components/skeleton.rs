@@ -167,7 +167,7 @@ pub fn SkeletonOverview() -> impl IntoView {
                 <div class="skeleton-block" style="width: 55%; height: 0.5rem; margin-top: 0.5rem"></div>
             </div>
             <div class="overview-cards-hero">
-                {(0..6).map(|_| view! { <SkeletonMetricCard /> }).collect_view()}
+                {(0..4).map(|_| view! { <SkeletonMetricCard /> }).collect_view()}
             </div>
             <SkeletonChart />
             <div class="overview-cards-detail">

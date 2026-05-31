@@ -76,8 +76,19 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
     });
 
     view! {
-        <div class="space-y-4">
+        <div class="glass-card">
+            // L3 prefix affinity hint
+            {move || {
+                let t = use_translations();
+                view! {
+                    <details class="upstream-routing-section cursor-pointer">
+                        <summary class="text-xs font-semibold text-theme-muted">{t.upstream_l3_affinity_label()}</summary>
+                        <p class="text-xs text-theme-muted mt-1">{t.upstream_l3_affinity_hint()}</p>
+                    </details>
+                }.into_any()
+            }}
             // Header status bar
+            <div class="upstream-routing-section">
             {move || {
                 let t = use_translations();
                 match routing.get() {
@@ -90,7 +101,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                         let keys_avail = data.key_pool.available;
                         let keys_total = data.key_pool.total;
                         view! {
-                            <div class="glass-card">
+                            <div>
                                 <div class="flex flex-wrap items-center gap-4 text-sm">
                                     <span class="font-semibold text-theme">{data.profile_id.clone()}</span>
                                     <span class={move || if healthy_count == total && total > 0 {
@@ -128,6 +139,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                     view! { <span></span> }.into_any()
                 }
             }}
+            </div>
 
             // Backends table
             {move || {
@@ -137,13 +149,13 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                     Some(ref data) => {
                         if data.backends.is_empty() {
                             return view! {
-                                <div class="glass-card text-sm text-theme-muted text-center py-8">
+                                <div class="text-sm text-theme-muted text-center py-8">
                                     {t.routing_no_backends()}
                                 </div>
                             }.into_any();
                         }
                         view! {
-                            <div class="glass-card">
+                            <div class="upstream-routing-section">
                                 <h3 class="text-base font-semibold text-theme mb-3">
                                     {format!("Ketama {}", t.routing_backend_health())}
                                 </h3>
@@ -239,7 +251,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                     None => view! { <span></span> }.into_any(),
                     Some(ref data) => {
                         view! {
-                            <div class="glass-card">
+                            <div class="upstream-routing-section">
                                 <div class="flex items-center justify-between mb-2">
                                     <h3 class="text-base font-semibold text-theme">
                                         {t.routing_key_pool_summary(data.key_pool.available, data.key_pool.total)}
@@ -265,7 +277,7 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
                     Some(ref data) => {
                         let cb = &data.circuit_breaker;
                         view! {
-                            <details class="glass-card">
+                            <details class="upstream-routing-section">
                                 <summary class="text-sm font-semibold text-theme cursor-pointer">
                                     {t.routing_circuit_breaker_title()}
                                 </summary>

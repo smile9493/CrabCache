@@ -84,6 +84,29 @@ pub(crate) async fn run(
             "Request completed"
         );
 
+        // ── Event bus emission (non-blocking) ──
+        if proxy.state.event_bus.subscriber_count() > 0 {
+            use crate::event_bus::{GatewayEvent, RequestCompletedEvent, now_secs};
+            let event = GatewayEvent::RequestCompleted(RequestCompletedEvent {
+                request_id: ctx.request_id.clone(),
+                model: ctx.model.clone(),
+                consumer: ctx.consumer.clone(),
+                project_id: ctx.project_id.clone(),
+                latency_ms,
+                cache_hit: ctx.cache_tier.is_some(),
+                cache_tier: ctx.cache_tier.map(|t| t.as_str().to_string()),
+                is_streaming: ctx.is_streaming,
+                input_tokens: Some(ctx.tokens.last_input),
+                output_tokens: Some(ctx.tokens.last_output),
+                upstream_status: ctx.upstream.http_status,
+                pipeline: ctx.request_pipeline.as_ref().map(|p| p.as_str().to_string()),
+                backend_name: ctx.upstream.backend_name.clone(),
+                client_ip: ctx.client_ip.clone(),
+                timestamp: now_secs(),
+            });
+            proxy.state.event_bus.publish(event);
+        }
+
         if crate::responses_wire::needs_responses_wire_translate(ctx) {
             let (tool_names, output_item_types) = ctx
                 .stream

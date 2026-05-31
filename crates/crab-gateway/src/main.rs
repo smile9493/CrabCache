@@ -983,6 +983,7 @@ fn main() -> Result<()> {
         circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
         model_lockouts,
         client_lockouts,
+        event_bus: Arc::new(crab_proxy::event_bus::EventBus::new(1024)),
     });
 
     // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)

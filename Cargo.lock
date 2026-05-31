@@ -1396,6 +1396,8 @@ dependencies = [
  "crab-semantic",
  "crab-state",
  "dashmap",
+ "hex",
+ "hmac 0.12.1",
  "indexmap 2.14.0",
  "jemallocator",
  "moka",
@@ -1409,6 +1411,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "tokio",
  "tokio-postgres",
@@ -1467,6 +1470,7 @@ dependencies = [
  "indexmap 2.14.0",
  "memchr",
  "moka",
+ "once_cell",
  "parking_lot",
  "pingora",
  "pingora-core",
@@ -2580,6 +2584,15 @@ dependencies = [
  "thiserror 2.0.18",
  "ureq 2.12.1",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -4490,7 +4503,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fallible-iterator 0.2.0",
- "hmac",
+ "hmac 0.13.0",
  "md-5",
  "memchr",
  "rand 0.10.1",

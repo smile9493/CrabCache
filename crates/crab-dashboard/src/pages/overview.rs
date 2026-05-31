@@ -643,7 +643,7 @@ fn OverviewContent(
     });
 
     view! {
-        <div class="space-y-4">
+        <div class="space-y-2">
             {move || show_cta.get().then(|| view! {
                 <div class="glass-card flex flex-wrap items-center justify-between gap-3 border border-warning/30">
                     <p class="text-sm text-warning">{t.overview_setup_upstream_cta()}</p>
@@ -758,7 +758,11 @@ pub fn OverviewHealthStrip(health: GatewayHealth, error_rate: f64) -> impl IntoV
 
 
 #[component]
-pub fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl IntoView {
+pub fn TraceCompareBanner(
+    trace: TraceSummary,
+    metrics: MetricsSnapshot,
+    #[prop(default = false)] compact: bool,
+) -> impl IntoView {
     let t = use_translations();
     let trace_pct = trace.cache_hit_ratio * 100.0;
     let gw_pct = if metrics.metrics_sample_insufficient {
@@ -782,36 +786,64 @@ pub fn TraceCompareBanner(trace: TraceSummary, metrics: MetricsSnapshot) -> impl
     });
 
     view! {
-        <div class="glass-card flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_trace_compare_title()}</h3>
-                <p class="text-xs text-theme-muted mb-2">{t.trace_hours_note()}</p>
-                <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
-                    <span>
-                        "24h trace: " <span class="text-accent">{format!("{trace_pct:.1}%")}</span>
-                        " (" {trace.total_requests} " req)"
+        {if compact {
+            view! {
+                <div class="trace-compare-strip">
+                    <span class="trace-compare-strip-label">{t.overview_trace_compare_title()}</span>
+                    <span class="trace-compare-strip-stat">
+                        "24h " <span class="text-accent">{format!("{trace_pct:.1}%")}</span>
+                        " · " {trace.total_requests} " req"
                     </span>
-                    <span>
-                        "5m gateway: "
+                    <span class="trace-compare-strip-stat">
+                        "5m "
                         {match gw_pct {
                             Some(p) => view! { <span class="text-accent">{format!("{p:.1}%")}</span> }.into_any(),
                             None => view! { <span class="text-theme-muted">"—"</span> }.into_any(),
                         }}
                     </span>
                     {delta_html.map(|(color, text)| {
-                        view! { <span class=color>{text}</span> }.into_any()
-                    }).unwrap_or_else(|| view! { <span></span> }.into_any())}
+                        view! { <span class=format!("trace-compare-strip-stat {color}")>{text}</span> }.into_any()
+                    }).unwrap_or_else(|| ().into_any())}
+                    <span class="trace-compare-strip-actions">
+                        <a href="/cache?tab=trace" class="trace-compare-strip-link">{t.overview_trace_compare_link()}</a>
+                        <a href="/live" class="trace-compare-strip-link">{t.sidebar_live()}</a>
+                    </span>
                 </div>
-            </div>
-            <div class="flex gap-2 shrink-0">
-                <a href="/cache?tab=trace" class="btn btn-secondary text-xs">
-                    {t.overview_trace_compare_link()}
-                </a>
-                <a href="/live" class="btn btn-secondary text-xs">
-                    {t.sidebar_live()}
-                </a>
-            </div>
-        </div>
+            }.into_any()
+        } else {
+            view! {
+                <div class="glass-card flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-theme mb-1">{t.overview_trace_compare_title()}</h3>
+                        <p class="text-xs text-theme-muted mb-2">{t.trace_hours_note()}</p>
+                        <div class="flex flex-wrap gap-6 text-sm font-mono tabular-nums">
+                            <span>
+                                "24h trace: " <span class="text-accent">{format!("{trace_pct:.1}%")}</span>
+                                " (" {trace.total_requests} " req)"
+                            </span>
+                            <span>
+                                "5m gateway: "
+                                {match gw_pct {
+                                    Some(p) => view! { <span class="text-accent">{format!("{p:.1}%")}</span> }.into_any(),
+                                    None => view! { <span class="text-theme-muted">"—"</span> }.into_any(),
+                                }}
+                            </span>
+                            {delta_html.map(|(color, text)| {
+                                view! { <span class=color>{text}</span> }.into_any()
+                            }).unwrap_or_else(|| view! { <span></span> }.into_any())}
+                        </div>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                        <a href="/cache?tab=trace" class="btn btn-secondary text-xs">
+                            {t.overview_trace_compare_link()}
+                        </a>
+                        <a href="/live" class="btn btn-secondary text-xs">
+                            {t.sidebar_live()}
+                        </a>
+                    </div>
+                </div>
+            }.into_any()
+        }}
     }
 }
 
@@ -983,10 +1015,18 @@ pub fn TimeSeriesChart(
     points: RwSignal<Vec<TimeSeriesPoint>>,
     selected_view: RwSignal<String>,
     suggestions: Vec<OverviewSuggestion>,
+    #[prop(default = false)] compact: bool,
 ) -> impl IntoView {
     let t = use_translations();
 
     let chart_points = Memo::new(move |_| compress_timeseries_points(points.get()));
+
+    let has_chart_data = Memo::new(move |_| {
+        chart_points
+            .get()
+            .iter()
+            .any(|p| p.tokens > 0 || p.requests > 0)
+    });
 
     let x_labels = Signal::derive(move || {
         chart_points
@@ -1019,10 +1059,10 @@ pub fn TimeSeriesChart(
     });
 
     view! {
-        <div class="glass-card">
-            <div class="flex items-center justify-between mb-4">
+        <div class=if compact { "glass-card glass-card-compact" } else { "glass-card" }>
+            <div class="flex items-center justify-between mb-2">
                 <h3 class="text-sm font-semibold text-theme">{t.overview_usage_trends()}</h3>
-                <div class="flex gap-2">
+                <div class="flex gap-1">
                     <button
                         on:click=move |_| selected_view.set("1h".to_string())
                         class=move || {
@@ -1064,22 +1104,34 @@ pub fn TimeSeriesChart(
 
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
-            <div class="space-y-2">
-                <CanvasLineChart
-                    x_labels=x_labels
-                    series=token_series
-                    height_px=180
-                    y_unit="tokens"
-                    empty_message=t.overview_collecting_timeseries()
-                />
-                <CanvasLineChart
-                    x_labels=x_labels
-                    series=request_series
-                    height_px=180
-                    y_unit="req"
-                    empty_message=t.overview_collecting_timeseries()
-                />
-            </div>
+            {move || {
+                if !has_chart_data.get() {
+                    view! {
+                        <div class="overview-ts-empty">
+                            <p class="text-xs text-theme-muted">{t.overview_collecting_timeseries()}</p>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! {
+                        <div class="space-y-1">
+                            <CanvasLineChart
+                                x_labels=x_labels
+                                series=token_series
+                                height_px=if compact { 120 } else { 160 }
+                                y_unit="tokens"
+                                empty_message=t.overview_collecting_timeseries()
+                            />
+                            <CanvasLineChart
+                                x_labels=x_labels
+                                series=request_series
+                                height_px=if compact { 120 } else { 160 }
+                                y_unit="req"
+                                empty_message=t.overview_collecting_timeseries()
+                            />
+                        </div>
+                    }.into_any()
+                }
+            }}
         </div>
     }
 }
@@ -1570,10 +1622,10 @@ fn DataPlaneDiagnostics() -> impl IntoView {
     });
 
     view! {
-        <div id="ov-diag" class="overview-section-anchor mt-6 border-t border-theme pt-5">
-            <div class="flex items-baseline gap-3 mb-4">
-                <h2 class="text-base font-semibold text-theme">{t.dataplane_page_title()}</h2>
-                <span class="text-xs text-theme-muted">{t.dataplane_page_desc()}</span>
+        <div id="ov-diag" class="overview-section-anchor overview-diag-compact mt-3 border-t border-theme pt-3">
+            <div class="flex items-baseline gap-2 mb-2">
+                <h2 class="text-sm font-semibold text-theme">{t.dataplane_page_title()}</h2>
+                <span class="text-[10px] text-theme-muted">{t.dataplane_page_desc()}</span>
             </div>
 
             {move || {
@@ -1583,7 +1635,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                 view! {}.into_any()
             }}
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-2 mb-2">
                 // Phase Latency card
                 <div class="dash-card dash-card-flush">
                     <div class="dash-card-header">
@@ -1614,6 +1666,12 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                             let phase_summaries: Vec<_> = phase_names.iter().map(|name| {
                                 let pd = phase_map.get(name).and_then(|v| v.as_object());
                                 (name.clone(), pd)
+                            }).filter(|(_, pd)| {
+                                pd.as_ref().is_some_and(|m| {
+                                    ["p50_ms", "p95_ms", "p99_ms"].iter().any(|k| {
+                                        m.get(*k).and_then(|v| v.as_f64()).is_some_and(|v| v > 0.0)
+                                    })
+                                })
                             }).collect();
                             view! {
                                 <table class="table">
@@ -1654,13 +1712,11 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                     </div>
                 </div>
 
-                // Error Attribution stacked column
-                <div class="flex flex-col gap-4">
-                    <div class="dash-card">
-                        <div class="dash-card-header">
-                            <span class="dash-card-title">{t.dataplane_rejection_reasons_total()}</span>
-                        </div>
-                        <div class="dash-card-body">
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <span class="dash-card-title">{t.dataplane_rejection_reasons_total()}</span>
+                    </div>
+                    <div class="dash-card-body">
                             {move || {
                                 if !is_loaded.get() {
                                     return view! {
@@ -1678,7 +1734,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                                 let e = errors.get();
                                 let reasons = e.get("rejection_reasons").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                                 if reasons.is_empty() {
-                                    return view! { <p class="text-theme-muted text-sm italic">{t.dataplane_no_rejections()}</p> }.into_any();
+                                    return view! { <p class="text-theme-muted text-xs italic py-1">{t.dataplane_no_rejections()}</p> }.into_any();
                                 }
                                 let max_count = reasons.iter().filter_map(|r| r.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
                                 view! {
@@ -1702,11 +1758,11 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                         </div>
                     </div>
 
-                    <div class="dash-card">
-                        <div class="dash-card-header">
-                            <span class="dash-card-title">{t.dataplane_error_sources_total()}</span>
-                        </div>
-                        <div class="dash-card-body">
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <span class="dash-card-title">{t.dataplane_error_sources_total()}</span>
+                    </div>
+                    <div class="dash-card-body">
                             {move || {
                                 if !is_loaded.get() {
                                     return view! {
@@ -1724,7 +1780,7 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                                 let e = errors.get();
                                 let sources = e.get("error_sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                                 if sources.is_empty() {
-                                    return view! { <p class="text-theme-muted text-sm italic">{t.dataplane_no_error_sources()}</p> }.into_any();
+                                    return view! { <p class="text-theme-muted text-xs italic py-1">{t.dataplane_no_error_sources()}</p> }.into_any();
                                 }
                                 let max_count = sources.iter().filter_map(|s| s.get("count").and_then(|c| c.as_u64())).max().unwrap_or(1);
                                 view! {
@@ -1747,7 +1803,6 @@ fn DataPlaneDiagnostics() -> impl IntoView {
                             }}
                         </div>
                     </div>
-                </div>
             </div>
 
             // Trace Error Top 10 — full-width

@@ -63,22 +63,26 @@ fn can_arm_mimo_request_passthrough(stream: Option<bool>) -> bool {
 }
 
 /// Codex and other Responses API clients require Chat↔Responses translation.
-/// Upgrade DeepSeek pipelines automatically when the client uses `/v1/responses`.
+/// Upgrade Chat-Completions upstream pipelines automatically when the client uses `/v1/responses`.
 fn upgrade_pipeline_for_responses_client(
     client_wire_api: crate::context::ClientWireApi,
     pipeline: RequestPipeline,
     provider: UpstreamProvider,
 ) -> RequestPipeline {
-    if client_wire_api == crate::context::ClientWireApi::Responses
-        && provider == UpstreamProvider::Deepseek
-        && matches!(
-            pipeline,
-            RequestPipeline::DeepSeekLight | RequestPipeline::CursorDeepSeekV4
-        )
-    {
-        RequestPipeline::CodexDeepSeek
-    } else {
-        pipeline
+    if client_wire_api != crate::context::ClientWireApi::Responses {
+        return pipeline;
+    }
+
+    match (provider, pipeline) {
+        (
+            UpstreamProvider::Deepseek,
+            RequestPipeline::DeepSeekLight | RequestPipeline::CursorDeepSeekV4,
+        ) => RequestPipeline::CodexDeepSeek,
+        (
+            UpstreamProvider::Mimo,
+            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay,
+        ) => RequestPipeline::CodexMimo,
+        _ => pipeline,
     }
 }
 
@@ -154,7 +158,7 @@ async fn run_post_body_phases(
     let model_alias_pipeline = model_alias_entry.map(|e| e.pipeline);
     let alias_hit = model_alias_entry.is_some();
 
-    let selection = if !skip_early_pipeline_select {
+    let mut selection = if !skip_early_pipeline_select {
         let pipe_ctx = PipelineRequestContext {
             model: &ctx.model,
             payload: ctx.parsed_request_payload.as_deref(),
@@ -277,6 +281,7 @@ async fn run_post_body_phases(
                 "Upgraded pipeline for Responses API client"
             );
             ctx.request_pipeline = Some(upgraded);
+            selection.pipeline = upgraded;
         }
     }
 
@@ -613,14 +618,15 @@ async fn run_post_body_phases(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
+            RequestPipeline::MimoTokenPlanRelay
+            | RequestPipeline::MimoPaygRelay
+            | RequestPipeline::CodexMimo => {
                 // `parsed_payload` already converted from Responses API when needed (above).
                 let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
                     payload,
                     &profile_fallback,
-                    features.mimo_retire_prefix_messages
-                        && ctx.client_wire_api == crate::context::ClientWireApi::ChatCompletions,
+                    features.mimo_retire_prefix_messages,
                     features.mimo_keep_recent_turns,
                 );
                 retired_prefix = mimo.retired_prefix_messages;
