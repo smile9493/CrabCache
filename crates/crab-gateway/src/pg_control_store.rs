@@ -40,16 +40,21 @@ impl PgControlStore {
 
     /// Upsert a full snapshot into `gateway_state_snapshots`.
     pub async fn upsert_snapshot(&self, snap: &ControlPlaneSnapshot, version: i64) -> anyhow::Result<()> {
-        let keys_json = serde_json::to_string(&snap.keys)
+        let keys_json = serde_json::to_value(&snap.keys)
             .context("serialize keys")?;
-        let runtime_json = serde_json::to_string(&snap.runtime)
+        let runtime_json = serde_json::to_value(&snap.runtime)
             .context("serialize runtime")?;
-        let profiles_json = serde_json::to_string(&snap.upstream_profiles)
+        let profiles_json = serde_json::to_value(&snap.upstream_profiles)
             .context("serialize profiles")?;
-        let key_states_json = serde_json::to_string(&snap.key_states)
+        let key_states_json = serde_json::to_value(&snap.key_states)
             .context("serialize key_states")?;
-        let domain_policies_json = serde_json::to_string(&snap.domain_policies)
+        let domain_policies_json = serde_json::to_value(&snap.domain_policies)
             .context("serialize domain_policies")?;
+        let keys_pg = tokio_postgres::types::Json(&keys_json);
+        let runtime_pg = tokio_postgres::types::Json(&runtime_json);
+        let profiles_pg = tokio_postgres::types::Json(&profiles_json);
+        let key_states_pg = tokio_postgres::types::Json(&key_states_json);
+        let domain_policies_pg = tokio_postgres::types::Json(&domain_policies_json);
 
         let client = self.client.lock().await;
         client
@@ -60,11 +65,11 @@ impl PgControlStore {
                  VALUES ('full', $1::jsonb, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6, 'gateway_direct')
                  ON CONFLICT DO NOTHING",
                 &[
-                    &keys_json,
-                    &runtime_json,
-                    &profiles_json,
-                    &key_states_json,
-                    &domain_policies_json,
+                    &keys_pg,
+                    &runtime_pg,
+                    &profiles_pg,
+                    &key_states_pg,
+                    &domain_policies_pg,
                     &version,
                 ],
             )
@@ -94,7 +99,7 @@ pub fn spawn_snapshot_writer(
         while let Some(snap) = rx.recv().await {
             let ver = version_rx.load(std::sync::atomic::Ordering::Relaxed);
             if let Err(e) = store.upsert_snapshot(&snap, ver).await {
-                warn!("PG control snapshot write failed: {}", e);
+                warn!("PG control snapshot write failed: {:#}", e);
             }
         }
         debug!("PG control snapshot writer exited");

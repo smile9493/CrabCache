@@ -103,9 +103,12 @@ impl PgTraceStore {
             let composition_json = e
                 .composition
                 .as_ref()
-                .map(serde_json::to_string)
+                .map(serde_json::to_value)
                 .transpose()
                 .map_err(|err| anyhow::anyhow!("serialize composition: {err}"))?;
+            let composition_pg = composition_json
+                .as_ref()
+                .map(tokio_postgres::types::Json);
             tx.execute(
                 &stmt,
                 &[
@@ -126,7 +129,7 @@ impl PgTraceStore {
                     &e.input_tokens.map(|v| v as i64),
                     &e.output_tokens.map(|v| v as i64),
                     &e.cache_tier,
-                    &composition_json,
+                    &composition_pg,
                     &e.request_messages_snapshot,
                     &e.response_preview,
                     &e.retired_prefix_messages.map(|v| v as i32),
@@ -156,7 +159,15 @@ impl PgTraceStore {
                 ],
             )
             .await
-            .context("pg execute insert_trace_logs")?;
+            .map_err(|err| {
+                tracing::warn!(
+                    request_hash = %e.request_hash,
+                    timestamp_ms = e.timestamp_ms,
+                    model = %e.model,
+                    "PG trace insert error detail: {err}"
+                );
+                anyhow::anyhow!("pg execute insert_trace_logs: {err}")
+            })?;
         }
 
         tx.commit().await.context("pg commit insert_trace_logs")?;
@@ -767,7 +778,7 @@ fn main() -> Result<()> {
                                     }
                                 }
                                 if let Err(e) = store.insert_batch(&buf).await {
-                                    tracing::warn!("PG trace batch insert failed: {}", e);
+                                    tracing::warn!("PG trace batch insert failed: {:#}", e);
                                     global_metrics().inc_admin_log_pg_write_error();
                                 }
                                 buf.clear();
@@ -1009,7 +1020,7 @@ fn main() -> Result<()> {
                             let snap = crab_gateway::pg_control_store::build_snapshot(&rt_ref);
                             let ver = 0i64;
                             if let Err(e) = store.upsert_snapshot(&snap, ver).await {
-                                tracing::warn!("PG control snapshot write failed: {}", e);
+                                tracing::warn!("PG control snapshot write failed: {:#}", e);
                             }
                         }
                     });
