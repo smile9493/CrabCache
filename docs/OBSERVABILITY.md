@@ -86,7 +86,9 @@ Dashboard **实时监控 / Live** 页面每 **2 秒**轮询 **`GET /api/admin/li
 | TTFT | `ttft_ms` | 流式首字延迟（加权平均） |
 | Token | `input_tokens` / `output_tokens` | 来自上游 `usage`；缓存命中使用缓存条目的用量 |
 
-需要 `[trace_logging] enabled = true` 且 API Key 具有 **name**（consumer 标签）。Admin 使用**增量 tail 读取** `trace.jsonl`，支持文件轮转检测（inode/mtime），避免全文件重解析。
+需要 `[trace_logging] enabled = true` 且 API Key 具有 **name**（consumer 标签）。Admin 使用 **PG 查询**作为主要数据源（推荐配置 `trace_logging.pg_url` 使 Gateway 直写 PG，消除 JSONL→PG 10 秒同步延迟）。JSONL 文件仍作为本地 fallback 缓冲写入。
+
+**PG 直写模式（推荐）：** 配置 `[trace_logging] pg_url = "postgres://..."` 后，Gateway 通过专用线程直接写入 PG `trace_logs` 表，Admin 查询和 `LiveTraceCache` 均以 PG 为权威数据源。需同时在 Admin 侧设置 `CRABCACHE_ADMIN_TRACE_PG_SYNC=false` 禁用旧的 JSONL→PG 同步任务。
 
 **性能：** `LiveTraceCache` 在 `crab-admin` 中缓存 **3 秒**（可通过 `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` 配置，默认 3），文件追加时仅读取新字节（增量 tail）。文件轮转时自动全量重建。Dashboard 每 **2 秒**（5m 窗口）或 **3 秒**（15m 窗口）轮询，浏览器标签页隐藏时暂停。
 

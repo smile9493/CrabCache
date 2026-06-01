@@ -2231,7 +2231,6 @@ async fn get_logs(
     let limit = query.limit.unwrap_or(100).min(500);
 
     let memory_logs = state.request_logs.read().clone();
-    let trace_path = crate::trace_log::trace_log_path();
 
     // If we have memory logs and no archive/filter query, use memory.
     let uses_trace_archive = query.cursor.is_some()
@@ -2278,9 +2277,7 @@ async fn get_logs(
         });
     }
 
-    // ── PG primary path ─────────────────────────────────────────────
-    // When PG is available, use it as the primary query source for all
-    // filtered/cursor queries, with JSONL as the fallback.
+    // ── PG query path ────────────────────────────────────────────────
     let pg_ref = state.pg_store.read().clone();
     if let Some(ref pg) = pg_ref {
         if let Some(result) = try_query_pg_logs(pg, &query, limit).await {
@@ -2288,45 +2285,11 @@ async fn get_logs(
         }
     }
 
-    // ── JSONL fallback path ─────────────────────────────────────────
-    // Use archive-aware loading with pagination.
-    let opts = crate::trace_log::TraceLoadOpts {
-        from_ms: query.from_ms,
-        to_ms: query.to_ms,
-        consumer: query.consumer,
-        model: query.model,
-        cache_tier: query.cache_tier,
-        request_hash: query.request_hash,
-        latency_min: query.latency_min,
-        latency_max: query.latency_max,
-        token_min: query.token_min,
-        token_max: query.token_max,
-        limit: limit + 1, // fetch +1 to determine has_more
-        cursor: query.cursor,
-    };
-
-    let entries = crate::trace_log::load_trace_with_opts(&trace_path, &opts);
-
-    let has_more = entries.len() > limit;
-
-    // Build cursor from raw trace entry data BEFORE consuming entries.
-    let next_cursor = if has_more {
-        let tail = &entries[limit - 1];
-        Some(format!("{}:{}", tail.timestamp_ms, tail.request_hash))
-    } else {
-        None
-    };
-
-    let items: Vec<RequestLog> = entries
-        .into_iter()
-        .take(limit)
-        .map(|e| crate::trace_log::trace_entry_to_request_log(&e))
-        .collect();
-
+    // No PG available — return empty.
     Json(crate::types::LogsPageResponse {
-        items,
-        next_cursor,
-        has_more,
+        items: Vec::new(),
+        next_cursor: None,
+        has_more: false,
         total_in_window: 0,
     })
 }
@@ -2409,8 +2372,7 @@ async fn get_log_detail(
         }));
     }
 
-    let trace_path = crate::trace_log::trace_log_path();
-    if let Some(entry) = state.find_trace_entry(&id, &trace_path).await {
+    if let Some(entry) = state.find_trace_entry(&id).await {
         return Ok(Json(crate::trace_log::trace_entry_to_request_detail(
             &entry,
         )));
@@ -3364,13 +3326,14 @@ async fn get_live_consumers(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ConsumersQuery>,
 ) -> Json<serde_json::Value> {
-    let path = crate::trace_log::trace_log_path();
     let pg = state.pg_store.read().clone();
     let window_secs = query.window_secs.clamp(60, 30 * 24 * 3600);
 
-    let _ = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    if let Some(ref pg) = pg {
+        let _ = crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await;
+    }
 
-    let trace_available = crate::trace_log::trace_source_available(&path, pg.as_ref());
+    let trace_available = crate::trace_log::trace_source_available(pg.as_ref());
 
     let consumer_names = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
     Json(serde_json::json!({
@@ -3397,7 +3360,14 @@ async fn get_key_concurrency(
     axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyConcurrencyResponse>, StatusCode> {
     let window_secs = query.window_secs;
-    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = {
+        let pg = state.pg_store.read().clone();
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await
+        } else {
+            Arc::new(Vec::new())
+        }
+    };
 
     let filtered: Vec<KeyConcurrencyEntry> = entries
         .iter()
@@ -3479,7 +3449,14 @@ async fn get_key_routing(
     axum::extract::Query(query): axum::extract::Query<KeyWindowQuery>,
 ) -> Result<Json<KeyRoutingResponse>, StatusCode> {
     let window_secs = query.window_secs;
-    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = {
+        let pg = state.pg_store.read().clone();
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await
+        } else {
+            Arc::new(Vec::new())
+        }
+    };
 
     let key_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3580,7 +3557,14 @@ async fn get_session_timeline(
     axum::extract::Path(fingerprint): axum::extract::Path<String>,
 ) -> Result<Json<SessionTimelineResponse>, StatusCode> {
     let window_secs: u32 = 900;
-    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
+    let entries = {
+        let pg = state.pg_store.read().clone();
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await
+        } else {
+            Arc::new(Vec::new())
+        }
+    };
 
     let mut session_entries: Vec<&crate::trace_log::TraceLogEntry> = entries
         .iter()
@@ -3638,7 +3622,6 @@ async fn get_live_metrics(
     }
     // "*" is a wildcard meaning "all consumers" — no filtering by consumer name.
 
-    let path = crate::trace_log::trace_log_path();
     let pg = state.pg_store.read().clone();
     let (window_secs, bucket_secs) =
         crate::live_metrics::clamp_live_params(query.window_secs, query.bucket_secs);
@@ -3647,8 +3630,15 @@ async fn get_live_metrics(
     let key_id = query.key_id.clone();
     let session_fingerprint = query.session_fingerprint.clone();
     let group_by = query.group_by.clone();
-    let entries = crate::trace_log::load_live_trace_entries_auto(&state, window_secs).await;
-    let trace_available = crate::trace_log::trace_source_available(&path, pg.as_ref());
+    let entries = {
+        let pg = state.pg_store.read().clone();
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await
+        } else {
+            Arc::new(Vec::new())
+        }
+    };
+    let trace_available = crate::trace_log::trace_source_available(pg.as_ref());
     // Use the cache's consumer HashSet instead of scanning the full entries list.
     let available_consumers = crate::trace_log::live_distinct_consumers(&state.live_trace_cache);
     let resp = crate::live_metrics::aggregate_live_metrics(
@@ -3700,8 +3690,7 @@ async fn get_trace_analysis(
         }
     }
 
-    let trace_path = crate::trace_log::trace_log_path();
-    let entries = state.load_trace_entries(&trace_path, query.hours).await;
+    let entries = state.load_trace_entries(query.hours).await;
 
     if entries.is_empty() {
         return Ok(Json(empty_trace_analysis()).into_response());

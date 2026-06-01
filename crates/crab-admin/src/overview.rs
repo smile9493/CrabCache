@@ -7,7 +7,6 @@ use crate::metrics_history::{
 };
 use crate::state::{AppState, GatewayProbe};
 use crate::suggestions::build_overview_suggestions;
-use crate::trace_log;
 use crate::trace_summary;
 use crate::types::{
     GatewayHealthView, MetricsHistoryMeta, MetricsSnapshot, MetricsSnapshotCore, OverviewBundle,
@@ -805,8 +804,7 @@ async fn cached_trace_summary(state: &Arc<AppState>, hours: u32) -> TraceSummary
         }
     }
 
-    let path = trace_log::trace_log_path();
-    let entries = state.load_trace_entries(&path, hours).await;
+    let entries = state.load_trace_entries(hours).await;
     let summary = trace_summary::compute_trace_summary(&entries, hours);
     *state.trace_summary_cache.write() = Some((Instant::now(), summary.clone()));
     summary

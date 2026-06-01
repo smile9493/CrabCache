@@ -133,19 +133,11 @@ docker compose --profile admin up -d
 | Admin state | 复制 `data/admin-state.json` |
 | 配置 | 版本化管理 `gateway.toml`、`.env`（勿提交明文密钥） |
 
-### Trace 日志 PG 双写
+### Trace 日志 PG 直写（推荐）
 
-Gateway 可通过 `CRABCACHE_TRACE_PG_URL` / `[trace_logging].pg_url` **直写** PostgreSQL `trace_logs`。Admin 默认另启 **JSONL→PG 同步**（`pg_sync`，每 10s）。两者均使用 `ON CONFLICT DO NOTHING`，功能上幂等，但会产生重复 insert 尝试。
+Gateway 通过 `CRABCACHE_TRACE_PG_URL` / `[trace_logging].pg_url` **直写** PostgreSQL `trace_logs` 表，消除旧 `pg_sync`（JSONL→PG 10 秒同步延迟）的瓶颈。JSONL 仅作为本地 fallback 缓冲写入，Admin 查询和 `LiveTraceCache` 均以 PG 为唯一权威数据源。
 
-当 Gateway 已直写 PG 时，建议在 Admin 侧设置：
-
-```bash
-CRABCACHE_ADMIN_TRACE_PG_SYNC=false
-```
-
-Admin 启动时若检测到 `CRABCACHE_TRACE_PG_URL` 且未关闭 sync，会打印 warning。
-
-Live metrics 在 JSONL 不可见时可从 PG 读取：设 `CRABCACHE_LIVE_TRACE_SOURCE=pg`（或 Admin 与 Gateway 分离且本地无 trace 文件时自动回退 PG）。
+Live metrics 直接从 PG 查询，不再依赖 JSONL 文件尾读。
 
 列表 API 的 `response_preview` 截断长度可通过 `CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS` 配置（默认 200，`0` = 不截断）。
 

@@ -62,14 +62,9 @@ async fn sync_once(state: &Arc<AppState>) -> Result<(), String> {
 
     let pg_opt = { state.pg_store.read().clone() };
     let entries: Vec<trace_log::TraceLogEntry> = if let Some(ref pg) = pg_opt {
-        trace_log::load_trace_entries_async_pg(pg, 24).await
+        trace_log::load_trace_entries(pg, 24).await
     } else {
-        let trace_path = trace_log::trace_log_path();
-        if !std::path::Path::new(&trace_path).is_file() {
-            return Ok(());
-        }
-        let raw = trace_log::load_trace_bytes(&trace_path, 4 * 1024 * 1024);
-        trace_log::parse_trace_lines(&raw.0, raw.1)
+        return Ok(());
     };
 
     // Build consumer→id lookup once to avoid O(keys) scan per entry.

@@ -14,6 +14,7 @@ crab-cache.workspace = true
 crab-semantic.workspace = true
 crab-reasoning.workspace = true
 crab-pipeline.workspace = true
+crab-translator.workspace = true
 crab-control.workspace = true
 crab-client-endpoint.workspace = true
 pingora.workspace = true

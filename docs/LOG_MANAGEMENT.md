@@ -45,8 +45,8 @@ max_files = 3
 |------|------|--------|
 | `CRABCACHE_TRACE_LOG_PATH` | Trace 日志路径 | `/app/logs/trace.jsonl` |
 | `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` | Live 缓存 TTL（秒） | `3` |
-| `CRABCACHE_LIVE_TRACE_SOURCE` | 设为 `pg` 强制从 PG 读取 | — |
-| `CRABCACHE_ADMIN_TRACE_PG_SYNC` | 设为 `false` 禁用 JSONL→PG 同步 | `true` |
+| `CRABCACHE_LIVE_TRACE_SOURCE` | **已废弃**（PG 为唯一数据源） | — |
+| `CRABCACHE_ADMIN_TRACE_PG_SYNC` | **已废弃**（pg_sync 已移除，Gateway 直写 PG） | — |
 | `CRADMIN_TRACE_RETENTION_DAYS` | PG trace_logs 保留天数覆盖 | 策略值 |
 | `CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS` | 列表 API 响应预览截断字符数 | `200` |
 
@@ -117,15 +117,9 @@ skip_paths = ["/health", "/healthz", "/ready"]
           └─ INSERT INTO trace_logs ... ON CONFLICT DO NOTHING
 ```
 
-### 3.2 JSONL → PG 同步（Admin 侧）
+### 3.2 JSONL → PG 同步（已废弃）
 
-当 Gateway 未直接写 PG（`trace_logging.pg_url` 未配置）时，Admin 后台任务 `pg_sync` 每 **10 秒**增量读取 `trace.jsonl` 并写入 PG：
-
-- 通过 byte offset + inode 追踪读取位置
-- 轮转检测：inode 变化或文件缩小 → 从头读取新文件
-- 环境变量：`CRABCACHE_ADMIN_TRACE_PG_SYNC=false` 可禁用
-
-**注意**：如果 Gateway 已配置 `trace_logging.pg_url` 直接写 PG，Admin 侧同步应禁用以避免重复插入（`ON CONFLICT DO NOTHING` 会兜底，但浪费 IO）。
+> **注意**：`pg_sync` 已在 PG 权威日志存储改造中移除。Gateway 直写 PG（配置 `trace_logging.pg_url`）是唯一推荐路径。JSONL 仅作为本地 fallback 缓冲，不再有从 Admin 侧同步到 PG 的代码路径。
 
 ### 3.3 Raw Capture 采样决策
 
@@ -229,6 +223,30 @@ CREATE TABLE request_logs (
 );
 ```
 
+#### request_logs vs trace_logs 合并评估
+
+| 维度 | `trace_logs` | `request_logs` |
+|------|-------------|---------------|
+| 列数 | 43+ | 14 |
+| 主键 | `(request_hash, timestamp_ms)` | `id TEXT` |
+| 数据来源 | Gateway tracing（完整生命周期） | Gateway request_filter（基础信息） |
+| 特有字段 | `phase_durations_ms`、`affinity_key`、`session_fingerprint`、缓存决策等 | `request_payload`（完整 JSONB）、`response_body`（完整 TEXT） |
+| 查询用途 | 性能分析、缓存命中率、Token 统计、过滤查询 | 快速列表（无过滤）、内存缓存 |
+| 分区支持 | 已实现（按天分区） | 未分区 |
+
+**结论：不建议合并**
+
+1. **用途不同**：`trace_logs` 是分析热表（43+ 列，被 WHERE 条件频繁查询），`request_logs` 是快速列表缓存（14 列，主要内存访问）。
+2. **行宽影响**：将 `request_payload`（JSONB，可达数 KB）和 `response_body`（TEXT，可达数 KB）合并到 `trace_logs` 会显著增大行宽，影响全表扫描性能。
+3. **已有桥接**：Dashboard Logs 页的过滤查询已走 `trace_logs`（`query_trace_logs_paginated`），`trace_entry_to_request_log` 函数负责转换。
+4. **数据重复**：`request_logs` 的核心字段（model、consumer、duration_ms、tokens 等）在 `trace_logs` 中已有更精确的版本。
+
+**可做的小优化**：
+
+- `request_logs` 也改为分区表（复用 `trace_logs` 的分区基础设施），提升清理效率
+- 评估 `request_logs` 的 PG 持久化是否仍需保留（当前内存缓存 + 双写 PG，可考虑仅内存 + 定期归档）
+- 确认 `request_logs` 写入量与 `trace_logs` 基本一致（每请求 1 条），避免数据不一致
+
 ### 4.3 audit_log
 
 ```sql
@@ -250,7 +268,7 @@ CREATE TABLE audit_log (
 | 任务 | 间隔 | 功能 | 配置 |
 |------|------|------|------|
 | `log_retention_loop` | 10 分钟 | JSONL 文件清理 + PG 行修剪 + Prometheus 指标更新 | `RetentionPolicy`（Dashboard 可调） |
-| `pg_sync` | 10 秒 | JSONL → PG 增量同步 | `CRABCACHE_ADMIN_TRACE_PG_SYNC` |
+| `pg_sync` | **已移除** | Gateway 直写 PG 替代 | — |
 | `key_usage_sync` | 60 秒 | 从 trace 日志同步 Key 月度 Token 用量 | `CRABCACHE_KEY_USAGE_SYNC_INTERVAL_SECS` |
 | `peak_hours_aggregator` | 5 分钟 | 模型高峰时段聚合写入 PG `model_peak_hours` | — |
 | `domain_usage_sync` | 60 秒 | Gateway 域名用量 → PG 同步 | `CRABCACHE_DOMAIN_USAGE_SYNC_INTERVAL_SECS` |
@@ -458,7 +476,7 @@ psql "$CRADMIN_PG_URL" -c "SELECT 1"
 grep "duplicate key\|ON CONFLICT" ./logs/gateway.log.* | tail -5
 ```
 
-**原因**：PG 不可达、`CRABCACHE_ADMIN_TRACE_PG_SYNC=false`、或 Gateway 已直写 PG 导致 Admin 侧同步被禁用。
+**原因**：PG 不可达或 Gateway `trace_logging.pg_url` 未配置。JSONL 仅作为本地 fallback 缓冲，不再有 Admin 侧同步路径。推荐配置 `trace_logging.pg_url` 使 Gateway 直写 PG。
 
 ### 9.3 磁盘占用过高
 

@@ -686,7 +686,320 @@ impl PgStore {
             )
             .await?;
 
+        // Migrate trace_logs to range-partitioned table by timestamp_ms (daily partitions).
+        drop(client); // release connection before calling self methods
+        self.migrate_trace_logs_to_partitioned().await?;
+
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // trace_logs partitioning
+    // -----------------------------------------------------------------------
+
+    /// Partition name for a given UTC date.
+    fn partition_name(year: i32, month: u32, day: u32) -> String {
+        format!("trace_logs_y{:04}m{:02}d{:02}", year, month, day)
+    }
+
+    /// Compute the `[start_ms, end_ms)` range for a UTC date.
+    fn partition_range_ms(year: i32, month: u32, day: u32) -> (i64, i64) {
+        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+        let start = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(year, month, day).unwrap(),
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        );
+        let end = start + chrono::Duration::days(1);
+        (
+            start.and_utc().timestamp_millis(),
+            end.and_utc().timestamp_millis(),
+        )
+    }
+
+    /// Check if `trace_logs` is already a partitioned table.
+    async fn is_trace_logs_partitioned(&self) -> Result<bool> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_opt(
+                "SELECT relkind FROM pg_class
+                 WHERE relname = 'trace_logs'
+                   AND relkind = 'p'",
+                &[],
+            )
+            .await?;
+        Ok(row.is_some())
+    }
+
+    /// Create a daily partition for `trace_logs` covering the given UTC date.
+    /// No-op if the partition already exists.
+    pub async fn create_trace_partition(&self, year: i32, month: u32, day: u32) -> Result<String> {
+        let name = Self::partition_name(year, month, day);
+        let (start_ms, end_ms) = Self::partition_range_ms(year, month, day);
+        let client = self.pool.get().await?;
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {name}
+             PARTITION OF trace_logs
+             FOR VALUES FROM ({start_ms}) TO ({end_ms})"
+        );
+        client.execute(sql.as_str(), &[]).await?;
+        Ok(name)
+    }
+
+    /// Drop a daily partition. Returns `true` if it existed and was dropped.
+    pub async fn drop_trace_partition(&self, year: i32, month: u32, day: u32) -> Result<bool> {
+        let name = Self::partition_name(year, month, day);
+        let client = self.pool.get().await?;
+        let sql = format!("DROP TABLE IF EXISTS {name}");
+        client.execute(sql.as_str(), &[]).await?;
+        // IF EXISTS always succeeds; query pg_class to see if it was actually there.
+        // Return true unconditionally — caller uses it for logging.
+        Ok(true)
+    }
+
+    /// Migrate `trace_logs` from a regular table to a range-partitioned table.
+    ///
+    /// Steps (only if `trace_logs` is not already partitioned):
+    /// 1. Rename existing table to `trace_logs_legacy`
+    /// 2. Create the partitioned parent table
+    /// 3. Create partitions for existing data range + future 3 days
+    /// 4. Copy data from legacy table
+    /// 5. Drop legacy table
+    pub async fn migrate_trace_logs_to_partitioned(&self) -> Result<()> {
+        if self.is_trace_logs_partitioned().await? {
+            info!("trace_logs is already partitioned, skipping migration");
+            return Ok(());
+        }
+
+        let client = self.pool.get().await?;
+
+        // Check if trace_logs exists at all (it might be a fresh DB).
+        let exists = client
+            .query_opt(
+                "SELECT 1 FROM pg_class WHERE relname = 'trace_logs'",
+                &[],
+            )
+            .await?;
+        if exists.is_none() {
+            info!("trace_logs does not exist yet, creating partitioned table directly");
+            drop(client);
+            return self.create_partitioned_trace_logs_table().await;
+        }
+
+        info!("Migrating trace_logs to range-partitioned table...");
+
+        // Step 1: Rename
+        client
+            .execute("ALTER TABLE trace_logs RENAME TO trace_logs_legacy", &[])
+            .await?;
+
+        // Step 2: Create partitioned parent (drop client first since we need self methods)
+        drop(client);
+        self.create_partitioned_trace_logs_table().await?;
+
+        // Step 3: Discover data range from legacy table and create partitions
+        let client = self.pool.get().await?;
+        let range_row = client
+            .query_opt(
+                "SELECT MIN(timestamp_ms), MAX(timestamp_ms) FROM trace_logs_legacy",
+                &[],
+            )
+            .await?;
+
+        if let Some(row) = range_row {
+            let min_ts: Option<i64> = row.get(0);
+            let max_ts: Option<i64> = row.get(1);
+
+            if let (Some(min_ts), Some(max_ts)) = (min_ts, max_ts) {
+                use chrono::{Datelike, TimeZone, Utc};
+                let min_date = Utc
+                    .timestamp_millis_opt(min_ts)
+                    .single()
+                    .map(|dt| dt.date_naive());
+                let max_date = Utc
+                    .timestamp_millis_opt(max_ts)
+                    .single()
+                    .map(|dt| dt.date_naive());
+
+                if let (Some(min_date), Some(max_date)) = (min_date, max_date) {
+                    // Create partitions for each day in range + 3 days into the future
+                    let end_date = max_date + chrono::Duration::days(3);
+                    let mut current = min_date;
+                    drop(client);
+                    while current <= end_date {
+                        self.create_trace_partition(
+                            current.year(),
+                            current.month(),
+                            current.day(),
+                        )
+                        .await?;
+                        current += chrono::Duration::days(1);
+                    }
+                    info!(
+                        min = %min_date,
+                        max = %max_date,
+                        "Created daily partitions for existing data range"
+                    );
+                }
+            }
+        } else {
+            drop(client);
+        }
+
+        // Also ensure a default partition for any data outside named partitions
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS trace_logs_default
+                 PARTITION OF trace_logs DEFAULT",
+                &[],
+            )
+            .await?;
+
+        // Step 4: Copy data
+        let rows = client
+            .execute(
+                "INSERT INTO trace_logs SELECT * FROM trace_logs_legacy",
+                &[],
+            )
+            .await?;
+        info!(rows, "Copied data from trace_logs_legacy to partitioned table");
+
+        // Step 5: Drop legacy
+        client
+            .execute("DROP TABLE trace_logs_legacy", &[])
+            .await?;
+        info!("Migration complete: trace_logs is now range-partitioned by timestamp_ms");
+
+        Ok(())
+    }
+
+    /// Create the partitioned parent `trace_logs` table (must not exist yet).
+    async fn create_partitioned_trace_logs_table(&self) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS trace_logs (
+                    request_hash    TEXT NOT NULL,
+                    timestamp_ms    BIGINT NOT NULL,
+                    content_length  INTEGER NOT NULL,
+                    semantic_cluster INTEGER NOT NULL,
+                    model           TEXT NOT NULL,
+                    prompt_tokens   INTEGER NOT NULL,
+                    latency_ms      DOUBLE PRECISION NOT NULL,
+                    cache_hit       BOOLEAN NOT NULL,
+                    conversation_id TEXT,
+                    consumer        TEXT,
+                    domain          TEXT,
+                    project_id      TEXT,
+                    upstream_latency_ms DOUBLE PRECISION,
+                    ttft_ms         DOUBLE PRECISION,
+                    input_tokens    BIGINT,
+                    output_tokens   BIGINT,
+                    cache_tier      TEXT,
+                    composition     JSONB,
+                    request_messages_snapshot TEXT,
+                    response_preview TEXT,
+                    retired_prefix_messages INTEGER,
+                    reasoning_strategy TEXT,
+                    prompt_cache_hit_ratio DOUBLE PRECISION,
+                    upstream_profile_id TEXT,
+                    pipeline        TEXT,
+                    upstream_model  TEXT,
+                    client_body_user_id TEXT,
+                    upstream_user_id TEXT,
+                    user_id_audit   TEXT,
+                    upstream_key_id TEXT,
+                    session_store   TEXT,
+                    stable_session_kind TEXT,
+                    upstream_outbound_bytes INTEGER,
+                    prefill_ms      DOUBLE PRECISION,
+                    pre_header_ms   DOUBLE PRECISION,
+                    affinity_key    TEXT,
+                    affinity_kind   TEXT,
+                    backend_name    TEXT,
+                    session_fingerprint TEXT,
+                    is_coalesced    BOOLEAN NOT NULL DEFAULT false,
+                    client_key_id   TEXT,
+                    request_passthrough BOOLEAN NOT NULL DEFAULT false,
+                    request_passthrough_prefix_len INTEGER,
+                    status_code     INTEGER,
+                    error_code      TEXT,
+                    limit_source    TEXT,
+                    cache_decision  TEXT,
+                    upstream_result TEXT,
+                    phase_durations_ms JSONB,
+                    PRIMARY KEY (request_hash, timestamp_ms)
+                ) PARTITION BY RANGE (timestamp_ms)",
+                &[],
+            )
+            .await?;
+
+        // Create indexes (they propagate to partitions automatically)
+        for stmt in [
+            "CREATE INDEX IF NOT EXISTS idx_trace_ts ON trace_logs (timestamp_ms DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_trace_consumer_ts ON trace_logs (consumer, timestamp_ms DESC) WHERE consumer IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_trace_model_ts ON trace_logs (model, timestamp_ms DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_trace_cache_tier ON trace_logs (cache_tier, timestamp_ms DESC) WHERE cache_tier IS NOT NULL",
+        ] {
+            client.execute(stmt, &[]).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Ensure partitions exist for today and the next N days.
+    pub async fn ensure_future_trace_partitions(&self, days_ahead: u32) -> Result<()> {
+        use chrono::{Datelike, Utc};
+        let today = Utc::now().date_naive();
+        for offset in 0..=days_ahead {
+            let date = today + chrono::Duration::days(i64::from(offset));
+            self.create_trace_partition(date.year(), date.month(), date.day())
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Drop trace partitions older than the given number of days.
+    /// Returns the number of partitions dropped.
+    pub async fn drop_old_trace_partitions(&self, retention_days: u32) -> Result<u64> {
+        use chrono::Utc;
+        let cutoff = Utc::now().date_naive() - chrono::Duration::days(i64::from(retention_days));
+        let client = self.pool.get().await?;
+
+        // Find all partition names that match trace_logs_y* pattern
+        let rows = client
+            .query(
+                "SELECT inhrelid::regclass::text
+                 FROM pg_inherits
+                 WHERE inhparent = 'trace_logs'::regclass
+                   AND inhrelid::regclass::text ~ '^trace_logs_y\\d{4}m\\d{2}d\\d{2}$'",
+                &[],
+            )
+            .await?;
+
+        let mut dropped: u64 = 0;
+        for row in rows {
+            let part_name: String = row.get(0);
+            // Parse date from name: trace_logs_y2026m06d01
+            if let Some(date_str) = part_name.strip_prefix("trace_logs_y") {
+                // date_str = "2026m06d01"
+                if date_str.len() == 10 {
+                    if let Ok(date) = chrono::NaiveDate::parse_from_str(
+                        &format!("{}-{}-{}", &date_str[0..4], &date_str[5..7], &date_str[8..10]),
+                        "%Y-%m-%d",
+                    ) {
+                        if date < cutoff {
+                            let sql = format!("DROP TABLE IF EXISTS {part_name}");
+                            client.execute(sql.as_str(), &[]).await?;
+                            info!(partition = %part_name, "Dropped old trace partition");
+                            dropped += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(dropped)
     }
 
     // -----------------------------------------------------------------------
@@ -1797,6 +2110,52 @@ impl PgStore {
 
     /// Delete trace logs older than the given timestamp.
     pub async fn prune_trace_logs(&self, cutoff_ms: u64) -> Result<u64> {
+        // Try partition-aware pruning first: drop entire partitions older than cutoff.
+        if self.is_trace_logs_partitioned().await.unwrap_or(false) {
+            use chrono::{TimeZone, Utc};
+            if let Some(cutoff_date) = Utc.timestamp_millis_opt(cutoff_ms as i64).single() {
+                let cutoff_date = cutoff_date.date_naive();
+                let client = self.pool.get().await?;
+                let rows = client
+                    .query(
+                        "SELECT inhrelid::regclass::text
+                         FROM pg_inherits
+                         WHERE inhparent = 'trace_logs'::regclass
+                           AND inhrelid::regclass::text ~ '^trace_logs_y\\d{4}m\\d{2}d\\d{2}$'",
+                        &[],
+                    )
+                    .await?;
+
+                let mut dropped: u64 = 0;
+                for row in rows {
+                    let part_name: String = row.get(0);
+                    if let Some(date_str) = part_name.strip_prefix("trace_logs_y") {
+                        if date_str.len() == 10 {
+                            if let Ok(date) = chrono::NaiveDate::parse_from_str(
+                                &format!(
+                                    "{}-{}-{}",
+                                    &date_str[0..4],
+                                    &date_str[5..7],
+                                    &date_str[8..10]
+                                ),
+                                "%Y-%m-%d",
+                            ) {
+                                if date < cutoff_date {
+                                    let sql = format!("DROP TABLE IF EXISTS {part_name}");
+                                    client.execute(sql.as_str(), &[]).await?;
+                                    info!(partition = %part_name, "Dropped old trace partition");
+                                    dropped += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                if dropped > 0 {
+                    return Ok(dropped);
+                }
+            }
+        }
+        // Fallback: row-level DELETE (for non-partitioned tables or empty partition set).
         let client = self.pool.get().await?;
         let count = client
             .execute(

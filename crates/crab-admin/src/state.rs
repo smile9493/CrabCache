@@ -147,34 +147,43 @@ impl AppState {
         self.pg_store.read().is_some()
     }
 
-    /// Load trace entries from PG if available, otherwise from JSONL.
+    /// Load trace entries from PG for a time window.
     pub async fn load_trace_entries(
         &self,
-        trace_path: &str,
         hours: u32,
     ) -> Vec<crate::trace_log::TraceLogEntry> {
         let pg = self.pg_store.read().clone();
-        crate::trace_log::load_trace_entries_auto(pg, trace_path, hours).await
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_trace_entries(pg, hours).await
+        } else {
+            Vec::new()
+        }
     }
 
-    /// Load trace entries with opts from PG if available, otherwise from JSONL.
+    /// Load trace entries with opts from PG.
     pub async fn load_trace_with_opts(
         &self,
-        trace_path: &str,
         opts: &crate::trace_log::TraceLoadOpts,
     ) -> Vec<crate::trace_log::TraceLogEntry> {
         let pg = self.pg_store.read().clone();
-        crate::trace_log::load_trace_with_opts_auto(pg, trace_path, opts).await
+        if let Some(ref pg) = pg {
+            crate::trace_log::load_trace_with_opts(pg, opts).await
+        } else {
+            Vec::new()
+        }
     }
 
-    /// Find a single trace entry by id, trying PG first then JSONL.
+    /// Find a single trace entry by id from PG.
     pub async fn find_trace_entry(
         &self,
         id: &str,
-        trace_path: &str,
     ) -> Option<crate::trace_log::TraceLogEntry> {
         let pg = self.pg_store.read().clone();
-        crate::trace_log::find_trace_entry_auto(pg, id, trace_path).await
+        if let Some(ref pg) = pg {
+            crate::trace_log::find_trace_entry(pg, id).await
+        } else {
+            None
+        }
     }
 }
 
@@ -1021,23 +1030,6 @@ impl AppState {
         // Snapshot request logs for PG dual-write (take before releasing lock).
         let pg_request_logs: Vec<StoredRequestLog> = self.request_logs.read().clone();
 
-        // Snapshot system configs for PG dual-write.
-        let pg_system_configs: HashMap<String, serde_json::Value> = {
-            let mut m = HashMap::new();
-            m.insert("cache_config".to_string(), serde_json::to_value(&*self.cache_config.read()).unwrap_or_default());
-            m.insert("semantic_config".to_string(), serde_json::to_value(&*self.semantic_config.read()).unwrap_or_default());
-            m.insert("connection_config".to_string(), serde_json::to_value(&*self.connection_config.read()).unwrap_or_default());
-            m.insert("limits_config".to_string(), serde_json::to_value(&*self.limits_config.read()).unwrap_or_default());
-            m.insert("pricing_config".to_string(), serde_json::to_value(&*self.pricing_config.read()).unwrap_or_default());
-            m.insert("features_config".to_string(), serde_json::to_value(&*self.features_config.read()).unwrap_or_default());
-            m.insert("trace_logging_config".to_string(), serde_json::to_value(&*self.trace_logging_config.read()).unwrap_or_default());
-            m.insert("raw_capture_config".to_string(), serde_json::to_value(&*self.raw_capture_config.read()).unwrap_or_default());
-            m.insert("reasoning_config".to_string(), serde_json::to_value(&*self.reasoning_config.read()).unwrap_or_default());
-            m.insert("log_retention".to_string(), serde_json::to_value(&*self.log_retention.read()).unwrap_or_default());
-            m.insert("admin_key".to_string(), serde_json::Value::String(self.admin_key.read().clone()));
-            m
-        };
-
         // Dual-write to PostgreSQL if available (extract data before moving file).
         let pg_task = if let Some(ref pg) = *self.pg_store.read() {
             let pg = pg.clone();
@@ -1049,6 +1041,22 @@ impl AppState {
             let upstream_snap = file.upstream_snapshot.clone();
             let notes = file.upstream_notes.clone();
             let last_test = file.last_upstream_test.clone();
+            // Snapshot system configs only when PG is available.
+            let system_configs: HashMap<String, serde_json::Value> = {
+                let mut m = HashMap::new();
+                m.insert("cache_config".to_string(), serde_json::to_value(&*self.cache_config.read()).unwrap_or_default());
+                m.insert("semantic_config".to_string(), serde_json::to_value(&*self.semantic_config.read()).unwrap_or_default());
+                m.insert("connection_config".to_string(), serde_json::to_value(&*self.connection_config.read()).unwrap_or_default());
+                m.insert("limits_config".to_string(), serde_json::to_value(&*self.limits_config.read()).unwrap_or_default());
+                m.insert("pricing_config".to_string(), serde_json::to_value(&*self.pricing_config.read()).unwrap_or_default());
+                m.insert("features_config".to_string(), serde_json::to_value(&*self.features_config.read()).unwrap_or_default());
+                m.insert("trace_logging_config".to_string(), serde_json::to_value(&*self.trace_logging_config.read()).unwrap_or_default());
+                m.insert("raw_capture_config".to_string(), serde_json::to_value(&*self.raw_capture_config.read()).unwrap_or_default());
+                m.insert("reasoning_config".to_string(), serde_json::to_value(&*self.reasoning_config.read()).unwrap_or_default());
+                m.insert("log_retention".to_string(), serde_json::to_value(&*self.log_retention.read()).unwrap_or_default());
+                m.insert("admin_key".to_string(), serde_json::Value::String(self.admin_key.read().clone()));
+                m
+            };
             Some((
                 pg,
                 pg_keys,
@@ -1059,7 +1067,7 @@ impl AppState {
                 upstream_snap,
                 notes,
                 last_test,
-                pg_system_configs,
+                system_configs,
             ))
         } else {
             None

@@ -728,6 +728,11 @@ pub async fn log_retention_loop(state: Arc<AppState>) {
         {
             let pg_ref = state.pg_store.read().clone();
             if let Some(ref pg) = pg_ref {
+                // Ensure future partitions exist (today + 3 days).
+                if let Err(e) = pg.ensure_future_trace_partitions(3).await {
+                    warn!(error = %e, "Failed to ensure future trace partitions");
+                }
+
                 // Priority: env var override > policy.pg_retention_days
                 let retention_days: u64 = std::env::var("CRADMIN_TRACE_RETENTION_DAYS")
                     .ok()

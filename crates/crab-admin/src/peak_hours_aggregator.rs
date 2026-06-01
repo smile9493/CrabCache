@@ -71,9 +71,8 @@ async fn aggregate_once(state: &AppState) -> anyhow::Result<()> {
     let watermark = pg.peak_hours_watermark().await.unwrap_or(None);
     let since_ms: i64 = watermark.map(|w| w - 7_200_000).unwrap_or(0).max(0);
 
-    // Read from JSONL (source of truth); PG trace_logs sync may lag or fail independently.
-    let trace_path = crate::trace_log::trace_log_path();
-    let entries = crate::trace_log::load_trace_entries_async(&trace_path, 0).await;
+    // Read from PG trace_logs (authoritative source).
+    let entries = crate::trace_log::load_trace_entries(&pg, 0).await;
     let agg_rows = aggregate_entries(&entries, since_ms);
 
     if agg_rows.is_empty() {

@@ -1,4 +1,4 @@
-use crate::trace_log::{load_trace_entries_async, trace_log_path};
+use crate::trace_log;
 use crate::types::*;
 use axum::{
     Json,
@@ -103,11 +103,10 @@ fn default_composition_hours() -> u32 {
 
 /// `GET /api/admin/composition/summary` — aggregate composition data from trace logs.
 pub async fn get_composition_summary(
-    State(_state): State<Arc<crate::state::AppState>>,
+    State(state): State<Arc<crate::state::AppState>>,
     Query(query): Query<CompositionSummaryQuery>,
 ) -> Json<CompositionSummaryResponse> {
-    let path = trace_log_path();
-    let entries = load_trace_entries_async(&path, query.hours).await;
+    let entries = state.load_trace_entries(query.hours).await;
 
     // Filter entries that have composition data, applying optional filters.
     let composed: Vec<(RequestComposition, f64, u64)> = entries
@@ -145,10 +144,9 @@ pub async fn get_composition_summary(
 
 /// `GET /api/admin/composition/trends` — hourly request volume for composed requests.
 pub async fn get_composition_trends(
-    State(_state): State<Arc<crate::state::AppState>>,
+    State(state): State<Arc<crate::state::AppState>>,
 ) -> Json<CompositionTrendsResponse> {
-    let path = trace_log_path();
-    let entries = load_trace_entries_async(&path, 24).await;
+    let entries = state.load_trace_entries(24).await;
 
     // Bucket by hour.
     use std::collections::BTreeMap;
@@ -188,7 +186,7 @@ pub async fn get_composition_trends(
 /// Auto-derive the composition debug log path from the trace log path.
 pub fn composition_debug_path() -> String {
     std::env::var("CRABCACHE_COMPOSITION_DEBUG_PATH").unwrap_or_else(|_| {
-        let trace_path = trace_log_path();
+        let trace_path = trace_log::trace_log_path();
         if trace_path.ends_with("trace.jsonl") {
             trace_path.replace("trace.jsonl", "trace-debug.jsonl")
         } else {

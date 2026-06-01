@@ -532,6 +532,12 @@ mod tests {
             upstream_outbound_bytes: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            status_code: None,
+            error_code: None,
+            limit_source: None,
+            cache_decision: None,
+            upstream_result: None,
+            phase_durations_ms: None,
         }
     }
 

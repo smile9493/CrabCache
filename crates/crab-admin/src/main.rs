@@ -14,7 +14,6 @@ mod overview;
 mod peak_hours_aggregator;
 mod persist;
 mod pg;
-mod pg_sync;
 mod raw_capture;
 mod routes;
 mod sse;
@@ -407,14 +406,6 @@ async fn main() -> anyhow::Result<()> {
         let bg = Arc::clone(&state);
         tokio::spawn(crate::log_management::log_retention_loop(bg));
         info!("Log retention enforcement task started");
-    }
-
-    // Spawn PG log sync task (runs every 10 seconds when enabled).
-    {
-        let bg = Arc::clone(&state);
-        if crate::pg_sync::spawn_pg_sync(bg) {
-            info!("PG log sync task started");
-        }
     }
 
     match state.gateway.list_keys().await {
