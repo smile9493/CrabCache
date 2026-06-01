@@ -6,7 +6,7 @@ pub fn model_prefix_to_profile(model: &str) -> &'static str {
     if lower.starts_with("deepseek-") {
         return "deepseek";
     }
-    if lower.starts_with("xiaomi/mimo-") || lower.starts_with("mimo-") {
+    if lower.starts_with("mimo") {
         return "mimo";
     }
     if lower.starts_with("gpt-")
@@ -199,6 +199,22 @@ mod tests {
         }];
         let ctx = PipelineRequestContext {
             model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "mimo");
+        assert_eq!(provider, UpstreamProvider::Mimo);
+    }
+
+    #[test]
+    fn model_prefix_mimopro() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "mimo".into(),
+            provider: UpstreamProvider::Mimo,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "mimopro",
             ..Default::default()
         };
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
