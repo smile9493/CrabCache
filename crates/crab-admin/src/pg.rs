@@ -686,9 +686,155 @@ impl PgStore {
             )
             .await?;
 
+        // Gateway control-plane snapshots (P1: disaster recovery).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS gateway_state_snapshots (
+                    snapshot_id     BIGSERIAL PRIMARY KEY,
+                    snapshot_type   TEXT NOT NULL DEFAULT 'full',
+                    keys_json       JSONB,
+                    runtime_json    JSONB,
+                    profiles_json   JSONB,
+                    key_states_json JSONB,
+                    domain_policies_json JSONB,
+                    version         BIGINT NOT NULL DEFAULT 0,
+                    source          TEXT NOT NULL DEFAULT 'admin_pull',
+                    snapshot_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_gw_snapshots_at
+                 ON gateway_state_snapshots (snapshot_at DESC)",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_gw_snapshots_type
+                 ON gateway_state_snapshots (snapshot_type, snapshot_at DESC)",
+                &[],
+            )
+            .await?;
+
+        // Codex OAuth sessions (P2: persist in-flight OAuth flows).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS codex_oauth_sessions (
+                    session_id      UUID PRIMARY KEY,
+                    session_type    TEXT NOT NULL,
+                    profile_id      TEXT NOT NULL,
+                    status          TEXT NOT NULL DEFAULT 'pending',
+                    credential_id   TEXT,
+                    email           TEXT,
+                    account_id      TEXT,
+                    session_json    JSONB NOT NULL,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    expires_at      TIMESTAMPTZ NOT NULL
+                )",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_codex_oauth_status
+                 ON codex_oauth_sessions (status, created_at DESC)",
+                &[],
+            )
+            .await?;
+
+        // Health probes (P2: availability SLA tracking).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS health_probes (
+                    probe_id        BIGSERIAL PRIMARY KEY,
+                    gateway_ready   BOOLEAN NOT NULL,
+                    redis_status    TEXT,
+                    l2_status       TEXT,
+                    uptime_secs     BIGINT,
+                    active_keys     INTEGER,
+                    probe_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_health_probes_at
+                 ON health_probes (probe_at DESC)",
+                &[],
+            )
+            .await?;
+
+        // Alert rules (P2: configurable alerting).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS alert_rules (
+                    rule_id         TEXT PRIMARY KEY,
+                    rule_type       TEXT NOT NULL,
+                    condition_json  JSONB NOT NULL,
+                    enabled         BOOLEAN NOT NULL DEFAULT true,
+                    notify_channels JSONB,
+                    last_triggered  TIMESTAMPTZ,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
+        // Webhook subscriptions (P3: persistent webhooks).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+                    webhook_id      TEXT PRIMARY KEY,
+                    url             TEXT NOT NULL,
+                    events          JSONB NOT NULL,
+                    secret_hash     TEXT,
+                    enabled         BOOLEAN NOT NULL DEFAULT true,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
+        // Dashboard preferences (P3: multi-device sync).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS dashboard_preferences (
+                    user_key        TEXT PRIMARY KEY,
+                    preferences     JSONB NOT NULL,
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
+        // Backup metadata (P3: backup tracking).
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS backup_metadata (
+                    backup_id       BIGSERIAL PRIMARY KEY,
+                    backup_type     TEXT NOT NULL,
+                    file_path       TEXT,
+                    file_size_bytes BIGINT,
+                    started_at      TIMESTAMPTZ NOT NULL,
+                    completed_at    TIMESTAMPTZ,
+                    status          TEXT NOT NULL DEFAULT 'running'
+                )",
+                &[],
+            )
+            .await?;
+
         // Migrate trace_logs to range-partitioned table by timestamp_ms (daily partitions).
         drop(client); // release connection before calling self methods
         self.migrate_trace_logs_to_partitioned().await?;
+
+        // Ensure enhanced columns exist on existing tables (idempotent ALTER ADD COLUMN).
+        self.ensure_enhanced_columns().await?;
 
         Ok(())
     }
@@ -2884,6 +3030,703 @@ impl PgStore {
             map.insert(key, value.0);
         }
         Ok(map)
+    }
+
+    // -----------------------------------------------------------------------
+    // gateway_state_snapshots
+    // -----------------------------------------------------------------------
+
+    /// Insert or update a gateway state snapshot.
+    pub async fn upsert_gateway_snapshot(
+        &self,
+        snapshot_type: &str,
+        keys_json: Option<&serde_json::Value>,
+        runtime_json: Option<&serde_json::Value>,
+        profiles_json: Option<&serde_json::Value>,
+        key_states_json: Option<&serde_json::Value>,
+        domain_policies_json: Option<&serde_json::Value>,
+        version: i64,
+        source: &str,
+    ) -> Result<i64> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO gateway_state_snapshots
+                    (snapshot_type, keys_json, runtime_json, profiles_json,
+                     key_states_json, domain_policies_json, version, source)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 RETURNING snapshot_id",
+                &[
+                    &snapshot_type,
+                    &keys_json.map(Json),
+                    &runtime_json.map(Json),
+                    &profiles_json.map(Json),
+                    &key_states_json.map(Json),
+                    &domain_policies_json.map(Json),
+                    &version,
+                    &source,
+                ],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    /// Load the most recent gateway state snapshot.
+    pub async fn load_latest_gateway_snapshot(
+        &self,
+    ) -> Result<Option<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_opt(
+                "SELECT keys_json, runtime_json, profiles_json,
+                        key_states_json, domain_policies_json, version, source, snapshot_at
+                 FROM gateway_state_snapshots
+                 ORDER BY snapshot_at DESC LIMIT 1",
+                &[],
+            )
+            .await?;
+        Ok(row.map(|r| {
+            let keys: Option<Json<serde_json::Value>> = r.get(0);
+            let runtime: Option<Json<serde_json::Value>> = r.get(1);
+            let profiles: Option<Json<serde_json::Value>> = r.get(2);
+            let key_states: Option<Json<serde_json::Value>> = r.get(3);
+            let domain_policies: Option<Json<serde_json::Value>> = r.get(4);
+            let version: i64 = r.get(5);
+            let source: String = r.get(6);
+            let snapshot_at: chrono::DateTime<chrono::Utc> = r.get(7);
+            serde_json::json!({
+                "keys": keys.map(|j| j.0),
+                "runtime": runtime.map(|j| j.0),
+                "profiles": profiles.map(|j| j.0),
+                "key_states": key_states.map(|j| j.0),
+                "domain_policies": domain_policies.map(|j| j.0),
+                "version": version,
+                "source": source,
+                "snapshot_at": snapshot_at.to_rfc3339(),
+            })
+        }))
+    }
+
+    /// Prune gateway snapshots older than the given timestamp.
+    pub async fn prune_gateway_snapshots(&self, cutoff_ms: u64) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM gateway_state_snapshots
+                 WHERE snapshot_at < to_timestamp($1::bigint / 1000.0)",
+                &[&to_pg_bigint(cutoff_ms)],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // codex_oauth_sessions
+    // -----------------------------------------------------------------------
+
+    /// Upsert a Codex OAuth session.
+    pub async fn upsert_codex_oauth_session(
+        &self,
+        session_id: &uuid::Uuid,
+        session_type: &str,
+        profile_id: &str,
+        status: &str,
+        credential_id: Option<&str>,
+        email: Option<&str>,
+        account_id: Option<&str>,
+        session_json: &serde_json::Value,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO codex_oauth_sessions
+                    (session_id, session_type, profile_id, status,
+                     credential_id, email, account_id, session_json, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (session_id) DO UPDATE SET
+                     status = EXCLUDED.status,
+                     credential_id = EXCLUDED.credential_id,
+                     email = EXCLUDED.email,
+                     account_id = EXCLUDED.account_id,
+                     session_json = EXCLUDED.session_json",
+                &[
+                    session_id,
+                    &session_type,
+                    &profile_id,
+                    &status,
+                    &credential_id,
+                    &email,
+                    &account_id,
+                    &Json(session_json),
+                    &expires_at,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load pending (non-expired) Codex OAuth sessions for recovery.
+    pub async fn load_pending_codex_oauth_sessions(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, String, String, String, Json<serde_json::Value>)>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT session_id, session_type, profile_id, status, session_json
+                 FROM codex_oauth_sessions
+                 WHERE status = 'pending' AND expires_at > now()
+                 ORDER BY created_at DESC",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let id: uuid::Uuid = r.get(0);
+                let st: String = r.get(1);
+                let pid: String = r.get(2);
+                let status: String = r.get(3);
+                let json: Json<serde_json::Value> = r.get(4);
+                (id, st, pid, status, json)
+            })
+            .collect())
+    }
+
+    /// Delete expired Codex OAuth sessions.
+    pub async fn prune_codex_oauth_sessions(&self) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM codex_oauth_sessions WHERE expires_at < now()",
+                &[],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // health_probes
+    // -----------------------------------------------------------------------
+
+    /// Insert a health probe record.
+    pub async fn insert_health_probe(
+        &self,
+        gateway_ready: bool,
+        redis_status: Option<&str>,
+        l2_status: Option<&str>,
+        uptime_secs: Option<i64>,
+        active_keys: Option<i32>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO health_probes
+                    (gateway_ready, redis_status, l2_status, uptime_secs, active_keys)
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[&gateway_ready, &redis_status, &l2_status, &uptime_secs, &active_keys],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Query health probes within a time window.
+    pub async fn load_health_probes(
+        &self,
+        since_ms: u64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT gateway_ready, redis_status, l2_status, uptime_secs,
+                        active_keys, probe_at
+                 FROM health_probes
+                 WHERE probe_at >= to_timestamp($1::bigint / 1000.0)
+                 ORDER BY probe_at DESC",
+                &[&to_pg_bigint(since_ms)],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let ready: bool = r.get(0);
+                let redis: Option<String> = r.get(1);
+                let l2: Option<String> = r.get(2);
+                let uptime: Option<i64> = r.get(3);
+                let keys: Option<i32> = r.get(4);
+                let at: chrono::DateTime<chrono::Utc> = r.get(5);
+                serde_json::json!({
+                    "gateway_ready": ready,
+                    "redis_status": redis,
+                    "l2_status": l2,
+                    "uptime_secs": uptime,
+                    "active_keys": keys,
+                    "probe_at": at.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Prune health probes older than the given timestamp.
+    pub async fn prune_health_probes(&self, cutoff_ms: u64) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM health_probes
+                 WHERE probe_at < to_timestamp($1::bigint / 1000.0)",
+                &[&to_pg_bigint(cutoff_ms)],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // alert_rules
+    // -----------------------------------------------------------------------
+
+    /// Upsert an alert rule.
+    pub async fn upsert_alert_rule(
+        &self,
+        rule_id: &str,
+        rule_type: &str,
+        condition_json: &serde_json::Value,
+        enabled: bool,
+        notify_channels: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO alert_rules (rule_id, rule_type, condition_json, enabled, notify_channels)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (rule_id) DO UPDATE SET
+                     rule_type = EXCLUDED.rule_type,
+                     condition_json = EXCLUDED.condition_json,
+                     enabled = EXCLUDED.enabled,
+                     notify_channels = EXCLUDED.notify_channels,
+                     updated_at = now()",
+                &[&rule_id, &rule_type, &Json(condition_json), &enabled, &notify_channels.map(Json)],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load all alert rules.
+    pub async fn load_alert_rules(&self) -> Result<Vec<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT rule_id, rule_type, condition_json, enabled,
+                        notify_channels, last_triggered, created_at, updated_at
+                 FROM alert_rules ORDER BY created_at DESC",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let id: String = r.get(0);
+                let rt: String = r.get(1);
+                let cond: Json<serde_json::Value> = r.get(2);
+                let enabled: bool = r.get(3);
+                let channels: Option<Json<serde_json::Value>> = r.get(4);
+                let triggered: Option<chrono::DateTime<chrono::Utc>> = r.get(5);
+                let created: chrono::DateTime<chrono::Utc> = r.get(6);
+                let updated: chrono::DateTime<chrono::Utc> = r.get(7);
+                serde_json::json!({
+                    "rule_id": id,
+                    "rule_type": rt,
+                    "condition": cond.0,
+                    "enabled": enabled,
+                    "notify_channels": channels.map(|c| c.0),
+                    "last_triggered": triggered.map(|t| t.to_rfc3339()),
+                    "created_at": created.to_rfc3339(),
+                    "updated_at": updated.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Delete an alert rule.
+    pub async fn delete_alert_rule(&self, rule_id: &str) -> Result<bool> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute("DELETE FROM alert_rules WHERE rule_id = $1", &[&rule_id])
+            .await?;
+        Ok(count > 0)
+    }
+
+    /// Update last_triggered timestamp for an alert rule.
+    pub async fn touch_alert_rule(&self, rule_id: &str) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "UPDATE alert_rules SET last_triggered = now() WHERE rule_id = $1",
+                &[&rule_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // webhook_subscriptions
+    // -----------------------------------------------------------------------
+
+    /// Upsert a webhook subscription.
+    pub async fn upsert_webhook(
+        &self,
+        webhook_id: &str,
+        url: &str,
+        events: &serde_json::Value,
+        secret_hash: Option<&str>,
+        enabled: bool,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO webhook_subscriptions (webhook_id, url, events, secret_hash, enabled)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (webhook_id) DO UPDATE SET
+                     url = EXCLUDED.url,
+                     events = EXCLUDED.events,
+                     secret_hash = EXCLUDED.secret_hash,
+                     enabled = EXCLUDED.enabled,
+                     updated_at = now()",
+                &[&webhook_id, &url, &Json(events), &secret_hash, &enabled],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load all webhook subscriptions.
+    pub async fn load_webhooks(&self) -> Result<Vec<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT webhook_id, url, events, secret_hash, enabled, created_at, updated_at
+                 FROM webhook_subscriptions ORDER BY created_at DESC",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let id: String = r.get(0);
+                let url: String = r.get(1);
+                let events: Json<serde_json::Value> = r.get(2);
+                let hash: Option<String> = r.get(3);
+                let enabled: bool = r.get(4);
+                let created: chrono::DateTime<chrono::Utc> = r.get(5);
+                let updated: chrono::DateTime<chrono::Utc> = r.get(6);
+                serde_json::json!({
+                    "webhook_id": id,
+                    "url": url,
+                    "events": events.0,
+                    "secret_hash": hash,
+                    "enabled": enabled,
+                    "created_at": created.to_rfc3339(),
+                    "updated_at": updated.to_rfc3339(),
+                })
+            })
+            .collect())
+    }
+
+    /// Delete a webhook subscription.
+    pub async fn delete_webhook(&self, webhook_id: &str) -> Result<bool> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "DELETE FROM webhook_subscriptions WHERE webhook_id = $1",
+                &[&webhook_id],
+            )
+            .await?;
+        Ok(count > 0)
+    }
+
+    // -----------------------------------------------------------------------
+    // dashboard_preferences
+    // -----------------------------------------------------------------------
+
+    /// Upsert dashboard preferences for a user.
+    pub async fn upsert_dashboard_preferences(
+        &self,
+        user_key: &str,
+        preferences: &serde_json::Value,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO dashboard_preferences (user_key, preferences)
+                 VALUES ($1, $2)
+                 ON CONFLICT (user_key) DO UPDATE SET
+                     preferences = EXCLUDED.preferences,
+                     updated_at = now()",
+                &[&user_key, &Json(preferences)],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load dashboard preferences for a user.
+    pub async fn load_dashboard_preferences(
+        &self,
+        user_key: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_opt(
+                "SELECT preferences FROM dashboard_preferences WHERE user_key = $1",
+                &[&user_key],
+            )
+            .await?;
+        Ok(row.map(|r| {
+            let Json(v): Json<serde_json::Value> = r.get(0);
+            v
+        }))
+    }
+
+    // -----------------------------------------------------------------------
+    // backup_metadata
+    // -----------------------------------------------------------------------
+
+    /// Insert a backup metadata record.
+    pub async fn insert_backup(
+        &self,
+        backup_type: &str,
+        file_path: Option<&str>,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "INSERT INTO backup_metadata (backup_type, file_path, started_at)
+                 VALUES ($1, $2, $3)
+                 RETURNING backup_id",
+                &[&backup_type, &file_path, &started_at],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    /// Mark a backup as completed.
+    pub async fn complete_backup(
+        &self,
+        backup_id: i64,
+        file_size_bytes: Option<i64>,
+        completed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "UPDATE backup_metadata
+                 SET status = 'completed', file_size_bytes = $2, completed_at = $3
+                 WHERE backup_id = $1",
+                &[&backup_id, &file_size_bytes, &completed_at],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load recent backup records.
+    pub async fn load_backups(&self, limit: i64) -> Result<Vec<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT backup_id, backup_type, file_path, file_size_bytes,
+                        started_at, completed_at, status
+                 FROM backup_metadata
+                 ORDER BY started_at DESC LIMIT $1",
+                &[&limit],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let id: i64 = r.get(0);
+                let bt: String = r.get(1);
+                let path: Option<String> = r.get(2);
+                let size: Option<i64> = r.get(3);
+                let started: chrono::DateTime<chrono::Utc> = r.get(4);
+                let completed: Option<chrono::DateTime<chrono::Utc>> = r.get(5);
+                let status: String = r.get(6);
+                serde_json::json!({
+                    "backup_id": id,
+                    "backup_type": bt,
+                    "file_path": path,
+                    "file_size_bytes": size,
+                    "started_at": started.to_rfc3339(),
+                    "completed_at": completed.map(|c| c.to_rfc3339()),
+                    "status": status,
+                })
+            })
+            .collect())
+    }
+
+    // -----------------------------------------------------------------------
+    // Table enhancements (ALTER TABLE ADD COLUMN IF NOT EXISTS)
+    // -----------------------------------------------------------------------
+
+    /// Ensure enhanced columns exist on existing tables.
+    /// Called once at startup; all statements are idempotent.
+    pub async fn ensure_enhanced_columns(&self) -> Result<()> {
+        let client = self.pool.get().await?;
+
+        // audit_log: old_value, new_value, actor_ip
+        client
+            .execute(
+                "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS old_value JSONB",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS new_value JSONB",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_ip TEXT",
+                &[],
+            )
+            .await?;
+
+        // keys_meta: last_used_at, last_used_ip
+        client
+            .execute(
+                "ALTER TABLE keys_meta ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE keys_meta ADD COLUMN IF NOT EXISTS last_used_ip TEXT",
+                &[],
+            )
+            .await?;
+
+        // upstream_profile_secrets: last_used_at, error_count_24h
+        client
+            .execute(
+                "ALTER TABLE upstream_profile_secrets ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE upstream_profile_secrets ADD COLUMN IF NOT EXISTS error_count_24h INTEGER DEFAULT 0",
+                &[],
+            )
+            .await?;
+
+        // domain_usage: input_cost_usd, output_cost_usd
+        client
+            .execute(
+                "ALTER TABLE domain_usage ADD COLUMN IF NOT EXISTS input_cost_usd DOUBLE PRECISION DEFAULT 0",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE domain_usage ADD COLUMN IF NOT EXISTS output_cost_usd DOUBLE PRECISION DEFAULT 0",
+                &[],
+            )
+            .await?;
+
+        // trace_logs: admin_noted, admin_note, client_ip (partitioned table — propagates to all partitions)
+        client
+            .execute(
+                "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS admin_noted BOOLEAN NOT NULL DEFAULT false",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS admin_note TEXT",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_ip TEXT",
+                &[],
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Enhanced audit_log (with old_value/new_value/actor_ip)
+    // -----------------------------------------------------------------------
+
+    /// Insert an audit log entry with optional before/after diff.
+    pub async fn insert_audit_log_enhanced(
+        &self,
+        action: &str,
+        actor: &str,
+        target: Option<&str>,
+        detail: Option<&serde_json::Value>,
+        old_value: Option<&serde_json::Value>,
+        new_value: Option<&serde_json::Value>,
+        actor_ip: Option<&str>,
+    ) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO audit_log (action, actor, target, detail, old_value, new_value, actor_ip)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[
+                    &action,
+                    &actor,
+                    &target,
+                    &detail.map(Json),
+                    &old_value.map(Json),
+                    &new_value.map(Json),
+                    &actor_ip,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Update keys_meta last_used_at from trace_logs.
+    pub async fn update_keys_last_used(&self) -> Result<u64> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "UPDATE keys_meta km
+                 SET last_used_at = sub.last_ts
+                 FROM (
+                     SELECT client_key_id, to_timestamp(MAX(timestamp_ms) / 1000.0) AS last_ts
+                     FROM trace_logs
+                     WHERE client_key_id IS NOT NULL AND client_key_id != ''
+                     GROUP BY client_key_id
+                 ) sub
+                 WHERE km.id = sub.client_key_id
+                   AND (km.last_used_at IS NULL OR km.last_used_at < sub.last_ts)",
+                &[],
+            )
+            .await?;
+        Ok(count)
+    }
+
+    /// Update trace_logs admin note.
+    pub async fn update_trace_note(
+        &self,
+        request_hash: &str,
+        timestamp_ms: i64,
+        note: Option<&str>,
+    ) -> Result<bool> {
+        let client = self.pool.get().await?;
+        let count = client
+            .execute(
+                "UPDATE trace_logs
+                 SET admin_noted = ($3 IS NOT NULL), admin_note = $3
+                 WHERE request_hash = $1 AND timestamp_ms = $2",
+                &[&request_hash, &timestamp_ms, &note],
+            )
+            .await?;
+        Ok(count > 0)
     }
 }
 

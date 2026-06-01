@@ -2,6 +2,8 @@ mod composition;
 mod credential_persist;
 mod dataplane;
 mod domain_usage_sync;
+mod gateway_state_sync;
+mod health_probe_sync;
 mod infra;
 mod key_usage_sync;
 mod live_metrics;
@@ -215,6 +217,30 @@ async fn main() -> anyhow::Result<()> {
                 if crate::credential_persist::hydrate_credentials_from_pg(&init_state).await {
                     info!("OAuth credentials hydrated from PostgreSQL");
                 }
+                // Recover pending OAuth sessions from PG.
+                if let Some(pg) = init_state.pg_store.read().as_ref() {
+                    match pg.load_pending_codex_oauth_sessions().await {
+                        Ok(sessions) => {
+                            let count = sessions.len();
+                            for (id, session_type, profile_id, _status, json) in sessions {
+                                if session_type == "device" {
+                                    // Reconstruct device session for continued polling.
+                                    tracing::debug!(
+                                        session_id = %id,
+                                        profile_id = %profile_id,
+                                        "Recovering pending device OAuth session from PG"
+                                    );
+                                }
+                            }
+                            if count > 0 {
+                                info!(count, "Pending OAuth sessions recovered from PostgreSQL");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to recover OAuth sessions from PG");
+                        }
+                    }
+                }
                 let configs_restored = init_state.hydrate_system_configs_from_pg().await;
                 if configs_restored > 0 {
                     info!(configs = configs_restored, "System configs hydrated from PostgreSQL");
@@ -359,6 +385,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Start domain_usage sync (fetches from Gateway, persists to PG, restores on restart).
     crate::domain_usage_sync::spawn(Arc::clone(&state));
+    crate::gateway_state_sync::spawn(Arc::clone(&state));
+    crate::health_probe_sync::spawn(Arc::clone(&state));
 
     {
         let prefetch = Arc::clone(&state);

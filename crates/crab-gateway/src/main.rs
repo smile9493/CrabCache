@@ -15,7 +15,7 @@ use crab_route::LbRouter;
 use crab_semantic::{EmbedderPool, SemanticCache, SemanticGateConfig, VectorStore};
 use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
-    spawn_state_refresh_task,
+    spawn_key_state_persist_task, spawn_state_refresh_task,
 };
 use parking_lot::RwLock;
 use pingora_core::server::Server;
@@ -88,11 +88,12 @@ impl PgTraceStore {
                      prefill_ms, pre_header_ms,
                      affinity_key, affinity_kind, backend_name,
                      session_fingerprint, is_coalesced, client_key_id,
-                     request_passthrough, request_passthrough_prefix_len)
+                     request_passthrough, request_passthrough_prefix_len,
+                     client_ip)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43)
+                         $39,$40,$41,$42,$43,$44)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await
@@ -151,6 +152,7 @@ impl PgTraceStore {
                     &e.client_key_id,
                     &e.request_passthrough,
                     &e.request_passthrough_prefix_len.map(|v| v as i32),
+                    &e.client_ip,
                 ],
             )
             .await
@@ -173,6 +175,94 @@ fn redact_pg_url(url: &str) -> String {
         }
     }
     url.to_string()
+}
+
+/// Try to recover control-plane state from PG `gateway_state_snapshots`.
+/// Returns `Ok(true)` if recovery succeeded, `Ok(false)` if no snapshot was found.
+async fn recover_from_pg_snapshot(
+    pg_url: &str,
+    runtime: &Arc<RuntimeConfig>,
+    store: &Arc<RedisStateStore>,
+    key_cooldown_secs: u64,
+) -> anyhow::Result<bool> {
+    use anyhow::Context;
+
+    let (client, connection) = tokio_postgres::connect(pg_url, tokio_postgres::NoTls)
+        .await
+        .context("pg recovery connect")?;
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            tracing::warn!("PG recovery connection error: {}", e);
+        }
+    });
+
+    let row = client
+        .query_opt(
+            "SELECT keys_json, runtime_json, profiles_json,
+                    key_states_json, domain_policies_json
+             FROM gateway_state_snapshots
+             ORDER BY snapshot_at DESC LIMIT 1",
+            &[],
+        )
+        .await
+        .context("query latest snapshot")?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    // Build a ControlPlaneSnapshot from the PG columns.
+    let keys_json: Option<tokio_postgres::types::Json<serde_json::Value>> = row.get(0);
+    let runtime_json: Option<tokio_postgres::types::Json<serde_json::Value>> = row.get(1);
+    let profiles_json: Option<tokio_postgres::types::Json<serde_json::Value>> = row.get(2);
+    let key_states_json: Option<tokio_postgres::types::Json<serde_json::Value>> = row.get(3);
+    let domain_policies_json: Option<tokio_postgres::types::Json<serde_json::Value>> = row.get(4);
+
+    let mut snap = crab_state::ControlPlaneSnapshot::default();
+
+    if let Some(keys_json) = keys_json {
+        if let Ok(keys) = serde_json::from_value::<std::collections::HashMap<String, crab_state::StoredKeySnapshot>>(keys_json.0.clone()) {
+            snap.keys = keys;
+        }
+    }
+    if let Some(runtime_json) = runtime_json {
+        if let Ok(rt) = serde_json::from_value::<Option<crab_state::RuntimeSnapshot>>(runtime_json.0.clone()) {
+            snap.runtime = rt;
+        }
+    }
+    if let Some(profiles_json) = profiles_json {
+        if let Ok(profs) = serde_json::from_value::<Option<Vec<crab_state::UpstreamProfileSnapshot>>>(profiles_json.0.clone()) {
+            snap.upstream_profiles = profs;
+        }
+    }
+    if let Some(key_states_json) = key_states_json {
+        if let Ok(states) = serde_json::from_value::<std::collections::HashMap<String, crab_proxy::UpstreamKeyStateSnapshot>>(key_states_json.0.clone()) {
+            snap.key_states = states;
+        }
+    }
+    if let Some(domain_policies_json) = domain_policies_json {
+        if let Ok(policies) = serde_json::from_value::<indexmap::IndexMap<String, crab_proxy::DomainPolicy>>(domain_policies_json.0.clone()) {
+            snap.domain_policies = policies;
+        }
+    }
+
+    // Apply the snapshot to runtime.
+    crab_state::apply_snapshot_to_runtime(runtime, &snap, key_cooldown_secs)
+        .context("apply PG snapshot to runtime")?;
+
+    // Also save to Redis so it's in sync.
+    store.save_all(&snap).await.context("save PG snapshot to Redis")?;
+
+    let profile_ids: Vec<String> = runtime.upstream_profiles.read().keys().cloned().collect();
+    info!(
+        keys = snap.keys.len(),
+        profile_count = profile_ids.len(),
+        profiles = ?profile_ids,
+        "Recovered control-plane state from PG snapshot"
+    );
+
+    Ok(true)
 }
 
 struct MetricsServer {
@@ -778,36 +868,59 @@ fn main() -> Result<()> {
         let store = Arc::new(store);
         let empty = rt.block_on(store.is_empty())?;
         if empty {
-            if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
-                for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                    if runtime.keys.contains_key(token) {
-                        continue;
+            // Try to recover from PG snapshot before falling back to bootstrap keys.
+            let mut recovered_from_pg = false;
+            if let Some(ref trace_cfg) = config.trace_logging {
+                if let Some(ref pg_url) = trace_cfg.pg_url {
+                    match rt.block_on(async {
+                        recover_from_pg_snapshot(pg_url, &runtime, &store, config.upstream.key_cooldown_secs).await
+                    }) {
+                        Ok(true) => {
+                            info!("Recovered control-plane state from PG snapshot");
+                            recovered_from_pg = true;
+                        }
+                        Ok(false) => {
+                            info!("No PG snapshot available, falling back to bootstrap");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "PG snapshot recovery failed, falling back to bootstrap");
+                        }
                     }
-                    let id = uuid::Uuid::new_v4().to_string();
-                    runtime.keys.insert(
-                        token.to_string(),
-                        crab_proxy::StoredKey {
-                            id,
-                            name: "bootstrap".to_string(),
-                            key_hash: token.to_string(),
-                            enabled: true,
-                            domain: None,
-                            project_id: None,
-                            pipeline: None,
-                            upstream_profile: None,
-                            max_concurrent: 0,
-                            rpm_limit: 0,
-                        },
-                    );
-                    info!(
-                        key_preview = %crab_gateway::config::mask_api_key(token),
-                        "Bootstrap client API key registered"
-                    );
                 }
             }
-            let snap = build_snapshot_from_runtime(&runtime);
-            rt.block_on(store.save_all(&snap))?;
-            info!("Initialized empty Redis control plane state");
+
+            if !recovered_from_pg {
+                if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
+                    for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        if runtime.keys.contains_key(token) {
+                            continue;
+                        }
+                        let id = uuid::Uuid::new_v4().to_string();
+                        runtime.keys.insert(
+                            token.to_string(),
+                            crab_proxy::StoredKey {
+                                id,
+                                name: "bootstrap".to_string(),
+                                key_hash: token.to_string(),
+                                enabled: true,
+                                domain: None,
+                                project_id: None,
+                                pipeline: None,
+                                upstream_profile: None,
+                                max_concurrent: 0,
+                                rpm_limit: 0,
+                            },
+                        );
+                        info!(
+                            key_preview = %crab_gateway::config::mask_api_key(token),
+                            "Bootstrap client API key registered"
+                        );
+                    }
+                }
+                let snap = build_snapshot_from_runtime(&runtime);
+                rt.block_on(store.save_all(&snap))?;
+                info!("Initialized empty Redis control plane state");
+            }
         } else {
             let (version, snap) = rt.block_on(store.load_all())?;
             apply_snapshot_to_runtime(&runtime, &snap, config.upstream.key_cooldown_secs)?;
@@ -828,6 +941,7 @@ fn main() -> Result<()> {
             config.upstream.key_cooldown_secs,
             config.state.refresh_interval_secs,
         );
+        spawn_key_state_persist_task(store.clone(), runtime.clone());
         Some(store)
     } else {
         if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
@@ -859,6 +973,50 @@ fn main() -> Result<()> {
         }
         None
     };
+
+    // PG control-plane snapshot writer (P1: disaster recovery).
+    // Reuses the same pg_url as the trace writer.
+    if let Some(ref trace_cfg) = config.trace_logging {
+        if let Some(ref pg_url_str) = trace_cfg.pg_url {
+            let pg_url_owned = pg_url_str.clone();
+            let rt_ref = runtime.clone();
+            std::thread::Builder::new()
+                .name("crab-pg-control-writer".into())
+                .spawn(move || {
+                    let pg_url = pg_url_owned;
+                    let rt = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            tracing::warn!("Failed to create PG control writer runtime: {}", e);
+                            return;
+                        }
+                    };
+                    rt.block_on(async {
+                        let store = match crab_gateway::pg_control_store::PgControlStore::connect(&pg_url).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Failed to connect PG control store: {}", e);
+                                return;
+                            }
+                        };
+                        let interval_secs = crab_gateway::pg_control_store::snapshot_interval_secs();
+                        info!(interval_secs, "PG control-plane snapshot writer started");
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                            let snap = crab_gateway::pg_control_store::build_snapshot(&rt_ref);
+                            let ver = 0i64;
+                            if let Err(e) = store.upsert_snapshot(&snap, ver).await {
+                                tracing::warn!("PG control snapshot write failed: {}", e);
+                            }
+                        }
+                    });
+                })
+                .ok();
+        }
+    }
 
     // Health checking is now handled by Pingora's LoadBalancer<Consistent> with
     // TcpHealthCheck. The LoadBalancer runs as a BackgroundService (registered below).

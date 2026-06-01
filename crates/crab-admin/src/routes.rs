@@ -275,6 +275,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/admin/logs", get(get_logs))
         .route("/api/admin/logs/:id", get(get_log_detail))
+        .route("/api/admin/logs/:id/note", patch(patch_log_note))
         // ── Log Management ──
         .route("/api/admin/logs/usage", get(get_log_disk_usage))
         .route("/api/admin/logs/clear", post(post_clear_logs))
@@ -347,6 +348,17 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/infra/speed-test/:job_id",
             get(get_infra_speed_test_job),
         )
+        // ── Alert Rules ──
+        .route(
+            "/api/admin/alerts/rules",
+            get(list_alert_rules).post(create_alert_rule),
+        )
+        .route(
+            "/api/admin/alerts/rules/:id",
+            get(get_alert_rule).put(update_alert_rule).delete(delete_alert_rule),
+        )
+        // ── Health History ──
+        .route("/api/admin/health/history", get(get_health_history))
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth))
         .with_state(state);
 
@@ -4107,7 +4119,33 @@ async fn audit_log(
     let pg = state.pg_store.read().clone();
     if let Some(ref pg) = pg {
         let _ = pg
-            .insert_audit_log(action, "admin", target, detail.as_ref(), None)
+            .insert_audit_log_enhanced(action, "admin", target, detail.as_ref(), None, None, None)
+            .await;
+    }
+}
+
+/// Enhanced audit log with before/after diff and client IP.
+async fn audit_log_enhanced(
+    state: &AppState,
+    action: &str,
+    target: Option<&str>,
+    detail: Option<serde_json::Value>,
+    old_value: Option<serde_json::Value>,
+    new_value: Option<serde_json::Value>,
+    actor_ip: Option<&str>,
+) {
+    let pg = state.pg_store.read().clone();
+    if let Some(ref pg) = pg {
+        let _ = pg
+            .insert_audit_log_enhanced(
+                action,
+                "admin",
+                target,
+                detail.as_ref(),
+                old_value.as_ref(),
+                new_value.as_ref(),
+                actor_ip,
+            )
             .await;
     }
 }
@@ -4252,6 +4290,220 @@ async fn get_audit_log(
         .collect();
 
     Ok(Json(serde_json::json!({ "entries": entries })))
+}
+
+// ---------------------------------------------------------------------------
+// Alert Rules CRUD
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct PatchLogNoteRequest {
+    note: Option<String>,
+}
+
+async fn patch_log_note(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PatchLogNoteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    // Parse id as "request_hash:timestamp_ms" format.
+    let parts: Vec<&str> = id.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid log ID format (expected hash:timestamp)".to_string()));
+    }
+    let request_hash = parts[0];
+    let timestamp_ms: i64 = parts[1].parse().map_err(|_| {
+        (StatusCode::BAD_REQUEST, "Invalid timestamp_ms".to_string())
+    })?;
+
+    let updated = pg
+        .update_trace_note(request_hash, timestamp_ms, req.note.as_deref())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if updated {
+        Ok(Json(serde_json::json!({ "status": "updated" })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Trace log not found".to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alert Rules CRUD
+// ---------------------------------------------------------------------------
+
+async fn list_alert_rules(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let rules = pg
+        .load_alert_rules()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "rules": rules })))
+}
+
+async fn get_alert_rule(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(rule_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let rules = pg
+        .load_alert_rules()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let rule = rules.into_iter().find(|r| {
+        r.get("rule_id").and_then(|v| v.as_str()) == Some(&rule_id)
+    });
+
+    match rule {
+        Some(r) => Ok(Json(r)),
+        None => Err((StatusCode::NOT_FOUND, "Alert rule not found".to_string())),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CreateAlertRuleRequest {
+    rule_id: String,
+    rule_type: String,
+    condition: serde_json::Value,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    notify_channels: Option<serde_json::Value>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn create_alert_rule(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateAlertRuleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    pg.upsert_alert_rule(
+        &req.rule_id,
+        &req.rule_type,
+        &req.condition,
+        req.enabled,
+        req.notify_channels.as_ref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "status": "created", "rule_id": req.rule_id })))
+}
+
+async fn update_alert_rule(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(rule_id): axum::extract::Path<String>,
+    Json(req): Json<CreateAlertRuleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    pg.upsert_alert_rule(
+        &rule_id,
+        &req.rule_type,
+        &req.condition,
+        req.enabled,
+        req.notify_channels.as_ref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "status": "updated", "rule_id": rule_id })))
+}
+
+async fn delete_alert_rule(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(rule_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let deleted = pg
+        .delete_alert_rule(&rule_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if deleted {
+        Ok(Json(serde_json::json!({ "status": "deleted" })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Alert rule not found".to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Health History API
+// ---------------------------------------------------------------------------
+
+async fn get_health_history(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let pg = state.pg_store.read().clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "PG not available".to_string(),
+    ))?;
+
+    let hours: u64 = query
+        .get("hours")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24);
+
+    let since_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+        - hours * 3600 * 1000;
+
+    let probes = pg
+        .load_health_probes(since_ms)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Calculate availability percentage.
+    let total = probes.len();
+    let up_count = probes.iter().filter(|p| {
+        p.get("gateway_ready").and_then(|v| v.as_bool()).unwrap_or(false)
+    }).count();
+    let availability = if total > 0 {
+        (up_count as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(Json(serde_json::json!({
+        "probes": probes,
+        "total": total,
+        "up_count": up_count,
+        "availability_pct": availability,
+        "hours": hours,
+    })))
 }
 
 #[cfg(test)]

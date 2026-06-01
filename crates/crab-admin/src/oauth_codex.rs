@@ -227,6 +227,7 @@ pub async fn rebuild_codex_profile_pool_from_credentials(
                 secret: rec.access_token.clone(),
                 enabled: !rec.disabled,
                 account_id,
+                priority: 0,
             }
         })
         .collect();
@@ -314,6 +315,7 @@ fn pool_secret_from_record(rec: &TokenRecord) -> UpstreamPoolSecret {
         secret: rec.access_token.clone(),
         enabled: !rec.disabled,
         account_id: account_id_for_pool_secret(&rec.access_token, &account_id),
+        priority: 0,
     }
 }
 
@@ -1043,6 +1045,22 @@ pub async fn start_pkce_login(
         },
     );
 
+    // Persist to PG for recovery after restart.
+    let pg_ref = state.pg_store.read().clone();
+    if let Some(pg) = pg_ref {
+        let session_json = serde_json::json!({
+            "mode": mode,
+            "profile_id": profile_id,
+        });
+        let expires_at = Utc::now() + chrono::Duration::minutes(5);
+        if let Err(e) = pg.upsert_codex_oauth_session(
+            &session_id, "pkce", &profile_id, "pending",
+            None, None, None, &session_json, expires_at,
+        ).await {
+            tracing::warn!(error = %e, "Failed to persist PKCE OAuth session to PG");
+        }
+    }
+
     Ok(Json(CodexPkceStartResponse {
         session_id: session_id.to_string(),
         auth_url,
@@ -1290,6 +1308,24 @@ pub async fn start_device_login(
     };
 
     state.codex_device_sessions.insert(session_id, session);
+
+    // Persist to PG for recovery after restart.
+    let pg_ref = state.pg_store.read().clone();
+    if let Some(pg) = pg_ref {
+        let session_json = serde_json::json!({
+            "user_code": start.user_code,
+            "verify_url": start.verify_url,
+            "poll_interval_secs": start.poll_interval_secs,
+            "device_auth_id": start.device_auth_id,
+        });
+        let expires_at = Utc::now() + chrono::Duration::minutes(15);
+        if let Err(e) = pg.upsert_codex_oauth_session(
+            &session_id, "device", &profile_id, "pending",
+            None, None, None, &session_json, expires_at,
+        ).await {
+            tracing::warn!(error = %e, "Failed to persist device OAuth session to PG");
+        }
+    }
 
     Ok(Json(CodexDeviceStartResponse {
         session_id: session_id.to_string(),

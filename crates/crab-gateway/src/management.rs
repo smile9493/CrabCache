@@ -272,6 +272,7 @@ pub fn router(state: ManagementState) -> Router {
             delete(clear_model_lockout),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
+        .route("/v1/state/snapshot", get(get_state_snapshot))
         .merge(crate::webhook_admin::build_webhook_routes())
         // Debug-only: fault injection control (returns 403 in release builds)
         .route(
@@ -855,6 +856,7 @@ async fn put_upstream_keys(
             enabled: k.enabled,
             account_id: k.account_id,
             supported_models: Vec::new(),
+            priority: k.priority,
         })
         .collect();
 
@@ -938,6 +940,7 @@ async fn patch_upstream_key(
             enabled: k.enabled,
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
+            priority: k.priority,
         })
         .ok_or_else(|| {
             (
@@ -999,6 +1002,7 @@ fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
                 enabled: k.enabled,
                 inflight: k.inflight,
                 cooldown_remaining_secs: k.cooldown_remaining_secs,
+                priority: k.priority,
             })
             .collect(),
     }
@@ -2292,6 +2296,30 @@ async fn restart_gateway_handler(
     });
 
     Ok(Json(serde_json::json!({"status": "restarting"})))
+}
+
+/// GET /v1/state/snapshot — Return the current control-plane state as JSON.
+/// Used by Admin for periodic PG persistence (gateway_state_sync).
+async fn get_state_snapshot(
+    headers: HeaderMap,
+    State(state): State<ManagementState>,
+) -> Result<Json<serde_json::Value>, Response> {
+    authorize(&headers, &state.admin_key)?;
+
+    let snap = crab_state::build_snapshot_from_runtime(&state.runtime);
+    let keys_json = serde_json::to_value(&snap.keys).unwrap_or_default();
+    let runtime_json = serde_json::to_value(&snap.runtime).unwrap_or_default();
+    let profiles_json = serde_json::to_value(&snap.upstream_profiles).unwrap_or_default();
+    let key_states_json = serde_json::to_value(&snap.key_states).unwrap_or_default();
+    let domain_policies_json = serde_json::to_value(&snap.domain_policies).unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "keys": keys_json,
+        "runtime": runtime_json,
+        "profiles": profiles_json,
+        "key_states": key_states_json,
+        "domain_policies": domain_policies_json,
+    })))
 }
 
 pub(crate) fn internal_error(msg: &str) -> Response {

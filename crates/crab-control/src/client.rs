@@ -706,4 +706,14 @@ impl GatewayAdminClient {
         let resp = Self::check(resp).await?;
         resp.json().await.map_err(ControlError::from)
     }
+
+    /// Fetch the current control-plane state snapshot from the Gateway.
+    pub async fn get_state_snapshot(&self) -> Result<serde_json::Value, ControlError> {
+        let resp = self
+            .authed(reqwest::Method::GET, "/v1/state/snapshot")
+            .send()
+            .await?;
+        let resp = Self::check(resp).await?;
+        resp.json().await.map_err(ControlError::from)
+    }
 }
