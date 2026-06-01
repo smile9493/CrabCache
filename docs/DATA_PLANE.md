@@ -56,6 +56,8 @@
 | Prefix 命中行为 | ✅ | **仅** `update_prefix_index` + 指标，**不**短路返回缓存体（与旧版展望文不同） |
 | `gateway_prefix_index_warmup_total` | ✅ | [`registry.rs`](../crates/crab-metrics/src/registry.rs) |
 | L3 affinity 反馈（hint + finalize） | ✅ | `affinity_prompt_cache_feedback`；连续 3 次 pure miss 才 invalidate |
+| L0 字节级容量限制（P3-5） | ✅ | Moka `weigher` + `max_entry_bytes`；`max_capacity` 按字节预算 |
+| 幂等层（P2-4） | ✅ | `Idempotency-Key` / `X-Request-Id` 去重；DashMap 短期存储；`logging` 阶段回写 |
 | 差分缓存 | 📋 | [`DATA_PLANE_P3.md`](./DATA_PLANE_P3.md) |
 | 自适应 TTL | ⬜ | 仍为 model/consumer 静态 TTL |
 
@@ -65,6 +67,9 @@
 |----|------|-------------|
 | 连接池直预热（TCP+TLS，无 HTTP） | ✅ | [`connection_prewarm.rs`](../crates/crab-proxy/src/connection_prewarm.rs)；启动 + 新 `session_fingerprint` 在 `upstream_peer` |
 | `select_with_hint` 真实 weight | ✅ | [`ring.rs`](../crates/crab-route/src/ring.rs) |
+| 多因子路由评分（P1-1） | ✅ | `backend_route_strategy`（round_robin / least_load / weighted_score）；5 维权重（health/latency/load/affinity/429）；Dashboard Routing 卡片 |
+| Quota Preflight（P1-2） | ✅ | 路由前检查后端健康 + 429 冷却，避免浪费连接；Dashboard Preflight 卡片 |
+| Profile 组合回退（P2-3） | ✅ | `fallback_profile_id` + `fallback_max_retries`；DFS 环检测；Dashboard Advanced 区 |
 | 自适应 Ketama 权重 | ⬜ | 仅 health check 降权（Pingora LB） |
 | HTTP/2 上游多路复用 | ✅ | 默认 `upstream_force_http1 = false`；`h2_ping_interval_secs` |
 | 上游响应 gzip 协商 + 解压 | ✅ | `UPSTREAM_ACCEPT_ENCODING` + `upstream_response_decompress.rs` |
@@ -90,6 +95,7 @@
 
 | 项 | 状态 | 文档 |
 |----|------|------|
+| 故障注入测试框架（P3-6） | ✅ | `FaultInjection` + feature flag `fault-injection`；`/v1/debug/fault-injection` 端点 |
 | io_uring | 📋 | DATA_PLANE_P3 |
 | WASM filters | 📋 | DATA_PLANE_P3 |
 | 多模态 body / 嵌入 | 📋 | DATA_PLANE_P3 |
@@ -107,6 +113,9 @@
 | `affinity_prompt_cache_feedback` | off | 请求末根据 `prompt_cache_*` 更新 Ketama hint |
 | `streaming_body_forward` | off | MiMo partial read + EOS finalize（[STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)） |
 | `mimo_session_store` | off | MiMo Redis canonical messages（缩小 upstream，不改 cache key） |
+| `backend_route_strategy` | `round_robin` | 多因子路由策略（`least_load` / `weighted_score`） |
+| `backend_load_aware_routing_enabled` | off | 负载感知路由 |
+| `preflight_enabled` | off | Quota Preflight（路由前健康 + 429 检查） |
 | `delta_cache` / `wasm_filters` / `io_uring_backend` | off | P3，见 DATA_PLANE_P3 |
 
 ---

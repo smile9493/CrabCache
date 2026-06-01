@@ -28,8 +28,9 @@
 
 | 现象 | 数据面（P0–P3） | 运维 / 配置 | 控制面 / Admin / 产品 |
 |------|-----------------|-------------|------------------------|
-| MiMo / 上游 **429**、Key 冷却 | △ 近似键+Coalescing（未做） | **加 Profile 上游 Key**、降 Cursor 并行 | cooldown API、Dashboard 展示 |
+| MiMo / 上游 **429**、Key 冷却 | △ Preflight 预检 ✅ + Coalescing | **加 Profile 上游 Key**、降 Cursor 并行、启用 `preflight_enabled` | cooldown API、Dashboard 展示 |
 | **upstream_key_exhausted** (503) | ✗ | 同上 + 确认仅 1 把 Key 时无轮换 | `GET /v1/upstream/profiles/{id}/keys` |
+| 上游 Profile 故障 | ✅ Profile 回退 | 配置 `fallback_profile_id` + `fallback_max_retries` | Dashboard Upstream Advanced 区 |
 | 客户端 `sk-cc-*` 限流 | ✗（`rpm_limit=0` 即不限） | 按需设 `rpm_limit` / `max_concurrent` | Management API |
 | 命中率低 | △ L2 语义、差分缓存（P3） | 启用 `[semantic]`、调 TTL | Cursor 减 context |
 | MISS P99 高 | △ 已落地：预热、early parse | 上游节点健康、减 body | 模型/用量 |

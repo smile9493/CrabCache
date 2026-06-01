@@ -2870,6 +2870,17 @@ async fn get_features_config(State(state): State<Arc<AppState>>) -> Json<Feature
         mimo_session_store_ttl_secs: f.mimo_session_store_ttl_secs,
         mimo_session_store_max_messages: f.mimo_session_store_max_messages,
         passthrough_prefix_bytes: f.passthrough_prefix_bytes,
+        backend_route_strategy: f.backend_route_strategy.clone(),
+        backend_load_aware_routing_enabled: f.backend_load_aware_routing_enabled,
+        backend_max_concurrent_requests: f.backend_max_concurrent_requests,
+        backend_health_weight: f.backend_health_weight,
+        backend_latency_weight: f.backend_latency_weight,
+        backend_load_weight: f.backend_load_weight,
+        backend_affinity_weight: f.backend_affinity_weight,
+        backend_rate_429_weight: f.backend_rate_429_weight,
+        preflight_enabled: f.preflight_enabled,
+        preflight_check_health: f.preflight_check_health,
+        preflight_check_429_cooldown: f.preflight_check_429_cooldown,
     })
 }
 
@@ -2895,6 +2906,17 @@ async fn update_features_config(
     f.mimo_session_store_ttl_secs = req.mimo_session_store_ttl_secs;
     f.mimo_session_store_max_messages = req.mimo_session_store_max_messages;
     f.passthrough_prefix_bytes = req.passthrough_prefix_bytes;
+    f.backend_route_strategy = req.backend_route_strategy;
+    f.backend_load_aware_routing_enabled = req.backend_load_aware_routing_enabled;
+    f.backend_max_concurrent_requests = req.backend_max_concurrent_requests;
+    f.backend_health_weight = req.backend_health_weight;
+    f.backend_latency_weight = req.backend_latency_weight;
+    f.backend_load_weight = req.backend_load_weight;
+    f.backend_affinity_weight = req.backend_affinity_weight;
+    f.backend_rate_429_weight = req.backend_rate_429_weight;
+    f.preflight_enabled = req.preflight_enabled;
+    f.preflight_check_health = req.preflight_check_health;
+    f.preflight_check_429_cooldown = req.preflight_check_429_cooldown;
     state.flush_persist();
     let f2 = f.clone();
     Json(FeaturesConfigView {
@@ -2915,6 +2937,17 @@ async fn update_features_config(
         mimo_session_store_ttl_secs: f2.mimo_session_store_ttl_secs,
         mimo_session_store_max_messages: f2.mimo_session_store_max_messages,
         passthrough_prefix_bytes: f2.passthrough_prefix_bytes,
+        backend_route_strategy: f2.backend_route_strategy,
+        backend_load_aware_routing_enabled: f2.backend_load_aware_routing_enabled,
+        backend_max_concurrent_requests: f2.backend_max_concurrent_requests,
+        backend_health_weight: f2.backend_health_weight,
+        backend_latency_weight: f2.backend_latency_weight,
+        backend_load_weight: f2.backend_load_weight,
+        backend_affinity_weight: f2.backend_affinity_weight,
+        backend_rate_429_weight: f2.backend_rate_429_weight,
+        preflight_enabled: f2.preflight_enabled,
+        preflight_check_health: f2.preflight_check_health,
+        preflight_check_429_cooldown: f2.preflight_check_429_cooldown,
     })
 }
 

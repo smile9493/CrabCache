@@ -179,6 +179,32 @@ pub fn ConfigRangeF64(
     }
 }
 
+/// Dropdown select for config options.
+#[component]
+pub fn ConfigSelect(
+    label: &'static str,
+    value: RwSignal<String>,
+    options: Vec<(&'static str, &'static str)>,
+) -> impl IntoView {
+    view! {
+        <div class="form-range-block">
+            <label class="form-range-label">{label}</label>
+            <select
+                class="input font-mono text-sm w-full"
+                prop:value=move || value.get()
+                on:change=move |ev| value.set(event_target_value(&ev))
+            >
+                {options
+                    .into_iter()
+                    .map(|(val, display)| {
+                        view! { <option value=val>{display}</option> }
+                    })
+                    .collect_view()}
+            </select>
+        </div>
+    }
+}
+
 /// Set `active` from `?tab=` when the value matches a `(name, index)` pair.
 pub fn init_tab_from_query(active: RwSignal<usize>, tabs: &[(&str, usize)]) {
     let Some(window) = web_sys::window() else {

@@ -210,7 +210,7 @@ pub struct StoredRequestLog {
     pub route_backend: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredCacheConfig {
     pub l0_max_capacity: u64,
     pub l0_ttl_secs: u64,
@@ -222,7 +222,7 @@ pub struct StoredCacheConfig {
     pub consumer_model_overrides: Vec<(String, u64)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredSemanticConfig {
     pub enabled: bool,
     pub similarity_threshold: f32,
@@ -321,6 +321,19 @@ pub struct StoredFeaturesConfig {
     pub mimo_session_store_ttl_secs: u64,
     pub mimo_session_store_max_messages: usize,
     pub passthrough_prefix_bytes: usize,
+    // P1-1: Multi-factor routing
+    pub backend_route_strategy: String,
+    pub backend_load_aware_routing_enabled: bool,
+    pub backend_max_concurrent_requests: usize,
+    pub backend_health_weight: f64,
+    pub backend_latency_weight: f64,
+    pub backend_load_weight: f64,
+    pub backend_affinity_weight: f64,
+    pub backend_rate_429_weight: f64,
+    // P1-2: Quota preflight
+    pub preflight_enabled: bool,
+    pub preflight_check_health: bool,
+    pub preflight_check_429_cooldown: bool,
 }
 
 impl Default for StoredFeaturesConfig {
@@ -343,6 +356,17 @@ impl Default for StoredFeaturesConfig {
             mimo_session_store_ttl_secs: 86400,
             mimo_session_store_max_messages: 200,
             passthrough_prefix_bytes: 1024,
+            backend_route_strategy: "round_robin".to_string(),
+            backend_load_aware_routing_enabled: false,
+            backend_max_concurrent_requests: 0,
+            backend_health_weight: 0.2,
+            backend_latency_weight: 0.2,
+            backend_load_weight: 0.2,
+            backend_affinity_weight: 0.2,
+            backend_rate_429_weight: 0.2,
+            preflight_enabled: false,
+            preflight_check_health: true,
+            preflight_check_429_cooldown: true,
         }
     }
 }
@@ -770,6 +794,85 @@ impl AppState {
         }
     }
 
+    /// Restore system configs from PostgreSQL into memory (PG is authoritative when enabled).
+    /// Returns the number of configs restored.
+    pub async fn hydrate_system_configs_from_pg(&self) -> usize {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return 0;
+        };
+        match pg.load_all_system_configs().await {
+            Ok(map) if !map.is_empty() => {
+                let count = map.len();
+                if let Some(v) = map.get("cache_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredCacheConfig>(v.clone()) {
+                        *self.cache_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("semantic_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredSemanticConfig>(v.clone()) {
+                        *self.semantic_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("connection_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredConnectionConfig>(v.clone()) {
+                        *self.connection_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("limits_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredLimitsConfig>(v.clone()) {
+                        *self.limits_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("pricing_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredPricingConfig>(v.clone()) {
+                        *self.pricing_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("features_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredFeaturesConfig>(v.clone()) {
+                        *self.features_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("trace_logging_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredTraceLoggingConfig>(v.clone()) {
+                        *self.trace_logging_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("raw_capture_config") {
+                    if let Ok(cfg) = serde_json::from_value::<StoredRawCaptureConfig>(v.clone()) {
+                        *self.raw_capture_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("reasoning_config") {
+                    if let Ok(cfg) = serde_json::from_value::<ReasoningConfig>(v.clone()) {
+                        *self.reasoning_config.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("log_retention") {
+                    if let Ok(cfg) = serde_json::from_value::<RetentionPolicy>(v.clone()) {
+                        *self.log_retention.write() = cfg;
+                    }
+                }
+                if let Some(v) = map.get("admin_key") {
+                    if let Some(key) = v.as_str() {
+                        *self.admin_key.write() = key.to_string();
+                    }
+                }
+                tracing::info!(
+                    configs = count,
+                    "System configs restored from PostgreSQL"
+                );
+                count
+            }
+            Ok(_) => 0,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load system configs from PostgreSQL");
+                0
+            }
+        }
+    }
+
     /// Push all cached profile key pools to Gateway (after PG hydration or recovery).
     pub async fn push_all_profile_pools_to_gateway(&self) {
         let profile_ids: Vec<String> = self
@@ -918,6 +1021,23 @@ impl AppState {
         // Snapshot request logs for PG dual-write (take before releasing lock).
         let pg_request_logs: Vec<StoredRequestLog> = self.request_logs.read().clone();
 
+        // Snapshot system configs for PG dual-write.
+        let pg_system_configs: HashMap<String, serde_json::Value> = {
+            let mut m = HashMap::new();
+            m.insert("cache_config".to_string(), serde_json::to_value(&*self.cache_config.read()).unwrap_or_default());
+            m.insert("semantic_config".to_string(), serde_json::to_value(&*self.semantic_config.read()).unwrap_or_default());
+            m.insert("connection_config".to_string(), serde_json::to_value(&*self.connection_config.read()).unwrap_or_default());
+            m.insert("limits_config".to_string(), serde_json::to_value(&*self.limits_config.read()).unwrap_or_default());
+            m.insert("pricing_config".to_string(), serde_json::to_value(&*self.pricing_config.read()).unwrap_or_default());
+            m.insert("features_config".to_string(), serde_json::to_value(&*self.features_config.read()).unwrap_or_default());
+            m.insert("trace_logging_config".to_string(), serde_json::to_value(&*self.trace_logging_config.read()).unwrap_or_default());
+            m.insert("raw_capture_config".to_string(), serde_json::to_value(&*self.raw_capture_config.read()).unwrap_or_default());
+            m.insert("reasoning_config".to_string(), serde_json::to_value(&*self.reasoning_config.read()).unwrap_or_default());
+            m.insert("log_retention".to_string(), serde_json::to_value(&*self.log_retention.read()).unwrap_or_default());
+            m.insert("admin_key".to_string(), serde_json::Value::String(self.admin_key.read().clone()));
+            m
+        };
+
         // Dual-write to PostgreSQL if available (extract data before moving file).
         let pg_task = if let Some(ref pg) = *self.pg_store.read() {
             let pg = pg.clone();
@@ -939,6 +1059,7 @@ impl AppState {
                 upstream_snap,
                 notes,
                 last_test,
+                pg_system_configs,
             ))
         } else {
             None
@@ -956,6 +1077,7 @@ impl AppState {
             upstream_snap,
             notes,
             last_test,
+            system_configs,
         )) = pg_task
         {
             let write_lock = self.pg_write_lock.clone();
@@ -1006,6 +1128,12 @@ impl AppState {
                 if !pg_request_logs.is_empty() {
                     if let Err(e) = pg.insert_request_logs(&pg_request_logs).await {
                         tracing::warn!(error = %e, count = pg_request_logs.len(), "PG dual-write: insert_request_logs failed");
+                    }
+                }
+                // Dual-write system configs (cache, semantic, connection, limits, pricing, features, etc.).
+                if !system_configs.is_empty() {
+                    if let Err(e) = pg.upsert_system_configs(&system_configs).await {
+                        tracing::warn!(error = %e, "PG dual-write: upsert_system_configs failed");
                     }
                 }
             });

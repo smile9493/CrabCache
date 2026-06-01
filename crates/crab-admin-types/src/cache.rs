@@ -79,6 +79,19 @@ pub struct FeaturesConfigView {
     pub mimo_session_store_ttl_secs: u64,
     pub mimo_session_store_max_messages: usize,
     pub passthrough_prefix_bytes: usize,
+    // P1-1: Multi-factor routing
+    pub backend_route_strategy: String,
+    pub backend_load_aware_routing_enabled: bool,
+    pub backend_max_concurrent_requests: usize,
+    pub backend_health_weight: f64,
+    pub backend_latency_weight: f64,
+    pub backend_load_weight: f64,
+    pub backend_affinity_weight: f64,
+    pub backend_rate_429_weight: f64,
+    // P1-2: Quota preflight
+    pub preflight_enabled: bool,
+    pub preflight_check_health: bool,
+    pub preflight_check_429_cooldown: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -12,6 +12,14 @@ pub struct UpstreamProfileAdminView {
     pub keys_available: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_profile_id: Option<String>,
+    #[serde(default = "default_fallback_max_retries")]
+    pub fallback_max_retries: u32,
+}
+
+fn default_fallback_max_retries() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

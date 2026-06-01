@@ -217,6 +217,8 @@ pub fn UpstreamPage() -> impl IntoView {
     let tls_sni = RwSignal::new(String::new());
     let proxy_url = RwSignal::new(String::new());
     let show_advanced = RwSignal::new(false);
+    let fallback_profile_id = RwSignal::new(String::new());
+    let fallback_max_retries = RwSignal::new(2u64);
 
     // Inline creation state
     let new_profile_id = RwSignal::new(String::new());
@@ -434,6 +436,8 @@ pub fn UpstreamPage() -> impl IntoView {
                 endpoints_text.set(p.endpoints.join("\n"));
                 tls_sni.set(p.tls_sni.clone());
                 proxy_url.set(p.proxy_url.clone().unwrap_or_default());
+                fallback_profile_id.set(p.fallback_profile_id.clone().unwrap_or_default());
+                fallback_max_retries.set(p.fallback_max_retries as u64);
             }
             load_profile_models(pid.clone());
             load_key_pool.clone()(pid);
@@ -621,6 +625,8 @@ pub fn UpstreamPage() -> impl IntoView {
                     }
                 })
             } else {
+                let fpid = fallback_profile_id.get().trim().to_string();
+                let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
                 let req = PutUpstreamProfileAdminRequest {
                     provider: prov,
                     base_url: url.clone(),
@@ -628,8 +634,8 @@ pub fn UpstreamPage() -> impl IntoView {
                     endpoints: endpoints.clone(),
                     tls_sni: sni,
                     proxy_url: proxy_opt,
-                    fallback_profile_id: None,
-                    fallback_max_retries: None,
+                    fallback_profile_id: fpid_opt,
+                    fallback_max_retries: Some(fallback_max_retries.get() as u32),
                 };
                 api::put_upstream_profile(&pid, &req).await.map(|_| ())
             };
@@ -778,6 +784,8 @@ pub fn UpstreamPage() -> impl IntoView {
         saving.set(true);
         let r = refresh.clone();
         leptos::task::spawn_local(async move {
+            let fpid = fallback_profile_id.get().trim().to_string();
+            let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
             let req = PutUpstreamProfileAdminRequest {
                 provider: prov,
                 base_url: url,
@@ -785,8 +793,8 @@ pub fn UpstreamPage() -> impl IntoView {
                 endpoints: Vec::new(),
                 tls_sni: sni,
                 proxy_url: proxy_opt,
-                fallback_profile_id: None,
-                fallback_max_retries: None,
+                fallback_profile_id: fpid_opt,
+                fallback_max_retries: Some(fallback_max_retries.get() as u32),
             };
             match api::put_upstream_profile(&id, &req).await {
                 Ok(_) => {
@@ -1348,6 +1356,30 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                     class="input font-mono text-sm" placeholder="socks5://127.0.0.1:1080"
                                                                 />
                                                                 <p class="text-xs text-theme-muted mt-1">{t.upstream_proxy_hint()}</p>
+                                                            </div>
+                                                            <div class="mt-3">
+                                                                <label class="block text-xs font-semibold text-theme-muted mb-1">"Fallback Profile"</label>
+                                                                <select
+                                                                    class="input font-mono text-sm w-full"
+                                                                    prop:value=move || fallback_profile_id.get()
+                                                                    on:change=move |ev| fallback_profile_id.set(event_target_value(&ev))
+                                                                >
+                                                                    <option value="">"None"</option>
+                                                                    {move || {
+                                                                        let current = active_profile.get();
+                                                                        profiles.get().into_iter()
+                                                                            .filter(|p| p.id != current)
+                                                                            .map(|p| view! { <option value=p.id.clone()>{p.id.clone()}</option> })
+                                                                            .collect_view()
+                                                                    }}
+                                                                </select>
+                                                                <p class="text-xs text-theme-muted mt-1">"Auto-failover to this profile on errors."</p>
+                                                            </div>
+                                                            <div class="mt-3">
+                                                                <ConfigRangeU64
+                                                                    label=move || format!("Fallback Max Retries: {}", fallback_max_retries.get())
+                                                                    value=fallback_max_retries min=1 max=5 min_hint="1" max_hint="5" accent="blue"
+                                                                />
                                                             </div>
                                                         })}
                                                     </div>

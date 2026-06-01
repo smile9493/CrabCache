@@ -674,6 +674,18 @@ impl PgStore {
             )
             .await?;
 
+        // Phase: system_config KV table for singleton configuration persistence.
+        client
+            .execute(
+                "CREATE TABLE IF NOT EXISTS system_config (
+                    key         TEXT PRIMARY KEY,
+                    value       JSONB NOT NULL,
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                )",
+                &[],
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -2456,6 +2468,63 @@ impl PgStore {
                 )
             })
             .collect())
+    }
+
+    // -----------------------------------------------------------------------
+    // system_config KV store
+    // -----------------------------------------------------------------------
+
+    /// Upsert multiple system config key-value pairs in a single transaction.
+    /// Each entry maps a config key (e.g. "cache_config") to its JSON value.
+    pub async fn upsert_system_configs(
+        &self,
+        configs: &HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        if configs.is_empty() {
+            return Ok(());
+        }
+        let client = self.pool.get().await?;
+        let stmt = client
+            .prepare_cached(
+                "INSERT INTO system_config (key, value, updated_at)
+                 VALUES ($1, $2, now())
+                 ON CONFLICT (key) DO UPDATE SET
+                     value = EXCLUDED.value,
+                     updated_at = now()",
+            )
+            .await?;
+        for (key, value) in configs {
+            client.execute(&stmt, &[key, &Json(value)]).await?;
+        }
+        Ok(())
+    }
+
+    /// Load a single system config value by key.
+    /// Returns `None` if the key does not exist.
+    pub async fn load_system_config(&self, key: &str) -> Result<Option<serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_opt(
+                "SELECT value FROM system_config WHERE key = $1",
+                &[&key],
+            )
+            .await?;
+        Ok(row.map(|r| r.get::<_, Json<serde_json::Value>>(0).0))
+    }
+
+    /// Load all system config entries as a map.
+    pub async fn load_all_system_configs(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query("SELECT key, value FROM system_config", &[])
+            .await?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let key: String = row.get(0);
+            let value: Json<serde_json::Value> = row.get(1);
+            map.insert(key, value.0);
+        }
+        Ok(map)
     }
 }
 

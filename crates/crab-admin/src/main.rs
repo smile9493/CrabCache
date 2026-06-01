@@ -216,6 +216,10 @@ async fn main() -> anyhow::Result<()> {
                 if crate::credential_persist::hydrate_credentials_from_pg(&init_state).await {
                     info!("OAuth credentials hydrated from PostgreSQL");
                 }
+                let configs_restored = init_state.hydrate_system_configs_from_pg().await;
+                if configs_restored > 0 {
+                    info!(configs = configs_restored, "System configs hydrated from PostgreSQL");
+                }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()

@@ -30,6 +30,8 @@ fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
         key_pool_count: p.key_pool_count,
         keys_available: p.keys_available,
         proxy_url: p.proxy_url,
+        fallback_profile_id: p.fallback_profile_id,
+        fallback_max_retries: p.fallback_max_retries,
     }
 }
 
