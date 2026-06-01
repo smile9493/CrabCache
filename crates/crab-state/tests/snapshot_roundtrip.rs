@@ -21,7 +21,7 @@ fn test_runtime() -> Arc<RuntimeConfig> {
     .unwrap();
     let router = LbRouter::new(&backends).unwrap();
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
-    let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60);
+    let upstream_pool = UpstreamKeyPool::from_secrets(vec!["sk-upstream-roundtrip".into()], 60, 0);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
     let mut profiles = IndexMap::new();
     profiles.insert(
@@ -35,6 +35,8 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             router: LbRouter::new(&backends).unwrap(),
             upstream_pool: pool_handle.clone(),
             proxy_url: None,
+            fallback_profile_id: None,
+            fallback_max_retries: 0,
         }),
     );
     RuntimeConfig::new(
@@ -98,6 +100,7 @@ fn empty_upstream_keys_replaces_pool() {
         upstream_keys: Some(vec![]),
         upstream_profiles: None,
         domain_policies: IndexMap::new(),
+        key_states: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_none());
@@ -109,7 +112,7 @@ fn replace_upstream_pool_updates_default_profile() {
     let profile_before = runtime.default_profile().resolve_upstream_pool();
     assert!(profile_before.acquire().is_some());
 
-    let new_pool = UpstreamKeyPool::from_secrets(vec!["sk-replaced-upstream-key".into()], 60);
+    let new_pool = UpstreamKeyPool::from_secrets(vec!["sk-replaced-upstream-key".into()], 60, 0);
     runtime.replace_upstream_pool(new_pool);
 
     assert!(runtime.upstream_pool().acquire().is_some());
@@ -132,6 +135,7 @@ fn missing_upstream_keys_preserves_pool() {
         upstream_keys: None,
         upstream_profiles: None,
         domain_policies: IndexMap::new(),
+        key_states: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.upstream_pool().acquire().is_some());
@@ -181,9 +185,14 @@ fn upstream_profiles_snapshot_roundtrip() {
                 secret: "sk-mimo-snapshot-key-12345678".to_string(),
                 enabled: true,
                 account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 0,
             }],
+            fallback_profile_id: None,
+            fallback_max_retries: 2,
         }]),
         domain_policies: IndexMap::new(),
+        key_states: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &snap, 60).expect("apply");
     assert!(runtime.profile("mimo").is_some());
@@ -213,7 +222,11 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
             secret: "sk-mimo-snapshot-key-12345678".to_string(),
             enabled: true,
             account_id: String::new(),
+            supported_models: Vec::new(),
+            priority: 0,
         }],
+        fallback_profile_id: None,
+        fallback_max_retries: 2,
     };
 
     let with_mimo = ControlPlaneSnapshot {
@@ -222,6 +235,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
         upstream_keys: None,
         upstream_profiles: Some(vec![mimo_snap.clone()]),
         domain_policies: IndexMap::new(),
+        key_states: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &with_mimo, 60).expect("apply mimo");
     assert!(runtime.profile("mimo").is_some());
@@ -247,9 +261,14 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
                 secret: "sk-deepseek-snapshot-key-12345678".to_string(),
                 enabled: true,
                 account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 0,
             }],
+            fallback_profile_id: None,
+            fallback_max_retries: 2,
         }]),
         domain_policies: IndexMap::new(),
+        key_states: HashMap::new(),
     };
     apply_snapshot_to_runtime(&runtime, &deepseek_only, 60).expect("apply deepseek only");
     assert!(runtime.profile("deepseek").is_some());
@@ -288,7 +307,7 @@ fn upsert_profile_is_immediately_readable() {
     )
     .unwrap();
     let mimo_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-mimo-upsert-test-key-12345678".into()], 60);
+        UpstreamKeyPool::from_secrets(vec!["sk-mimo-upsert-test-key-12345678".into()], 60, 0);
     let mimo_pool_handle = Arc::new(RwLock::new(mimo_pool));
     let mimo_profile = Arc::new(UpstreamProfileRuntime {
         id: "mimo".to_string(),
@@ -299,6 +318,8 @@ fn upsert_profile_is_immediately_readable() {
         router: LbRouter::new(&mimo_backends).unwrap(),
         upstream_pool: mimo_pool_handle,
         proxy_url: None,
+        fallback_profile_id: None,
+        fallback_max_retries: 0,
     });
 
     runtime.upsert_profile(mimo_profile).expect("upsert");

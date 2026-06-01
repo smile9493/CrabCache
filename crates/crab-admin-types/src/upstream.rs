@@ -71,6 +71,9 @@ pub struct UpstreamKeyView {
     pub models: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<KeyQuotaInfo>,
+    /// Key priority: 0 = highest, higher values = lower priority.
+    #[serde(default)]
+    pub priority: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +90,9 @@ pub struct UpstreamKeyInput {
     pub enabled: bool,
     #[serde(default)]
     pub account_id: String,
+    /// Key priority: 0 = highest (default), higher values = lower priority.
+    #[serde(default)]
+    pub priority: u32,
 }
 
 fn default_key_enabled() -> bool {
@@ -99,6 +105,8 @@ pub struct PatchUpstreamKeyRequest {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

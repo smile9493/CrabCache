@@ -9,6 +9,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const REASONING_NAMESPACE_AUTH: &str = "gateway-upstream-pool";
 
+/// Persisted dynamic state for a single upstream key slot.
+/// Written to Redis on state changes; restored on pool construction.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpstreamKeyStateSnapshot {
+    pub key_id: String,
+    pub cooldown_until_ms: u64,
+    pub rate_limit_strikes: u32,
+    /// Per-scope cooldown deadlines (scope name -> until_ms).
+    #[serde(default)]
+    pub scope_cooldowns: HashMap<String, u64>,
+    pub enabled: bool,
+}
+
 /// Keys without an explicit `account_id` share this bucket (no cross-key rotation on 429).
 pub const DEFAULT_UPSTREAM_ACCOUNT_ID: &str = "default";
 
@@ -31,6 +44,8 @@ pub struct UpstreamKeySpec {
     pub account_id: String,
     /// Upstream model slugs this key can serve (empty = no explicit filter).
     pub supported_models: Vec<String>,
+    /// Key priority: 0 = highest (default), higher values = lower priority.
+    pub priority: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -41,6 +56,7 @@ pub struct UpstreamKeyStatus {
     pub enabled: bool,
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
+    pub priority: u32,
 }
 
 struct UpstreamKeySlot {
@@ -57,6 +73,8 @@ struct UpstreamKeySlot {
     supported_models: RwLock<Arc<[String]>>,
     /// Hard concurrency limit per key. Permits acquired on acquire, released on Guard drop.
     semaphore: Arc<tokio::sync::Semaphore>,
+    /// Key priority: 0 = highest, higher values = lower priority.
+    priority: AtomicU32,
 }
 
 pub struct UpstreamKeyPool {
@@ -66,6 +84,9 @@ pub struct UpstreamKeyPool {
     max_inflight: usize,
     /// Optional quota cache for Codex quota-aware key selection (set once after construction).
     codex_quota_cache: std::sync::OnceLock<Arc<crate::codex_quota_cache::CodexQuotaCache>>,
+    /// Set to true when key dynamic state (cooldowns, strikes, enabled) changes.
+    /// Cleared by `take_dirty_states()`.
+    state_dirty: AtomicBool,
 }
 
 /// Holds an inflight slot until dropped.
@@ -234,6 +255,7 @@ impl UpstreamKeyPool {
                     semaphore: Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
                         max_inflight,
                     ))),
+                    priority: AtomicU32::new(spec.priority),
                 }
             })
             .collect();
@@ -244,6 +266,7 @@ impl UpstreamKeyPool {
             cooldown_secs,
             max_inflight,
             codex_quota_cache: std::sync::OnceLock::new(),
+            state_dirty: AtomicBool::new(false),
         })
     }
 
@@ -261,6 +284,7 @@ impl UpstreamKeyPool {
                 enabled: true,
                 account_id: String::new(),
                 supported_models: Vec::new(),
+                priority: 0,
             })
             .collect();
         Self::new(specs, cooldown_secs, max_inflight)
@@ -357,6 +381,7 @@ impl UpstreamKeyPool {
                     enabled: s.enabled.load(Ordering::Relaxed),
                     inflight: s.inflight.load(Ordering::Relaxed),
                     cooldown_remaining_secs,
+                    priority: s.priority.load(Ordering::Relaxed),
                 }
             })
             .collect()
@@ -375,6 +400,7 @@ impl UpstreamKeyPool {
                     s.account_id.to_string()
                 },
                 supported_models: s.supported_models.read().to_vec(),
+                priority: s.priority.load(Ordering::Relaxed),
             })
             .collect()
     }
@@ -389,6 +415,82 @@ impl UpstreamKeyPool {
                 *slot.supported_models.write() = Arc::from(sorted);
             }
         }
+    }
+
+    /// Export dynamic key states for persistence to Redis.
+    /// Returns a map of key_id -> state snapshot.
+    pub fn export_key_states(&self) -> HashMap<String, UpstreamKeyStateSnapshot> {
+        let now = now_ms();
+        self.slots
+            .iter()
+            .filter_map(|slot| {
+                let cooldown_until = slot.cooldown_until_ms.load(Ordering::Relaxed);
+                let strikes = slot.rate_limit_strikes.load(Ordering::Relaxed);
+                let enabled = slot.enabled.load(Ordering::Relaxed);
+                let scope_cooldowns: HashMap<String, u64> = slot
+                    .scope_cooldowns
+                    .read()
+                    .iter()
+                    .filter(|(_, until)| **until > now)
+                    .map(|(k, v)| (k.to_string(), *v))
+                    .collect();
+
+                // Only persist if there's meaningful state
+                if cooldown_until <= now && strikes == 0 && enabled && scope_cooldowns.is_empty() {
+                    return None;
+                }
+
+                Some((
+                    slot.id.clone(),
+                    UpstreamKeyStateSnapshot {
+                        key_id: slot.id.clone(),
+                        cooldown_until_ms: cooldown_until,
+                        rate_limit_strikes: strikes,
+                        scope_cooldowns,
+                        enabled,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// Apply persisted key states from Redis, restoring cooldowns and strikes.
+    /// Keys not found in the state map are left unchanged.
+    pub fn apply_key_states(&self, states: &HashMap<String, UpstreamKeyStateSnapshot>) {
+        let now = now_ms();
+        for slot in &self.slots {
+            if let Some(state) = states.get(&slot.id) {
+                // Restore cooldown if not expired
+                if state.cooldown_until_ms > now {
+                    slot.cooldown_until_ms
+                        .store(state.cooldown_until_ms, Ordering::Relaxed);
+                }
+                // Restore strikes
+                slot.rate_limit_strikes
+                    .store(state.rate_limit_strikes, Ordering::Relaxed);
+                // Restore enabled state (bidirectional)
+                slot.enabled.store(state.enabled, Ordering::Relaxed);
+                // Restore unexpired scope cooldowns
+                if !state.scope_cooldowns.is_empty() {
+                    let mut sc = slot.scope_cooldowns.write();
+                    for (scope, &until) in &state.scope_cooldowns {
+                        if until > now {
+                            sc.insert(Arc::from(scope.as_str()), until);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// If the pool's dynamic state has changed since the last call, return the
+    /// exported key states and clear the dirty flag. Returns `None` if no change.
+    pub fn take_dirty_states(&self) -> Option<HashMap<String, UpstreamKeyStateSnapshot>> {
+        if !self.state_dirty.swap(false, Ordering::Relaxed) {
+            return None;
+        }
+        let states = self.export_key_states();
+        Some(states)
     }
 
     /// Return the first enabled key's full secret for admin / sync usage.
@@ -453,6 +555,7 @@ impl UpstreamKeyPool {
                 let mut rate_limit_strikes = 0u32;
                 let mut scope_cooldowns = HashMap::new();
                 let mut supported_models: Arc<[String]> = Arc::from(spec.supported_models.clone());
+                let mut priority = spec.priority;
                 if let Some(prev) = old.slots.iter().find(|s| s.id == id) {
                     inflight = prev.inflight.load(Ordering::Relaxed);
                     cooldown_until_ms = prev.cooldown_until_ms.load(Ordering::Relaxed);
@@ -460,6 +563,10 @@ impl UpstreamKeyPool {
                     scope_cooldowns = prev.scope_cooldowns.read().clone();
                     if supported_models.is_empty() {
                         supported_models = prev.supported_models.read().clone();
+                    }
+                    // Preserve runtime priority unless spec overrides (non-default)
+                    if spec.priority == 0 && prev.priority.load(Ordering::Relaxed) != 0 {
+                        priority = prev.priority.load(Ordering::Relaxed);
                     }
                 }
                 let semaphore = old
@@ -483,6 +590,7 @@ impl UpstreamKeyPool {
                     scope_cooldowns: RwLock::new(scope_cooldowns),
                     supported_models: RwLock::new(supported_models),
                     semaphore,
+                    priority: AtomicU32::new(priority),
                 }
             })
             .collect();
@@ -493,6 +601,7 @@ impl UpstreamKeyPool {
             cooldown_secs: old.cooldown_secs,
             max_inflight: old.max_inflight,
             codex_quota_cache: old.codex_quota_cache.clone(),
+            state_dirty: AtomicBool::new(old.state_dirty.load(Ordering::Relaxed)),
         })
     }
 
@@ -826,6 +935,8 @@ impl UpstreamKeyPool {
 
             let inflight = slot.inflight.load(Ordering::Relaxed);
             let strikes_score = strikes.saturating_mul(1000) as usize;
+            let priority = slot.priority.load(Ordering::Relaxed);
+            let priority_offset = (priority as usize).saturating_mul(100_000);
 
             // Quota-aware scoring: penalize keys with low remaining headroom
             let quota_penalty = if let Some(cache) = self.quota_cache() {
@@ -853,9 +964,9 @@ impl UpstreamKeyPool {
             };
 
             let score = if fill_first {
-                strikes_score + inflight + quota_penalty
+                priority_offset + strikes_score + inflight + quota_penalty
             } else {
-                inflight + quota_penalty
+                priority_offset + inflight + quota_penalty
             };
             if score < best_score {
                 best_score = score;
@@ -924,24 +1035,40 @@ impl UpstreamKeyPool {
             if let Some(scope) = scope.filter(|s| !s.is_empty() && *s != "default") {
                 slot.scope_cooldowns.write().insert(Arc::from(scope), until);
             }
+            self.state_dirty.store(true, Ordering::Relaxed);
         }
     }
 
     pub fn record_key_success(&self, key_id: &str) {
         if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
-            slot.rate_limit_strikes.store(0, Ordering::Relaxed);
+            let prev = slot.rate_limit_strikes.swap(0, Ordering::Relaxed);
+            if prev > 0 {
+                self.state_dirty.store(true, Ordering::Relaxed);
+            }
         }
     }
 
     pub fn report_unauthorized(&self, key_id: &str) {
         if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
             slot.enabled.store(false, Ordering::Relaxed);
+            self.state_dirty.store(true, Ordering::Relaxed);
         }
     }
 
     pub fn set_enabled(&self, key_id: &str, enabled: bool) -> bool {
         if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
             slot.enabled.store(enabled, Ordering::Relaxed);
+            self.state_dirty.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update the priority of a specific key. Lower values = higher priority.
+    pub fn set_priority(&self, key_id: &str, priority: u32) -> bool {
+        if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
+            slot.priority.store(priority, Ordering::Relaxed);
             true
         } else {
             false
@@ -1029,6 +1156,7 @@ mod tests {
                 enabled: true,
                 account_id: "my-custom-account".into(),
                 supported_models: Vec::new(),
+                priority: 0,
             }],
             60,
             0,
@@ -1078,6 +1206,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 supported_models: Vec::new(),
+                priority: 0,
             }],
         );
         assert_eq!(merged.len(), 2);
@@ -1089,6 +1218,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 supported_models: Vec::new(),
+                priority: 0,
             }],
         );
         assert_eq!(merged2.len(), 2);
@@ -1112,6 +1242,7 @@ mod tests {
                     enabled: true,
                     account_id: "acct-a".into(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "key-a2".into(),
@@ -1119,6 +1250,7 @@ mod tests {
                     enabled: true,
                     account_id: "acct-a".into(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
             60,
@@ -1138,6 +1270,7 @@ mod tests {
                     enabled: true,
                     account_id: "acct-a".into(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "key-b".into(),
@@ -1145,6 +1278,7 @@ mod tests {
                     enabled: true,
                     account_id: "acct-b".into(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
             60,
@@ -1193,6 +1327,7 @@ mod tests {
                     enabled: false,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "k2".into(),
@@ -1200,6 +1335,7 @@ mod tests {
                     enabled: false,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
             60,
@@ -1234,6 +1370,7 @@ mod tests {
                     enabled: false,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "k2".into(),
@@ -1241,6 +1378,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
             60,
@@ -1268,6 +1406,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "key-1".into(),
@@ -1275,6 +1414,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: String::new(),
@@ -1282,6 +1422,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
         );
@@ -1319,6 +1460,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
                 UpstreamKeySpec {
                     id: "key-1".into(),
@@ -1326,6 +1468,7 @@ mod tests {
                     enabled: true,
                     account_id: String::new(),
                     supported_models: Vec::new(),
+                    priority: 0,
                 },
             ],
             60,
@@ -1340,5 +1483,215 @@ mod tests {
             "duplicate ids found: {:?}",
             ids
         );
+    }
+
+    #[test]
+    fn priority_scoring_prefers_lower_priority_value() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "high-pri".into(),
+                    secret: "sk-aaaaaaaaaaaa".into(),
+                    enabled: true,
+                    account_id: "acct-a".into(),
+                    supported_models: Vec::new(),
+                    priority: 0,
+                },
+                UpstreamKeySpec {
+                    id: "low-pri".into(),
+                    secret: "sk-bbbbbbbbbbbb".into(),
+                    enabled: true,
+                    account_id: "acct-b".into(),
+                    supported_models: Vec::new(),
+                    priority: 5,
+                },
+            ],
+            60,
+            0,
+        );
+        // High priority (0) should be preferred over low priority (5)
+        let guard = pool.acquire().unwrap();
+        assert_eq!(guard.key_id(), "high-pri");
+    }
+
+    #[test]
+    fn export_key_states_captures_cooldown() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_rate_limited("key-1");
+        let states = pool.export_key_states();
+        assert_eq!(states.len(), 1);
+        let state = states.get("key-1").unwrap();
+        assert!(state.cooldown_until_ms > 0);
+        assert_eq!(state.rate_limit_strikes, 1);
+    }
+
+    #[test]
+    fn export_key_states_skips_clean_keys() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        let states = pool.export_key_states();
+        assert!(states.is_empty(), "clean keys should not be exported");
+    }
+
+    #[test]
+    fn apply_key_states_restores_cooldown() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let mut states = std::collections::HashMap::new();
+        states.insert(
+            "key-1".to_string(),
+            UpstreamKeyStateSnapshot {
+                key_id: "key-1".into(),
+                cooldown_until_ms: now + 60_000,
+                rate_limit_strikes: 3,
+                scope_cooldowns: std::collections::HashMap::new(),
+                enabled: true,
+            },
+        );
+        pool.apply_key_states(&states);
+        assert_eq!(pool.available_count(), 0, "key should be in cooldown");
+    }
+
+    #[test]
+    fn apply_key_states_restores_disabled() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        let mut states = std::collections::HashMap::new();
+        states.insert(
+            "key-1".to_string(),
+            UpstreamKeyStateSnapshot {
+                key_id: "key-1".into(),
+                cooldown_until_ms: 0,
+                rate_limit_strikes: 0,
+                scope_cooldowns: std::collections::HashMap::new(),
+                enabled: false,
+            },
+        );
+        pool.apply_key_states(&states);
+        assert!(pool.acquire().is_none(), "disabled key should not be acquirable");
+    }
+
+    #[test]
+    fn take_dirty_states_returns_none_when_clean() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        assert!(pool.take_dirty_states().is_none());
+    }
+
+    #[test]
+    fn take_dirty_states_returns_some_after_rate_limit() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_rate_limited("key-1");
+        let states = pool.take_dirty_states();
+        assert!(states.is_some());
+        assert_eq!(states.unwrap().len(), 1);
+        // Second call should return None (dirty flag cleared)
+        assert!(pool.take_dirty_states().is_none());
+    }
+
+    #[test]
+    fn take_dirty_states_captures_disabled() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_unauthorized("key-1");
+        let states = pool.take_dirty_states().unwrap();
+        let state = states.get("key-1").unwrap();
+        assert!(!state.enabled);
+    }
+
+    #[test]
+    fn hot_replace_preserves_priority() {
+        let pool = UpstreamKeyPool::new(
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 5,
+            }],
+            60,
+            0,
+        );
+        // hot_replace with same id but priority=0 (default) should preserve old priority
+        let new_pool = UpstreamKeyPool::hot_replace(
+            &pool,
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 0,
+            }],
+        );
+        let status = new_pool.list_status();
+        assert_eq!(status[0].priority, 5, "priority should be preserved from old pool");
+    }
+
+    #[test]
+    fn hot_replace_updates_priority_when_explicit() {
+        let pool = UpstreamKeyPool::new(
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 5,
+            }],
+            60,
+            0,
+        );
+        // hot_replace with explicit non-zero priority should update
+        let new_pool = UpstreamKeyPool::hot_replace(
+            &pool,
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 10,
+            }],
+        );
+        let status = new_pool.list_status();
+        assert_eq!(status[0].priority, 10, "explicit priority should update");
+    }
+
+    #[test]
+    fn set_priority_updates_key() {
+        let pool = UpstreamKeyPool::new(
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 0,
+            }],
+            60,
+            0,
+        );
+        assert!(pool.set_priority("key-1", 7));
+        let status = pool.list_status();
+        assert_eq!(status[0].priority, 7);
+    }
+
+    #[test]
+    fn to_specs_includes_priority() {
+        let pool = UpstreamKeyPool::new(
+            vec![UpstreamKeySpec {
+                id: "key-1".into(),
+                secret: "sk-aaaaaaaaaaaa".into(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 3,
+            }],
+            60,
+            0,
+        );
+        let specs = pool.to_specs();
+        assert_eq!(specs[0].priority, 3);
     }
 }

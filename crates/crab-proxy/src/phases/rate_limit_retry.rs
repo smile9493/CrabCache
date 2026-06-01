@@ -32,6 +32,9 @@ pub(crate) fn try_upstream_rate_limit_rotation(
     pool: &Arc<UpstreamKeyPool>,
 ) -> pingora_core::Result<()> {
     let codex = codex_rate_limit::is_codex_upstream_pipeline(ctx.request_pipeline);
+    let mimo = ctx
+        .request_pipeline
+        .is_some_and(GatewayProxy::is_mimo_pipeline);
     let retry_hdr = upstream_response
         .headers
         .get(header::RETRY_AFTER)
@@ -41,6 +44,7 @@ pub(crate) fn try_upstream_rate_limit_rotation(
         body,
         retry_hdr,
         codex,
+        mimo,
         pool.default_cooldown_secs(),
     );
     if !classification.is_rate_limit {
@@ -56,7 +60,11 @@ pub(crate) fn try_upstream_rate_limit_rotation(
         return Ok(());
     };
 
-    let scope = if codex { Some(model_scope(ctx)) } else { None };
+    let scope = if codex || mimo {
+        Some(model_scope(ctx))
+    } else {
+        None
+    };
     let fill_first = proxy.state.features.read().codex_acquire_fill_first;
     let cooldown = cooldown_secs(&classification, pool);
     pool.report_rate_limited_for(&id, cooldown, scope);

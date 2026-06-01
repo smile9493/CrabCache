@@ -3,7 +3,7 @@ use crab_cache::TtlConfig;
 use crab_control::parse_backend_endpoints;
 use crab_proxy::{
     ConnectionConfig, DomainPolicy, ProfileBuildInput, RuntimeConfig, StoredKey, UpstreamKeyPool,
-    UpstreamKeySpec, build_profile_runtime, resolve_profile_key_specs,
+    UpstreamKeySpec, UpstreamKeyStateSnapshot, build_profile_runtime, resolve_profile_key_specs,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,10 @@ pub struct UpstreamKeySnapshot {
     pub account_id: String,
     #[serde(default)]
     pub supported_models: Vec<String>,
+    /// Key priority: 0 = highest (default), higher values = lower priority.
+    /// On retry, the pool degrades to lower-priority keys.
+    #[serde(default)]
+    pub priority: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +115,10 @@ pub struct ControlPlaneSnapshot {
     pub upstream_profiles: Option<Vec<UpstreamProfileSnapshot>>,
     #[serde(default)]
     pub domain_policies: IndexMap<String, DomainPolicy>,
+    /// Persisted dynamic state for upstream key slots (cooldowns, strikes, enabled).
+    /// Keyed by `profile_id:key_id`; profiles without dynamic state omit entries.
+    #[serde(default)]
+    pub key_states: HashMap<String, UpstreamKeyStateSnapshot>,
 }
 
 pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnapshot {
@@ -176,6 +184,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
             enabled: s.enabled,
             account_id: s.account_id,
             supported_models: s.supported_models,
+            priority: s.priority,
         })
         .collect();
 
@@ -210,6 +219,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                         enabled: s.enabled,
                         account_id: s.account_id,
                         supported_models: s.supported_models,
+                        priority: s.priority,
                     })
                     .collect();
                 Some(UpstreamProfileSnapshot {
@@ -228,6 +238,20 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
     };
 
     let pipeline_globals = runtime.pipeline_globals();
+
+    // Collect key states from all profile pools
+    let mut key_states: HashMap<String, UpstreamKeyStateSnapshot> = HashMap::new();
+    {
+        let profiles_map = runtime.upstream_profiles.read();
+        for (profile_id, profile) in profiles_map.iter() {
+            let pool = profile.resolve_upstream_pool();
+            for (key_id, state) in pool.export_key_states() {
+                let composite_key = format!("{}:{}", profile_id, key_id);
+                key_states.insert(composite_key, state);
+            }
+        }
+    }
+
     ControlPlaneSnapshot {
         keys,
         runtime: Some(RuntimeSnapshot {
@@ -244,6 +268,7 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
         upstream_keys: Some(upstream_keys),
         upstream_profiles: Some(upstream_profiles),
         domain_policies,
+        key_states,
     }
 }
 
@@ -315,6 +340,7 @@ pub fn apply_snapshot_to_runtime(
                     enabled: k.enabled,
                     account_id: k.account_id.clone(),
                     supported_models: k.supported_models.clone(),
+                    priority: k.priority,
                 })
                 .collect();
             let input = ProfileBuildInput {
@@ -378,6 +404,7 @@ pub fn apply_snapshot_to_runtime(
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
                 supported_models: k.supported_models.clone(),
+                priority: k.priority,
             })
             .collect();
         let pool = UpstreamKeyPool::new(specs, upstream_cooldown_secs, 0);
@@ -388,6 +415,31 @@ pub fn apply_snapshot_to_runtime(
     }
 
     runtime.replace_domain_policies(snap.domain_policies.clone());
+
+    // Restore persisted key states (cooldowns, strikes, enabled) to profile pools
+    if !snap.key_states.is_empty() {
+        let profiles_map = runtime.upstream_profiles.read();
+        for (profile_id, profile) in profiles_map.iter() {
+            let pool = profile.resolve_upstream_pool();
+            // Filter key_states for this profile
+            let prefix = format!("{}:", profile_id);
+            let profile_states: HashMap<String, UpstreamKeyStateSnapshot> = snap
+                .key_states
+                .iter()
+                .filter_map(|(k, v)| {
+                    k.strip_prefix(&prefix).map(|key_id| (key_id.to_string(), v.clone()))
+                })
+                .collect();
+            if !profile_states.is_empty() {
+                pool.apply_key_states(&profile_states);
+                tracing::info!(
+                    profile_id = %profile_id,
+                    keys_restored = profile_states.len(),
+                    "Restored key states from snapshot"
+                );
+            }
+        }
+    }
 
     Ok(())
 }

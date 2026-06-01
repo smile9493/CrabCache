@@ -59,6 +59,7 @@ pub fn upstream_key_input_to_control(k: &UpstreamKeyInput) -> crab_control::Upst
         secret: k.secret.clone(),
         enabled: k.enabled,
         account_id: k.account_id.clone(),
+        priority: k.priority,
     }
 }
 
@@ -87,6 +88,7 @@ pub fn patch_upstream_key_to_control(
     crab_control::PatchUpstreamKeyRequest {
         enabled: req.enabled,
         secret: req.secret.clone(),
+        priority: req.priority,
     }
 }
 
@@ -102,6 +104,7 @@ pub fn upstream_key_view_from_control(k: crab_control::UpstreamKeyView) -> Upstr
         plan_type: None,
         models: Vec::new(),
         quota: None,
+        priority: k.priority,
     }
 }
 

@@ -489,6 +489,7 @@ pub async fn get_profile_keys(
             enabled: s.enabled,
             inflight: s.inflight,
             cooldown_remaining_secs: s.cooldown_remaining_secs,
+            priority: s.priority,
         })
         .collect();
     Ok(Json(UpstreamProfileKeysView {
@@ -518,6 +519,7 @@ pub async fn export_profile_keys(
             secret: s.secret,
             enabled: s.enabled,
             account_id: s.account_id,
+            priority: s.priority,
         })
         .collect();
     Ok(Json(UpstreamProfileKeysExport {
@@ -558,6 +560,7 @@ pub async fn put_profile_keys(
             enabled: k.enabled,
             account_id: k.account_id,
             supported_models: Vec::new(),
+            priority: k.priority,
         })
         .collect();
     let persist_mode = req.mode;
@@ -600,7 +603,7 @@ pub async fn patch_profile_key(
     if state.runtime.profile(profile_id).is_none() {
         return Err(bad_request("unknown upstream profile"));
     }
-    if req.enabled.is_none() && req.secret.is_none() {
+    if req.enabled.is_none() && req.secret.is_none() && req.priority.is_none() {
         return Err(bad_request("no fields to update"));
     }
     if req.secret.is_some() {
@@ -624,6 +627,17 @@ pub async fn patch_profile_key(
         )
             .into_response());
     }
+    if let Some(priority) = req.priority
+        && !pool.set_priority(key_id, priority)
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response());
+    }
     let view = pool
         .list_status()
         .into_iter()
@@ -635,6 +649,7 @@ pub async fn patch_profile_key(
             enabled: k.enabled,
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
+            priority: k.priority,
         })
         .ok_or_else(|| {
             (

@@ -101,7 +101,7 @@ pub use trace_logger::{
 };
 pub use upstream_pool::{
     DEFAULT_UPSTREAM_ACCOUNT_ID, REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool,
-    UpstreamKeySpec, UpstreamKeyStatus, key_preview,
+    UpstreamKeySpec, UpstreamKeyStateSnapshot, UpstreamKeyStatus, key_preview,
 };
 pub use upstream_profile::{UpstreamProfileRuntime, validate_fallback_chain};
 pub use upstream_user_id_limiter::{

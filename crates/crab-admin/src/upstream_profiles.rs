@@ -173,6 +173,7 @@ fn profile_keys_from_admin_pool(
                     plan_type: None,
                     models: Vec::new(),
                     quota: None,
+                    priority: 0,
                 }
             };
             if let Some(probe) = models_probe {
@@ -208,6 +209,7 @@ pub async fn put_profile_keys(
             secret: k.secret.clone(),
             enabled: k.enabled,
             account_id: k.account_id.clone(),
+            priority: k.priority,
         })
         .collect();
     {
@@ -320,6 +322,7 @@ pub async fn patch_profile_key(
                             secret: p.secret.clone(),
                             enabled: p.enabled,
                             account_id: p.account_id.clone(),
+                            priority: 0,
                         })
                         .collect(),
                 );
@@ -433,6 +436,7 @@ pub async fn sync_profile_pool_to_gateway(
             secret: s.secret.clone(),
             enabled: s.enabled,
             account_id: s.account_id.clone(),
+            priority: s.priority,
         })
         .collect();
     let req = put_upstream_profile_keys_to_control(&keys, mode);
@@ -525,6 +529,7 @@ pub async fn put_profile_keys_upsert(
                     } else {
                         k.account_id
                     },
+                    priority: k.priority,
                 }
             })
             .collect();
@@ -571,6 +576,7 @@ pub async fn put_profile_keys_append(
         secret: secret.to_string(),
         enabled: true,
         account_id: account_id.to_string(),
+        priority: 0,
     };
     put_profile_keys(state, profile_id, vec![key_input], false)
         .await

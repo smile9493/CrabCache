@@ -426,6 +426,7 @@ impl From<PersistedProfileSecrets>
                             secret: s.secret,
                             enabled: s.enabled,
                             account_id: s.account_id,
+                            priority: 0,
                         })
                         .collect(),
                 )

@@ -86,6 +86,7 @@ impl RedisStateStore {
         let upstream_profiles_json: Option<String> =
             conn.get(self.key("upstream_profiles")).await?;
         let domain_json: Option<String> = conn.get(self.key("domain_policies")).await?;
+        let key_states_json: Option<String> = conn.get(self.key("key_states")).await?;
 
         let keys = keys_json
             .as_deref()
@@ -113,6 +114,12 @@ impl RedisStateStore {
             .transpose()?
             .unwrap_or_default();
 
+        let key_states = key_states_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?
+            .unwrap_or_default();
+
         Ok((
             version,
             ControlPlaneSnapshot {
@@ -121,6 +128,7 @@ impl RedisStateStore {
                 upstream_keys,
                 upstream_profiles,
                 domain_policies,
+                key_states,
             },
         ))
     }
@@ -154,6 +162,12 @@ impl RedisStateStore {
                 serde_json::to_string(&snap.domain_policies)?,
             )
             .await?;
+        let _: () = conn
+            .set(
+                self.key("key_states"),
+                serde_json::to_string(&snap.key_states)?,
+            )
+            .await?;
 
         let version: u64 = conn.incr(self.key("version"), 1).await?;
         let _: u64 = conn.publish(&self.rev_channel, version).await?;
@@ -182,6 +196,16 @@ impl RedisStateStore {
     pub async fn ping(&self) -> bool {
         let mut conn = self.conn.clone();
         conn.get::<_, String>("PING").await.is_ok()
+    }
+
+    /// Clone the internal connection manager for direct Redis operations.
+    pub fn conn_clone(&self) -> ConnectionManager {
+        self.conn.clone()
+    }
+
+    /// Build the full Redis key for a given suffix.
+    pub fn key_for(&self, suffix: &str) -> String {
+        self.key(suffix)
     }
 }
 

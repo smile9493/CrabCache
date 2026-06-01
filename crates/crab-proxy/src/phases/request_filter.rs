@@ -497,6 +497,7 @@ async fn run_post_body_phases(
                 body = Bytes::from(serde_json::to_vec(&chat).unwrap_or_default());
             }
         }
+        ctx.upstream.prepared_body_for_retry = Some(body.clone());
         ctx.new_request_body = Some(body);
         ctx.upstream_body_for_capture = Some(full_body.clone());
     } else {

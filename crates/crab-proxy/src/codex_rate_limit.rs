@@ -151,6 +151,7 @@ pub fn classify_upstream_rate_limit(
     body: Option<&str>,
     retry_after_header: Option<&str>,
     codex_context: bool,
+    mimo_context: bool,
     default_cooldown_secs: u64,
 ) -> RateLimitClassification {
     let text = body_text(body);
@@ -167,8 +168,8 @@ pub fn classify_upstream_rate_limit(
         };
     }
 
-    // Header-only path for Codex overload (no body yet at response_filter).
-    if codex_context && status == 503 {
+    // Header-only path for Codex/MiMo overload (no body yet at response_filter).
+    if (codex_context || mimo_context) && status == 503 {
         return RateLimitClassification {
             is_rate_limit: true,
             effective_status: 429,
@@ -221,7 +222,7 @@ mod tests {
     fn capacity_message_promoted() {
         let body = r#"{"error":{"message":"Selected model is at capacity. Please try a different model."}}"#;
         assert!(body_indicates_codex_rate_limit(body));
-        let c = classify_upstream_rate_limit(400, Some(body), None, true, 60);
+        let c = classify_upstream_rate_limit(400, Some(body), None, true, false, 60);
         assert!(c.is_rate_limit);
         assert_eq!(c.effective_status, 429);
     }
@@ -230,7 +231,7 @@ mod tests {
     fn high_demand_promoted() {
         let body = r#"{"error":{"message":"We're currently experiencing high demand, which may cause temporary errors."}}"#;
         assert!(body_indicates_codex_rate_limit(body));
-        let c = classify_upstream_rate_limit(502, Some(body), None, true, 60);
+        let c = classify_upstream_rate_limit(502, Some(body), None, true, false, 60);
         assert!(c.is_rate_limit);
     }
 
@@ -256,14 +257,14 @@ mod tests {
 
     #[test]
     fn codex_503_header_only() {
-        let c = classify_upstream_rate_limit(503, None, None, true, 90);
+        let c = classify_upstream_rate_limit(503, None, None, true, false, 90);
         assert!(c.is_rate_limit);
         assert_eq!(c.cooldown, Some(Duration::from_secs(90)));
     }
 
     #[test]
     fn non_codex_503_not_rate_limit() {
-        let c = classify_upstream_rate_limit(503, None, None, false, 60);
+        let c = classify_upstream_rate_limit(503, None, None, false, false, 60);
         assert!(!c.is_rate_limit);
     }
 

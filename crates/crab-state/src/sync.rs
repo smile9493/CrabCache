@@ -162,3 +162,53 @@ pub async fn persist_runtime_state_with_retry(
     global_metrics().record_state_persist_error();
     Err(last_err.unwrap())
 }
+
+/// Persist pre-collected key states to Redis (lightweight, no version bump).
+async fn persist_collected_key_states(
+    store: &RedisStateStore,
+    states: &std::collections::HashMap<String, crab_proxy::UpstreamKeyStateSnapshot>,
+) -> anyhow::Result<()> {
+    let mut conn = store.conn_clone();
+    let json = serde_json::to_string(states)?;
+    redis::AsyncCommands::set::<_, _, ()>(&mut conn, store.key_for("key_states"), json).await?;
+    Ok(())
+}
+
+/// Spawn a background task that debounces key state changes and persists to Redis.
+/// Checks every 500ms; if any profile pool has dirty key states, collects and saves them.
+pub fn spawn_key_state_persist_task(
+    store: Arc<RedisStateStore>,
+    runtime: Arc<RuntimeConfig>,
+) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("key state persist runtime");
+        rt.block_on(async move {
+            let debounce_interval = Duration::from_millis(500);
+            loop {
+                tokio::time::sleep(debounce_interval).await;
+                // Collect dirty states from all profile pools in one pass
+                let mut all_states: std::collections::HashMap<
+                    String,
+                    crab_proxy::UpstreamKeyStateSnapshot,
+                > = std::collections::HashMap::new();
+                {
+                    let profiles = runtime.upstream_profiles.read();
+                    for (profile_id, profile) in profiles.iter() {
+                        let pool = profile.resolve_upstream_pool();
+                        if let Some(states) = pool.take_dirty_states() {
+                            for (key_id, state) in states {
+                                let composite_key = format!("{}:{}", profile_id, key_id);
+                                all_states.insert(composite_key, state);
+                            }
+                        }
+                    }
+                }
+                if !all_states.is_empty() {
+                    if let Err(e) = persist_collected_key_states(&store, &all_states).await {
+                        warn!(error = %e, "Failed to persist key states to Redis");
+                    }
+                }
+            }
+        });
+    });
+}

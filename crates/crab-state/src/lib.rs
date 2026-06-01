@@ -8,4 +8,7 @@ pub use snapshot::{
     UpstreamKeySnapshot, UpstreamProfileSnapshot, apply_snapshot_to_runtime,
     build_snapshot_from_runtime,
 };
-pub use sync::{persist_runtime_state, persist_runtime_state_with_retry, spawn_state_refresh_task};
+pub use sync::{
+    persist_runtime_state, persist_runtime_state_with_retry, spawn_key_state_persist_task,
+    spawn_state_refresh_task,
+};
