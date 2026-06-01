@@ -2,11 +2,13 @@ use crate::client_kind::ClientKind;
 use crate::is_deepseek_v4_model;
 use crate::profile::{model_prefix_to_profile, resolve_upstream_profile_id};
 use crate::rule_engine::RuleMatchInput;
+#[allow(deprecated)]
 use crate::signals::{cursor_agent_signals, user_agent_suggests_cursor};
 use crate::types::{
     PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext, PipelineSelection,
     PipelineSelectionReason, ProfileDescriptor, RequestPipeline, UpstreamProvider,
 };
+use crab_translator::WireFormat;
 
 pub fn select_request_pipeline(
     globals: &PipelineGlobals,
@@ -203,6 +205,7 @@ fn auto_pipeline_with_reason(
             client_kind,
             provider,
             model: ctx.model,
+            wire_format: ctx.wire_format.unwrap_or(WireFormat::ChatCompletions),
         };
         if let Some((pipeline, rule_name)) = engine.select(&input) {
             return (

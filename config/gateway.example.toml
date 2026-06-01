@@ -59,6 +59,9 @@ deepseek-chat = { upstream = "deepseek-chat", pipeline = "deepseek_light" }
 # [gateway.pipeline.rules.match]
 # client = ["codex"]
 # provider = ["codex"]
+# # Optional wire_format filter: ["chat_completions", "responses", "anthropic", "canonical"]
+# # Omit to match any wire format.
+# # wire_format = ["responses"]
 #
 # [[gateway.pipeline.rules]]
 # name = "codex_to_deepseek"
@@ -310,6 +313,14 @@ max_files = 5
 # when combined with max_lines × max_files.
 # max_payload_bytes = 1024
 # max_response_preview_bytes = 512
+
+# PG direct write: gateway writes trace_logs directly to PostgreSQL via a
+# dedicated writer thread, bypassing the old JSONL→Admin pg_sync 10-second lag.
+# When set, JSONL is still written as a local fallback buffer, but Admin
+# queries use PG as the sole authoritative source. The old pg_sync task
+# has been removed; this is now the only PG write path.
+# Env override: CRABCACHE_TRACE_PG_URL
+# pg_url = "postgres://user:pass@127.0.0.1:5432/crabcache"
 
 # Optional: debug composition logging (full system/tools text for analysis)
 # When enabled, writes full (unhashed) system prompts and tool definitions

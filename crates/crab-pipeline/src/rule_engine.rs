@@ -1,5 +1,6 @@
 use crate::client_kind::{matches_model_pattern, ClientKind};
 use crate::types::{RequestPipeline, UpstreamProvider};
+use crab_translator::WireFormat;
 use serde::{Deserialize, Serialize};
 
 /// A single declarative pipeline selection rule.
@@ -32,6 +33,9 @@ pub struct PipelineMatchConditions {
     /// Model name glob patterns (None = any model).
     /// Supports `*` at end (prefix) or beginning (suffix).
     pub model_pattern: Option<Vec<String>>,
+    /// Wire format filter (None = any format).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_format: Option<Vec<WireFormat>>,
 }
 
 /// Input context for rule engine matching (extracted from PipelineRequestContext).
@@ -39,6 +43,7 @@ pub struct RuleMatchInput<'a> {
     pub client_kind: ClientKind,
     pub provider: UpstreamProvider,
     pub model: &'a str,
+    pub wire_format: WireFormat,
 }
 
 /// Declarative pipeline rule engine — replaces hardcoded if/match chains in `select.rs`.
@@ -86,6 +91,7 @@ impl PipelineRuleEngine {
                     client: Some(vec![ClientKind::Cursor]),
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: Some(vec!["deepseek-v4-*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CursorDeepSeekV4,
             },
@@ -96,6 +102,7 @@ impl PipelineRuleEngine {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Codex]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexRelay,
             },
@@ -106,6 +113,7 @@ impl PipelineRuleEngine {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: Some(vec!["deepseek-*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexDeepSeek,
             },
@@ -116,6 +124,7 @@ impl PipelineRuleEngine {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Mimo]),
                     model_pattern: Some(vec!["mimo-*".into(), "xiaomi/*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexMimo,
             },
@@ -126,6 +135,7 @@ impl PipelineRuleEngine {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::DeepSeekLight,
             },
@@ -136,6 +146,7 @@ impl PipelineRuleEngine {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Mimo]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::MimoTokenPlanRelay,
             },
@@ -169,12 +180,28 @@ fn rule_matches(conditions: &PipelineMatchConditions, input: &RuleMatchInput<'_>
         }
     }
 
+    // Wire format filter
+    if let Some(ref formats) = conditions.wire_format {
+        if !formats.contains(&input.wire_format) {
+            return false;
+        }
+    }
+
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_input(client_kind: ClientKind, provider: UpstreamProvider, model: &str) -> RuleMatchInput<'_> {
+        RuleMatchInput {
+            client_kind,
+            provider,
+            model,
+            wire_format: WireFormat::ChatCompletions,
+        }
+    }
 
     fn rule_engine_with_legacy_defaults() -> PipelineRuleEngine {
         PipelineRuleEngine::new(vec![
@@ -185,6 +212,7 @@ mod tests {
                     client: Some(vec![ClientKind::Cursor]),
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: Some(vec!["deepseek-v4-*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CursorDeepSeekV4,
             },
@@ -195,6 +223,7 @@ mod tests {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Codex]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexRelay,
             },
@@ -205,6 +234,7 @@ mod tests {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: Some(vec!["deepseek-*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexDeepSeek,
             },
@@ -215,6 +245,7 @@ mod tests {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Mimo]),
                     model_pattern: Some(vec!["mimo-*".into(), "xiaomi/*".into()]),
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexMimo,
             },
@@ -225,6 +256,7 @@ mod tests {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::DeepSeekLight,
             },
@@ -235,6 +267,7 @@ mod tests {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Mimo]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::MimoTokenPlanRelay,
             },
@@ -244,11 +277,7 @@ mod tests {
     #[test]
     fn cursor_deepseek_v4_matches() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Cursor,
-            provider: UpstreamProvider::Deepseek,
-            model: "deepseek-v4-pro",
-        };
+        let input = default_input(ClientKind::Cursor, UpstreamProvider::Deepseek, "deepseek-v4-pro");
         let (pipeline, name) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::CursorDeepSeekV4);
         assert_eq!(name, "cursor_deepseek_v4");
@@ -257,11 +286,7 @@ mod tests {
     #[test]
     fn deepseek_chat_matches_light() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Generic,
-            provider: UpstreamProvider::Deepseek,
-            model: "deepseek-chat",
-        };
+        let input = default_input(ClientKind::Generic, UpstreamProvider::Deepseek, "deepseek-chat");
         let (pipeline, name) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::DeepSeekLight);
         assert_eq!(name, "deepseek_light");
@@ -270,11 +295,7 @@ mod tests {
     #[test]
     fn codex_relay_matches() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Codex,
-            provider: UpstreamProvider::Codex,
-            model: "gpt-5",
-        };
+        let input = default_input(ClientKind::Codex, UpstreamProvider::Codex, "gpt-5");
         let (pipeline, name) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::CodexRelay);
         assert_eq!(name, "codex_relay");
@@ -283,11 +304,7 @@ mod tests {
     #[test]
     fn codex_deepseek_matches() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Codex,
-            provider: UpstreamProvider::Deepseek,
-            model: "deepseek-v4-pro",
-        };
+        let input = default_input(ClientKind::Codex, UpstreamProvider::Deepseek, "deepseek-v4-pro");
         let (pipeline, _) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::CodexDeepSeek);
     }
@@ -295,11 +312,7 @@ mod tests {
     #[test]
     fn codex_mimo_matches() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Codex,
-            provider: UpstreamProvider::Mimo,
-            model: "mimo-v2.5-pro",
-        };
+        let input = default_input(ClientKind::Codex, UpstreamProvider::Mimo, "mimo-v2.5-pro");
         let (pipeline, _) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::CodexMimo);
     }
@@ -307,11 +320,7 @@ mod tests {
     #[test]
     fn mimo_generic_matches_relay() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Generic,
-            provider: UpstreamProvider::Mimo,
-            model: "mimo-v2-flash",
-        };
+        let input = default_input(ClientKind::Generic, UpstreamProvider::Mimo, "mimo-v2-flash");
         let (pipeline, name) = engine.select(&input).unwrap();
         assert_eq!(pipeline, RequestPipeline::MimoTokenPlanRelay);
         assert_eq!(name, "mimo_relay");
@@ -320,11 +329,7 @@ mod tests {
     #[test]
     fn no_match_returns_none() {
         let engine = rule_engine_with_legacy_defaults();
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Generic,
-            provider: UpstreamProvider::Openai,
-            model: "gpt-4o",
-        };
+        let input = default_input(ClientKind::Generic, UpstreamProvider::Openai, "gpt-4o");
         assert!(engine.select(&input).is_none());
     }
 
@@ -339,6 +344,7 @@ mod tests {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::DeepSeekLight,
             },
@@ -349,17 +355,40 @@ mod tests {
                     client: None,
                     provider: Some(vec![UpstreamProvider::Deepseek]),
                     model_pattern: None,
+                    wire_format: None,
                 },
                 pipeline: RequestPipeline::CursorDeepSeekV4,
             },
         ]);
-        let input = RuleMatchInput {
-            client_kind: ClientKind::Generic,
-            provider: UpstreamProvider::Deepseek,
-            model: "deepseek-chat",
-        };
+        let input = default_input(ClientKind::Generic, UpstreamProvider::Deepseek, "deepseek-chat");
         let (_, name) = engine.select(&input).unwrap();
         assert_eq!(name, "high_priority");
+    }
+
+    #[test]
+    fn wire_format_filter_matches() {
+        let engine = PipelineRuleEngine::new(vec![PipelineRule {
+            name: "responses_only".into(),
+            priority: 10,
+            match_conditions: PipelineMatchConditions {
+                client: None,
+                provider: None,
+                model_pattern: None,
+                wire_format: Some(vec![WireFormat::Responses]),
+            },
+            pipeline: RequestPipeline::CodexRelay,
+        }]);
+        // Responses format matches
+        let input = RuleMatchInput {
+            client_kind: ClientKind::Generic,
+            provider: UpstreamProvider::Other,
+            model: "gpt-5",
+            wire_format: WireFormat::Responses,
+        };
+        assert!(engine.select(&input).is_some());
+        // ChatCompletions format does not match
+        let input2 = default_input(ClientKind::Generic, UpstreamProvider::Other, "gpt-5");
+        assert!(engine.select(&input2).is_none());
     }
 
     #[test]

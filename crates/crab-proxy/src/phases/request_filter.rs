@@ -222,6 +222,7 @@ async fn run_post_body_phases(
             alias_upstream_model,
             model_alias_pipeline,
             client_kind: Some(ctx.client_kind),
+            wire_format: Some(ctx.client_wire_api.to_wire_format()),
         };
         let selection = select_request_pipeline(
             &pipeline_globals,
@@ -1259,6 +1260,7 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
         alias_upstream_model: model_alias_entry.map(|e| e.upstream.as_str()),
         model_alias_pipeline: model_alias_entry.map(|e| e.pipeline),
         client_kind: Some(ctx.client_kind),
+        wire_format: Some(ctx.client_wire_api.to_wire_format()),
     };
     let selection = select_request_pipeline(
         &pipeline_globals,

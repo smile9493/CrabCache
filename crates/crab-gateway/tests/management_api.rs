@@ -1581,3 +1581,186 @@ async fn runtime_connection_roundtrip() {
         before.tcp_keepalive_idle_secs + 1
     );
 }
+
+#[tokio::test]
+async fn pipeline_rules_get_empty() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/pipeline/rules")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["rules"].as_array().is_some(),
+        "response should contain a rules array"
+    );
+}
+
+#[tokio::test]
+async fn pipeline_rules_put_and_read_back() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_body = serde_json::json!({
+        "rules": [
+            {
+                "name": "test_rule",
+                "priority": 10,
+                "pipeline": "deepseek_light",
+                "match": {
+                    "client": ["cursor"],
+                    "provider": ["deepseek"],
+                    "model_pattern": ["deepseek-v4-*"]
+                }
+            }
+        ]
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/pipeline/rules")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let get_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/pipeline/rules")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let rules = json["rules"].as_array().expect("rules array");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0]["name"].as_str(), Some("test_rule"));
+    assert_eq!(rules[0]["pipeline"].as_str(), Some("deepseek_light"));
+    assert_eq!(rules[0]["priority"].as_u64(), Some(10));
+    assert_eq!(
+        rules[0]["match"]["client"][0].as_str(),
+        Some("cursor")
+    );
+}
+
+#[tokio::test]
+async fn pipeline_test_simulate() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    // First, write a rule
+    let put_body = serde_json::json!({
+        "rules": [
+            {
+                "name": "cursor_ds_v4",
+                "priority": 10,
+                "pipeline": "cursor_deepseek_v4",
+                "match": {
+                    "client": ["cursor"],
+                    "provider": ["deepseek"],
+                    "model_pattern": ["deepseek-v4-*"]
+                }
+            }
+        ]
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/pipeline/rules")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    // Test a matching request
+    let test_body = serde_json::json!({
+        "model": "deepseek-v4-pro",
+        "client": "cursor",
+        "provider": "deepseek"
+    });
+    let test_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/pipeline/test")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(test_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(test_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(test_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["matched"], true);
+    assert_eq!(json["rule_name"].as_str(), Some("cursor_ds_v4"));
+    assert_eq!(json["pipeline"].as_str(), Some("cursor_deepseek_v4"));
+
+    // Test a non-matching request (wrong provider)
+    let test_body2 = serde_json::json!({
+        "model": "deepseek-v4-pro",
+        "client": "cursor",
+        "provider": "openai"
+    });
+    let test_resp2 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/pipeline/test")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(test_body2.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(test_resp2.status(), StatusCode::OK);
+    let body2 = axum::body::to_bytes(test_resp2.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    assert_eq!(json2["matched"], false);
+}

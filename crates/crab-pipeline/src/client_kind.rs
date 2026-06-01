@@ -123,7 +123,7 @@ fn is_codex_family_model(model: &str) -> bool {
 }
 
 /// Payload-based Cursor agent signal detection (consolidated from `signals.rs`).
-fn has_cursor_payload_signals(payload: Option<&Value>) -> bool {
+pub(crate) fn has_cursor_payload_signals(payload: Option<&Value>) -> bool {
     let Some(payload) = payload else {
         return false;
     };

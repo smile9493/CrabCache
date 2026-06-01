@@ -6,6 +6,7 @@ use crab_pipeline::{
 };
 use crab_proxy::{FeaturesConfig, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::LbRouter;
+use crab_translator::WireFormat;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -193,6 +194,7 @@ pub struct PipelineMatchConfig {
     pub client: Option<Vec<String>>,
     pub provider: Option<Vec<String>>,
     pub model_pattern: Option<Vec<String>>,
+    pub wire_format: Option<Vec<String>>,
 }
 
 impl GatewayConfig {
@@ -664,6 +666,9 @@ impl GatewayConfig {
                         v.iter().map(|s| UpstreamProvider::from_str(s)).collect()
                     }),
                     model_pattern: rc.match_conditions.model_pattern.clone(),
+                    wire_format: rc.match_conditions.wire_format.as_ref().map(|v| {
+                        v.iter().map(|s| WireFormat::from_str(s)).collect()
+                    }),
                 },
                 pipeline: RequestPipeline::from_str(&rc.pipeline),
             })

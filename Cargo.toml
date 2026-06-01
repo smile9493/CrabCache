@@ -90,6 +90,7 @@ crab-semantic  = { path = "crates/crab-semantic" }
 crab-proxy     = { path = "crates/crab-proxy" }
 crab-reasoning = { path = "crates/crab-reasoning" }
 crab-pipeline   = { path = "crates/crab-pipeline" }
+crab-translator = { path = "crates/crab-translator" }
 crab-admin     = { path = "crates/crab-admin" }
 crab-control   = { path = "crates/crab-control" }
 crab-client-endpoint = { path = "crates/crab-client-endpoint" }

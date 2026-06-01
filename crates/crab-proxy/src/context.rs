@@ -13,6 +13,7 @@ use crab_client_endpoint::ClientEndpointSnapshot;
 use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
 use crab_pipeline::{ClientKind, PipelineSelectionReason, RequestPipeline};
+use crab_translator::WireFormat;
 
 /// Client-facing OpenAI wire protocol (Chat Completions vs Responses API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,6 +37,14 @@ impl ClientWireApi {
         match self {
             Self::ChatCompletions => "chat_completions",
             Self::Responses => "responses",
+        }
+    }
+
+    /// Convert to the translator-layer `WireFormat` enum.
+    pub fn to_wire_format(self) -> WireFormat {
+        match self {
+            Self::ChatCompletions => WireFormat::ChatCompletions,
+            Self::Responses => WireFormat::Responses,
         }
     }
 }

@@ -18,6 +18,7 @@ pub use cursor_models::{
 pub use profile::{model_prefix_to_profile, resolve_upstream_profile_id};
 pub use rule_engine::{PipelineMatchConditions, PipelineRule, PipelineRuleEngine, RuleMatchInput};
 pub use select::{select_request_pipeline, validate_pipeline_override};
+#[allow(deprecated)]
 pub use signals::cursor_agent_signals;
 pub use types::{
     CODEX_STATIC_MODELS, PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext,

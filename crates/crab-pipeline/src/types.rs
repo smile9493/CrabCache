@@ -1,6 +1,7 @@
 use crate::client_kind::ClientKind;
 use crate::cursor_models::CursorModelsConfig;
 use crate::rule_engine::PipelineRuleEngine;
+use crab_translator::WireFormat;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -321,6 +322,8 @@ pub struct PipelineRequestContext<'a> {
     pub model_alias_pipeline: Option<PipelineOverride>,
     /// Detected client kind (from `ClientDetector`). `None` = not yet detected.
     pub client_kind: Option<ClientKind>,
+    /// Detected wire format (from path + method). `None` = ChatCompletions (default).
+    pub wire_format: Option<WireFormat>,
 }
 
 #[derive(Debug, Clone)]

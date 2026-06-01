@@ -1,45 +1,13 @@
 use serde_json::Value;
 
+use crate::client_kind;
+
+#[deprecated(note = "use ClientDetector::detect() instead")]
 pub fn cursor_agent_signals(payload: Option<&Value>) -> bool {
-    let Some(payload) = payload else {
-        return false;
-    };
-
-    if payload.get("tools").is_some() {
-        return true;
-    }
-    if payload
-        .get("conversation_id")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| !s.trim().is_empty())
-    {
-        return true;
-    }
-    if payload
-        .get("prompt_cache_key")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| !s.trim().is_empty())
-    {
-        return true;
-    }
-
-    let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) else {
-        return false;
-    };
-
-    messages.iter().any(message_has_cursor_signals)
+    client_kind::has_cursor_payload_signals(payload)
 }
 
-fn message_has_cursor_signals(msg: &Value) -> bool {
-    if msg.get("tool_calls").is_some() {
-        return true;
-    }
-    if msg.get("reasoning_content").is_some() {
-        return true;
-    }
-    false
-}
-
+#[deprecated(note = "use ClientDetector::detect() instead")]
 pub fn user_agent_suggests_cursor(user_agent: Option<&str>) -> bool {
     user_agent
         .map(|ua| ua.to_ascii_lowercase().contains("cursor"))
@@ -54,7 +22,9 @@ mod tests {
     #[test]
     fn tools_trigger_signal() {
         let p = json!({"model": "deepseek-v4-pro", "tools": []});
-        assert!(cursor_agent_signals(Some(&p)));
+        #[allow(deprecated)]
+        let result = cursor_agent_signals(Some(&p));
+        assert!(result);
     }
 
     #[test]
@@ -62,7 +32,9 @@ mod tests {
         let p = json!({
             "messages": [{"role": "assistant", "reasoning_content": "x", "content": ""}]
         });
-        assert!(cursor_agent_signals(Some(&p)));
+        #[allow(deprecated)]
+        let result = cursor_agent_signals(Some(&p));
+        assert!(result);
     }
 
     #[test]
@@ -73,6 +45,8 @@ mod tests {
                 {"role": "assistant", "content": "hello"}
             ]
         });
-        assert!(!cursor_agent_signals(Some(&p)));
+        #[allow(deprecated)]
+        let result = cursor_agent_signals(Some(&p));
+        assert!(!result);
     }
 }

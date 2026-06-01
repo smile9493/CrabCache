@@ -25,6 +25,7 @@ use crab_pipeline::{
     ClientKind, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
     PipelineRuleEngine, validate_cursor_models,
 };
+use crab_translator::WireFormat;
 use crab_control::{
     PipelineRuleMatchView, PipelineRuleView, PipelineRulesConfigView, PipelineTestRequest,
     PipelineTestResponse,
@@ -1835,6 +1836,9 @@ fn rule_engine_to_view(engine: &PipelineRuleEngine) -> PipelineRulesConfigView {
                         v.iter().map(|p| p.as_str().to_string()).collect()
                     }),
                     model_pattern: r.match_conditions.model_pattern.clone(),
+                    wire_format: r.match_conditions.wire_format.as_ref().map(|v| {
+                        v.iter().map(|f| f.as_str().to_string()).collect()
+                    }),
                 },
             })
             .collect(),
@@ -1864,6 +1868,9 @@ fn view_to_rule_engine(view: &PipelineRulesConfigView) -> Result<PipelineRuleEng
                     .map(|s| UpstreamProvider::from_str(s))
                     .collect()
             });
+            let wire_format = r.match_conditions.wire_format.as_ref().map(|v| {
+                v.iter().map(|s| WireFormat::from_str(s)).collect()
+            });
             Ok(PipelineRule {
                 name: r.name.clone(),
                 priority: r.priority,
@@ -1871,6 +1878,7 @@ fn view_to_rule_engine(view: &PipelineRulesConfigView) -> Result<PipelineRuleEng
                     client,
                     provider,
                     model_pattern: r.match_conditions.model_pattern.clone(),
+                    wire_format,
                 },
                 pipeline: RequestPipeline::from_str(&r.pipeline),
             })
@@ -1930,12 +1938,18 @@ async fn post_pipeline_test(
         .as_deref()
         .map(crab_pipeline::UpstreamProvider::from_str)
         .unwrap_or(crab_pipeline::UpstreamProvider::Other);
+    let wire_format = req
+        .wire_format
+        .as_deref()
+        .map(WireFormat::from_str)
+        .unwrap_or(WireFormat::ChatCompletions);
     let globals = state.runtime.pipeline_globals();
     if let Some(engine) = &globals.rule_engine {
         let input = crab_pipeline::RuleMatchInput {
             client_kind,
             provider,
             model: &req.model,
+            wire_format,
         };
         if let Some((pipeline, rule_name)) = engine.select(&input) {
             return Ok(Json(PipelineTestResponse {

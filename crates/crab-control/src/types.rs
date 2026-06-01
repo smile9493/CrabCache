@@ -384,6 +384,8 @@ pub struct PipelineRuleMatchView {
     pub provider: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_pattern: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wire_format: Option<Vec<String>>,
 }
 
 /// Pipeline rules configuration (Management API).
@@ -400,6 +402,8 @@ pub struct PipelineTestRequest {
     pub client: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(default)]
+    pub wire_format: Option<String>,
 }
 
 /// Pipeline test response (matched rule result).
