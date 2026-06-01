@@ -1,5 +1,7 @@
+use crate::client_kind::ClientKind;
 use crate::is_deepseek_v4_model;
 use crate::profile::{model_prefix_to_profile, resolve_upstream_profile_id};
+use crate::rule_engine::RuleMatchInput;
 use crate::signals::{cursor_agent_signals, user_agent_suggests_cursor};
 use crate::types::{
     PipelineGlobals, PipelineMode, PipelineOverride, PipelineRequestContext, PipelineSelection,
@@ -11,6 +13,8 @@ pub fn select_request_pipeline(
     profiles: &[ProfileDescriptor],
     ctx: &PipelineRequestContext<'_>,
 ) -> PipelineSelection {
+    let client_kind = ctx.client_kind.unwrap_or(ClientKind::Generic);
+
     let (upstream_profile_id, provider, _profile_explicit) =
         resolve_upstream_profile_id(globals, profiles, ctx);
     let provider = normalize_legacy_codex_provider(provider, &upstream_profile_id);
@@ -21,6 +25,7 @@ pub fn select_request_pipeline(
             upstream_profile_id,
             provider,
             reason: PipelineSelectionReason::GlobalForceCursorV4,
+            client_kind,
         };
     }
 
@@ -42,10 +47,11 @@ pub fn select_request_pipeline(
             upstream_profile_id,
             provider,
             reason,
+            client_kind,
         };
     }
 
-    let (pipeline, reason) = auto_pipeline_with_reason(ctx, provider);
+    let (pipeline, reason) = auto_pipeline_with_reason(ctx, provider, globals);
 
     // When a model alias overrides the pipeline (e.g. gpt-4o → deepseek-v4-pro via Codex key),
     // also override the upstream profile so the request uses the correct endpoints and key pool.
@@ -61,6 +67,7 @@ pub fn select_request_pipeline(
         upstream_profile_id,
         provider,
         reason,
+        client_kind,
     }
 }
 
@@ -179,6 +186,7 @@ fn pipeline_from_override(
 fn auto_pipeline_with_reason(
     ctx: &PipelineRequestContext<'_>,
     provider: UpstreamProvider,
+    globals: &PipelineGlobals,
 ) -> (RequestPipeline, PipelineSelectionReason) {
     // Model alias pipeline takes priority regardless of profile provider.
     // This allows a Codex-profile API key to route aliased models (e.g. gpt-4o → deepseek-v4-pro)
@@ -189,6 +197,22 @@ fn auto_pipeline_with_reason(
         }
     }
 
+    // Try declarative rule engine first (if configured and client_kind is set).
+    if let (Some(engine), Some(client_kind)) = (&globals.rule_engine, ctx.client_kind) {
+        let input = RuleMatchInput {
+            client_kind,
+            provider,
+            model: ctx.model,
+        };
+        if let Some((pipeline, rule_name)) = engine.select(&input) {
+            return (
+                pipeline,
+                PipelineSelectionReason::RuleEngine(rule_name.to_string()),
+            );
+        }
+    }
+
+    // Fallback to legacy if/match logic.
     let pipeline = auto_pipeline_legacy(ctx, provider);
     let reason = match pipeline {
         RequestPipeline::CursorDeepSeekV4 => PipelineSelectionReason::CursorSignals,

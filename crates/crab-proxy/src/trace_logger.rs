@@ -80,6 +80,9 @@ pub struct SanitizedLogEntry {
     /// Request pipeline id (e.g. `cursor_deepseek_v4`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
+    /// Detected client kind (e.g. `cursor`, `codex`, `generic`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<String>,
     /// Model name sent upstream after prepare.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
@@ -254,6 +257,7 @@ impl SanitizedLogEntry {
             upstream_profile_id: None,
             upstream_key_id: None,
             pipeline: None,
+            client_kind: None,
             upstream_model: None,
             client_body_user_id: None,
             upstream_user_id: None,

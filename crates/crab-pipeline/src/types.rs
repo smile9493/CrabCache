@@ -1,4 +1,6 @@
+use crate::client_kind::ClientKind;
 use crate::cursor_models::CursorModelsConfig;
+use crate::rule_engine::PipelineRuleEngine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -29,6 +31,21 @@ impl RequestPipeline {
             RequestPipeline::CodexRelay => "codex_relay",
             RequestPipeline::CodexDeepSeek => "codex_deepseek",
             RequestPipeline::CodexMimo => "codex_mimo",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "cursor_deepseek_v4" => Self::CursorDeepSeekV4,
+            "deepseek_light" => Self::DeepSeekLight,
+            "mimo_token_plan_relay" => Self::MimoTokenPlanRelay,
+            "mimo_payg_relay" => Self::MimoPaygRelay,
+            "generic_relay" => Self::GenericRelay,
+            "codex_relay" => Self::CodexRelay,
+            "codex_deepseek" => Self::CodexDeepSeek,
+            "codex_mimo" => Self::CodexMimo,
+            _ => Self::GenericRelay,
         }
     }
 }
@@ -145,7 +162,7 @@ impl PipelineMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineSelectionReason {
     GlobalForceCursorV4,
@@ -160,10 +177,12 @@ pub enum PipelineSelectionReason {
     ModelAlias,
     CodexDeepSeekProvider,
     CodexMimoProvider,
+    /// Selected by the declarative rule engine (rule name recorded).
+    RuleEngine(String),
 }
 
 impl PipelineSelectionReason {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             PipelineSelectionReason::GlobalForceCursorV4 => "global_force_cursor_v4",
             PipelineSelectionReason::KeyOverride => "key_override",
@@ -177,6 +196,7 @@ impl PipelineSelectionReason {
             PipelineSelectionReason::ModelAlias => "model_alias",
             PipelineSelectionReason::CodexDeepSeekProvider => "codex_deepseek_provider",
             PipelineSelectionReason::CodexMimoProvider => "codex_mimo_provider",
+            PipelineSelectionReason::RuleEngine(name) => name.as_str(),
         }
     }
 }
@@ -216,6 +236,8 @@ pub struct PipelineGlobals {
     pub pipeline_mode: PipelineMode,
     pub known_profile_ids: Vec<String>,
     pub cursor_models: CursorModelsConfig,
+    /// Declarative rule engine (None = use legacy if/match logic).
+    pub rule_engine: Option<PipelineRuleEngine>,
 }
 
 impl Default for PipelineGlobals {
@@ -225,6 +247,7 @@ impl Default for PipelineGlobals {
             pipeline_mode: PipelineMode::Auto,
             known_profile_ids: vec!["deepseek".to_string()],
             cursor_models: CursorModelsConfig::default(),
+            rule_engine: None,
         }
     }
 }
@@ -248,6 +271,7 @@ impl PipelineGlobals {
             pipeline_mode,
             known_profile_ids,
             cursor_models: CursorModelsConfig::default(),
+            rule_engine: None,
         }
     }
 
@@ -259,6 +283,23 @@ impl PipelineGlobals {
     ) -> Self {
         let mut g = Self::with_profiles_and_mode(default_id, profile_ids, pipeline_mode);
         g.cursor_models = cursor_models;
+        g
+    }
+
+    pub fn with_profiles_mode_cursor_models_and_rule_engine(
+        default_id: impl Into<String>,
+        profile_ids: impl IntoIterator<Item = String>,
+        pipeline_mode: PipelineMode,
+        cursor_models: CursorModelsConfig,
+        rule_engine: Option<PipelineRuleEngine>,
+    ) -> Self {
+        let mut g = Self::with_profiles_mode_and_cursor_models(
+            default_id,
+            profile_ids,
+            pipeline_mode,
+            cursor_models,
+        );
+        g.rule_engine = rule_engine;
         g
     }
 }
@@ -278,6 +319,8 @@ pub struct PipelineRequestContext<'a> {
     pub alias_upstream_model: Option<&'a str>,
     /// Pipeline hint from alias entry (`auto` uses legacy rules).
     pub model_alias_pipeline: Option<PipelineOverride>,
+    /// Detected client kind (from `ClientDetector`). `None` = not yet detected.
+    pub client_kind: Option<ClientKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +329,7 @@ pub struct PipelineSelection {
     pub upstream_profile_id: String,
     pub provider: UpstreamProvider,
     pub reason: PipelineSelectionReason,
+    pub client_kind: ClientKind,
 }
 
 #[derive(Debug, Clone)]

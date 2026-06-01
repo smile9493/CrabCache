@@ -12,7 +12,7 @@ use crab_cache::{CacheEntry, CoalesceGuard, RequestCoalescer, TieredCache};
 use crab_client_endpoint::ClientEndpointSnapshot;
 use crab_composition::RequestComposition;
 use crab_metrics::CacheTier;
-use crab_pipeline::{PipelineSelectionReason, RequestPipeline};
+use crab_pipeline::{ClientKind, PipelineSelectionReason, RequestPipeline};
 
 /// Client-facing OpenAI wire protocol (Chat Completions vs Responses API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -448,6 +448,8 @@ pub struct GatewayContext {
     pub is_models_list: bool,
     /// Downstream wire API inferred from request path.
     pub client_wire_api: ClientWireApi,
+    /// Detected client kind (Cursor, Codex, Windsurf, etc.).
+    pub client_kind: ClientKind,
     pub model: String,
     pub consumer: Option<String>,
     pub domain: Option<String>,
@@ -548,6 +550,7 @@ impl GatewayContext {
             is_streaming: false,
             is_models_list: false,
             client_wire_api: ClientWireApi::ChatCompletions,
+            client_kind: ClientKind::Generic,
             model: String::new(),
             consumer: None,
             domain: None,

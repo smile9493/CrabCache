@@ -365,6 +365,53 @@ pub struct PipelineProfileView {
     pub fallback_model: String,
 }
 
+/// A single pipeline rule view (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRuleView {
+    pub name: String,
+    pub priority: u32,
+    pub pipeline: String,
+    #[serde(rename = "match")]
+    pub match_conditions: PipelineRuleMatchView,
+}
+
+/// Match conditions for a pipeline rule view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRuleMatchView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_pattern: Option<Vec<String>>,
+}
+
+/// Pipeline rules configuration (Management API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineRulesConfigView {
+    pub rules: Vec<PipelineRuleView>,
+}
+
+/// Pipeline test request (simulate rule matching).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTestRequest {
+    pub model: String,
+    #[serde(default)]
+    pub client: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+}
+
+/// Pipeline test response (matched rule result).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTestResponse {
+    pub matched: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+}
+
 /// Read-only upstream profile summary (Management API).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamProfileView {

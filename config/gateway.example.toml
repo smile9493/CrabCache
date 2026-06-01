@@ -35,6 +35,55 @@ gpt-4o = { upstream = "deepseek-v4-pro", pipeline = "cursor_deepseek_v4" }
 gpt-4 = { upstream = "deepseek-v4-pro", pipeline = "cursor_deepseek_v4" }
 deepseek-chat = { upstream = "deepseek-chat", pipeline = "deepseek_light" }
 
+# ── Declarative Pipeline Rules (optional) ──────────────────────────────
+# When [gateway.pipeline] is present with rules, the rule engine evaluates
+# rules in priority order before falling back to the legacy if/match logic.
+# Omit this section entirely to use legacy behavior (100% backward compatible).
+#
+# [gateway.pipeline]
+# default = "generic_relay"
+#
+# [[gateway.pipeline.rules]]
+# name = "cursor_deepseek_v4"
+# priority = 10
+# pipeline = "cursor_deepseek_v4"
+# [gateway.pipeline.rules.match]
+# client = ["cursor"]
+# provider = ["deepseek"]
+# model_pattern = ["deepseek-v4-*"]
+#
+# [[gateway.pipeline.rules]]
+# name = "codex_relay"
+# priority = 20
+# pipeline = "codex_relay"
+# [gateway.pipeline.rules.match]
+# client = ["codex"]
+# provider = ["codex"]
+#
+# [[gateway.pipeline.rules]]
+# name = "codex_to_deepseek"
+# priority = 25
+# pipeline = "codex_deepseek"
+# [gateway.pipeline.rules.match]
+# client = ["codex"]
+# provider = ["deepseek"]
+# model_pattern = ["deepseek-*"]
+#
+# [[gateway.pipeline.rules]]
+# name = "deepseek_light"
+# priority = 30
+# pipeline = "deepseek_light"
+# [gateway.pipeline.rules.match]
+# provider = ["deepseek"]
+# # No model_pattern → all DeepSeek models (lower priority than cursor rule)
+#
+# [[gateway.pipeline.rules]]
+# name = "mimo_relay"
+# priority = 40
+# pipeline = "mimo_token_plan_relay"
+# [gateway.pipeline.rules.match]
+# provider = ["mimo"]
+
 # Management HTTP API (Admin / control plane). Default binds loopback only.
 # In Docker set CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080 so peer containers can reach it.
 [management]

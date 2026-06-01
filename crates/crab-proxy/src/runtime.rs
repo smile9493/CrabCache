@@ -3,7 +3,7 @@ use crate::stored_key::StoredKey;
 use crate::upstream_pool::UpstreamKeyPool;
 use crate::upstream_profile::UpstreamProfileRuntime;
 use crab_cache::{FingerprintConfig, TtlConfig};
-use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode};
+use crab_pipeline::{CursorModelsConfig, PipelineGlobals, PipelineMode, PipelineRuleEngine};
 use crab_route::LbRouter;
 use dashmap::DashMap;
 use indexmap::IndexMap;
@@ -256,6 +256,17 @@ impl RuntimeConfig {
 
     pub fn cursor_models(&self) -> CursorModelsConfig {
         self.pipeline_globals().cursor_models.clone()
+    }
+
+    /// Hot-reload the declarative pipeline rule engine.
+    /// Pass `None` to clear the engine and revert to legacy if/match logic.
+    pub fn set_rule_engine(&self, engine: Option<PipelineRuleEngine>) {
+        self.pipeline_globals.write().rule_engine = engine;
+    }
+
+    /// Return a snapshot of the current rule engine (if configured).
+    pub fn rule_engine(&self) -> Option<PipelineRuleEngine> {
+        self.pipeline_globals.read().rule_engine.clone()
     }
 
     fn refresh_known_profile_ids(&self) {

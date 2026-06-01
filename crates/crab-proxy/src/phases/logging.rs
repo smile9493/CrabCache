@@ -340,6 +340,7 @@ pub(crate) async fn run(
                 entry.guardrail_labels = ctx.guardrail_hits.clone();
                 entry.client_ip = ctx.client_ip.clone();
                 entry.client_peer_addr = ctx.client_peer_addr.clone();
+                entry.client_kind = Some(ctx.client_kind.as_str().to_string());
                 entry.body_read_duration_ms =
                     match (ctx.timeline.body_read_start, ctx.timeline.body_read_done) {
                         (Some(start), Some(done)) => {

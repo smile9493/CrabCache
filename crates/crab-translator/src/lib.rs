@@ -66,6 +66,34 @@ impl WireFormat {
             Self::Canonical => "canonical",
         }
     }
+
+    /// Parse a wire format from a string (case-insensitive).
+    /// Defaults to `ChatCompletions` for unrecognized values.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "chat_completions" | "chat" | "completions" => Self::ChatCompletions,
+            "responses" => Self::Responses,
+            "anthropic" | "messages" => Self::Anthropic,
+            "canonical" => Self::Canonical,
+            _ => Self::ChatCompletions,
+        }
+    }
+}
+
+/// Declares the translation requirements for a pipeline.
+///
+/// Each pipeline can specify which wire formats it expects for inbound,
+/// outbound, and response directions. Phase 2 will use this to route
+/// requests through the appropriate translator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineTranslation {
+    /// Wire format the client sends.
+    pub inbound: WireFormat,
+    /// Wire format sent to the upstream provider.
+    pub outbound: WireFormat,
+    /// Wire format the upstream returns (translated back to client's format).
+    pub response: WireFormat,
 }
 
 /// A request translator converts from a wire format to the canonical format.

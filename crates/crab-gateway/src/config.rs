@@ -1,6 +1,7 @@
 use crab_control::parse_upstream_base_url;
 use crab_pipeline::{
-    CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMode, PipelineOverride,
+    ClientKind, CursorModelEntry, CursorModelsConfig, PipelineGlobals, PipelineMatchConditions,
+    PipelineMode, PipelineOverride, PipelineRule, PipelineRuleEngine, RequestPipeline,
     UpstreamProvider, validate_cursor_models,
 };
 use crab_proxy::{FeaturesConfig, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
@@ -130,6 +131,9 @@ pub struct GatewaySection {
     /// When true, client keys without `project_id` get a stable derived DeepSeek `user_id` (`client:{hash}`).
     #[serde(default)]
     pub auto_project_id_from_client_key: bool,
+    /// Declarative pipeline rules (optional, overrides legacy if/match logic).
+    #[serde(default)]
+    pub pipeline: Option<PipelineSection>,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -151,6 +155,44 @@ pub struct GatewayCursorModelAlias {
 
 fn default_cursor_alias_pipeline() -> String {
     "cursor_deepseek_v4".to_string()
+}
+
+/// `[pipeline]` configuration section for declarative pipeline rules.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct PipelineSection {
+    /// Default pipeline name when no rule matches (e.g. `"generic_relay"`).
+    #[serde(default = "default_pipeline_default")]
+    pub default: String,
+    /// Ordered list of pipeline rules (evaluated by priority).
+    #[serde(default)]
+    pub rules: Vec<PipelineRuleConfig>,
+}
+
+fn default_pipeline_default() -> String {
+    "generic_relay".to_string()
+}
+
+/// A single pipeline rule as declared in TOML `[[pipeline.rules]]`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PipelineRuleConfig {
+    pub name: String,
+    pub pipeline: String,
+    #[serde(default = "default_rule_priority")]
+    pub priority: u32,
+    #[serde(rename = "match")]
+    pub match_conditions: PipelineMatchConfig,
+}
+
+fn default_rule_priority() -> u32 {
+    100
+}
+
+/// Match conditions for a pipeline rule (TOML representation).
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct PipelineMatchConfig {
+    pub client: Option<Vec<String>>,
+    pub provider: Option<Vec<String>>,
+    pub model_pattern: Option<Vec<String>>,
 }
 
 impl GatewayConfig {
@@ -586,12 +628,47 @@ impl GatewayConfig {
             .map(|p| p.id)
             .collect();
         let mode = PipelineMode::from_str(&self.gateway.pipeline_mode);
-        PipelineGlobals::with_profiles_mode_and_cursor_models(
+        let rule_engine = self.build_rule_engine();
+        PipelineGlobals::with_profiles_mode_cursor_models_and_rule_engine(
             self.gateway.default_upstream_profile.clone(),
             ids,
             mode,
             self.cursor_models_config(),
+            rule_engine,
         )
+    }
+
+    /// Build a `PipelineRuleEngine` from the `[pipeline]` config section, if present.
+    fn build_rule_engine(&self) -> Option<PipelineRuleEngine> {
+        let section = self.gateway.pipeline.as_ref()?;
+        let rules: Vec<PipelineRule> = section
+            .rules
+            .iter()
+            .map(|rc| PipelineRule {
+                name: rc.name.clone(),
+                priority: rc.priority,
+                match_conditions: PipelineMatchConditions {
+                    client: rc.match_conditions.client.as_ref().map(|v| {
+                        v.iter()
+                            .map(|s| match s.to_lowercase().as_str() {
+                                "cursor" => ClientKind::Cursor,
+                                "codex" => ClientKind::Codex,
+                                "windsurf" => ClientKind::Windsurf,
+                                "aider" => ClientKind::Aider,
+                                "continue" => ClientKind::Continue,
+                                _ => ClientKind::Generic,
+                            })
+                            .collect()
+                    }),
+                    provider: rc.match_conditions.provider.as_ref().map(|v| {
+                        v.iter().map(|s| UpstreamProvider::from_str(s)).collect()
+                    }),
+                    model_pattern: rc.match_conditions.model_pattern.clone(),
+                },
+                pipeline: RequestPipeline::from_str(&rc.pipeline),
+            })
+            .collect();
+        Some(PipelineRuleEngine::new(rules))
     }
 
     pub fn build_upstream_profile_runtimes(

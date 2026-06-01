@@ -22,7 +22,12 @@ use crab_control::{
     parse_backend_endpoints, parse_upstream_base_url,
 };
 use crab_pipeline::{
-    CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride, validate_cursor_models,
+    ClientKind, CursorModelEntry, CursorModelsConfig, PipelineMode, PipelineOverride,
+    PipelineRuleEngine, validate_cursor_models,
+};
+use crab_control::{
+    PipelineRuleMatchView, PipelineRuleView, PipelineRulesConfigView, PipelineTestRequest,
+    PipelineTestResponse,
 };
 use crab_proxy::{
     BackendRouteStrategy, ClientKeyLimiter, DomainPolicy, FeaturesConfig, PricingConfig,
@@ -170,6 +175,11 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/runtime/pipeline",
             get(get_pipeline_runtime).put(put_pipeline_runtime),
         )
+        .route(
+            "/v1/pipeline/rules",
+            get(get_pipeline_rules).put(put_pipeline_rules),
+        )
+        .route("/v1/pipeline/test", post(post_pipeline_test))
         .route(
             "/v1/runtime/semantic",
             get(get_semantic_runtime).put(put_semantic_runtime),
@@ -1804,6 +1814,142 @@ async fn put_pipeline_runtime(
 
     schedule_persist_state(&state);
     Ok(Json(pipeline_runtime_view(&state.runtime)))
+}
+
+// ── Pipeline Rules CRUD ───────────────────────────────────────────────
+
+fn rule_engine_to_view(engine: &PipelineRuleEngine) -> PipelineRulesConfigView {
+    PipelineRulesConfigView {
+        rules: engine
+            .rules()
+            .iter()
+            .map(|r| PipelineRuleView {
+                name: r.name.clone(),
+                priority: r.priority,
+                pipeline: r.pipeline.as_str().to_string(),
+                match_conditions: PipelineRuleMatchView {
+                    client: r.match_conditions.client.as_ref().map(|v| {
+                        v.iter().map(|c| c.as_str().to_string()).collect()
+                    }),
+                    provider: r.match_conditions.provider.as_ref().map(|v| {
+                        v.iter().map(|p| p.as_str().to_string()).collect()
+                    }),
+                    model_pattern: r.match_conditions.model_pattern.clone(),
+                },
+            })
+            .collect(),
+    }
+}
+
+fn view_to_rule_engine(view: &PipelineRulesConfigView) -> Result<PipelineRuleEngine, String> {
+    use crab_pipeline::{PipelineMatchConditions, PipelineRule, RequestPipeline, UpstreamProvider};
+    let rules: Vec<PipelineRule> = view
+        .rules
+        .iter()
+        .map(|r| {
+            let client = r.match_conditions.client.as_ref().map(|v| {
+                v.iter()
+                    .map(|s| match s.to_lowercase().as_str() {
+                        "cursor" => ClientKind::Cursor,
+                        "codex" => ClientKind::Codex,
+                        "windsurf" => ClientKind::Windsurf,
+                        "aider" => ClientKind::Aider,
+                        "continue" => ClientKind::Continue,
+                        _ => ClientKind::Generic,
+                    })
+                    .collect()
+            });
+            let provider = r.match_conditions.provider.as_ref().map(|v| {
+                v.iter()
+                    .map(|s| UpstreamProvider::from_str(s))
+                    .collect()
+            });
+            Ok(PipelineRule {
+                name: r.name.clone(),
+                priority: r.priority,
+                match_conditions: PipelineMatchConditions {
+                    client,
+                    provider,
+                    model_pattern: r.match_conditions.model_pattern.clone(),
+                },
+                pipeline: RequestPipeline::from_str(&r.pipeline),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(PipelineRuleEngine::new(rules))
+}
+
+async fn get_pipeline_rules(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> Result<Json<PipelineRulesConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let view = match state.runtime.rule_engine() {
+        Some(engine) => rule_engine_to_view(&engine),
+        None => PipelineRulesConfigView { rules: vec![] },
+    };
+    Ok(Json(view))
+}
+
+async fn put_pipeline_rules(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PipelineRulesConfigView>,
+) -> Result<Json<PipelineRulesConfigView>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let engine = view_to_rule_engine(&req).map_err(|msg| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })).into_response()
+    })?;
+    let rule_count = engine.rules().len();
+    state.runtime.set_rule_engine(Some(engine));
+    tracing::info!(rule_count, "Pipeline rules updated");
+    schedule_persist_state(&state);
+    Ok(Json(req))
+}
+
+async fn post_pipeline_test(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Json(req): Json<PipelineTestRequest>,
+) -> Result<Json<PipelineTestResponse>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let client_kind = req
+        .client
+        .as_deref()
+        .map(|s| match s.to_lowercase().as_str() {
+            "cursor" => ClientKind::Cursor,
+            "codex" => ClientKind::Codex,
+            "windsurf" => ClientKind::Windsurf,
+            "aider" => ClientKind::Aider,
+            "continue" => ClientKind::Continue,
+            _ => ClientKind::Generic,
+        })
+        .unwrap_or(ClientKind::Generic);
+    let provider = req
+        .provider
+        .as_deref()
+        .map(crab_pipeline::UpstreamProvider::from_str)
+        .unwrap_or(crab_pipeline::UpstreamProvider::Other);
+    let globals = state.runtime.pipeline_globals();
+    if let Some(engine) = &globals.rule_engine {
+        let input = crab_pipeline::RuleMatchInput {
+            client_kind,
+            provider,
+            model: &req.model,
+        };
+        if let Some((pipeline, rule_name)) = engine.select(&input) {
+            return Ok(Json(PipelineTestResponse {
+                matched: true,
+                rule_name: Some(rule_name.to_string()),
+                pipeline: Some(pipeline.as_str().to_string()),
+            }));
+        }
+    }
+    Ok(Json(PipelineTestResponse {
+        matched: false,
+        rule_name: None,
+        pipeline: None,
+    }))
 }
 
 fn cursor_models_view(runtime: &RuntimeConfig) -> CursorModelsConfigView {

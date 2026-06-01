@@ -29,8 +29,9 @@ use crate::{evaluate_request_guardrails, maybe_handle_cursor_bypass};
 use bytes::Bytes;
 use crab_metrics::global_metrics;
 use crab_pipeline::{
-    PipelineOverride, PipelineRequestContext, PipelineSelection, PipelineSelectionReason,
-    RequestPipeline, UpstreamProvider, select_request_pipeline, validate_pipeline_override,
+    ClientDetector, PipelineOverride, PipelineRequestContext, PipelineSelection,
+    PipelineSelectionReason, RequestPipeline, UpstreamProvider, select_request_pipeline,
+    validate_pipeline_override,
 };
 use crab_reasoning::{
     CursorReasoningDisplayAdapter, StreamAccumulator, prepare_codex_mimo_request,
@@ -188,6 +189,26 @@ async fn run_post_body_phases(
     let model_alias_pipeline = model_alias_entry.map(|e| e.pipeline);
     let alias_hit = model_alias_entry.is_some();
 
+    // Detect client kind before pipeline selection.
+    let detection_path = match ctx.client_wire_api {
+        crate::context::ClientWireApi::Responses => "/v1/responses",
+        _ => "/v1/chat/completions",
+    };
+    let x_client_kind = session
+        .req_header()
+        .headers
+        .get("x-client-kind")
+        .and_then(|v| v.to_str().ok());
+    // Parse body for payload-based signal detection (lightweight, reuses existing bytes).
+    let detection_payload: Option<serde_json::Value> =
+        serde_json::from_slice(full_body.as_ref()).ok();
+    ctx.client_kind = ClientDetector::detect(
+        detection_path,
+        user_agent.as_deref(),
+        x_client_kind,
+        detection_payload.as_ref(),
+    );
+
     let mut selection = if !skip_early_pipeline_select {
         let pipe_ctx = PipelineRequestContext {
             model: &ctx.model,
@@ -200,6 +221,7 @@ async fn run_post_body_phases(
             user_agent: user_agent.as_deref(),
             alias_upstream_model,
             model_alias_pipeline,
+            client_kind: Some(ctx.client_kind),
         };
         let selection = select_request_pipeline(
             &pipeline_globals,
@@ -231,13 +253,15 @@ async fn run_post_body_phases(
         }
 
         ctx.request_pipeline = Some(selection.pipeline);
-        ctx.pipeline_reason = Some(selection.reason);
+        ctx.client_kind = selection.client_kind;
+        let reason_str = selection.reason.as_str().to_string();
+        ctx.pipeline_reason = Some(selection.reason.clone());
         ctx.upstream_profile_id = Some(selection.upstream_profile_id.clone());
 
         global_metrics().record_pipeline_selected(
             selection.pipeline.as_str(),
             &selection.upstream_profile_id,
-            selection.reason.as_str(),
+            &reason_str,
         );
         timeline_stamp(&mut ctx.timeline.pipeline_select_done);
         if crate::codex_rate_limit::is_codex_upstream_pipeline(ctx.request_pipeline) {
@@ -306,7 +330,9 @@ async fn run_post_body_phases(
             provider: profile.provider,
             reason: ctx
                 .pipeline_reason
+                .clone()
                 .expect("streaming defer sets pipeline_reason"),
+            client_kind: ctx.client_kind,
         }
     };
 
@@ -323,8 +349,8 @@ async fn run_post_body_phases(
             ctx.request_pipeline = Some(upgraded);
             selection.pipeline = upgraded;
             if let Some(reason) = reason {
+                selection.reason = reason.clone();
                 ctx.pipeline_reason = Some(reason);
-                selection.reason = reason;
             }
         }
     }
@@ -1232,6 +1258,7 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
         user_agent: user_agent.as_deref(),
         alias_upstream_model: model_alias_entry.map(|e| e.upstream.as_str()),
         model_alias_pipeline: model_alias_entry.map(|e| e.pipeline),
+        client_kind: Some(ctx.client_kind),
     };
     let selection = select_request_pipeline(
         &pipeline_globals,
@@ -1241,14 +1268,18 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     if !request_passthrough_allowed_pipeline(selection.pipeline) {
         return false;
     }
-    ctx.request_pipeline = Some(selection.pipeline);
+    let sel_pipeline = selection.pipeline;
+    let sel_profile_id = selection.upstream_profile_id;
+    let reason_str = selection.reason.as_str().to_string();
+    ctx.request_pipeline = Some(sel_pipeline);
     ctx.pipeline_reason = Some(selection.reason);
-    ctx.upstream_profile_id = Some(selection.upstream_profile_id);
+    ctx.upstream_profile_id = Some(sel_profile_id.clone());
     ctx.upstream_model = Some(ctx.model.clone());
+    ctx.client_kind = selection.client_kind;
     global_metrics().record_pipeline_selected(
-        selection.pipeline.as_str(),
+        sel_pipeline.as_str(),
         ctx.upstream_profile_id.as_deref().unwrap_or("default"),
-        selection.reason.as_str(),
+        &reason_str,
     );
     let (stable_kind, _stable_prefix) = stable_session_log_fields(
         ctx.conversation_id.as_deref(),
