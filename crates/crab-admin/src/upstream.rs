@@ -314,9 +314,6 @@ fn pick_sync_key_context(state: &AppState, profile_id: &str) -> Option<(String, 
 }
 
 async fn profile_provider_async(state: &Arc<AppState>, profile_id: &str) -> String {
-    if profile_id == "deepseek" {
-        return "deepseek".to_string();
-    }
     state
         .gateway
         .list_upstream_profiles()
@@ -467,10 +464,6 @@ pub async fn profile_base_url_async(
     state: &Arc<AppState>,
     profile_id: &str,
 ) -> Result<String, String> {
-    if profile_id == "deepseek" {
-        let cfg = state.upstream_config.read();
-        return Ok(cfg.base_url.clone());
-    }
     let list = state
         .gateway
         .list_upstream_profiles()

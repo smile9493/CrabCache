@@ -62,11 +62,20 @@ pub fn RoutingTab(profile_id: String) -> impl IntoView {
             }
             let pid = pid_refresh.clone();
             let alive = Arc::clone(&alive_for_interval);
-            if let Ok(data) = api::fetch_profile_routing(&pid).await {
-                if !alive.load(Ordering::Relaxed) {
-                    break;
+            match api::fetch_profile_routing(&pid).await {
+                Ok(data) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    routing.try_set(Some(data));
+                    error.try_set(String::new());
                 }
-                routing.try_set(Some(data));
+                Err(e) => {
+                    if !alive.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    error.try_set(e);
+                }
             }
         }
     });
