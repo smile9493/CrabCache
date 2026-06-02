@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API 网关，面向多供应商 LLM（大语言模型）API 的缓存优化与可观测透明分析。以 DeepSeek V4 为重点参考实现（当前唯一支持 Reasoning/thinking 的供应商），同时兼容 OpenAI、Anthropic 等主流供应商。通过多级缓存架构（L0/L1/L2）、会话亲和性路由和请求合并（Coalescing），实现极致的成本优化和低延迟响应。
+CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API 网关，面向多供应商 LLM（大语言模型）API 的缓存优化与可观测透明分析。内置 **120+ 个 LLM 供应商**（OpenAI、Anthropic、DeepSeek、Groq、xAI、Mistral、Gemini、阿里通义、百度千帆、智谱 GLM 等），以 DeepSeek V4 为重点参考实现（当前唯一支持 Reasoning/thinking 的供应商）。通过多级缓存架构（L0/L1/L2）、会话亲和性路由和请求合并（Coalescing），实现极致的成本优化和低延迟响应。
 
 ### 核心特性
 

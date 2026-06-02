@@ -1,6 +1,6 @@
 # 任务 03: Pipeline 选择更新
 
-> **Phase**: 1c | **优先级**: P0 | **状态**: 待开始
+> **Phase**: 1c | **优先级**: P0 | **状态**: ✅ 已完成
 > **预计工作量**: 30 分钟 | **风险**: 低
 
 ## 目标
@@ -17,9 +17,8 @@
 
 ```rust
 fn auto_pipeline_legacy(
-    provider: UpstreamProvider,
-    model: &str,
     ctx: &PipelineRequestContext<'_>,
+    provider: UpstreamProvider,
 ) -> RequestPipeline {
     match provider {
         // ── DeepSeek 特殊处理 ──

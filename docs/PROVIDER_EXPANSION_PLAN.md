@@ -1,12 +1,14 @@
 # CrabCache 供应商扩展计划 — 项目任务总纲
 
 > 参考 OmniRoute（177 个供应商）将 CrabCache 从 5 个供应商扩展到 120+ 个内置供应商。
+>
+> **当前进度**：Phase 1（枚举/路由/管线）和 Phase 3（Dashboard UI）已完成；Phase 2（配置模板）、Phase 4（测试）、Phase 5（文档）待实施。
 
 ## 1. 背景与目标
 
 ### 1.1 现状
 
-CrabCache 当前仅内置 5 个上游供应商：
+CrabCache **已扩展至 120+ 个内置上游供应商**（原计划 5 个 → 实际完成 120+）：
 
 | 供应商 | 枚举值 | 特殊处理 |
 |--------|--------|----------|
@@ -79,11 +81,11 @@ DeepInfra, Lambda AI, SambaNova, nScale, OVHcloud, Baseten, Databricks, Snowflak
 
 ### Phase 1：核心枚举与路由（1-2 天）
 
-- [ ] 扩展 `UpstreamProvider` 枚举（120+ 变体）
-- [ ] 更新 `from_str()` / `as_str()` 方法
-- [ ] 扩展 `model_prefix_to_profile()` 映射
-- [ ] 更新 `auto_pipeline_legacy()` match 分支
-- [ ] 添加单元测试
+- [x] 扩展 `UpstreamProvider` 枚举（120+ 变体）— `crates/crab-pipeline/src/types.rs`
+- [x] 更新 `from_str()` / `as_str()` 方法 — 含多别名映射
+- [x] 扩展 `model_prefix_to_profile()` 映射 — `crates/crab-pipeline/src/profile.rs`
+- [x] 更新 `auto_pipeline_legacy()` match 分支 — `crates/crab-pipeline/src/select.rs`
+- [ ] 添加单元测试（供应商 roundtrip、profile 路由覆盖）
 
 ### Phase 2：配置模板（0.5 天）
 
@@ -92,8 +94,8 @@ DeepInfra, Lambda AI, SambaNova, nScale, OVHcloud, Baseten, Databricks, Snowflak
 
 ### Phase 3：Dashboard UI（1 天）
 
-- [ ] 更新上游 Profile 页面的供应商下拉列表
-- [ ] 更新模型同步逻辑（如有）
+- [x] 更新上游 Profile 页面的供应商预设模板 — `crates/crab-dashboard/src/pages/upstream.rs`（~58 个 `PresetTemplate`）
+- [x] 更新模型同步逻辑（如有）
 
 ### Phase 4：测试与验证（1 天）
 

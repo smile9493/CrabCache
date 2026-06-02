@@ -1,6 +1,6 @@
 # 任务 01: 核心枚举扩展
 
-> **Phase**: 1a | **优先级**: P0 | **状态**: 待开始
+> **Phase**: 1a | **优先级**: P0 | **状态**: ✅ 已完成
 > **预计工作量**: 2-3 小时 | **风险**: 低
 
 ## 目标
@@ -182,7 +182,7 @@ pub fn from_str(s: &str) -> Self {
     match s.to_lowercase().as_str() {
         // 原有
         "deepseek" => Self::Deepseek,
-        "mimo" | "xiaomi" => Self::Mimo,
+        "mimo" => Self::Mimo,
         "openai" => Self::Openai,
         "codex" => Self::Codex,
         "anthropic" => Self::Anthropic,
@@ -192,7 +192,7 @@ pub fn from_str(s: &str) -> Self {
         "xai" | "grok" => Self::Xai,
         "mistral" => Self::Mistral,
         "gemini" | "google" => Self::Gemini,
-        "perplexity" => Self::Perplexity,
+        "perplexity" | "pplx" => Self::Perplexity,
         "together" => Self::Together,
         "fireworks" => Self::Fireworks,
         "cerebras" => Self::Cerebras,
@@ -200,7 +200,7 @@ pub fn from_str(s: &str) -> Self {
         "nvidia" | "nim" => Self::Nvidia,
         "nebius" => Self::Nebius,
         "siliconflow" => Self::Siliconflow,
-        "hyperbolic" => Self::Hyperbolic,
+        "hyperbolic" | "hyp" => Self::Hyperbolic,
         "openrouter" => Self::OpenRouter,
         "reka" => Self::Reka,
 
@@ -214,11 +214,11 @@ pub fn from_str(s: &str) -> Self {
         "sap" => Self::Sap,
 
         // 中国供应商
-        "alibaba" | "qwen" | "dashscope" => Self::Alibaba,
+        "alibaba" | "ali" | "qwen" | "dashscope" | "alibaba-cn" | "ali-cn" => Self::Alibaba,
         "qianfan" | "baidu-cloud" => Self::Qianfan,
-        "glm" | "zhipu" | "bigmodel" => Self::Glm,
-        "kimi" | "moonshot-ai" => Self::Kimi,
-        "minimax" => Self::Minimax,
+        "glm" | "zhipu" | "bigmodel" | "glm-cn" | "glmcn" | "glmt" => Self::Glm,
+        "kimi" | "moonshot-ai" | "kimi-coding-apikey" | "kmca" => Self::Kimi,
+        "minimax" | "minimax-cn" => Self::Minimax,
         "moonshot" => Self::Moonshot,
         "volcengine" | "volc" => Self::Volcengine,
         "doubao" => Self::Doubao,
@@ -271,11 +271,11 @@ pub fn from_str(s: &str) -> Self {
         "nanogpt" => Self::Nanogpt,
         "predibase" => Self::Predibase,
         "bytez" => Self::Bytez,
-        "aimlapi" | "aiml" => Self::Aimlapi,
-        "novita" => Self::Novita,
+        "aimlapi" | "aiml" | "ai/ml-api" => Self::Aimlapi,
+        "novita" | "novita-ai" => Self::Novita,
         "piapi" => Self::Piapi,
         "getgoapi" | "goapi" => Self::Getgoapi,
-        "laozhang" => Self::Laozhang,
+        "laozhang" | "laozhang-ai" => Self::Laozhang,
         "glhf" => Self::Glhf,
         "cablyai" => Self::Cablyai,
         "thebai" => Self::Thebai,
@@ -285,7 +285,7 @@ pub fn from_str(s: &str) -> Self {
         "petals" => Self::Petals,
         "poe" => Self::Poe,
         "gitlab" | "gitlab-duo-pat" => Self::Gitlab,
-        "chutes" => Self::Chutes,
+        "chutes" | "chutes-ai" => Self::Chutes,
         "voyage-ai" | "voyage" => Self::VoyageAi,
         "jina-ai" | "jina" => Self::JinaAi,
         "fal-ai" | "fal" => Self::FalAi,
@@ -302,15 +302,15 @@ pub fn from_str(s: &str) -> Self {
         "byteplus" => Self::Byteplus,
         "bluesminds" | "blues" => Self::Bluesminds,
         "freemodel-dev" | "freemodel" => Self::FreemodelDev,
-        "blackbox" => Self::Blackbox,
+        "blackbox" | "blackbox-ai" => Self::Blackbox,
         "bazaarlink" => Self::Bazaarlink,
         "completions" | "completions-me" => Self::Completions,
-        "enally" => Self::Enally,
-        "freetheai" => Self::Freetheai,
+        "enally" | "enally-ai" => Self::Enally,
+        "freetheai" | "free-the-ai" => Self::Freetheai,
         "crof" | "crofai" => Self::Crof,
-        "longcat" => Self::Longcat,
+        "longcat" | "longcat-ai" => Self::Longcat,
         "pollinations" => Self::Pollinations,
-        "puter" => Self::Puter,
+        "puter" | "puter-ai" => Self::Puter,
         "uncloseai" => Self::Uncloseai,
         "replicate" => Self::Replicate,
         "ollama-cloud" | "ollama" => Self::OllamaCloud,
@@ -323,9 +323,9 @@ pub fn from_str(s: &str) -> Self {
         "phind" => Self::Phind,
         "huggingchat" => Self::Huggingchat,
         "dify" => Self::Dify,
-        "publicai" => Self::Publicai,
+        "publicai" | "public-ai" => Self::Publicai,
         "sapio" => Self::Sapio,
-        "freeaiapikey" => Self::Freeaiapikey,
+        "freeaiapikey" | "free-ai-api-key" => Self::Freeaiapikey,
 
         _ => Self::Other,
     }

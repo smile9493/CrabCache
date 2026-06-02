@@ -1,6 +1,6 @@
 # 任务 05: Dashboard UI 更新
 
-> **Phase**: 3 | **优先级**: P2 | **状态**: 待开始
+> **Phase**: 3 | **优先级**: P2 | **状态**: ✅ 已完成
 > **预计工作量**: 1-2 小时 | **风险**: 低
 
 ## 目标
@@ -13,62 +13,33 @@
 
 ## 详细步骤
 
-### Step 1: 更新供应商下拉列表
+### Step 1: 更新供应商预设模板
 
-在上游 Profile 创建/编辑表单中的供应商选择下拉框中添加所有新供应商：
+实际实现采用了 `PresetTemplate` 结构体 + `PRESETS` 常量数组的方式（而非文档原计划的 `provider_select_options()` 函数），包含 ~58 个供应商预设：
 
 ```rust
-// 供应商分组显示
-fn provider_select_options() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
-    vec![
-        ("原供应商", vec![
-            ("deepseek", "DeepSeek"),
-            ("mimo", "MiMo (小米)"),
-            ("openai", "OpenAI"),
-            ("codex", "Codex"),
-            ("anthropic", "Anthropic"),
-        ]),
-        ("国际主流", vec![
-            ("groq", "Groq"),
-            ("xai", "xAI (Grok)"),
-            ("mistral", "Mistral"),
-            ("gemini", "Google Gemini"),
-            ("perplexity", "Perplexity"),
-            ("together", "Together AI"),
-            ("fireworks", "Fireworks AI"),
-            ("cerebras", "Cerebras"),
-            ("cohere", "Cohere"),
-            ("nvidia", "NVIDIA NIM"),
-            ("openrouter", "OpenRouter"),
-        ]),
-        ("云平台", vec![
-            ("azure-openai", "Azure OpenAI"),
-            ("bedrock", "Amazon Bedrock"),
-            ("vertex", "Google Vertex AI"),
-        ]),
-        ("中国供应商", vec![
-            ("alibaba", "阿里通义千问"),
-            ("qianfan", "百度千帆"),
-            ("glm", "智谱 GLM"),
-            ("kimi", "Kimi (月之暗面)"),
-            ("minimax", "Minimax"),
-            ("tencent", "腾讯混元"),
-            ("iflytek", "科大讯飞星火"),
-            ("baichuan", "百川"),
-            ("yi", "零一万物"),
-            ("stepfun", "阶跃星辰"),
-            ("doubao", "豆包"),
-        ]),
-        ("推理平台", vec![
-            ("deepinfra", "DeepInfra"),
-            ("sambanova", "SambaNova"),
-            ("huggingface", "HuggingFace"),
-            ("replicate", "Replicate"),
-            ("github-models", "GitHub Models"),
-        ]),
-    ]
+struct PresetTemplate {
+    id: &'static str,
+    label_zh: &'static str,
+    label_en: &'static str,
+    provider: &'static str,
+    base_url: &'static str,
+    models: &'static [&'static str],
+    default_model: &'static str,
+    tls_sni: &'static str,
 }
+
+const PRESETS: &[PresetTemplate] = &[
+    // ── Original ── (DeepSeek, MiMo, OpenAI, Codex, Anthropic)
+    // ── International ── (Groq, xAI, Mistral, Gemini, Perplexity, Together, Fireworks, Cerebras, Cohere, NVIDIA, Nebius, SiliconFlow, Hyperbolic, OpenRouter, Reka)
+    // ── Cloud Platforms ── (Azure OpenAI, Azure AI, Bedrock, Vertex, watsonx, OCI, SAP)
+    // ── China Providers ── (Alibaba, Qianfan, GLM, Kimi, Minimax, Moonshot, Volcengine, Doubao, Tencent, iFlytek, Baichuan, Yi, StepFun, 360AI, SenseNova, SparkDesk, Coze)
+    // ── Inference Platforms ── (DeepInfra, SambaNova, Together, Fireworks, etc.)
+    // ...
+];
 ```
+
+见 `crates/crab-dashboard/src/pages/upstream.rs` 第 41-609 行。
 
 ### Step 2: 更新模型同步逻辑
 
