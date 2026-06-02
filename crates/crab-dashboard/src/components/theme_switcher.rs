@@ -58,34 +58,31 @@ pub fn ThemeSwitcher() -> impl IntoView {
         })
     };
 
-    Effect::new(move |_| {
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        let Some(document) = window.document() else {
-            return;
-        };
+    // Register event listeners once at component level (not inside Effect)
+    // to avoid accumulating listeners on Effect re-runs.
+    if let Some(window) = web_sys::window() {
+        if let Some(document) = window.document() {
+            let click_outside = Arc::clone(&click_outside);
+            let click_closure =
+                wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
+                    (click_outside)(ev);
+                })
+                    as Box<dyn Fn(web_sys::MouseEvent)>);
+            let _ = document
+                .add_event_listener_with_callback("mousedown", click_closure.as_ref().unchecked_ref());
+            click_closure.forget();
 
-        let click_outside = Arc::clone(&click_outside);
-        let click_closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
-                (click_outside)(ev);
-            })
-                as Box<dyn Fn(web_sys::MouseEvent)>);
-        let _ = document
-            .add_event_listener_with_callback("mousedown", click_closure.as_ref().unchecked_ref());
-        click_closure.forget();
-
-        let keydown_handler = Arc::clone(&keydown_handler);
-        let key_closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::KeyboardEvent| {
-                (keydown_handler)(ev);
-            })
-                as Box<dyn Fn(web_sys::KeyboardEvent)>);
-        let _ = document
-            .add_event_listener_with_callback("keydown", key_closure.as_ref().unchecked_ref());
-        key_closure.forget();
-    });
+            let keydown_handler = Arc::clone(&keydown_handler);
+            let key_closure =
+                wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::KeyboardEvent| {
+                    (keydown_handler)(ev);
+                })
+                    as Box<dyn Fn(web_sys::KeyboardEvent)>);
+            let _ = document
+                .add_event_listener_with_callback("keydown", key_closure.as_ref().unchecked_ref());
+            key_closure.forget();
+        }
+    }
 
     on_cleanup(move || {
         alive.store(false, Ordering::Relaxed);

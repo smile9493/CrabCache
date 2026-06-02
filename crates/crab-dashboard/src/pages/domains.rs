@@ -353,10 +353,18 @@ pub fn DomainDetailDrawer(domain: RwSignal<Option<String>>) -> impl IntoView {
     let policy_save_tick = RwSignal::new(0u32);
     let visible = move || domain.get().is_some();
 
-    let load_detail = move |name: String| {
-        leptos::task::spawn_local(async move {
-            detail.try_set(Some(api::fetch_domain_detail(&name).await));
-        });
+    let load_detail = {
+        let detail = detail;
+        move |name: String| {
+            let current_name = name.clone();
+            leptos::task::spawn_local(async move {
+                let result = api::fetch_domain_detail(&current_name).await;
+                // Only update if the domain hasn't changed since the request started
+                if domain.get().as_deref() == Some(&current_name) {
+                    detail.try_set(Some(result));
+                }
+            });
+        }
     };
 
     Effect::new(move |_| {

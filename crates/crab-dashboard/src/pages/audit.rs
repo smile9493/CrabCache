@@ -152,8 +152,9 @@ pub fn AuditLogPage() -> impl IntoView {
                                         let detail_text = entry.detail.as_ref()
                                             .map(|d| serde_json::to_string_pretty(d).unwrap_or_default())
                                             .unwrap_or_default();
-                                        let detail_preview = if detail_text.len() > 80 {
-                                            format!("{}…", &detail_text[..80])
+                                        let detail_preview = if detail_text.chars().count() > 80 {
+                                            let truncated: String = detail_text.chars().take(80).collect();
+                                            format!("{}…", truncated)
                                         } else {
                                             detail_text.clone()
                                         };

@@ -33,7 +33,6 @@ pub fn ReasoningPage() -> impl IntoView {
                 let reasoning_recovery = RwSignal::new(cfg.reasoning_recovery.unwrap_or(false));
                 let sqlite_cache_enabled = RwSignal::new(cfg.sqlite_cache_enabled);
                 let sqlite_cache_path = RwSignal::new(cfg.sqlite_cache_path.clone().unwrap_or_default());
-                let sqlite_enabled = RwSignal::new(cfg.sqlite_cache_enabled);
 
                 let on_save = {
                     let save_ok = t.routing_saved().to_string();
@@ -108,13 +107,12 @@ pub fn ReasoningPage() -> impl IntoView {
                                     on:change=move |ev| {
                                         let checked = event_target_checked(&ev);
                                         sqlite_cache_enabled.set(checked);
-                                        sqlite_enabled.set(checked);
                                     }
                                 />
                                 <span class="config-label">{t.reasoning_sqlite_cache()}</span>
                             </label>
 
-                            {move || if sqlite_enabled.get() {
+                            {move || if sqlite_cache_enabled.get() {
                                 view! {
                                     <div class="ml-6">
                                         <label class="config-label">{t.reasoning_sqlite_path()}</label>

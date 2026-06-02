@@ -600,7 +600,7 @@ const PRESETS: &[PresetTemplate] = &[
         label_zh: "Phind",
         label_en: "Phind",
         provider: "phind",
-        base_url: "https://https.api.phind.com/v1",
+        base_url: "https://api.phind.com/v1",
         models: &["Phind-70B", "Phind-34B"],
         default_model: "Phind-70B",
         tls_sni: "https.api.phind.com",
@@ -1109,6 +1109,7 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let keys_to_append_clone = keys_to_append.clone();
         let r = refresh.clone();
+        let default_id = default_profile_id.get_untracked();
         let fpid = fallback_profile_id.get().trim().to_string();
         let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
         let fmr = fallback_max_retries.get() as u32;
@@ -1135,7 +1136,11 @@ pub fn UpstreamPage() -> impl IntoView {
                             keys,
                             mode: UpstreamKeysPutMode::Append,
                         };
-                        let key_err = api::put_upstream_profile_keys(&pid, &key_req).await.err();
+                        let key_err = if pid == default_id {
+                            api::put_upstream_keys(&key_req).await.err()
+                        } else {
+                            api::put_upstream_profile_keys(&pid, &key_req).await.err()
+                        };
                         if let Some(e) = key_err {
                             save_error.try_set(format!("Profile saved but keys failed: {e}"));
                             keys_ok = false;
@@ -1177,6 +1182,7 @@ pub fn UpstreamPage() -> impl IntoView {
             return;
         }
         let pid = active_profile.get();
+        let default_id = default_profile_id.get_untracked();
         let keys = pool_lines_to_key_inputs(secrets);
         let mode = if pool_replace_mode.get() {
             UpstreamKeysPutMode::Replace
@@ -1185,9 +1191,11 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let req = PutUpstreamKeysRequest { keys, mode };
         leptos::task::spawn_local(async move {
-            let result = api::put_upstream_profile_keys(&pid, &req)
-                .await
-                .map(|v| UpstreamKeysView { keys: v.keys });
+            let result = if pid == default_id {
+                api::put_upstream_keys(&req).await.map(|v| UpstreamKeysView { keys: v.keys })
+            } else {
+                api::put_upstream_profile_keys(&pid, &req).await.map(|v| UpstreamKeysView { keys: v.keys })
+            };
             match result {
                 Ok(v) => {
                     key_pool.try_set(Some(Ok(v)));
@@ -1223,6 +1231,7 @@ pub fn UpstreamPage() -> impl IntoView {
                     r.clone()(None);
                 }
                 Err(e) => {
+                    show_delete_confirm.try_set(false);
                     save_error.try_set(e);
                 }
             }
@@ -1267,9 +1276,10 @@ pub fn UpstreamPage() -> impl IntoView {
 
         saving.set(true);
         let r = refresh.clone();
+        let fpid = fallback_profile_id.get().trim().to_string();
+        let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
+        let fmr = fallback_max_retries.get() as u32;
         leptos::task::spawn_local(async move {
-            let fpid = fallback_profile_id.get().trim().to_string();
-            let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
             let req = PutUpstreamProfileAdminRequest {
                 provider: prov,
                 base_url: url,
@@ -1278,10 +1288,11 @@ pub fn UpstreamPage() -> impl IntoView {
                 tls_sni: sni,
                 proxy_url: proxy_opt,
                 fallback_profile_id: fpid_opt,
-                fallback_max_retries: Some(fallback_max_retries.get() as u32),
+                fallback_max_retries: Some(fmr),
             };
             match api::put_upstream_profile(&id, &req).await {
                 Ok(_) => {
+                    saved.try_set(true);
                     drawer_creating.try_set(false);
                     new_profile_id.try_set(String::new());
                     active_profile.try_set(id.clone());
@@ -1572,15 +1583,16 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 type="button"
                                                                 class="glass-card text-left p-4 hover:border-accent/50 transition-colors cursor-pointer space-y-2"
                                                                 on:click=move |_| {
-                                                                    let p = preset_for_id(pid).unwrap();
-                                                                    new_profile_id.set(p.id.to_string());
-                                                                    provider.set(p.provider.to_string());
-                                                                    base_url.set(p.base_url.to_string());
-                                                                    model.set(p.default_model.to_string());
-                                                                    tls_sni.set(p.tls_sni.to_string());
-                                                                    endpoints_text.set(String::new());
-                                                                    save_error.set(String::new());
-                                                                    creation_step.set(CreationStep::FillForm);
+                                                                    if let Some(p) = preset_for_id(pid) {
+                                                                        new_profile_id.set(p.id.to_string());
+                                                                        provider.set(p.provider.to_string());
+                                                                        base_url.set(p.base_url.to_string());
+                                                                        model.set(p.default_model.to_string());
+                                                                        tls_sni.set(p.tls_sni.to_string());
+                                                                        endpoints_text.set(String::new());
+                                                                        save_error.set(String::new());
+                                                                        creation_step.set(CreationStep::FillForm);
+                                                                    }
                                                                 }
                                                             >
                                                                 <div class="font-semibold text-sm text-theme">{label}</div>
@@ -1784,11 +1796,12 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             view! {
                                                                 <button type="button" class="btn btn-secondary text-xs"
                                                                     on:click=move |_| {
-                                                                        let p = preset_for_id(pid).unwrap();
-                                                                        base_url.set(p.base_url.to_string());
-                                                                        model.set(p.default_model.to_string());
-                                                                        provider.set(p.provider.to_string());
-                                                                        if !p.tls_sni.is_empty() { tls_sni.set(p.tls_sni.to_string()); }
+                                                                        if let Some(p) = preset_for_id(pid) {
+                                                                            base_url.set(p.base_url.to_string());
+                                                                            model.set(p.default_model.to_string());
+                                                                            provider.set(p.provider.to_string());
+                                                                            if !p.tls_sni.is_empty() { tls_sni.set(p.tls_sni.to_string()); }
+                                                                        }
                                                                     }
                                                                 >{label}</button>
                                                             }
@@ -2214,11 +2227,14 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                 leptos::task::spawn_local(async move {
                                                                                     let req = PatchUpstreamKeyRequest { enabled: Some(next), secret: None, priority: None };
                                                                                     let default_id = default_profile_id.get_untracked();
-                                                                                    let _ = if pid == default_id {
+                                                                                    let result = if pid == default_id {
                                                                                         api::patch_upstream_key(&id, &req).await
                                                                                     } else {
                                                                                         api::patch_upstream_profile_key(&pid, &id, &req).await
                                                                                     };
+                                                                                    if let Err(e) = result {
+                                                                                        pool_delete_error.try_set(format!("Toggle failed: {e}"));
+                                                                                    }
                                                                                     reload.clone()(pid);
                                                                                 });
                                                                             }
@@ -2278,11 +2294,11 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         let prov = provider.get();
                                                         let b_url = base_url.get();
                                                         let pid = drawer_profile.get().unwrap_or_default();
-                                                        let is_codex = prov == "codex" || prov == "openai" || b_url.contains("openai.com");
+                                                        let is_codex = prov == "codex" || prov == "openai" || b_url.contains("chatgpt.com");
                                                         is_codex.then(|| view! {
                                                             <CodexOAuthPanel
                                                                 profile_id=pid
-                                                                on_pool_changed=Callback::new(move |_: ()| {})
+                                                                on_pool_changed=Callback::new(move |_: ()| { signal_refresh_key_pool(); })
                                                             />
                                                         })
                                                     }}

@@ -26,10 +26,16 @@ fn format_uptime(secs: u64) -> String {
 pub fn GatewayHealthIndicator() -> impl IntoView {
     let t = use_translations();
     let health: RwSignal<Option<GatewayHealth>> = RwSignal::new(None);
+    let alive = Arc::new(AtomicBool::new(true));
+
+    on_cleanup({
+        let alive = Arc::clone(&alive);
+        move || {
+            alive.store(false, Ordering::Relaxed);
+        }
+    });
 
     Effect::new(move |_| {
-        let alive = Arc::new(AtomicBool::new(true));
-
         let fetch_health = {
             let health = health;
             let alive = Arc::clone(&alive);
@@ -68,10 +74,6 @@ pub fn GatewayHealthIndicator() -> impl IntoView {
                     fetch_health();
                 }
             }
-        });
-
-        on_cleanup(move || {
-            alive.store(false, Ordering::Relaxed);
         });
     });
 

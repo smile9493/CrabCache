@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::clipboard;
@@ -115,11 +117,22 @@ pub fn KeysPage() -> impl IntoView {
     load_keys();
     load_network_info();
 
+    // Add cleanup mechanism to prevent memory leak
+    let alive = Arc::new(AtomicBool::new(true));
+    let alive_clone = alive.clone();
+
     leptos::task::spawn_local(async move {
-        loop {
+        while alive_clone.load(Ordering::Relaxed) {
             gloo_timers::future::TimeoutFuture::new(5_000).await;
-            load_keys();
+            if alive_clone.load(Ordering::Relaxed) && crate::page_visible::page_visible() {
+                load_keys();
+            }
         }
+    });
+
+    // Cleanup on component unmount
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
     });
 
     let show_create = RwSignal::new(false);
