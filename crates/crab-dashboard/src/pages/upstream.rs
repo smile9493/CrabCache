@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use leptos::prelude::*;
@@ -22,7 +23,7 @@ pub fn signal_refresh_key_pool() {
 use crate::locale::use_translations;
 use crate::types::{
     KeyQuotaInfo, PatchUpstreamKeyRequest, PutUpstreamKeysRequest, PutUpstreamProfileAdminRequest,
-    SyncResult, UpdateUpstreamConfigRequest, UpstreamKeyInput, UpstreamKeysPutMode,
+    SyncResult, UpstreamKeyInput, UpstreamKeysPutMode,
     UpstreamKeysView, UpstreamProfileAdminView, UpstreamTestBody, UpstreamTestResult,
 };
 
@@ -706,10 +707,6 @@ pub fn UpstreamPage() -> impl IntoView {
     let active_profile = RwSignal::new("deepseek".to_string());
     let gateway_reachable = RwSignal::new(true);
 
-    // Search/filter state
-    let search_query = RwSignal::new(String::new());
-    let status_filter = RwSignal::new("all");
-
     // Drawer-based navigation: Some(profile_id) opens drawer, None = list view
     let drawer_profile: RwSignal<Option<String>> = RwSignal::new(None);
     let drawer_creating: RwSignal<bool> = RwSignal::new(false);
@@ -894,14 +891,21 @@ pub fn UpstreamPage() -> impl IntoView {
         });
     }
 
-    let load_profile_models = move |pid: String| {
-        profile_model_options.set(Vec::new());
-        leptos::task::spawn_local(async move {
-            if let Ok(resp) = api::fetch_models(Some(&pid)).await {
-                let ids: Vec<String> = resp.models.into_iter().map(|m| m.id).collect();
-                profile_model_options.set(ids);
-            }
-        });
+    let model_req_id = Arc::new(AtomicU64::new(0));
+    let load_profile_models = {
+        let model_req_id = model_req_id.clone();
+        move |pid: String| {
+            profile_model_options.set(Vec::new());
+            let req_id = model_req_id.fetch_add(1, Ordering::Relaxed) + 1;
+            let model_req_id = model_req_id.clone();
+            leptos::task::spawn_local(async move {
+                if let Ok(resp) = api::fetch_models(Some(&pid)).await {
+                    if model_req_id.load(Ordering::Relaxed) != req_id { return; }
+                    let ids: Vec<String> = resp.models.into_iter().map(|m| m.id).collect();
+                    profile_model_options.set(ids);
+                }
+            });
+        }
     };
 
     let load_profile_data = {
@@ -913,30 +917,16 @@ pub fn UpstreamPage() -> impl IntoView {
             save_error.set(String::new());
             saved.set(false);
             sync_result.set(None);
+            pool_secrets_text.set(String::new());
+            pool_saved.set(false);
+            pool_error.set(String::new());
+            key_test_results.set(HashMap::new());
+            key_testing.set(HashMap::new());
+            testing_all.set(false);
+            quota_auto_refreshing.set(false);
 
             let p_list = profiles.get();
-            let default_id = default_profile_id.get_untracked();
-            if pid == default_id {
-                leptos::task::spawn_local(async move {
-                    match api::fetch_upstream_config().await {
-                        Ok(c) => {
-                            base_url.try_set(c.base_url.clone());
-                            model.try_set(c.model.clone());
-                            endpoints_text.try_set(c.endpoints.join("\n"));
-                            tls_sni.try_set(String::new());
-                            proxy_url.try_set(String::new());
-                            provider.try_set("deepseek".to_string());
-                            gateway_reachable.try_set(c.gateway_reachable);
-                            if let Some(ref lt) = c.last_test {
-                                test_result.try_set(Some(lt.clone()));
-                            }
-                        }
-                        Err(e) => {
-                            save_error.try_set(e);
-                        }
-                    }
-                });
-            } else if let Some(p) = p_list.iter().find(|p| p.id == pid) {
+            if let Some(p) = p_list.iter().find(|p| p.id == pid) {
                 provider.set(p.provider.clone());
                 base_url.set(p.base_url.clone());
                 model.set(p.fallback_model.clone());
@@ -957,12 +947,15 @@ pub fn UpstreamPage() -> impl IntoView {
             let load = load_profile_data.clone();
             leptos::task::spawn_local(async move {
                 if let Ok(resp) = api::fetch_upstream_profiles().await {
+                    gateway_reachable.try_set(true);
                     let def = resp.default_profile_id.clone();
                     default_profile_id.try_set(def.clone());
                     profiles.try_set(resp.profiles);
                     let select = pid.unwrap_or(def);
                     active_profile.try_set(select.clone());
                     load(select);
+                } else {
+                    gateway_reachable.try_set(false);
                 }
                 profiles_loaded.try_set(true);
             });
@@ -1116,59 +1109,45 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let keys_to_append_clone = keys_to_append.clone();
         let r = refresh.clone();
+        let fpid = fallback_profile_id.get().trim().to_string();
+        let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
+        let fmr = fallback_max_retries.get() as u32;
 
         leptos::task::spawn_local(async move {
-            let result = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
-                let req = UpdateUpstreamConfigRequest {
-                    base_url: url.clone(),
-                    model: model_val.clone(),
-                    api_key: None,
-                    endpoints: endpoints.clone(),
-                    keys_to_append: keys_to_append_clone.clone(),
-                };
-                api::update_upstream_config(&req).await.map(|resp| {
-                    if let Some(s) = resp.sync {
-                        sync_result.try_set(Some(s));
-                    }
-                })
-            } else {
-                let fpid = fallback_profile_id.get().trim().to_string();
-                let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
-                let req = PutUpstreamProfileAdminRequest {
-                    provider: prov,
-                    base_url: url.clone(),
-                    fallback_model: model_val.clone(),
-                    endpoints: endpoints.clone(),
-                    tls_sni: sni,
-                    proxy_url: proxy_opt,
-                    fallback_profile_id: fpid_opt,
-                    fallback_max_retries: Some(fallback_max_retries.get() as u32),
-                };
-                api::put_upstream_profile(&pid, &req).await.map(|_| ())
+            let req = PutUpstreamProfileAdminRequest {
+                provider: prov,
+                base_url: url.clone(),
+                fallback_model: model_val.clone(),
+                endpoints: endpoints.clone(),
+                tls_sni: sni,
+                proxy_url: proxy_opt,
+                fallback_profile_id: fpid_opt,
+                fallback_max_retries: Some(fmr),
             };
+            let result = api::put_upstream_profile(&pid, &req).await.map(|_| ());
 
             match result {
                 Ok(_) => {
+                    let mut keys_ok = true;
                     if !keys_to_append_clone.is_empty() {
                         let keys = pool_lines_to_key_inputs(keys_to_append_clone);
                         let key_req = PutUpstreamKeysRequest {
                             keys,
                             mode: UpstreamKeysPutMode::Append,
                         };
-                        let key_err = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
-                            api::put_upstream_keys(&key_req).await.err()
-                        } else {
-                            api::put_upstream_profile_keys(&pid, &key_req).await.err()
-                        };
+                        let key_err = api::put_upstream_profile_keys(&pid, &key_req).await.err();
                         if let Some(e) = key_err {
                             save_error.try_set(format!("Profile saved but keys failed: {e}"));
+                            keys_ok = false;
                         } else {
                             pool_secrets_text.try_set(String::new());
                         }
                     } else {
                         pool_secrets_text.try_set(String::new());
                     }
-                    saved.try_set(true);
+                    if keys_ok {
+                        saved.try_set(true);
+                    }
                     r.clone()(Some(pid));
                 }
                 Err(e) => { save_error.try_set(e); },
@@ -1206,13 +1185,9 @@ pub fn UpstreamPage() -> impl IntoView {
         };
         let req = PutUpstreamKeysRequest { keys, mode };
         leptos::task::spawn_local(async move {
-            let result = if pid == default_profile_id.try_get_untracked().unwrap_or_default() {
-                api::put_upstream_keys(&req).await
-            } else {
-                api::put_upstream_profile_keys(&pid, &req)
-                    .await
-                    .map(|v| UpstreamKeysView { keys: v.keys })
-            };
+            let result = api::put_upstream_profile_keys(&pid, &req)
+                .await
+                .map(|v| UpstreamKeysView { keys: v.keys });
             match result {
                 Ok(v) => {
                     key_pool.try_set(Some(Ok(v)));
@@ -1259,6 +1234,8 @@ pub fn UpstreamPage() -> impl IntoView {
     let on_create_profile = Callback::new({
         let refresh = refresh_profiles.clone();
         move |_| {
+        saved.set(false);
+        save_error.set(String::new());
         let id = new_profile_id.get().trim().to_string();
         if id.is_empty() {
             save_error.set("Profile ID is required".to_string());
@@ -1502,7 +1479,6 @@ pub fn UpstreamPage() -> impl IntoView {
                     >
                         <div class="flex flex-col items-center justify-center h-full gap-2 text-theme-muted">
                             <span class="text-3xl leading-none">"+"</span>
-                            <span class="text-3xl leading-none">+</span>
                             <span class="text-sm font-medium">{t.upstream_new_profile_label()}</span>
                         </div>
                     </div>
@@ -1873,6 +1849,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                     <option value="sensenova">商汤</option>
                                                                     <option value="coze">Coze</option>
                                                                     <option value="baidu">百度 ERNIE</option>
+                                                                    <option value="doubao">豆包</option>
+                                                                    <option value="moonshot">Moonshot</option>
+                                                                    <option value="sparkdesk">星火 SparkDesk</option>
                                                                 </optgroup>
                                                                 <optgroup label="Inference">
                                                                     <option value="deepinfra">DeepInfra</option>
@@ -1886,6 +1865,92 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                     <option value="chutes">Chutes.ai</option>
                                                                     <option value="poe">Poe</option>
                                                                     <option value="phind">Phind</option>
+                                                                    <option value="lambda-ai">Lambda AI</option>
+                                                                    <option value="nscale">nScale</option>
+                                                                    <option value="ovhcloud">OVHcloud</option>
+                                                                    <option value="baseten">Baseten</option>
+                                                                    <option value="databricks">Databricks</option>
+                                                                    <option value="snowflake">Snowflake</option>
+                                                                    <option value="wandb">W&B</option>
+                                                                    <option value="ai21">AI21</option>
+                                                                    <option value="gigachat">GigaChat</option>
+                                                                    <option value="venice">Venice</option>
+                                                                    <option value="codestral">Codestral</option>
+                                                                    <option value="upstage">Upstage</option>
+                                                                    <option value="maritalk">Maritalk</option>
+                                                                    <option value="modal">Modal</option>
+                                                                    <option value="vercel-ai-gateway">Vercel AI</option>
+                                                                    <option value="meta-llama">Meta Llama</option>
+                                                                    <option value="v0-vercel">v0</option>
+                                                                    <option value="morph">Morph</option>
+                                                                    <option value="featherless-ai">Featherless</option>
+                                                                    <option value="llm7">LLM7</option>
+                                                                    <option value="lepton">Lepton</option>
+                                                                    <option value="kluster">Kluster</option>
+                                                                    <option value="friendliai">FriendliAI</option>
+                                                                    <option value="llamagate">LlamaGate</option>
+                                                                    <option value="heroku">Heroku</option>
+                                                                    <option value="galadriel">Galadriel</option>
+                                                                    <option value="datarobot">DataRobot</option>
+                                                                    <option value="clarifai">Clarifai</option>
+                                                                    <option value="gitlawb">Gitlawb</option>
+                                                                    <option value="inference-net">Inference.net</option>
+                                                                    <option value="nanogpt">NanoGPT</option>
+                                                                    <option value="predibase">Predibase</option>
+                                                                    <option value="bytez">Bytez</option>
+                                                                    <option value="piapi">PiAPI</option>
+                                                                    <option value="getgoapi">GoAPI</option>
+                                                                    <option value="laozhang">LaoZhang</option>
+                                                                    <option value="glhf">GLHF</option>
+                                                                    <option value="cablyai">CablyAI</option>
+                                                                    <option value="thebai">TheB.AI</option>
+                                                                    <option value="fenayai">FenayAI</option>
+                                                                    <option value="empower">Empower</option>
+                                                                    <option value="nous-research">Nous Research</option>
+                                                                    <option value="petals">Petals</option>
+                                                                    <option value="gitlab">GitLab</option>
+                                                                    <option value="voyage-ai">Voyage AI</option>
+                                                                    <option value="jina-ai">Jina AI</option>
+                                                                    <option value="fal-ai">Fal.ai</option>
+                                                                    <option value="stability-ai">Stability AI</option>
+                                                                    <option value="black-forest-labs">Black Forest Labs</option>
+                                                                    <option value="recraft">Recraft</option>
+                                                                    <option value="poolside">Poolside</option>
+                                                                    <option value="arcee-ai">Arcee AI</option>
+                                                                    <option value="inclusionai">InclusionAI</option>
+                                                                    <option value="liquid">Liquid AI</option>
+                                                                    <option value="nomic">Nomic</option>
+                                                                    <option value="krutrim">Krutrim</option>
+                                                                    <option value="monsterapi">MonsterAPI</option>
+                                                                    <option value="byteplus">BytePlus</option>
+                                                                    <option value="bluesminds">BluesMinds</option>
+                                                                    <option value="freemodel-dev">FreeModel</option>
+                                                                    <option value="blackbox">Blackbox</option>
+                                                                    <option value="bazaarlink">BazaarLink</option>
+                                                                    <option value="completions">Completions.me</option>
+                                                                    <option value="enally">Enally</option>
+                                                                    <option value="freetheai">FreeTheAI</option>
+                                                                    <option value="crof">CrofAI</option>
+                                                                    <option value="longcat">LongCat</option>
+                                                                    <option value="pollinations">Pollinations</option>
+                                                                    <option value="puter">Puter</option>
+                                                                    <option value="uncloseai">UncloseAI</option>
+                                                                    <option value="agentrouter">AgentRouter</option>
+                                                                    <option value="command-code">Command Code</option>
+                                                                    <option value="astraflow">Astraflow</option>
+                                                                    <option value="opencode-zen">OpenCode Zen</option>
+                                                                    <option value="opencode-go">OpenCode Go</option>
+                                                                    <option value="zai">Z.AI</option>
+                                                                    <option value="huggingchat">HuggingChat</option>
+                                                                    <option value="dify">Dify</option>
+                                                                    <option value="publicai">PublicAI</option>
+                                                                    <option value="sapio">Sapio</option>
+                                                                    <option value="freeaiapikey">FreeAIAPIKey</option>
+                                                                    <option value="cloudflare-ai">Cloudflare AI</option>
+                                                                    <option value="scaleway">Scaleway</option>
+                                                                    <option value="api-airforce">Api.airforce</option>
+                                                                    <option value="qoder">Qoder</option>
+                                                                    <option value="hackclub">Hackclub</option>
                                                                 </optgroup>
                                                                 <option value="custom">Custom</option>
                                                             </select>
@@ -1957,7 +2022,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 })
                                                             }}
                                                         </div>
-                                                        {move || (drawer_profile.get().unwrap_or_default() != "deepseek").then(|| view! {
+                                                        {move || (drawer_profile.get().unwrap_or_default() != default_profile_id.get_untracked()).then(|| view! {
                                                             <div>
                                                                 <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_tls_sni_label()}</label>
                                                                 <input type="text" prop:value=move || tls_sni.get()
@@ -2090,10 +2155,10 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             {move || t.upstream_pool_title_for(&drawer_profile.get().unwrap_or_default())}
                                                         </h3>
                                                         <p class="text-xs text-theme-muted mt-1">{move || t.upstream_pool_desc()}</p>
-                                                        {move || (drawer_profile.get().unwrap_or_default() == "deepseek").then(|| view! {
+                                                        {move || (drawer_profile.get().unwrap_or_default() == default_profile_id.get_untracked()).then(|| view! {
                                                             <p class="text-xs text-theme-muted mt-1">{t.upstream_pool_deepseek_hint()}</p>
                                                         })}
-                                                        {move || (drawer_profile.get().unwrap_or_default() != "deepseek").then(|| view! {
+                                                        {move || (drawer_profile.get().unwrap_or_default() != default_profile_id.get_untracked()).then(|| view! {
                                                             <p class="text-xs text-theme-muted mt-1">{t.upstream_pool_patch_deepseek_only()}</p>
                                                         })}
                                                     </div>
