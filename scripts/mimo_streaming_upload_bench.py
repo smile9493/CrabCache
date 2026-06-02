@@ -22,7 +22,7 @@ def make_payload(content_chars: int, stream: bool = False, max_tokens: int = 64)
     content = "Describe the architecture of a distributed cache system. " * (content_chars // 70 + 1)
     content = content[:content_chars]
     payload = {
-        "model": "xiaomi/mimo-v2.5-pro",
+        "model": "mimo-v2.5-pro",
         "messages": [{"role": "user", "content": content}],
         "stream": stream,
         "max_tokens": max_tokens,

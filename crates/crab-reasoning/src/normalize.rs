@@ -1703,33 +1703,27 @@ fn mimo_prepare_changes_wire_body(
     false
 }
 
-/// Normalize MiMo model id for the OpenAI-compatible API (`xiaomi/mimo-v2.5-pro`).
+/// Normalize MiMo model id for the OpenAI-compatible API (`mimo-v2.5-pro`).
 pub fn normalize_mimo_model(model: &str) -> String {
     let trimmed = model.trim();
     if trimmed.is_empty() {
         return String::new();
     }
     let lower = trimmed.to_lowercase().replace('_', "-");
-    if lower.starts_with("xiaomi/") {
-        return lower;
-    }
     if lower.starts_with("mimo-") {
-        return format!("xiaomi/{lower}");
+        return lower;
     }
     lower
 }
 
 fn mimo_model_defaults_to_thinking_enabled(model: &str) -> bool {
     let lower = model.trim().to_ascii_lowercase();
-    !lower.ends_with("mimo-v2-flash") && !lower.ends_with("/mimo-v2-flash")
+    !lower.ends_with("mimo-v2-flash")
 }
 
 fn mimo_model_fixes_temperature_in_thinking(model: &str) -> bool {
     let lower = model.trim().to_ascii_lowercase();
-    lower.ends_with("mimo-v2.5-pro")
-        || lower.ends_with("/mimo-v2.5-pro")
-        || lower.ends_with("mimo-v2.5")
-        || lower.ends_with("/mimo-v2.5")
+    lower.ends_with("mimo-v2.5-pro") || lower.ends_with("mimo-v2.5")
 }
 
 /// MiMo relay: field filter + OpenAI model id normalization; optional turn-based prefix retirement.
@@ -2377,22 +2371,22 @@ mod tests {
     fn normalize_mimo_model_adds_vendor_prefix() {
         assert_eq!(
             normalize_mimo_model("mimo-v2.5-pro"),
-            "xiaomi/mimo-v2.5-pro"
+            "mimo-v2.5-pro"
         );
         assert_eq!(
-            normalize_mimo_model("xiaomi/mimo-v2-flash"),
-            "xiaomi/mimo-v2-flash"
+            normalize_mimo_model("mimo-v2-flash"),
+            "mimo-v2-flash"
         );
         assert_eq!(
             normalize_mimo_model("MiMo-V2.5-Pro"),
-            "xiaomi/mimo-v2.5-pro"
+            "mimo-v2.5-pro"
         );
     }
 
     #[test]
     fn prepare_mimo_request_serializes_when_tools_are_normalized() {
         let payload = serde_json::json!({
-            "model": "xiaomi/mimo-v2.5-pro",
+            "model": "mimo-v2.5-pro",
             "stream": true,
             "messages": [
                 {"role": "system", "content": "Use apply_patch to edit files."},
@@ -2403,7 +2397,7 @@ mod tests {
                 {"type": "namespace", "name": "multi_agent_v1"},
             ],
         });
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
         assert!(
             result.serialized_body.is_some(),
             "tool normalization/injection must rewrite upstream body"
@@ -2424,7 +2418,7 @@ mod tests {
     #[test]
     fn prepare_mimo_request_preserves_custom_apply_patch() {
         let payload = serde_json::json!({
-            "model": "xiaomi/mimo-v2.5-pro",
+            "model": "mimo-v2.5-pro",
             "stream": true,
             "messages": [
                 {"role": "system", "content": "Use apply_patch to edit files."},
@@ -2435,7 +2429,7 @@ mod tests {
                 {"type": "custom", "name": "apply_patch", "description": "patch"},
             ],
         });
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
         let names: Vec<_> = result.payload["tools"]
             .as_array()
             .unwrap()
@@ -2449,11 +2443,11 @@ mod tests {
     #[test]
     fn prepare_mimo_request_normalizes_model() {
         let payload = serde_json::json!({
-            "model": "mimo-v2.5-pro",
+            "model": "MiMo-V2.5-Pro",
             "messages": [{"role": "user", "content": "hi"}]
         });
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
-        assert_eq!(result.model, "xiaomi/mimo-v2.5-pro");
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
+        assert_eq!(result.model, "mimo-v2.5-pro");
         assert!(!result.payload.to_string().contains("thinking"));
         assert_eq!(result.retired_prefix_messages, 0);
         assert!(
@@ -2465,11 +2459,11 @@ mod tests {
     #[test]
     fn prepare_mimo_request_short_circuits_unchanged_body() {
         let payload = serde_json::json!({
-            "model": "xiaomi/mimo-v2.5-pro",
+            "model": "mimo-v2.5-pro",
             "messages": [{"role": "user", "content": "hi"}],
             "stream": true
         });
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
         assert_eq!(result.retired_prefix_messages, 0);
         assert!(
             result.serialized_body.is_none(),
@@ -2523,7 +2517,7 @@ mod tests {
             "messages": messages,
         });
         let before = payload.to_string().len();
-        let result = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", true, 6);
+        let result = prepare_mimo_request(&payload, "mimo-v2.5-pro", true, 6);
         let after = result.payload.to_string().len();
         assert!(result.retired_prefix_messages > 0, "expected retire");
         assert!(after < before, "upstream body should shrink");
@@ -2582,7 +2576,7 @@ mod tests {
             }]
         });
 
-        let result = prepare_codex_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", false, 6);
+        let result = prepare_codex_mimo_request(&payload, "mimo-v2.5-pro", false, 6);
         let out = result.payload["messages"].as_array().unwrap();
         assert!(
             out.len() < 120,

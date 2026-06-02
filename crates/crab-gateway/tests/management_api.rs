@@ -968,7 +968,7 @@ async fn upstream_profiles_list_and_upsert() {
     let put_body = serde_json::json!({
         "provider": "mimo",
         "base_url": "https://api.xiaomimimo.com",
-        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "fallback_model": "mimo-v2.5-pro",
         "endpoints": ["api.xiaomimimo.com:443"],
         "default_weight": 1
     });
@@ -1056,7 +1056,7 @@ async fn upstream_profile_put_is_immediately_listed() {
     let put_body = serde_json::json!({
         "provider": "mimo",
         "base_url": "https://api.xiaomimimo.com",
-        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "fallback_model": "mimo-v2.5-pro",
         "endpoints": ["api.xiaomimimo.com:443"],
         "default_weight": 1
     });
@@ -1181,14 +1181,14 @@ async fn upstream_profile_upsert_overwrites_without_duplicate_entries() {
     let first = serde_json::json!({
         "provider": "mimo",
         "base_url": "https://api.xiaomimimo.com",
-        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "fallback_model": "mimo-v2.5-pro",
         "endpoints": ["api.xiaomimimo.com:443"],
         "default_weight": 1
     });
     let second = serde_json::json!({
         "provider": "mimo",
         "base_url": "https://api.xiaomimimo.com",
-        "fallback_model": "xiaomi/mimo-v2.5-plus",
+        "fallback_model": "mimo-v2.5-plus",
         "endpoints": ["api.xiaomimimo.com:443"],
         "default_weight": 1
     });
@@ -1237,7 +1237,7 @@ async fn upstream_profile_upsert_overwrites_without_duplicate_entries() {
     );
     assert_eq!(
         matches[0]["fallback_model"].as_str(),
-        Some("xiaomi/mimo-v2.5-plus")
+        Some("mimo-v2.5-plus")
     );
 }
 
@@ -1256,7 +1256,7 @@ async fn upstream_profile_upsert_concurrent_no_500_and_consistent() {
             let body = serde_json::json!({
                 "provider": "mimo",
                 "base_url": "https://api.xiaomimimo.com",
-                "fallback_model": format!("xiaomi/mimo-concurrent-{i}"),
+                "fallback_model": format!("mimo-concurrent-{i}"),
                 "endpoints": ["api.xiaomimimo.com:443"],
                 "default_weight": 1
             });
@@ -1338,7 +1338,7 @@ async fn upstream_profiles_persisted_in_redis_state() {
     let body = serde_json::json!({
         "provider": "mimo",
         "base_url": "https://api.xiaomimimo.com",
-        "fallback_model": "xiaomi/mimo-v2.5-pro",
+        "fallback_model": "mimo-v2.5-pro",
         "endpoints": ["api.xiaomimimo.com:443"],
         "default_weight": 1
     });

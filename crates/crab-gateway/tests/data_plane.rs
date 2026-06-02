@@ -310,7 +310,7 @@ fn mimo_retire_prefix_shrinks_upstream_body() {
         "messages": messages,
     });
     let before = serde_json::to_vec(&payload).expect("serialize");
-    let prepared = prepare_mimo_request(&payload, "xiaomi/mimo-v2.5-pro", true, 6);
+    let prepared = prepare_mimo_request(&payload, "mimo-v2.5-pro", true, 6);
     let after = serde_json::to_vec(&prepared.payload).expect("serialize upstream");
     assert!(prepared.retired_prefix_messages > 0);
     assert!(after.len() < before.len());

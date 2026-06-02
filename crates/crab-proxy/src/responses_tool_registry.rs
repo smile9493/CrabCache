@@ -312,7 +312,7 @@ mod tests {
     fn exec_only_pipeline_keeps_exec_command_only_upstream_tools() {
         let payload = codex_exec_only_responses_payload();
         let chat = responses_payload_to_chat_completions(&payload);
-        let mimo = prepare_mimo_request(&chat, "xiaomi/mimo-v2.5-pro", false, 6);
+        let mimo = prepare_mimo_request(&chat, "mimo-v2.5-pro", false, 6);
         let names: Vec<_> = mimo.payload["tools"]
             .as_array()
             .unwrap()
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn mimo_prepare_strips_non_function_tools() {
         let chat = responses_payload_to_chat_completions(&codex_exec_only_responses_payload());
-        let mimo = prepare_mimo_request(&chat, "xiaomi/mimo-v2.5-pro", false, 6);
+        let mimo = prepare_mimo_request(&chat, "mimo-v2.5-pro", false, 6);
         let pipeline = audit_mimo_tool_pipeline(&chat, &mimo.payload);
         assert!(pipeline.stripped_non_function_tools.is_empty());
         let mut names = pipeline.upstream_tool_names.clone();
@@ -382,7 +382,10 @@ mod tests {
         let chat = responses_payload_to_chat_completions(&codex_exec_only_responses_payload());
         let audit = audit_chat_tool_registry(&chat);
         assert!(audit.instructions_mention_apply_patch);
-        assert!(audit.has_apply_patch_tool);
-        assert!(!audit.missing_apply_patch);
+        // exec-only surface: exec_command present, no native file tools →
+        // ensure_codex_file_tools_from_context correctly skips injection
+        assert!(!audit.has_apply_patch_tool);
+        assert!(audit.missing_apply_patch);
+        assert!(audit.exec_only_surface);
     }
 }

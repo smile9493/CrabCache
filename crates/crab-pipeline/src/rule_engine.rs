@@ -123,7 +123,7 @@ impl PipelineRuleEngine {
                 match_conditions: PipelineMatchConditions {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Mimo]),
-                    model_pattern: Some(vec!["mimo-*".into(), "xiaomi/*".into()]),
+                    model_pattern: Some(vec!["mimo-*".into()]),
                     wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexMimo,
@@ -244,7 +244,7 @@ mod tests {
                 match_conditions: PipelineMatchConditions {
                     client: Some(vec![ClientKind::Codex]),
                     provider: Some(vec![UpstreamProvider::Mimo]),
-                    model_pattern: Some(vec!["mimo-*".into(), "xiaomi/*".into()]),
+                    model_pattern: Some(vec!["mimo-*".into()]),
                     wire_format: None,
                 },
                 pipeline: RequestPipeline::CodexMimo,

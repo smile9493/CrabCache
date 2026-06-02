@@ -78,7 +78,7 @@ fn pipeline_override_matches_model(override_pipe: PipelineOverride, model: &str)
     let implied = model_prefix_to_profile(model);
     match override_pipe {
         PipelineOverride::Auto => true,
-        PipelineOverride::MimoTokenPlanRelay | PipelineOverride::MimoPaygRelay => implied == "mimo",
+        PipelineOverride::MimoTokenPlanRelay => implied == "mimo",
         PipelineOverride::CodexMimo => implied == "mimo",
         PipelineOverride::CodexRelay => implied == "openai",
         PipelineOverride::CodexDeepSeek
@@ -109,9 +109,7 @@ fn profile_for_pipeline(
         RequestPipeline::CursorDeepSeekV4
         | RequestPipeline::DeepSeekLight
         | RequestPipeline::CodexDeepSeek => "deepseek",
-        RequestPipeline::MimoTokenPlanRelay
-        | RequestPipeline::MimoPaygRelay
-        | RequestPipeline::CodexMimo => "mimo",
+        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::CodexMimo => "mimo",
         RequestPipeline::CodexRelay => {
             return profiles
                 .iter()
@@ -149,13 +147,6 @@ fn pipeline_from_override(
         PipelineOverride::MimoTokenPlanRelay => {
             if provider == UpstreamProvider::Mimo {
                 Some(RequestPipeline::MimoTokenPlanRelay)
-            } else {
-                Some(RequestPipeline::GenericRelay)
-            }
-        }
-        PipelineOverride::MimoPaygRelay => {
-            if provider == UpstreamProvider::Mimo {
-                Some(RequestPipeline::MimoPaygRelay)
             } else {
                 Some(RequestPipeline::GenericRelay)
             }
@@ -220,9 +211,7 @@ fn auto_pipeline_with_reason(
     let reason = match pipeline {
         RequestPipeline::CursorDeepSeekV4 => PipelineSelectionReason::CursorSignals,
         RequestPipeline::DeepSeekLight => PipelineSelectionReason::DeepSeekNonV4,
-        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
-            PipelineSelectionReason::MimoProvider
-        }
+        RequestPipeline::MimoTokenPlanRelay => PipelineSelectionReason::MimoProvider,
         RequestPipeline::GenericRelay => PipelineSelectionReason::ProviderDefault,
         RequestPipeline::CodexRelay => PipelineSelectionReason::CodexProvider,
         // Codex* bridge pipelines are selected by model alias or Responses upgrade.
@@ -240,7 +229,6 @@ fn resolve_alias_pipeline(alias_pipe: PipelineOverride) -> Option<RequestPipelin
         PipelineOverride::CursorDeepSeekV4 => Some(RequestPipeline::CursorDeepSeekV4),
         PipelineOverride::DeepSeekLight => Some(RequestPipeline::DeepSeekLight),
         PipelineOverride::MimoTokenPlanRelay => Some(RequestPipeline::MimoTokenPlanRelay),
-        PipelineOverride::MimoPaygRelay => Some(RequestPipeline::MimoPaygRelay),
         PipelineOverride::GenericRelay => Some(RequestPipeline::GenericRelay),
         PipelineOverride::CodexRelay => Some(RequestPipeline::CodexRelay),
         PipelineOverride::CodexDeepSeek => Some(RequestPipeline::CodexDeepSeek),
@@ -269,9 +257,142 @@ fn auto_pipeline_legacy(
         }
         UpstreamProvider::Mimo => RequestPipeline::MimoTokenPlanRelay,
         UpstreamProvider::Codex => RequestPipeline::CodexRelay,
-        UpstreamProvider::Openai | UpstreamProvider::Anthropic | UpstreamProvider::Other => {
-            RequestPipeline::GenericRelay
-        }
+        // All other providers use OpenAI-compatible format → GenericRelay
+        UpstreamProvider::Openai
+        | UpstreamProvider::Anthropic
+        | UpstreamProvider::Groq
+        | UpstreamProvider::Xai
+        | UpstreamProvider::Mistral
+        | UpstreamProvider::Gemini
+        | UpstreamProvider::Perplexity
+        | UpstreamProvider::Together
+        | UpstreamProvider::Fireworks
+        | UpstreamProvider::Cerebras
+        | UpstreamProvider::Cohere
+        | UpstreamProvider::Nvidia
+        | UpstreamProvider::Nebius
+        | UpstreamProvider::Siliconflow
+        | UpstreamProvider::Hyperbolic
+        | UpstreamProvider::OpenRouter
+        | UpstreamProvider::Reka
+        | UpstreamProvider::AzureOpenai
+        | UpstreamProvider::AzureAi
+        | UpstreamProvider::Bedrock
+        | UpstreamProvider::VertexAi
+        | UpstreamProvider::Watsonx
+        | UpstreamProvider::Oci
+        | UpstreamProvider::Sap
+        | UpstreamProvider::Alibaba
+        | UpstreamProvider::Qianfan
+        | UpstreamProvider::Glm
+        | UpstreamProvider::Kimi
+        | UpstreamProvider::Minimax
+        | UpstreamProvider::Moonshot
+        | UpstreamProvider::Volcengine
+        | UpstreamProvider::Doubao
+        | UpstreamProvider::Tencent
+        | UpstreamProvider::Iflytek
+        | UpstreamProvider::Baichuan
+        | UpstreamProvider::Yi
+        | UpstreamProvider::Stepfun
+        | UpstreamProvider::Ai360
+        | UpstreamProvider::Sensenova
+        | UpstreamProvider::Sparkdesk
+        | UpstreamProvider::Coze
+        | UpstreamProvider::Baidu
+        | UpstreamProvider::DeepInfra
+        | UpstreamProvider::LambdaAi
+        | UpstreamProvider::Sambanova
+        | UpstreamProvider::Nscale
+        | UpstreamProvider::Ovhcloud
+        | UpstreamProvider::Baseten
+        | UpstreamProvider::Databricks
+        | UpstreamProvider::Snowflake
+        | UpstreamProvider::Wandb
+        | UpstreamProvider::Ai21
+        | UpstreamProvider::Gigachat
+        | UpstreamProvider::Venice
+        | UpstreamProvider::Codestral
+        | UpstreamProvider::Upstage
+        | UpstreamProvider::Maritalk
+        | UpstreamProvider::Modal
+        | UpstreamProvider::Huggingface
+        | UpstreamProvider::GitHubModels
+        | UpstreamProvider::VercelAiGateway
+        | UpstreamProvider::MetaLlama
+        | UpstreamProvider::V0Vercel
+        | UpstreamProvider::Morph
+        | UpstreamProvider::FeatherlessAi
+        | UpstreamProvider::Llm7
+        | UpstreamProvider::Lepton
+        | UpstreamProvider::Kluster
+        | UpstreamProvider::Friendliai
+        | UpstreamProvider::Llamagate
+        | UpstreamProvider::Heroku
+        | UpstreamProvider::Galadriel
+        | UpstreamProvider::Datarobot
+        | UpstreamProvider::Clarifai
+        | UpstreamProvider::Gitlawb
+        | UpstreamProvider::InferenceNet
+        | UpstreamProvider::Nanogpt
+        | UpstreamProvider::Predibase
+        | UpstreamProvider::Bytez
+        | UpstreamProvider::Aimlapi
+        | UpstreamProvider::Novita
+        | UpstreamProvider::Piapi
+        | UpstreamProvider::Getgoapi
+        | UpstreamProvider::Laozhang
+        | UpstreamProvider::Glhf
+        | UpstreamProvider::Cablyai
+        | UpstreamProvider::Thebai
+        | UpstreamProvider::Fenayai
+        | UpstreamProvider::Empower
+        | UpstreamProvider::NousResearch
+        | UpstreamProvider::Petals
+        | UpstreamProvider::Poe
+        | UpstreamProvider::Gitlab
+        | UpstreamProvider::Chutes
+        | UpstreamProvider::VoyageAi
+        | UpstreamProvider::JinaAi
+        | UpstreamProvider::FalAi
+        | UpstreamProvider::StabilityAi
+        | UpstreamProvider::BlackForestLabs
+        | UpstreamProvider::Recraft
+        | UpstreamProvider::Poolside
+        | UpstreamProvider::ArceeAi
+        | UpstreamProvider::Inclusionai
+        | UpstreamProvider::Liquid
+        | UpstreamProvider::Nomic
+        | UpstreamProvider::Krutrim
+        | UpstreamProvider::Monsterapi
+        | UpstreamProvider::Byteplus
+        | UpstreamProvider::Bluesminds
+        | UpstreamProvider::FreemodelDev
+        | UpstreamProvider::Blackbox
+        | UpstreamProvider::Bazaarlink
+        | UpstreamProvider::Completions
+        | UpstreamProvider::Enally
+        | UpstreamProvider::Freetheai
+        | UpstreamProvider::Crof
+        | UpstreamProvider::Longcat
+        | UpstreamProvider::Pollinations
+        | UpstreamProvider::Puter
+        | UpstreamProvider::Uncloseai
+        | UpstreamProvider::Replicate
+        | UpstreamProvider::OllamaCloud
+        | UpstreamProvider::Agentrouter
+        | UpstreamProvider::CommandCode
+        | UpstreamProvider::Astraflow
+        | UpstreamProvider::OpencodeZen
+        | UpstreamProvider::OpencodeGo
+        | UpstreamProvider::Zai
+        | UpstreamProvider::Phind
+        | UpstreamProvider::Huggingchat
+        | UpstreamProvider::Dify
+        | UpstreamProvider::Publicai
+        | UpstreamProvider::Sapio
+        | UpstreamProvider::Freeaiapikey
+        | UpstreamProvider::Other => RequestPipeline::GenericRelay,
     }
 }
 
@@ -291,12 +412,11 @@ pub fn validate_pipeline_override(
             )
         }
         PipelineOverride::MimoTokenPlanRelay
-        | PipelineOverride::MimoPaygRelay
         | PipelineOverride::CodexMimo
             if provider != UpstreamProvider::Mimo =>
         {
             Some(
-                "mimo_token_plan_relay, mimo_payg_relay, and codex_mimo require a mimo upstream profile",
+                "mimo_token_plan_relay and codex_mimo require a mimo upstream profile",
             )
         }
         PipelineOverride::CodexRelay if provider != UpstreamProvider::Codex => {
@@ -494,14 +614,14 @@ mod tests {
     }
 
     #[test]
-    fn xiaomi_prefixed_model_routes_to_mimo_profile() {
+    fn mimo_model_routes_to_mimo_profile() {
         let globals = PipelineGlobals::default();
         let profiles = vec![ProfileDescriptor {
             id: "mimo".into(),
             provider: UpstreamProvider::Mimo,
         }];
         let ctx = PipelineRequestContext {
-            model: "xiaomi/mimo-v2-flash",
+            model: "mimo-v2-flash",
             ..Default::default()
         };
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
@@ -550,5 +670,18 @@ mod tests {
         assert_eq!(sel.upstream_profile_id, "codex");
         assert_eq!(sel.pipeline, RequestPipeline::CodexRelay);
         assert_ne!(sel.pipeline, RequestPipeline::MimoTokenPlanRelay);
+    }
+
+    #[test]
+    fn mimo_payg_relay_backward_compat_maps_to_mimo_token_plan_relay() {
+        // Legacy string "mimo_payg_relay" should map to MimoTokenPlanRelay
+        assert_eq!(
+            PipelineOverride::from_str("mimo_payg_relay"),
+            PipelineOverride::MimoTokenPlanRelay
+        );
+        assert_eq!(
+            PipelineOverride::from_str("mimo_token_plan_relay"),
+            PipelineOverride::MimoTokenPlanRelay
+        );
     }
 }

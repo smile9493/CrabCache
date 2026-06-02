@@ -38,6 +38,7 @@ struct PresetTemplate {
 }
 
 const PRESETS: &[PresetTemplate] = &[
+    // ── Original ──
     PresetTemplate {
         id: "deepseek",
         label_zh: "DeepSeek 官方",
@@ -59,8 +60,8 @@ const PRESETS: &[PresetTemplate] = &[
         label_en: "MiMo",
         provider: "mimo",
         base_url: "https://api.xiaomimimo.com",
-        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
-        default_model: "xiaomi/mimo-v2.5-pro",
+        models: &["mimo-v2.5-pro", "mimo-v2-flash"],
+        default_model: "mimo-v2.5-pro",
         tls_sni: "api.xiaomimimo.com",
     },
     PresetTemplate {
@@ -69,8 +70,8 @@ const PRESETS: &[PresetTemplate] = &[
         label_en: "MiMo TP CN",
         provider: "mimo",
         base_url: "https://token-plan-cn.xiaomimimo.com",
-        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
-        default_model: "xiaomi/mimo-v2.5-pro",
+        models: &["mimo-v2.5-pro", "mimo-v2-flash"],
+        default_model: "mimo-v2.5-pro",
         tls_sni: "token-plan-cn.xiaomimimo.com",
     },
     PresetTemplate {
@@ -79,19 +80,29 @@ const PRESETS: &[PresetTemplate] = &[
         label_en: "MiMo TP SGP",
         provider: "mimo",
         base_url: "https://token-plan-sgp.xiaomimimo.com",
-        models: &["xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2-flash"],
-        default_model: "xiaomi/mimo-v2.5-pro",
+        models: &["mimo-v2.5-pro", "mimo-v2-flash"],
+        default_model: "mimo-v2.5-pro",
         tls_sni: "token-plan-sgp.xiaomimimo.com",
     },
     PresetTemplate {
-        id: "custom",
-        label_zh: "自定义",
-        label_en: "Custom",
-        provider: "custom",
-        base_url: "",
-        models: &[],
-        default_model: "",
-        tls_sni: "",
+        id: "openai",
+        label_zh: "OpenAI",
+        label_en: "OpenAI",
+        provider: "openai",
+        base_url: "https://api.openai.com",
+        models: &["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4-turbo"],
+        default_model: "gpt-5",
+        tls_sni: "api.openai.com",
+    },
+    PresetTemplate {
+        id: "anthropic",
+        label_zh: "Anthropic (Claude)",
+        label_en: "Anthropic (Claude)",
+        provider: "anthropic",
+        base_url: "https://api.anthropic.com",
+        models: &["claude-sonnet-4", "claude-opus-4", "claude-haiku-3.5"],
+        default_model: "claude-sonnet-4",
+        tls_sni: "api.anthropic.com",
     },
     PresetTemplate {
         id: "codex",
@@ -108,6 +119,501 @@ const PRESETS: &[PresetTemplate] = &[
         ],
         default_model: "gpt-5-codex",
         tls_sni: "chatgpt.com",
+    },
+    // ── International Mainstream ──
+    PresetTemplate {
+        id: "groq",
+        label_zh: "Groq",
+        label_en: "Groq",
+        provider: "groq",
+        base_url: "https://api.groq.com/openai/v1",
+        models: &["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+        default_model: "llama-3.3-70b-versatile",
+        tls_sni: "api.groq.com",
+    },
+    PresetTemplate {
+        id: "xai",
+        label_zh: "xAI (Grok)",
+        label_en: "xAI (Grok)",
+        provider: "xai",
+        base_url: "https://api.x.ai/v1",
+        models: &["grok-3", "grok-3-mini", "grok-2"],
+        default_model: "grok-3",
+        tls_sni: "api.x.ai",
+    },
+    PresetTemplate {
+        id: "mistral",
+        label_zh: "Mistral",
+        label_en: "Mistral",
+        provider: "mistral",
+        base_url: "https://api.mistral.ai/v1",
+        models: &["mistral-large-latest", "mistral-medium-latest", "codestral-latest"],
+        default_model: "mistral-large-latest",
+        tls_sni: "api.mistral.ai",
+    },
+    PresetTemplate {
+        id: "gemini",
+        label_zh: "Google Gemini",
+        label_en: "Google Gemini",
+        provider: "gemini",
+        base_url: "https://generativelanguage.googleapis.com/v1beta",
+        models: &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        default_model: "gemini-2.5-pro",
+        tls_sni: "generativelanguage.googleapis.com",
+    },
+    PresetTemplate {
+        id: "perplexity",
+        label_zh: "Perplexity",
+        label_en: "Perplexity",
+        provider: "perplexity",
+        base_url: "https://api.perplexity.ai",
+        models: &["sonar-pro", "sonar", "sonar-small-online"],
+        default_model: "sonar-pro",
+        tls_sni: "api.perplexity.ai",
+    },
+    PresetTemplate {
+        id: "together",
+        label_zh: "Together AI",
+        label_en: "Together AI",
+        provider: "together",
+        base_url: "https://api.together.xyz/v1",
+        models: &["meta-llama/Llama-3.3-70B-Instruct-Turbo", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"],
+        default_model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        tls_sni: "api.together.xyz",
+    },
+    PresetTemplate {
+        id: "fireworks",
+        label_zh: "Fireworks AI",
+        label_en: "Fireworks AI",
+        provider: "fireworks",
+        base_url: "https://api.fireworks.ai/inference/v1",
+        models: &["accounts/fireworks/models/llama-v3p3-70b-instruct", "accounts/fireworks/models/llama-v3p1-8b-instruct"],
+        default_model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        tls_sni: "api.fireworks.ai",
+    },
+    PresetTemplate {
+        id: "cerebras",
+        label_zh: "Cerebras",
+        label_en: "Cerebras",
+        provider: "cerebras",
+        base_url: "https://api.cerebras.ai/v1",
+        models: &["llama-3.3-70b", "llama-3.1-8b"],
+        default_model: "llama-3.3-70b",
+        tls_sni: "api.cerebras.ai",
+    },
+    PresetTemplate {
+        id: "cohere",
+        label_zh: "Cohere",
+        label_en: "Cohere",
+        provider: "cohere",
+        base_url: "https://api.cohere.com/v2",
+        models: &["command-a", "command-r-plus", "command-r"],
+        default_model: "command-a",
+        tls_sni: "api.cohere.com",
+    },
+    PresetTemplate {
+        id: "nvidia",
+        label_zh: "NVIDIA NIM",
+        label_en: "NVIDIA NIM",
+        provider: "nvidia",
+        base_url: "https://integrate.api.nvidia.com/v1",
+        models: &["meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct"],
+        default_model: "meta/llama-3.3-70b-instruct",
+        tls_sni: "integrate.api.nvidia.com",
+    },
+    PresetTemplate {
+        id: "nebius",
+        label_zh: "Nebius AI",
+        label_en: "Nebius AI",
+        provider: "nebius",
+        base_url: "https://api.studio.nebius.ai/v1",
+        models: &["meta-llama/Meta-Llama-3.3-70B-Instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct"],
+        default_model: "meta-llama/Meta-Llama-3.3-70B-Instruct",
+        tls_sni: "api.studio.nebius.ai",
+    },
+    PresetTemplate {
+        id: "siliconflow",
+        label_zh: "硅基流动",
+        label_en: "SiliconFlow",
+        provider: "siliconflow",
+        base_url: "https://api.siliconflow.cn/v1",
+        models: &["Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2.5-14B-Instruct", "deepseek-ai/DeepSeek-V3"],
+        default_model: "Qwen/Qwen2.5-72B-Instruct",
+        tls_sni: "api.siliconflow.cn",
+    },
+    PresetTemplate {
+        id: "hyperbolic",
+        label_zh: "Hyperbolic",
+        label_en: "Hyperbolic",
+        provider: "hyperbolic",
+        base_url: "https://api.hyperbolic.xyz/v1",
+        models: &["meta-llama/Meta-Llama-3.1-70B-Instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct"],
+        default_model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        tls_sni: "api.hyperbolic.xyz",
+    },
+    PresetTemplate {
+        id: "openrouter",
+        label_zh: "OpenRouter",
+        label_en: "OpenRouter",
+        provider: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+        models: &["anthropic/claude-sonnet-4", "google/gemini-2.5-pro", "meta-llama/llama-3.3-70b-instruct"],
+        default_model: "anthropic/claude-sonnet-4",
+        tls_sni: "openrouter.ai",
+    },
+    PresetTemplate {
+        id: "reka",
+        label_zh: "Reka",
+        label_en: "Reka",
+        provider: "reka",
+        base_url: "https://api.reka.ai/v1",
+        models: &["reka-core", "reka-flash", "reka-edge"],
+        default_model: "reka-core",
+        tls_sni: "api.reka.ai",
+    },
+    // ── Cloud Platforms ──
+    PresetTemplate {
+        id: "azure-openai",
+        label_zh: "Azure OpenAI",
+        label_en: "Azure OpenAI",
+        provider: "azure-openai",
+        base_url: "https://YOUR_RESOURCE.openai.azure.com",
+        models: &["gpt-4o", "gpt-4-turbo", "gpt-35-turbo"],
+        default_model: "gpt-4o",
+        tls_sni: "YOUR_RESOURCE.openai.azure.com",
+    },
+    PresetTemplate {
+        id: "azure-ai",
+        label_zh: "Azure AI Foundry",
+        label_en: "Azure AI Foundry",
+        provider: "azure-ai",
+        base_url: "https://YOUR_RESOURCE.services.ai.azure.com/openai/v1",
+        models: &["gpt-4o", "gpt-4-turbo"],
+        default_model: "gpt-4o",
+        tls_sni: "YOUR_RESOURCE.services.ai.azure.com",
+    },
+    PresetTemplate {
+        id: "bedrock",
+        label_zh: "Amazon Bedrock",
+        label_en: "Amazon Bedrock",
+        provider: "bedrock",
+        base_url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        models: &["anthropic.claude-sonnet-4-20250514-v1:0", "anthropic.claude-haiku-4-20250414-v1:0"],
+        default_model: "anthropic.claude-sonnet-4-20250514-v1:0",
+        tls_sni: "bedrock-runtime.us-east-1.amazonaws.com",
+    },
+    PresetTemplate {
+        id: "vertex",
+        label_zh: "Google Vertex AI",
+        label_en: "Google Vertex AI",
+        provider: "vertex-ai",
+        base_url: "https://us-central1-aiplatform.googleapis.com/v1",
+        models: &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        default_model: "gemini-2.5-pro",
+        tls_sni: "us-central1-aiplatform.googleapis.com",
+    },
+    PresetTemplate {
+        id: "watsonx",
+        label_zh: "IBM watsonx",
+        label_en: "IBM watsonx",
+        provider: "watsonx",
+        base_url: "https://us-south.ml.cloud.ibm.com/ml/gateway/v1",
+        models: &["meta-llama/llama-3-3-70b-instruct", "meta-llama/llama-3-1-8b-instruct"],
+        default_model: "meta-llama/llama-3-3-70b-instruct",
+        tls_sni: "us-south.ml.cloud.ibm.com",
+    },
+    PresetTemplate {
+        id: "oci",
+        label_zh: "OCI 生成式 AI",
+        label_en: "OCI Generative AI",
+        provider: "oci",
+        base_url: "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/openai/v1",
+        models: &["cohere.command-r-plus", "cohere.command-r"],
+        default_model: "cohere.command-r-plus",
+        tls_sni: "inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    },
+    PresetTemplate {
+        id: "sap",
+        label_zh: "SAP AI Hub",
+        label_en: "SAP AI Hub",
+        provider: "sap",
+        base_url: "https://YOUR_DEPLOYMENT_URL",
+        models: &["gpt-4o", "gpt-4-turbo"],
+        default_model: "gpt-4o",
+        tls_sni: "YOUR_DEPLOYMENT_URL",
+    },
+    // ── China Providers ──
+    PresetTemplate {
+        id: "alibaba",
+        label_zh: "阿里通义千问",
+        label_en: "Alibaba Qwen",
+        provider: "alibaba",
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models: &["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"],
+        default_model: "qwen-max",
+        tls_sni: "dashscope.aliyuncs.com",
+    },
+    PresetTemplate {
+        id: "qianfan",
+        label_zh: "百度千帆",
+        label_en: "Baidu Qianfan",
+        provider: "qianfan",
+        base_url: "https://qianfan.baidubce.com/v2",
+        models: &["ernie-4.0-8k", "ernie-3.5-8k", "ernie-speed-8k"],
+        default_model: "ernie-4.0-8k",
+        tls_sni: "qianfan.baidubce.com",
+    },
+    PresetTemplate {
+        id: "glm",
+        label_zh: "智谱 GLM",
+        label_en: "Zhipu GLM",
+        provider: "glm",
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        models: &["glm-4-plus", "glm-4", "glm-4-flash"],
+        default_model: "glm-4-plus",
+        tls_sni: "open.bigmodel.cn",
+    },
+    PresetTemplate {
+        id: "kimi",
+        label_zh: "Kimi (月之暗面)",
+        label_en: "Kimi (Moonshot)",
+        provider: "kimi",
+        base_url: "https://api.moonshot.cn/v1",
+        models: &["kimi-k2.6", "moonshot-v1-128k", "moonshot-v1-32k"],
+        default_model: "kimi-k2.6",
+        tls_sni: "api.moonshot.cn",
+    },
+    PresetTemplate {
+        id: "minimax",
+        label_zh: "Minimax",
+        label_en: "Minimax",
+        provider: "minimax",
+        base_url: "https://api.minimax.chat/v1",
+        models: &["MiniMax-M2.5", "MiniMax-M1", "abab6.5s-chat"],
+        default_model: "MiniMax-M2.5",
+        tls_sni: "api.minimax.chat",
+    },
+    PresetTemplate {
+        id: "volcengine",
+        label_zh: "火山引擎",
+        label_en: "Volcengine",
+        provider: "volcengine",
+        base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        models: &["doubao-seed-2-0-code-preview", "doubao-1.5-pro-256k", "doubao-1.5-lite-32k"],
+        default_model: "doubao-seed-2-0-code-preview",
+        tls_sni: "ark.cn-beijing.volces.com",
+    },
+    PresetTemplate {
+        id: "tencent",
+        label_zh: "腾讯混元",
+        label_en: "Tencent Hunyuan",
+        provider: "tencent",
+        base_url: "https://api.hunyuan.cloud.tencent.com/v1",
+        models: &["hunyuan-turbos-latest", "hunyuan-turbos", "hunyuan-lite"],
+        default_model: "hunyuan-turbos-latest",
+        tls_sni: "api.hunyuan.cloud.tencent.com",
+    },
+    PresetTemplate {
+        id: "iflytek",
+        label_zh: "科大讯飞星火",
+        label_en: "iFlytek Spark",
+        provider: "iflytek",
+        base_url: "https://spark-api-open.xf-yun.com/v1",
+        models: &["generalv3.5", "generalv3", "4.0Ultra"],
+        default_model: "generalv3.5",
+        tls_sni: "spark-api-open.xf-yun.com",
+    },
+    PresetTemplate {
+        id: "baichuan",
+        label_zh: "百川",
+        label_en: "Baichuan",
+        provider: "baichuan",
+        base_url: "https://api.baichuan-ai.com/v1",
+        models: &["Baichuan4", "Baichuan3-Turbo", "Baichuan2-Turbo"],
+        default_model: "Baichuan4",
+        tls_sni: "api.baichuan-ai.com",
+    },
+    PresetTemplate {
+        id: "yi",
+        label_zh: "零一万物",
+        label_en: "01.AI Yi",
+        provider: "yi",
+        base_url: "https://api.lingyiwanwu.com/v1",
+        models: &["yi-large", "yi-medium", "yi-light"],
+        default_model: "yi-large",
+        tls_sni: "api.lingyiwanwu.com",
+    },
+    PresetTemplate {
+        id: "stepfun",
+        label_zh: "阶跃星辰",
+        label_en: "StepFun",
+        provider: "stepfun",
+        base_url: "https://api.stepfun.com/v1",
+        models: &["step-2-16k", "step-1-128k", "step-1-32k"],
+        default_model: "step-2-16k",
+        tls_sni: "api.stepfun.com",
+    },
+    PresetTemplate {
+        id: "360ai",
+        label_zh: "360 AI",
+        label_en: "360 AI",
+        provider: "360ai",
+        base_url: "https://api.360.cn/v1",
+        models: &["360-gpt2-pro", "360-gpt2"],
+        default_model: "360-gpt2-pro",
+        tls_sni: "api.360.cn",
+    },
+    PresetTemplate {
+        id: "sensenova",
+        label_zh: "商汤 SenseNova",
+        label_en: "SenseTime SenseNova",
+        provider: "sensenova",
+        base_url: "https://api.sensenova.cn/v1/llm",
+        models: &["SenseChat-5", "SenseChat-4"],
+        default_model: "SenseChat-5",
+        tls_sni: "api.sensenova.cn",
+    },
+    PresetTemplate {
+        id: "coze",
+        label_zh: "Coze (字节)",
+        label_en: "Coze (ByteDance)",
+        provider: "coze",
+        base_url: "https://api.coze.com/v1",
+        models: &["coze-bot"],
+        default_model: "coze-bot",
+        tls_sni: "api.coze.com",
+    },
+    PresetTemplate {
+        id: "baidu",
+        label_zh: "百度 ERNIE",
+        label_en: "Baidu ERNIE",
+        provider: "baidu",
+        base_url: "https://yiyan.baidu.com",
+        models: &["ernie-speed", "ernie-lite"],
+        default_model: "ernie-speed",
+        tls_sni: "yiyan.baidu.com",
+    },
+    // ── Inference Platforms ──
+    PresetTemplate {
+        id: "deepinfra",
+        label_zh: "DeepInfra",
+        label_en: "DeepInfra",
+        provider: "deepinfra",
+        base_url: "https://api.deepinfra.com/v1/openai",
+        models: &["meta-llama/Meta-Llama-3.1-70B-Instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct"],
+        default_model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        tls_sni: "api.deepinfra.com",
+    },
+    PresetTemplate {
+        id: "sambanova",
+        label_zh: "SambaNova",
+        label_en: "SambaNova",
+        provider: "sambanova",
+        base_url: "https://api.sambanova.ai/v1",
+        models: &["Meta-Llama-3.3-70B-Instruct", "Meta-Llama-3.1-8B-Instruct"],
+        default_model: "Meta-Llama-3.3-70B-Instruct",
+        tls_sni: "api.sambanova.ai",
+    },
+    PresetTemplate {
+        id: "github-models",
+        label_zh: "GitHub Models",
+        label_en: "GitHub Models",
+        provider: "github-models",
+        base_url: "https://models.inference.ai.azure.com",
+        models: &["gpt-4o", "gpt-4-turbo", "Meta-Llama-3.1-405B-Instruct"],
+        default_model: "gpt-4o",
+        tls_sni: "models.inference.ai.azure.com",
+    },
+    PresetTemplate {
+        id: "huggingface",
+        label_zh: "HuggingFace",
+        label_en: "HuggingFace",
+        provider: "huggingface",
+        base_url: "https://api-inference.huggingface.co/v1",
+        models: &["meta-llama/Meta-Llama-3.1-70B-Instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct"],
+        default_model: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        tls_sni: "api-inference.huggingface.co",
+    },
+    PresetTemplate {
+        id: "replicate",
+        label_zh: "Replicate",
+        label_en: "Replicate",
+        provider: "replicate",
+        base_url: "https://openai-proxy.replicate.com/v1",
+        models: &["meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct"],
+        default_model: "meta/llama-3.3-70b-instruct",
+        tls_sni: "openai-proxy.replicate.com",
+    },
+    PresetTemplate {
+        id: "ollama-cloud",
+        label_zh: "Ollama Cloud",
+        label_en: "Ollama Cloud",
+        provider: "ollama-cloud",
+        base_url: "https://api.ollama.com/v1",
+        models: &["llama3.3:70b", "llama3.1:8b"],
+        default_model: "llama3.3:70b",
+        tls_sni: "api.ollama.com",
+    },
+    PresetTemplate {
+        id: "aimlapi",
+        label_zh: "AI/ML API",
+        label_en: "AI/ML API",
+        provider: "aimlapi",
+        base_url: "https://api.aimlapi.com/v1",
+        models: &["gpt-4o", "gpt-4-turbo", "claude-sonnet-4"],
+        default_model: "gpt-4o",
+        tls_sni: "api.aimlapi.com",
+    },
+    PresetTemplate {
+        id: "novita",
+        label_zh: "Novita AI",
+        label_en: "Novita AI",
+        provider: "novita",
+        base_url: "https://api.novita.ai/v3/openai",
+        models: &["meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.1-8b-instruct"],
+        default_model: "meta-llama/llama-3.3-70b-instruct",
+        tls_sni: "api.novita.ai",
+    },
+    PresetTemplate {
+        id: "chutes",
+        label_zh: "Chutes.ai",
+        label_en: "Chutes.ai",
+        provider: "chutes",
+        base_url: "https://llm.chutes.ai/v1",
+        models: &["meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.1-8b-instruct"],
+        default_model: "meta-llama/llama-3.3-70b-instruct",
+        tls_sni: "llm.chutes.ai",
+    },
+    PresetTemplate {
+        id: "poe",
+        label_zh: "Poe",
+        label_en: "Poe",
+        provider: "poe",
+        base_url: "https://api.poe.com/v1",
+        models: &["Claude-Sonnet-4", "GPT-4o", "Gemini-2.5-Pro"],
+        default_model: "Claude-Sonnet-4",
+        tls_sni: "api.poe.com",
+    },
+    PresetTemplate {
+        id: "phind",
+        label_zh: "Phind",
+        label_en: "Phind",
+        provider: "phind",
+        base_url: "https://https.api.phind.com/v1",
+        models: &["Phind-70B", "Phind-34B"],
+        default_model: "Phind-70B",
+        tls_sni: "https.api.phind.com",
+    },
+    // ── Custom (must be last) ──
+    PresetTemplate {
+        id: "custom",
+        label_zh: "自定义",
+        label_en: "Custom",
+        provider: "custom",
+        base_url: "",
+        models: &[],
+        default_model: "",
+        tls_sni: "",
     },
 ];
 
@@ -133,6 +639,7 @@ fn pool_lines_to_key_inputs(lines: Vec<String>) -> Vec<UpstreamKeyInput> {
                 secret,
                 enabled: true,
                 account_id,
+                priority: 0,
             }
         })
         .collect()
@@ -1137,10 +1644,73 @@ pub fn UpstreamPage() -> impl IntoView {
                                                     </div>
                                                     <div>
                                                         <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_provider_label()}</label>
-                                                        <input type="text" class="input text-sm" placeholder="e.g. mimo"
+                                                        <select class="input text-sm"
                                                             prop:value=move || provider.get()
-                                                            on:input=move |ev| provider.set(event_target_value(&ev))
-                                                        />
+                                                            on:change=move |ev| provider.set(event_target_value(&ev))
+                                                        >
+                                                            <option value="deepseek">DeepSeek</option>
+                                                            <option value="mimo">MiMo</option>
+                                                            <option value="openai">OpenAI</option>
+                                                            <option value="codex">Codex</option>
+                                                            <option value="anthropic">Anthropic</option>
+                                                            <optgroup label="International">
+                                                                <option value="groq">Groq</option>
+                                                                <option value="xai">xAI</option>
+                                                                <option value="mistral">Mistral</option>
+                                                                <option value="gemini">Gemini</option>
+                                                                <option value="perplexity">Perplexity</option>
+                                                                <option value="together">Together</option>
+                                                                <option value="fireworks">Fireworks</option>
+                                                                <option value="cerebras">Cerebras</option>
+                                                                <option value="cohere">Cohere</option>
+                                                                <option value="nvidia">NVIDIA NIM</option>
+                                                                <option value="nebius">Nebius</option>
+                                                                <option value="siliconflow">SiliconFlow</option>
+                                                                <option value="hyperbolic">Hyperbolic</option>
+                                                                <option value="openrouter">OpenRouter</option>
+                                                                <option value="reka">Reka</option>
+                                                            </optgroup>
+                                                            <optgroup label="Cloud">
+                                                                <option value="azure-openai">Azure OpenAI</option>
+                                                                <option value="azure-ai">Azure AI</option>
+                                                                <option value="bedrock">Bedrock</option>
+                                                                <option value="vertex-ai">Vertex AI</option>
+                                                                <option value="watsonx">watsonx</option>
+                                                                <option value="oci">OCI</option>
+                                                                <option value="sap">SAP</option>
+                                                            </optgroup>
+                                                            <optgroup label="中国">
+                                                                <option value="alibaba">通义千问</option>
+                                                                <option value="qianfan">百度千帆</option>
+                                                                <option value="glm">智谱 GLM</option>
+                                                                <option value="kimi">Kimi</option>
+                                                                <option value="minimax">Minimax</option>
+                                                                <option value="volcengine">火山引擎</option>
+                                                                <option value="tencent">混元</option>
+                                                                <option value="iflytek">讯飞星火</option>
+                                                                <option value="baichuan">百川</option>
+                                                                <option value="yi">零一万物</option>
+                                                                <option value="stepfun">阶跃星辰</option>
+                                                                <option value="360ai">360 AI</option>
+                                                                <option value="sensenova">商汤</option>
+                                                                <option value="coze">Coze</option>
+                                                                <option value="baidu">百度 ERNIE</option>
+                                                            </optgroup>
+                                                            <optgroup label="Inference">
+                                                                <option value="deepinfra">DeepInfra</option>
+                                                                <option value="sambanova">SambaNova</option>
+                                                                <option value="github-models">GitHub Models</option>
+                                                                <option value="huggingface">HuggingFace</option>
+                                                                <option value="replicate">Replicate</option>
+                                                                <option value="ollama-cloud">Ollama Cloud</option>
+                                                                <option value="aimlapi">AI/ML API</option>
+                                                                <option value="novita">Novita AI</option>
+                                                                <option value="chutes">Chutes.ai</option>
+                                                                <option value="poe">Poe</option>
+                                                                <option value="phind">Phind</option>
+                                                            </optgroup>
+                                                            <option value="custom">Custom</option>
+                                                        </select>
                                                     </div>
                                                     <div class="md:col-span-2">
                                                         <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_base_url_label()}</label>
@@ -1251,10 +1821,74 @@ pub fn UpstreamPage() -> impl IntoView {
                                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                         <div>
                                                             <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_provider_label()}</label>
-                                                            <input type="text" prop:value=move || provider.get()
-                                                                on:input=move |ev| provider.set(event_target_value(&ev))
-                                                                class="input text-sm" placeholder="deepseek"
-                                                            />
+                                                            <select
+                                                                prop:value=move || provider.get()
+                                                                on:change=move |ev| provider.set(event_target_value(&ev))
+                                                                class="input text-sm"
+                                                            >
+                                                                <option value="deepseek">DeepSeek</option>
+                                                                <option value="mimo">MiMo</option>
+                                                                <option value="openai">OpenAI</option>
+                                                                <option value="codex">Codex</option>
+                                                                <option value="anthropic">Anthropic</option>
+                                                                <optgroup label="International">
+                                                                    <option value="groq">Groq</option>
+                                                                    <option value="xai">xAI</option>
+                                                                    <option value="mistral">Mistral</option>
+                                                                    <option value="gemini">Gemini</option>
+                                                                    <option value="perplexity">Perplexity</option>
+                                                                    <option value="together">Together</option>
+                                                                    <option value="fireworks">Fireworks</option>
+                                                                    <option value="cerebras">Cerebras</option>
+                                                                    <option value="cohere">Cohere</option>
+                                                                    <option value="nvidia">NVIDIA NIM</option>
+                                                                    <option value="nebius">Nebius</option>
+                                                                    <option value="siliconflow">SiliconFlow</option>
+                                                                    <option value="hyperbolic">Hyperbolic</option>
+                                                                    <option value="openrouter">OpenRouter</option>
+                                                                    <option value="reka">Reka</option>
+                                                                </optgroup>
+                                                                <optgroup label="Cloud">
+                                                                    <option value="azure-openai">Azure OpenAI</option>
+                                                                    <option value="azure-ai">Azure AI</option>
+                                                                    <option value="bedrock">Bedrock</option>
+                                                                    <option value="vertex-ai">Vertex AI</option>
+                                                                    <option value="watsonx">watsonx</option>
+                                                                    <option value="oci">OCI</option>
+                                                                    <option value="sap">SAP</option>
+                                                                </optgroup>
+                                                                <optgroup label="中国">
+                                                                    <option value="alibaba">通义千问</option>
+                                                                    <option value="qianfan">百度千帆</option>
+                                                                    <option value="glm">智谱 GLM</option>
+                                                                    <option value="kimi">Kimi</option>
+                                                                    <option value="minimax">Minimax</option>
+                                                                    <option value="volcengine">火山引擎</option>
+                                                                    <option value="tencent">混元</option>
+                                                                    <option value="iflytek">讯飞星火</option>
+                                                                    <option value="baichuan">百川</option>
+                                                                    <option value="yi">零一万物</option>
+                                                                    <option value="stepfun">阶跃星辰</option>
+                                                                    <option value="360ai">360 AI</option>
+                                                                    <option value="sensenova">商汤</option>
+                                                                    <option value="coze">Coze</option>
+                                                                    <option value="baidu">百度 ERNIE</option>
+                                                                </optgroup>
+                                                                <optgroup label="Inference">
+                                                                    <option value="deepinfra">DeepInfra</option>
+                                                                    <option value="sambanova">SambaNova</option>
+                                                                    <option value="github-models">GitHub Models</option>
+                                                                    <option value="huggingface">HuggingFace</option>
+                                                                    <option value="replicate">Replicate</option>
+                                                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                                                    <option value="aimlapi">AI/ML API</option>
+                                                                    <option value="novita">Novita AI</option>
+                                                                    <option value="chutes">Chutes.ai</option>
+                                                                    <option value="poe">Poe</option>
+                                                                    <option value="phind">Phind</option>
+                                                                </optgroup>
+                                                                <option value="custom">Custom</option>
+                                                            </select>
                                                         </div>
                                                         <div>
                                                             <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_base_url_label()}</label>
@@ -1513,7 +2147,7 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                                 let pid = pid_for_toggle.clone();
                                                                                 let reload = reload.clone();
                                                                                 leptos::task::spawn_local(async move {
-                                                                                    let req = PatchUpstreamKeyRequest { enabled: Some(next), secret: None };
+                                                                                    let req = PatchUpstreamKeyRequest { enabled: Some(next), secret: None, priority: None };
                                                                                     let default_id = default_profile_id.get_untracked();
                                                                                     let _ = if pid == default_id {
                                                                                         api::patch_upstream_key(&id, &req).await

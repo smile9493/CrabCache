@@ -172,7 +172,7 @@ fn upstream_profiles_snapshot_roundtrip() {
             id: "mimo".to_string(),
             provider: "mimo".to_string(),
             base_url: "https://api.xiaomimimo.com".to_string(),
-            fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+            fallback_model: "mimo-v2.5-pro".to_string(),
             tls_sni: "api.xiaomimimo.com".to_string(),
             endpoints: vec![BackendSnapshot {
                 name: "mimo-backend-1".to_string(),
@@ -209,7 +209,7 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
         id: "mimo".to_string(),
         provider: "mimo".to_string(),
         base_url: "https://api.xiaomimimo.com".to_string(),
-        fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+        fallback_model: "mimo-v2.5-pro".to_string(),
         tls_sni: "api.xiaomimimo.com".to_string(),
         endpoints: vec![BackendSnapshot {
             name: "mimo-backend-1".to_string(),
@@ -313,7 +313,7 @@ fn upsert_profile_is_immediately_readable() {
         id: "mimo".to_string(),
         provider: UpstreamProvider::Mimo,
         base_url: "https://api.xiaomimimo.com".to_string(),
-        fallback_model: "xiaomi/mimo-v2.5-pro".to_string(),
+        fallback_model: "mimo-v2.5-pro".to_string(),
         tls_sni: "api.xiaomimimo.com".to_string(),
         router: LbRouter::new(&mimo_backends).unwrap(),
         upstream_pool: mimo_pool_handle,
@@ -328,5 +328,5 @@ fn upsert_profile_is_immediately_readable() {
         .profile("mimo")
         .expect("profile should exist right after upsert");
     assert_eq!(loaded.base_url, "https://api.xiaomimimo.com");
-    assert_eq!(loaded.fallback_model, "xiaomi/mimo-v2.5-pro");
+    assert_eq!(loaded.fallback_model, "mimo-v2.5-pro");
 }
