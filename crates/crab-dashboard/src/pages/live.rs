@@ -93,7 +93,10 @@ fn compress_chart_buckets(buckets: &[LiveMetricsBucket]) -> Vec<LiveMetricsBucke
     let downsampled = crate::components::chart::core::downsample_lttb(&pairs, MAX_CHART_POINTS);
     downsampled
         .iter()
-        .map(|(idx, _)| buckets[idx.round() as usize].clone())
+        .map(|(idx, _)| {
+            let i = (idx.round() as usize).min(buckets.len() - 1);
+            buckets[i].clone()
+        })
         .collect()
 }
 
@@ -1835,9 +1838,14 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             let e2e_bg = latency_heatmap_bg(b.e2e_latency_ms);
                             let up_val = b.upstream_latency_ms.unwrap_or(0.0);
                             let up_bg = latency_heatmap_bg(up_val);
-                            let down_val = b
-                                .pre_header_ms
-                                .unwrap_or(b.e2e_latency_ms - b.upstream_latency_ms.unwrap_or(0.0));
+                            let (down_val, down_valid) = if let Some(ph) = b.pre_header_ms {
+                                (ph, true)
+                            } else if let Some(up) = b.upstream_latency_ms {
+                                let diff = b.e2e_latency_ms - up;
+                                (diff.max(0.0), diff >= 0.0)
+                            } else {
+                                (0.0, false)
+                            };
                             let down_bg = latency_heatmap_bg(down_val);
                             let hit_bg = heatmap_bg(hit_pct / 100.0, true);
                             let in_bg = heatmap_bg(b.input_tokens as f64 / max_in, false);
@@ -1877,7 +1885,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                         }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{down_bg}")>
-                                        {if b.pre_header_ms.is_some() || b.upstream_latency_ms.is_some() {
+                                        {if down_valid {
                                             format!("{:.0}", down_val)
                                         } else {
                                             "—".to_string()

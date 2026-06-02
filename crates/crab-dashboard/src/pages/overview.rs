@@ -286,8 +286,7 @@ pub fn OverviewPage() -> impl IntoView {
             if load_generation.try_get() == Some(request_id) {
                 if overview_core.try_get().map_or(true, |o| o.is_none()) {
                     overview_core.try_set(Some(Err(
-                        "Overview request timed out. Please refresh or re-login admin key."
-                            .to_string(),
+                        t.overview_request_timed_out().to_string(),
                     )));
                 }
                 is_loading.try_set(false);
@@ -352,12 +351,23 @@ pub fn OverviewPage() -> impl IntoView {
                 }
                 match api::fetch_model_peak_hours(7).await {
                     Ok(resp) => {
+                        if !alive_ph.load(Ordering::Relaxed) {
+                            break;
+                        }
                         ph.set(resp);
                         ph_err.set(None);
                     }
-                    Err(e) => ph_err.set(Some(e)),
+                    Err(e) => {
+                        if !alive_ph.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        ph_err.set(Some(e));
+                    }
                 }
                 TimeoutFuture::new(300_000).await;
+                if !alive_ph.load(Ordering::Relaxed) {
+                    break;
+                }
             }
         });
     }
@@ -463,6 +473,7 @@ pub fn OverviewPage() -> impl IntoView {
     // Relative time updater
     let relative_time = RwSignal::new(String::new());
     let alive_clock = Arc::clone(&alive);
+    let t_clock = t;
     leptos::task::spawn_local(async move {
         loop {
             TimeoutFuture::new(1_000).await;
@@ -474,13 +485,13 @@ pub fn OverviewPage() -> impl IntoView {
                 let now = js_sys::Date::now() as u64;
                 let elapsed_ms = now.saturating_sub(ts);
                 let text = if elapsed_ms < 1000 {
-                    "just now".to_string()
+                    t_clock.overview_relative_just_now().to_string()
                 } else if elapsed_ms < 60_000 {
-                    format!("{}s ago", elapsed_ms / 1000)
+                    t_clock.overview_relative_seconds_ago(elapsed_ms / 1000)
                 } else if elapsed_ms < 3_600_000 {
-                    format!("{}m ago", elapsed_ms / 60_000)
+                    t_clock.overview_relative_minutes_ago(elapsed_ms / 60_000)
                 } else {
-                    format!("{}h ago", elapsed_ms / 3_600_000)
+                    t_clock.overview_relative_hours_ago(elapsed_ms / 3_600_000)
                 };
                 relative_time.try_set(text);
             }
@@ -905,7 +916,7 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
                     <div class="text-3xl font-mono tabular-nums text-accent font-semibold">
                         {format!("{:.1}%", ratio_pct)}
                     </div>
-                    <div class="text-xs text-theme-muted mt-1">"L3 hit ratio"</div>
+                    <div class="text-xs text-theme-muted mt-1">{t.overview_l3_hit_ratio()}</div>
                 </div>
                 <div class="text-sm font-mono tabular-nums text-theme-secondary space-y-1">
                     <div>{format!("hit: {}", prefix.hit_tokens)}</div>
@@ -920,10 +931,10 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="text-left text-xs text-theme-muted border-b border-theme">
-                                    <th class="pb-2 pr-4">"model"</th>
-                                    <th class="pb-2 pr-4">"hit"</th>
-                                    <th class="pb-2 pr-4">"miss"</th>
-                                    <th class="pb-2">"ratio"</th>
+                                    <th class="pb-2 pr-4">{t.overview_prefix_model()}</th>
+                                    <th class="pb-2 pr-4">{t.overview_prefix_hit()}</th>
+                                    <th class="pb-2 pr-4">{t.overview_prefix_miss()}</th>
+                                    <th class="pb-2">{t.overview_prefix_ratio()}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1174,7 +1185,7 @@ pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl
             </div>
             <div class="mt-4 space-y-1.5">
                 <div class="flex items-center justify-between text-xs text-theme-muted">
-                    <span>"5m coalesce share"</span>
+                    <span>{t.overview_coalesce_share_5m()}</span>
                     <span class="font-mono tabular-nums text-accent">{format!("{:.1}%", efficiency_pct)}</span>
                 </div>
                 <div class="h-2 w-full bg-theme-tertiary rounded overflow-hidden">
@@ -1184,8 +1195,8 @@ pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl
                     ></div>
                 </div>
                 <div class="flex items-center justify-between text-[11px] text-theme-muted font-mono tabular-nums">
-                    <span>{format!("saved {:.0}", coalesced_5m)}</span>
-                    <span>{format!("unique {:.0}", unique_requests)}</span>
+                    <span>{format!("{} {:.0}", t.overview_coalesce_saved(), coalesced_5m)}</span>
+                    <span>{format!("{} {:.0}", t.overview_coalesce_unique(), unique_requests)}</span>
                 </div>
             </div>
         </div>
@@ -1220,11 +1231,11 @@ pub fn SemanticCacheCard(metrics: MetricsSnapshot, semantic: SemanticConfig) -> 
                     <div class="text-xl font-mono text-accent">{metrics.semantic_hits}</div>
                 </div>
                 <div>
-                    <div class="text-xs text-theme-muted">"rejected"</div>
+                    <div class="text-xs text-theme-muted">{t.overview_semantic_rejected()}</div>
                     <div class="text-xl font-mono text-warning">{metrics.semantic_rejected}</div>
                 </div>
                 <div>
-                    <div class="text-xs text-theme-muted">"skipped"</div>
+                    <div class="text-xs text-theme-muted">{t.overview_semantic_skipped()}</div>
                     <div class="text-xl font-mono text-theme-secondary">{metrics.semantic_skipped}</div>
                 </div>
             </div>
@@ -1346,7 +1357,7 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
                     values=top10_values
                     width=520
                     height_px=160
-                    empty_message="No consumer data."
+                    empty_message=t.overview_consumer_no_data()
                 />
             </div>
             {move || {
@@ -1365,15 +1376,15 @@ pub fn ConsumerHitTable(metrics: MetricsSnapshot) -> impl IntoView {
                                             {t.overview_consumer_col()}<span class="text-accent">{sort_icon(ConsumerSortField::Consumer)}</span>
                                         </th>
                                         <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::HitTokens)>
-                                            "hit tokens"<span class="text-accent">{sort_icon(ConsumerSortField::HitTokens)}</span>
+                                            {t.overview_consumer_hit_tokens()}<span class="text-accent">{sort_icon(ConsumerSortField::HitTokens)}</span>
                                         </th>
                                         <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::MissTokens)>
-                                            "miss tokens"<span class="text-accent">{sort_icon(ConsumerSortField::MissTokens)}</span>
+                                            {t.overview_consumer_miss_tokens()}<span class="text-accent">{sort_icon(ConsumerSortField::MissTokens)}</span>
                                         </th>
                                         <th class="pb-2 pr-4 cursor-pointer select-none hover:text-theme" on:click=toggle_sort(ConsumerSortField::Ratio)>
-                                            "ratio"<span class="text-accent">{sort_icon(ConsumerSortField::Ratio)}</span>
+                                            {t.overview_consumer_ratio()}<span class="text-accent">{sort_icon(ConsumerSortField::Ratio)}</span>
                                         </th>
-                                        <th class="pb-2">"trend"</th>
+                                        <th class="pb-2">{t.overview_consumer_trend()}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1525,19 +1536,19 @@ pub fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
             <p class="text-xs text-theme-muted mb-4">{t.overview_prefix_health_desc()}</p>
             <div class="grid grid-cols-2 gap-3 text-sm font-mono tabular-nums">
                 <div>
-                    <span class="text-xs text-theme-muted block">"prefix_break"</span>
+                    <span class="text-xs text-theme-muted block">{t.overview_prefix_health_prefix_break()}</span>
                     <span class="text-warning">{ops.prefix_break_total}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-theme-muted block">"sse_omitted"</span>
+                    <span class="text-xs text-theme-muted block">{t.overview_prefix_health_sse_omitted()}</span>
                     <span>{ops.stream_cache_sse_omitted}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-theme-muted block">"reasoning hit"</span>
+                    <span class="text-xs text-theme-muted block">{t.overview_prefix_health_reasoning_hit()}</span>
                     <span class="text-accent">{ops.reasoning_store_hits}</span>
                 </div>
                 <div>
-                    <span class="text-xs text-theme-muted block">"reasoning miss"</span>
+                    <span class="text-xs text-theme-muted block">{t.overview_prefix_health_reasoning_miss()}</span>
                     <span>{ops.reasoning_store_misses}</span>
                 </div>
             </div>
@@ -1545,7 +1556,7 @@ pub fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
                 {format!("reasoning store hit {:.1}%", reasoning_hit_pct)}
             </p>
             <a href="/cache" class="text-xs text-accent hover:underline mt-2 inline-block">
-                "Cache / reasoning →"
+                {t.overview_prefix_health_cache_reasoning_link()}
             </a>
         </div>
     }
@@ -1583,22 +1594,26 @@ fn DataPlaneDiagnostics() -> impl IntoView {
     let errors = RwSignal::new(serde_json::Value::Null);
     let fetch_error = RwSignal::new(None::<String>);
     let is_loaded = RwSignal::new(false);
+    let alive = Arc::new(AtomicBool::new(true));
 
     let fetch = {
         let phases = phases;
         let errors = errors;
         let fetch_error = fetch_error;
         let is_loaded = is_loaded;
+        let alive = Arc::clone(&alive);
         move || {
-            let phases = phases;
-            let errors = errors;
-            let fetch_error = fetch_error;
-            let is_loaded = is_loaded;
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
+                if !alive.load(Ordering::Relaxed) { return; }
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/phases").await {
                     Ok(data) => phases.set(data),
                     Err(e) => fetch_error.set(Some(e)),
                 }
+                if !alive.load(Ordering::Relaxed) { return; }
                 match api::fetch_json::<serde_json::Value>("/api/admin/dataplane/errors").await {
                     Ok(data) => errors.set(data),
                     Err(e) => fetch_error.set(Some(e)),
@@ -1611,11 +1626,19 @@ fn DataPlaneDiagnostics() -> impl IntoView {
     fetch();
 
     let fetch = fetch;
+    let alive_poll = Arc::clone(&alive);
     leptos::task::spawn_local(async move {
         loop {
             TimeoutFuture::new(30_000).await;
+            if !alive_poll.load(Ordering::Relaxed) {
+                break;
+            }
             fetch();
         }
+    });
+
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
     });
 
     view! {

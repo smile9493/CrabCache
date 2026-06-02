@@ -12,9 +12,9 @@ use crate::components::ui::ProgressBar;
 use crate::locale::{Translations, use_translations};
 use crate::pages::domains::{DomainDetailDrawer, DomainOverviewTableInline};
 use crate::pages::overview::{
-    CacheHitSection, CoalescingCard, ConsumerHitTable, CostSavingsSection, LatencySection,
+    CacheHitSection, CoalescingCard, ConsumerHitTable, LatencySection,
     OpsMetricsRow, OverviewHealthStrip, PrefixCacheCard, PrefixHealthCard, SemanticCacheCard,
-    TimeSeriesChart, TokenStats, TraceCompareBanner, UpstreamKeyStrip,
+    TimeSeriesChart, TokenStats, TraceCompareBanner,
 };
 use crate::pages::overview_analytics::{InfraOverviewModule, infra_container_headline};
 use crate::time_utils::format_number;
@@ -140,15 +140,21 @@ pub fn OverviewCardGrid(
                 }) as Box<dyn FnMut(_)>);
             let _ = window
                 .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
-            closure.forget();
+            // Store closure so it can be removed on cleanup.
+            let closure_js: js_sys::Function = closure.into_js_value().into();
+            let window_clone = window.clone();
+            on_cleanup(move || {
+                let _ = window_clone.remove_event_listener_with_callback(
+                    "keydown",
+                    closure_js.as_ref(),
+                );
+            });
         });
     }
 
     let open_health = RwSignal::new(false);
-    let open_keys = RwSignal::new(false);
     let open_hit = RwSignal::new(false);
     let open_qps = RwSignal::new(false);
-    let open_cost = RwSignal::new(false);
     let open_error = RwSignal::new(false);
     let open_token = RwSignal::new(false);
     let open_coalesce = RwSignal::new(false);
@@ -164,10 +170,8 @@ pub fn OverviewCardGrid(
     // Mutual exclusion: only one modal can be open at a time.
     let all_open_signals = [
         open_health,
-        open_keys,
         open_hit,
         open_qps,
-        open_cost,
         open_error,
         open_token,
         open_coalesce,
@@ -192,49 +196,55 @@ pub fn OverviewCardGrid(
     let c0 = close_others.clone();
     let on_open_health = Callback::new(move |_: ()| c0.run(0));
     let c1 = close_others.clone();
-    let on_open_keys = Callback::new(move |_: ()| c1.run(1));
+    let on_open_hit = Callback::new(move |_: ()| c1.run(1));
     let c2 = close_others.clone();
-    let on_open_hit = Callback::new(move |_: ()| c2.run(2));
+    let on_open_qps = Callback::new(move |_: ()| c2.run(2));
     let c3 = close_others.clone();
-    let on_open_qps = Callback::new(move |_: ()| c3.run(3));
+    let on_open_error = Callback::new(move |_: ()| c3.run(3));
     let c4 = close_others.clone();
-    let on_open_cost = Callback::new(move |_: ()| c4.run(4));
+    let on_open_token = Callback::new(move |_: ()| c4.run(4));
     let c5 = close_others.clone();
-    let on_open_error = Callback::new(move |_: ()| c5.run(5));
+    let on_open_coalesce = Callback::new(move |_: ()| c5.run(5));
     let c6 = close_others.clone();
-    let on_open_token = Callback::new(move |_: ()| c6.run(6));
+    let on_open_semantic = Callback::new(move |_: ()| c6.run(6));
     let c7 = close_others.clone();
-    let on_open_coalesce = Callback::new(move |_: ()| c7.run(7));
+    let on_open_latency = Callback::new(move |_: ()| c7.run(7));
     let c8 = close_others.clone();
-    let on_open_semantic = Callback::new(move |_: ()| c8.run(8));
+    let on_open_ops = Callback::new(move |_: ()| c8.run(8));
     let c9 = close_others.clone();
-    let on_open_latency = Callback::new(move |_: ()| c9.run(9));
+    let on_open_consumer = Callback::new(move |_: ()| c9.run(9));
     let c10 = close_others.clone();
-    let on_open_ops = Callback::new(move |_: ()| c10.run(10));
+    let on_open_domain = Callback::new(move |_: ()| c10.run(10));
     let c11 = close_others.clone();
-    let on_open_consumer = Callback::new(move |_: ()| c11.run(11));
+    let on_open_prefix = Callback::new(move |_: ()| c11.run(11));
     let c12 = close_others.clone();
-    let on_open_domain = Callback::new(move |_: ()| c12.run(12));
-    let c13 = close_others.clone();
-    let on_open_prefix = Callback::new(move |_: ()| c13.run(13));
-    let c14 = close_others.clone();
-    let on_open_prefix_health = Callback::new(move |_: ()| c14.run(14));
-    let c15 = close_others;
-    let on_open_infra = Callback::new(move |_: ()| c15.run(15));
+    let on_open_prefix_health = Callback::new(move |_: ()| c12.run(12));
+    let c13 = close_others;
+    let on_open_infra = Callback::new(move |_: ()| c13.run(13));
 
     // Infra headline fetched async once.
     let infra_headline: RwSignal<String> = RwSignal::new("—".to_string());
-    leptos::task::spawn_local(async move {
-        match api::fetch_infra_snapshot().await {
-            Ok(s) => infra_headline.try_set(infra_container_headline(&s)),
-            Err(_) => infra_headline.try_set("—".to_string()),
-        };
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    {
+        let alive = std::sync::Arc::clone(&alive);
+        leptos::task::spawn_local(async move {
+            if !alive.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            match api::fetch_infra_snapshot().await {
+                Ok(s) => infra_headline.try_set(infra_container_headline(&s)),
+                Err(_) => infra_headline.try_set("—".to_string()),
+            };
+        });
+    }
+    on_cleanup(move || {
+        alive.store(false, std::sync::atomic::Ordering::Relaxed);
     });
 
     view! {
         <div class="space-y-4">
             // Reactive block: reads memos, rebuilds ONLY view fragments — not the parent component.
-            // The 16 open/close signals live outside this block and survive re-renders.
+            // The 14 open/close signals live outside this block and survive re-renders.
             {move || {
                 let h = health_memo.get();
                 let m = metrics_memo.get();
@@ -251,17 +261,12 @@ pub fn OverviewCardGrid(
                         } else {
                             t.overview_health_unhealthy().to_string()
                         };
-                        let keys_headline = format!(
-                            "{}/{}",
-                            ops.upstream_keys_available, ops.upstream_key_count
-                        );
                         let hit_headline = if metrics.metrics_sample_insufficient {
                             "—".to_string()
                         } else {
                             format!("{:.1}%", metrics.hit_rate_5m * 100.0)
                         };
                         let qps_headline = format!("{:.2}", metrics.qps_5m);
-                        let cost_headline = format!("${:.4}", ops.cost_saved_usd_5m);
                         let err_headline = if metrics.error_rate_5m > 0.001 {
                             format!("{:.2}%", metrics.error_rate_5m * 100.0)
                         } else {
@@ -292,12 +297,6 @@ pub fn OverviewCardGrid(
                         let (top_domain, top_domain_hit) = top_domain_label(&metrics);
                         let top_domain_hit_preview = top_domain_hit;
 
-                        let keys_pct = if health.upstream_key_count > 0 {
-                            health.upstream_keys_available as f64 / health.upstream_key_count as f64 * 100.0
-                        } else {
-                            0.0
-                        };
-
                         let metrics_hit_preview = metrics.clone();
                         let metrics_hit_detail = metrics.clone();
                         let metrics_consumer = metrics.clone();
@@ -308,10 +307,8 @@ pub fn OverviewCardGrid(
                         let metrics_token = metrics.clone();
                         let trace_hit = trace.clone();
                         let suggestions_qps = sugg.clone();
-                        let ops_cost = ops.clone();
                         let ops_coalesce = ops.clone();
                         let ops_prefix = ops.clone();
-                        let ops_keys = ops.clone();
                         let prefix_token = prefix.clone();
                         let prefix_card = prefix.clone();
 
@@ -535,13 +532,13 @@ pub fn OverviewCardGrid(
                                                 view! {
                                                     <div class="peak-hours-container peak-hours-side">
                                                         <div class="peak-hours-header">
-                                                        <h3 class="peak-hours-title">"模型高峰时段"</h3>
+                                                        <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
                                                     </div>
                                                     <p class="text-xs text-theme-muted">
                                                         {if err.contains("PG not available") || err.contains("503") {
-                                                            "PostgreSQL 未连接".to_string()
+                                                            t.overview_peak_hours_pg_unavailable().to_string()
                                                         } else {
-                                                            format!("加载失败: {err}")
+                                                            t.overview_peak_hours_load_failed(&err)
                                                         }}
                                                     </p>
                                                 </div>
@@ -550,9 +547,9 @@ pub fn OverviewCardGrid(
                                                 view! {
                                                     <div class="peak-hours-container peak-hours-side">
                                                         <div class="peak-hours-header">
-                                                            <h3 class="peak-hours-title">"模型高峰时段"</h3>
+                                                            <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
                                                         </div>
-                                                        <p class="text-xs text-theme-muted">"暂无高峰期数据"</p>
+                                                        <p class="text-xs text-theme-muted">{t.overview_peak_hours_no_data()}</p>
                                                     </div>
                                                 }.into_any()
                                             } else {
