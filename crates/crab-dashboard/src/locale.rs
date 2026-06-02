@@ -2143,8 +2143,416 @@ impl Translations {
     }
     pub fn system_desc(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "版本更新、Admin 密钥管理",
-            Locale::EnUS => "Binary updates and admin key management.",
+            Locale::ZhCN => "版本更新、密钥管理、管道、数据面与设计系统",
+            Locale::EnUS => "Binary updates, key management, pipeline, data plane, and design system.",
+        }
+    }
+    pub fn sidebar_design(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "设计系统",
+            Locale::EnUS => "Design",
+        }
+    }
+    pub fn ds_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "设计系统",
+            Locale::EnUS => "Design system",
+        }
+    }
+    pub fn ds_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "主题、设计令牌、组件规范与表格密度，与 style/design-tokens.css 同源",
+            Locale::EnUS => "Themes, design tokens, component specs, and table density; sourced from design-tokens.css.",
+        }
+    }
+    pub fn ds_tab_themes(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "主题",
+            Locale::EnUS => "Themes",
+        }
+    }
+    pub fn ds_tab_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "令牌",
+            Locale::EnUS => "Tokens",
+        }
+    }
+    pub fn ds_tab_components(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "组件",
+            Locale::EnUS => "Components",
+        }
+    }
+    pub fn ds_tab_layout(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "布局",
+            Locale::EnUS => "Layout",
+        }
+    }
+    pub fn ds_tab_design(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "设计",
+            Locale::EnUS => "Design",
+        }
+    }
+    pub fn ds_themes_lead(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "选择外观主题；偏好保存在本机 localStorage，与顶栏主题切换同步。",
+            Locale::EnUS => "Pick an appearance theme. Preference is stored in localStorage and stays in sync with the top bar switcher.",
+        }
+    }
+    pub fn ds_active_theme(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "当前解析主题",
+            Locale::EnUS => "Resolved theme",
+        }
+    }
+    pub fn ds_preview_surface(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "卡片面",
+            Locale::EnUS => "Surface",
+        }
+    }
+    pub fn ds_preview_accent(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "强调色",
+            Locale::EnUS => "Accent",
+        }
+    }
+    pub fn ds_preview_success(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "成功态",
+            Locale::EnUS => "Success",
+        }
+    }
+    pub fn ds_tokens_lead(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "运行时 CSS 变量值随主题变化；点击色块或复制按钮写入剪贴板。",
+            Locale::EnUS => "Runtime CSS variable values follow the active theme. Click a swatch or Copy to clipboard.",
+        }
+    }
+    pub fn ds_token_group_surface(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "表面与边框",
+            Locale::EnUS => "Surfaces & borders",
+        }
+    }
+    pub fn ds_token_group_text(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "文本与强调",
+            Locale::EnUS => "Text & accent",
+        }
+    }
+    pub fn ds_token_group_semantic(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义色",
+            Locale::EnUS => "Semantic",
+        }
+    }
+    pub fn ds_token_group_tiers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存层级色",
+            Locale::EnUS => "Cache tier colors",
+        }
+    }
+    pub fn ds_token_group_layout(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "圆角与间距",
+            Locale::EnUS => "Radius & spacing",
+        }
+    }
+    pub fn ds_token_desc_surface(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "背景、卡片、输入框与边框",
+            Locale::EnUS => "Backgrounds, cards, inputs, borders",
+        }
+    }
+    pub fn ds_token_desc_text(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "文本颜色与强调色",
+            Locale::EnUS => "Text colors and accent",
+        }
+    }
+    pub fn ds_token_desc_semantic(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态语义色",
+            Locale::EnUS => "State semantic colors",
+        }
+    }
+    pub fn ds_token_desc_tiers(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存层级视觉编码",
+            Locale::EnUS => "Cache tier visual encoding",
+        }
+    }
+    pub fn ds_token_desc_layout(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "圆角、间距与动画时长",
+            Locale::EnUS => "Radius, spacing, transition timing",
+        }
+    }
+    pub fn ds_copy_token(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "复制变量名",
+            Locale::EnUS => "Copy variable name",
+        }
+    }
+    pub fn ds_copy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "复制",
+            Locale::EnUS => "Copy",
+        }
+    }
+    pub fn ds_copy_ok(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "已复制到剪贴板",
+            Locale::EnUS => "Copied to clipboard",
+        }
+    }
+    pub fn ds_components_lead(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "与全站共用的按钮、徽章、告警与表单控件；改样式请同步 design-tokens.css 与 input.css。",
+            Locale::EnUS => "Shared buttons, badges, alerts, and form controls used across the dashboard. Update design-tokens.css and input.css together.",
+        }
+    }
+    pub fn ds_spec_buttons(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按钮",
+            Locale::EnUS => "Buttons",
+        }
+    }
+    pub fn ds_spec_buttons_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "主操作、次要、幽灵、危险与禁用",
+            Locale::EnUS => "Primary, secondary, ghost, danger, disabled",
+        }
+    }
+    pub fn ds_btn_primary(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保存",
+            Locale::EnUS => "Save",
+        }
+    }
+    pub fn ds_btn_secondary(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
+        }
+    }
+    pub fn ds_btn_ghost(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "更多",
+            Locale::EnUS => "More",
+        }
+    }
+    pub fn ds_btn_danger(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "删除",
+            Locale::EnUS => "Delete",
+        }
+    }
+    pub fn ds_btn_disabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "不可用",
+            Locale::EnUS => "Disabled",
+        }
+    }
+    pub fn ds_spec_badges(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "徽章",
+            Locale::EnUS => "Badges",
+        }
+    }
+    pub fn ds_spec_badges_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "状态与层级标记",
+            Locale::EnUS => "Status and tier labels",
+        }
+    }
+    pub fn ds_badge_default(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "默认",
+            Locale::EnUS => "Default",
+        }
+    }
+    pub fn ds_badge_info(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "信息",
+            Locale::EnUS => "Info",
+        }
+    }
+    pub fn ds_badge_success(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "成功",
+            Locale::EnUS => "Success",
+        }
+    }
+    pub fn ds_badge_warning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "警告",
+            Locale::EnUS => "Warning",
+        }
+    }
+    pub fn ds_badge_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "错误",
+            Locale::EnUS => "Error",
+        }
+    }
+    pub fn ds_badge_accent(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "强调",
+            Locale::EnUS => "Accent",
+        }
+    }
+    pub fn ds_spec_alerts(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "告警条",
+            Locale::EnUS => "Alerts",
+        }
+    }
+    pub fn ds_spec_alerts_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "静态与动态反馈",
+            Locale::EnUS => "Static and dynamic feedback",
+        }
+    }
+    pub fn ds_alert_info(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配置已加载，尚未保存。",
+            Locale::EnUS => "Configuration loaded; not saved yet.",
+        }
+    }
+    pub fn ds_alert_success(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "热更新已成功应用。",
+            Locale::EnUS => "Hot update applied successfully.",
+        }
+    }
+    pub fn ds_alert_warning(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "网关 Management API 响应较慢。",
+            Locale::EnUS => "Gateway Management API is responding slowly.",
+        }
+    }
+    pub fn ds_alert_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "无法连接 Redis，L1 缓存不可用。",
+            Locale::EnUS => "Cannot reach Redis; L1 cache is unavailable.",
+        }
+    }
+    pub fn ds_alert_trigger(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "触发动态告警",
+            Locale::EnUS => "Trigger dynamic alert",
+        }
+    }
+    pub fn ds_alert_dynamic(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "这是一条可关闭的运行时提示。",
+            Locale::EnUS => "This is a dismissible runtime notice.",
+        }
+    }
+    pub fn ds_spec_forms(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "表单",
+            Locale::EnUS => "Forms",
+        }
+    }
+    pub fn ds_spec_forms_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "文本输入与范围滑块",
+            Locale::EnUS => "Text input and range slider",
+        }
+    }
+    pub fn ds_input_placeholder(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "sk-cc-…",
+            Locale::EnUS => "sk-cc-…",
+        }
+    }
+    pub fn ds_range_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "语义缓存阈值",
+            Locale::EnUS => "Semantic cache threshold",
+        }
+    }
+    pub fn ds_spec_metrics(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "指标与进度",
+            Locale::EnUS => "Metrics & progress",
+        }
+    }
+    pub fn ds_spec_metrics_hint(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "概览卡片与进度条样式",
+            Locale::EnUS => "Overview metric card and progress bar",
+        }
+    }
+    pub fn ds_metric_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中率 (5m)",
+            Locale::EnUS => "Hit rate (5m)",
+        }
+    }
+    pub fn ds_metric_hit_sub(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L0+L1+L2",
+            Locale::EnUS => "L0+L1+L2",
+        }
+    }
+    pub fn ds_progress_label(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配额使用",
+            Locale::EnUS => "Quota usage",
+        }
+    }
+    pub fn ds_layout_lead(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "表格行高与间距刻度；密度与顶栏表格按钮同步。",
+            Locale::EnUS => "Table row height and spacing scale; density syncs with the top bar table control.",
+        }
+    }
+    pub fn ds_density_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "表格密度",
+            Locale::EnUS => "Table density",
+        }
+    }
+    pub fn ds_density_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "舒适适合长会话阅读；紧凑适合高行数列表。",
+            Locale::EnUS => "Comfortable for long reading sessions; compact for high-row tables.",
+        }
+    }
+    pub fn ds_table_preview(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "表格预览",
+            Locale::EnUS => "Table preview",
+        }
+    }
+    pub fn ds_col_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "Model",
+        }
+    }
+    pub fn ds_col_tier(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存层",
+            Locale::EnUS => "Tier",
+        }
+    }
+    pub fn ds_col_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟",
+            Locale::EnUS => "Latency",
+        }
+    }
+    pub fn ds_spacing_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "间距刻度",
+            Locale::EnUS => "Spacing scale",
         }
     }
     pub fn system_version_title(self) -> &'static str {
@@ -2201,6 +2609,18 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "检查中...",
             Locale::EnUS => "Checking...",
+        }
+    }
+    pub fn system_cancel(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "取消",
+            Locale::EnUS => "Cancel",
+        }
+    }
+    pub fn system_updating(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "更新中，请稍候...",
+            Locale::EnUS => "Updating, please wait...",
         }
     }
     pub fn system_admin_key_title(self) -> &'static str {
@@ -5950,6 +6370,270 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "诊断",
             Locale::EnUS => "Diagnostics",
+        }
+    }
+
+    // ── Features / Experimental ──
+    pub fn feat_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实验性功能",
+            Locale::EnUS => "Experimental Features",
+        }
+    }
+    pub fn feat_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数据面实验开关，涵盖 MiMo、缓存、连接和预留功能。",
+            Locale::EnUS => "Toggle experimental data-plane features for MiMo, cache, connection, and reserved functions.",
+        }
+    }
+    pub fn feat_group_mimo(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "MiMo / 上下文",
+            Locale::EnUS => "MiMo / Context",
+        }
+    }
+    pub fn feat_group_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存",
+            Locale::EnUS => "Cache",
+        }
+    }
+    pub fn feat_group_connection(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连接",
+            Locale::EnUS => "Connection",
+        }
+    }
+    pub fn feat_group_routing(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由策略",
+            Locale::EnUS => "Routing Strategy",
+        }
+    }
+    pub fn feat_group_preflight(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "配额预检",
+            Locale::EnUS => "Quota Preflight",
+        }
+    }
+    pub fn feat_group_reserved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "预留 / P3",
+            Locale::EnUS => "Reserved / P3",
+        }
+    }
+    // MiMo toggles
+    pub fn feat_mimo_compression(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上下文压缩",
+            Locale::EnUS => "Context Compression",
+        }
+    }
+    pub fn feat_mimo_retire_prefix(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "退役前缀消息",
+            Locale::EnUS => "Retire Prefix Messages",
+        }
+    }
+    pub fn feat_mimo_session(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话存储",
+            Locale::EnUS => "Session Store",
+        }
+    }
+    pub fn feat_mimo_gzip(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "上游请求 Gzip",
+            Locale::EnUS => "Upstream Request Gzip",
+        }
+    }
+    // MiMo ranges
+    pub fn feat_mimo_threshold(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "压缩阈值",
+            Locale::EnUS => "Compression Threshold",
+        }
+    }
+    pub fn feat_mimo_keep_turns(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保留近期轮次",
+            Locale::EnUS => "Keep Recent Turns",
+        }
+    }
+    pub fn feat_mimo_session_ttl(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话 TTL (秒)",
+            Locale::EnUS => "Session TTL (s)",
+        }
+    }
+    pub fn feat_mimo_session_msgs(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "会话最大消息数",
+            Locale::EnUS => "Session Max Msgs",
+        }
+    }
+    pub fn feat_mimo_gzip_min(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Gzip 最小字节数",
+            Locale::EnUS => "Gzip Min Bytes",
+        }
+    }
+    // Cache toggles
+    pub fn feat_prefix_aware(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀感知 L0",
+            Locale::EnUS => "Prefix-aware L0",
+        }
+    }
+    pub fn feat_delta_cache(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "增量缓存",
+            Locale::EnUS => "Delta Cache",
+        }
+    }
+    pub fn feat_streaming_forward(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "流式体转发",
+            Locale::EnUS => "Streaming Body Forward",
+        }
+    }
+    pub fn feat_passthrough_bytes(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "透传前缀 (字节)",
+            Locale::EnUS => "Passthrough Prefix (bytes)",
+        }
+    }
+    // Connection toggles
+    pub fn feat_conn_prewarm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "连接预热",
+            Locale::EnUS => "Connection Prewarm",
+        }
+    }
+    pub fn feat_affinity_feedback(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "亲和性提示缓存反馈",
+            Locale::EnUS => "Affinity Prompt Cache Feedback",
+        }
+    }
+    // Routing
+    pub fn feat_load_aware(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "负载感知路由",
+            Locale::EnUS => "Load-aware Routing",
+        }
+    }
+    pub fn feat_route_strategy(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "路由策略",
+            Locale::EnUS => "Route Strategy",
+        }
+    }
+    pub fn feat_max_concurrent(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大并发请求数",
+            Locale::EnUS => "Max Concurrent Requests",
+        }
+    }
+    pub fn feat_max_concurrent_unlimited(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "最大并发请求数: 不限",
+            Locale::EnUS => "Max Concurrent Requests: unlimited",
+        }
+    }
+    // Routing weights
+    pub fn feat_weight_health(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "健康权重",
+            Locale::EnUS => "Health Weight",
+        }
+    }
+    pub fn feat_weight_latency(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "延迟权重",
+            Locale::EnUS => "Latency Weight",
+        }
+    }
+    pub fn feat_weight_load(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "负载权重",
+            Locale::EnUS => "Load Weight",
+        }
+    }
+    pub fn feat_weight_affinity(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "亲和权重",
+            Locale::EnUS => "Affinity Weight",
+        }
+    }
+    pub fn feat_weight_429(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "429 惩罚权重",
+            Locale::EnUS => "429 Penalty Weight",
+        }
+    }
+    // Preflight
+    pub fn feat_preflight_enabled(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "启用预检",
+            Locale::EnUS => "Preflight Enabled",
+        }
+    }
+    pub fn feat_preflight_health(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查后端健康",
+            Locale::EnUS => "Check Backend Health",
+        }
+    }
+    pub fn feat_preflight_429(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "检查 429 冷却",
+            Locale::EnUS => "Check 429 Cooldown",
+        }
+    }
+    // Reserved
+    pub fn feat_io_uring(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "io_uring 后端",
+            Locale::EnUS => "io_uring Backend",
+        }
+    }
+    pub fn feat_wasm_filters(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "WASM 过滤器",
+            Locale::EnUS => "WASM Filters",
+        }
+    }
+
+    // ── System page section labels ──
+    pub fn section_core(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "核心",
+            Locale::EnUS => "Core",
+        }
+    }
+    pub fn section_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "数据面",
+            Locale::EnUS => "Data Plane",
+        }
+    }
+    pub fn section_features(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "实验性功能",
+            Locale::EnUS => "Experimental Features",
+        }
+    }
+    pub fn section_limits(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "限额配置",
+            Locale::EnUS => "Limits",
+        }
+    }
+    pub fn section_design(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "设计系统",
+            Locale::EnUS => "Design System",
         }
     }
 }

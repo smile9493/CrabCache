@@ -15,132 +15,131 @@ pub fn PipelinePage() -> impl IntoView {
     let reload = move || {
         leptos::task::spawn_local(async move {
             match api::fetch_pipeline_runtime().await {
-                Ok(c) => {
-                    config.try_set(Some(Ok(c)));
-                }
-                Err(e) => {
-                    config.try_set(Some(Err(e)));
-                }
+                Ok(c) => { config.try_set(Some(Ok(c))); }
+                Err(e) => { config.try_set(Some(Err(e))); }
             }
         });
     };
 
     reload();
 
-    view! {
-        <div class="space-y-4">
-            <div class="flex items-center justify-end">
-                <button
-                    on:click=move |_| reload()
-                    class="btn btn-secondary text-xs"
-                >
-                    {t.overview_refresh()}
-                </button>
-            </div>
-
-            <Alert variant="info" message=feedback.into() />
-
-            {move || match config.get() {
-                None => view! { <crate::components::skeleton::SkeletonTable rows=5 cols=4 /> }.into_any(),
-                Some(Err(e)) => view! {
-                    <div class="config-card glass-card text-error text-sm">{e}</div>
-                }.into_any(),
-                Some(Ok(cfg)) => {
-                    let mode = RwSignal::new(cfg.pipeline_mode.clone());
-                    let default_profile = RwSignal::new(cfg.default_upstream_profile.clone());
-                    let profiles = cfg.profiles.clone();
-                    let profiles_for_save = profiles.clone();
-                    let on_save = {
-                        let save_ok = t.pipeline_save_ok().to_string();
-                        move |_| {
-                            saving.set(true);
-                            let req = PipelineRuntimeConfig {
-                                pipeline_mode: mode.get(),
-                                default_upstream_profile: default_profile.get(),
-                                profiles: profiles_for_save.clone(),
-                            };
-                            let save_ok = save_ok.clone();
-                            leptos::task::spawn_local(async move {
-                                match api::update_pipeline_runtime(&req).await {
-                                    Ok(_) => { feedback.try_set(save_ok); },
-                                    Err(e) => { feedback.try_set(e); },
-                                }
-                                saving.try_set(false);
-                                reload();
-                            });
-                        }
+    // Card 1: Pipeline config form
+    let card_config = move || match config.get() {
+        None => view! { <div class="config-card glass-card"><crate::components::skeleton::SkeletonTable rows=3 cols=2 /></div> }.into_any(),
+        Some(Err(e)) => view! { <div class="config-card glass-card text-error text-sm">{e}</div> }.into_any(),
+        Some(Ok(cfg)) => {
+            let mode = RwSignal::new(cfg.pipeline_mode.clone());
+            let default_profile = RwSignal::new(cfg.default_upstream_profile.clone());
+            let profiles = cfg.profiles.clone();
+            let profiles_for_save = profiles.clone();
+            let on_save = {
+                let save_ok = t.pipeline_save_ok().to_string();
+                move |_| {
+                    saving.set(true);
+                    let req = PipelineRuntimeConfig {
+                        pipeline_mode: mode.get(),
+                        default_upstream_profile: default_profile.get(),
+                        profiles: profiles_for_save.clone(),
                     };
-                    view! {
-                        <section class="config-section space-y-4">
-                            <div class="config-card glass-card space-y-4 max-w-xl">
-                                <div>
-                                    <label class="config-label">{t.pipeline_mode_label()}</label>
-                                    <select
-                                        class="config-input w-full"
-                                        prop:value=move || mode.get()
-                                        on:change=move |ev| {
-                                            mode.set(event_target_value(&ev));
-                                        }
-                                    >
-                                        <option value="auto">{t.pipeline_mode_auto()}</option>
-                                        <option value="force_cursor_v4">{t.pipeline_mode_force()}</option>
-                                    </select>
-                                    <p class="text-xs text-theme-muted mt-1">{t.pipeline_mode_hint()}</p>
-                                </div>
-                                <div>
-                                    <label class="config-label">{t.pipeline_default_profile()}</label>
-                                    <select
-                                        class="config-input w-full"
-                                        prop:value=move || default_profile.get()
-                                        on:change=move |ev| {
-                                            default_profile.set(event_target_value(&ev));
-                                        }
-                                    >
-                                        {profiles.iter().map(|p| {
-                                            let id = p.id.clone();
-                                            let label = format!("{} ({})", id, p.provider);
-                                            view! {
-                                                <option value=id.clone()>{label}</option>
-                                            }
-                                        }).collect_view()}
-                                    </select>
-                                </div>
-                                <button
-                                    class="btn btn-primary text-sm"
-                                    disabled=move || saving.get()
-                                    on:click=on_save
-                                >
-                                    {move || if saving.get() { t.pipeline_saving() } else { t.pipeline_save() }}
-                                </button>
-                            </div>
-                            <div class="config-card glass-card">
-                                <h3 class="text-sm font-semibold text-theme mb-3">{t.pipeline_profiles_title()}</h3>
-                                <table class="data-table text-sm w-full">
-                                    <thead>
-                                        <tr>
-                                            <th>"ID"</th>
-                                            <th>{t.pipeline_provider_col()}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {profiles.iter().map(|p| {
-                                            let id = p.id.clone();
-                                            let provider = p.provider.clone();
-                                            view! {
-                                                <tr>
-                                                    <td class="font-mono">{id}</td>
-                                                    <td>{provider}</td>
-                                                </tr>
-                                            }
-                                        }).collect_view()}
-                                    </tbody>
-                                </table>
-                                <p class="text-xs text-theme-muted mt-3">{t.pipeline_profiles_hint()}</p>
-                            </div>
-                        </section>
-                    }.into_any()
+                    let save_ok = save_ok.clone();
+                    leptos::task::spawn_local(async move {
+                        match api::update_pipeline_runtime(&req).await {
+                            Ok(_) => { feedback.try_set(save_ok); }
+                            Err(e) => { feedback.try_set(e); }
+                        }
+                        saving.try_set(false);
+                        reload();
+                    });
                 }
-            }}
-        </div>
+            };
+            view! {
+                <div class="config-card glass-card">
+                    <div class="config-card-head">
+                        <h3 class="config-card-title">{t.pipeline_mode_label()}</h3>
+                    </div>
+                    <div class="config-card-body space-y-4">
+                        <select
+                            class="config-input w-full"
+                            prop:value=move || mode.get()
+                            on:change=move |ev| mode.set(event_target_value(&ev))
+                        >
+                            <option value="auto">{t.pipeline_mode_auto()}</option>
+                            <option value="force_cursor_v4">{t.pipeline_mode_force()}</option>
+                        </select>
+                        <p class="text-xs text-theme-muted">{t.pipeline_mode_hint()}</p>
+                        <div>
+                            <label class="config-label">{t.pipeline_default_profile()}</label>
+                            <select
+                                class="config-input w-full"
+                                prop:value=move || default_profile.get()
+                                on:change=move |ev| default_profile.set(event_target_value(&ev))
+                            >
+                                {profiles.iter().map(|p| {
+                                    let id = p.id.clone();
+                                    let label = format!("{} ({})", id, p.provider);
+                                    view! { <option value=id.clone()>{label}</option> }
+                                }).collect_view()}
+                            </select>
+                        </div>
+                        <button
+                            class="btn btn-primary text-sm"
+                            disabled=move || saving.get()
+                            on:click=on_save
+                        >
+                            {move || if saving.get() { t.pipeline_saving() } else { t.pipeline_save() }}
+                        </button>
+                        {move || {
+                            let msg = feedback.get();
+                            if !msg.is_empty() {
+                                view! { <p class="text-xs" style="color: var(--cc-accent);">{msg}</p> }.into_any()
+                            } else { ().into_any() }
+                        }}
+                    </div>
+                </div>
+            }.into_any()
+        }
+    };
+
+    // Card 2: Profiles table
+    let card_profiles = move || match config.get() {
+        None | Some(Err(_)) => ().into_any(),
+        Some(Ok(cfg)) => {
+            let profiles = cfg.profiles.clone();
+            view! {
+                <div class="config-card glass-card">
+                    <div class="config-card-head">
+                        <h3 class="config-card-title">{t.pipeline_profiles_title()}</h3>
+                    </div>
+                    <div class="config-card-body">
+                        <table class="data-table text-sm w-full">
+                            <thead>
+                                <tr>
+                                    <th>"ID"</th>
+                                    <th>{t.pipeline_provider_col()}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {profiles.iter().map(|p| {
+                                    let id = p.id.clone();
+                                    let provider = p.provider.clone();
+                                    view! {
+                                        <tr>
+                                            <td class="font-mono">{id}</td>
+                                            <td>{provider}</td>
+                                        </tr>
+                                    }
+                                }).collect_view()}
+                            </tbody>
+                        </table>
+                        <p class="text-xs text-theme-muted mt-3">{t.pipeline_profiles_hint()}</p>
+                    </div>
+                </div>
+            }.into_any()
+        }
+    };
+
+    view! {
+        {card_config}
+        {card_profiles}
     }
 }
