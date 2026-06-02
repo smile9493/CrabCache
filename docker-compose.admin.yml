@@ -1,0 +1,19 @@
+# Overlay for full Admin stack (recommended with --profile admin):
+#   - Gateway waits for Postgres healthy before trace PG writes
+#   - Admin waits for Gateway ready before HTTP healthcheck passes (push/hydrate safer)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.admin.yml --profile admin up -d
+
+services:
+  gateway:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin:
+    depends_on:
+      gateway:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
