@@ -1717,6 +1717,56 @@ fn heatmap_bg(ratio: f64, invert: bool) -> &'static str {
     }
 }
 
+/// Map a latency (ms) to one of 12 discrete colour levels for the live heatmap.
+/// Levels grow from cool to warm: blue -> green -> yellow -> orange -> red -> purple.
+/// Thresholds: <=2s,4s,...,12s (step 2s), then <=16s,...,36s (step 4s). >36s stays at 12.
+fn latency_heatmap_level(latency_ms: f64) -> u8 {
+    let secs = latency_ms.max(0.0) / 1000.0;
+    if secs <= 2.0 {
+        1
+    } else if secs <= 4.0 {
+        2
+    } else if secs <= 6.0 {
+        3
+    } else if secs <= 8.0 {
+        4
+    } else if secs <= 10.0 {
+        5
+    } else if secs <= 12.0 {
+        6
+    } else if secs <= 16.0 {
+        7
+    } else if secs <= 20.0 {
+        8
+    } else if secs <= 24.0 {
+        9
+    } else if secs <= 28.0 {
+        10
+    } else if secs <= 32.0 {
+        11
+    } else {
+        12
+    }
+}
+
+/// Map a latency (ms) to a 12-level heatmap background token.
+fn latency_heatmap_bg(latency_ms: f64) -> &'static str {
+    match latency_heatmap_level(latency_ms) {
+        1 => "var(--cc-latency-1)",
+        2 => "var(--cc-latency-2)",
+        3 => "var(--cc-latency-3)",
+        4 => "var(--cc-latency-4)",
+        5 => "var(--cc-latency-5)",
+        6 => "var(--cc-latency-6)",
+        7 => "var(--cc-latency-7)",
+        8 => "var(--cc-latency-8)",
+        9 => "var(--cc-latency-9)",
+        10 => "var(--cc-latency-10)",
+        11 => "var(--cc-latency-11)",
+        _ => "var(--cc-latency-12)",
+    }
+}
+
 #[component]
 fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
     let t = use_translations();
@@ -1741,24 +1791,6 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         .max()
         .unwrap_or(1)
         .max(1) as f64;
-    let max_e2e = rows
-        .iter()
-        .map(|b| b.e2e_latency_ms)
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    let max_upstream = rows
-        .iter()
-        .map(|b| b.upstream_latency_ms.unwrap_or(0.0))
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    let max_downstream = rows
-        .iter()
-        .map(|b| {
-            b.pre_header_ms
-                .unwrap_or(b.e2e_latency_ms - b.upstream_latency_ms.unwrap_or(0.0))
-        })
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
     let max_in = rows
         .iter()
         .map(|b| b.input_tokens)
@@ -1783,6 +1815,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             <th class="text-left py-1 px-2">{t.live_heatmap_model()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_upstream_key()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_downstream_key()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_client_ip()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_e2e()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_up_latency()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_down_latency()}</th>
@@ -1799,19 +1832,20 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                 0.0
                             };
                             let req_bg = heatmap_bg(b.request_count as f64 / max_req, false);
-                            let e2e_bg = heatmap_bg(b.e2e_latency_ms / max_e2e, false);
+                            let e2e_bg = latency_heatmap_bg(b.e2e_latency_ms);
                             let up_val = b.upstream_latency_ms.unwrap_or(0.0);
-                            let up_bg = heatmap_bg(up_val / max_upstream, false);
+                            let up_bg = latency_heatmap_bg(up_val);
                             let down_val = b
                                 .pre_header_ms
                                 .unwrap_or(b.e2e_latency_ms - b.upstream_latency_ms.unwrap_or(0.0));
-                            let down_bg = heatmap_bg(down_val / max_downstream, false);
+                            let down_bg = latency_heatmap_bg(down_val);
                             let hit_bg = heatmap_bg(hit_pct / 100.0, true);
                             let in_bg = heatmap_bg(b.input_tokens as f64 / max_in, false);
                             let out_bg = heatmap_bg(b.output_tokens as f64 / max_out, false);
                             let top_model = b.top_model.clone();
                             let top_upstream_key = b.top_upstream_key.clone();
                             let top_downstream_key = b.top_downstream_key.clone();
+                            let top_client_ip = b.top_client_ip.clone();
                             view! {
                                 <tr class="border-b border-theme/30">
                                     <td class="py-1 pr-3 text-theme">
@@ -1828,6 +1862,9 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     </td>
                                     <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=top_downstream_key.clone()>
                                         {if top_downstream_key.is_empty() { "—".to_string() } else { top_downstream_key.clone() }}
+                                    </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[120px]" title=top_client_ip.clone()>
+                                        {if top_client_ip.is_empty() { "—".to_string() } else { top_client_ip.clone() }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
                                         {format!("{:.0}", b.e2e_latency_ms)}

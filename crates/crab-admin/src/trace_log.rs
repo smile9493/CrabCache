@@ -116,6 +116,9 @@ pub struct TraceLogEntry {
     pub upstream_result: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_durations_ms: Option<serde_json::Value>,
+    /// Resolved downstream client IP (X-Forwarded-For / X-Real-IP / peer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
 }
 
 impl TraceLogEntry {
@@ -638,6 +641,7 @@ mod tests {
                 cache_decision: None,
                 upstream_result: None,
                 phase_durations_ms: None,
+                client_ip: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -689,6 +693,7 @@ mod tests {
                 cache_decision: None,
                 upstream_result: None,
                 phase_durations_ms: None,
+                client_ip: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
@@ -746,6 +751,7 @@ mod tests {
             cache_decision: None,
             upstream_result: None,
             phase_durations_ms: None,
+            client_ip: None,
         };
         let log = trace_entry_to_request_log(&entry);
         assert_eq!(log.response_preview.chars().count(), 200);
@@ -803,6 +809,7 @@ mod tests {
             cache_decision: None,
             upstream_result: None,
             phase_durations_ms: None,
+            client_ip: None,
         };
         let log = trace_entry_to_request_log(&entry);
         assert_eq!(log.id, "abc123-1700000000000");

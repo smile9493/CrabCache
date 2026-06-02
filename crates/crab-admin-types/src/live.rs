@@ -82,6 +82,9 @@ pub struct LiveMetricsBucket {
     /// Most frequent downstream key (consumer) in this bucket.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub top_downstream_key: String,
+    /// Most frequent client IP in this bucket.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub top_client_ip: String,
 }
 
 fn is_zero_u32(v: &u32) -> bool {

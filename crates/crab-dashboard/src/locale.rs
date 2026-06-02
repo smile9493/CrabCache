@@ -1273,6 +1273,12 @@ impl Translations {
             Locale::EnUS => "Down Key",
         }
     }
+    pub fn live_heatmap_client_ip(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端IP",
+            Locale::EnUS => "Client IP",
+        }
+    }
     pub fn live_heatmap_up_latency(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游延迟",
@@ -3197,12 +3203,6 @@ impl Translations {
             Locale::EnUS => "Admin Sign In",
         }
     }
-    pub fn auth_desc(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "请输入与服务器 CRABCACHE_ADMIN_KEY 一致的密钥。",
-            Locale::EnUS => "Enter the key matching the server CRABCACHE_ADMIN_KEY.",
-        }
-    }
     pub fn auth_key_label(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "Admin API Key",
@@ -3241,8 +3241,8 @@ impl Translations {
     }
     pub fn auth_error_invalid(self) -> &'static str {
         match self.locale {
-            Locale::ZhCN => "密钥无效，请确认与服务器 CRABCACHE_ADMIN_KEY 一致",
-            Locale::EnUS => "Invalid key — must match the server CRABCACHE_ADMIN_KEY",
+            Locale::ZhCN => "Admin API Key 无效，请重试",
+            Locale::EnUS => "Invalid Admin API Key",
         }
     }
     pub fn auth_verifying(self) -> &'static str {

@@ -231,6 +231,7 @@ mod tests {
             cache_decision: None,
             upstream_result: None,
             phase_durations_ms: None,
+            client_ip: None,
         }
     }
 

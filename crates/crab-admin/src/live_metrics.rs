@@ -219,6 +219,16 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
                 .or_insert(0) += 1;
         }
     }
+    if let Some(ip) = entry
+        .client_ip
+        .as_deref()
+        .filter(|v| !v.is_empty())
+    {
+        *slot
+            .client_ip_counts
+            .entry(ip.to_string())
+            .or_insert(0) += 1;
+    }
 
     // OHLC tracking for input tokens.
     if inp > 0 {
@@ -296,10 +306,11 @@ struct BucketAcc {
     /// Raw (timestamp_ms, value) pairs for OHLC computation.
     input_token_entries: Vec<(u64, u64)>,
     output_token_entries: Vec<(u64, u64)>,
-    /// Frequency maps for model, upstream key, and downstream key (consumer).
+    /// Frequency maps for model, upstream key, downstream key, and client IP.
     model_counts: HashMap<String, u32>,
     upstream_key_counts: HashMap<String, u32>,
     downstream_key_counts: HashMap<String, u32>,
+    client_ip_counts: HashMap<String, u32>,
 }
 
 impl BucketAcc {
@@ -340,6 +351,7 @@ impl BucketAcc {
             top_model: top_value(&self.model_counts),
             top_upstream_key: top_value(&self.upstream_key_counts),
             top_downstream_key: top_value(&self.downstream_key_counts),
+            top_client_ip: top_value(&self.client_ip_counts),
         }
     }
 }
@@ -390,6 +402,7 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         top_model: String::new(),
         top_upstream_key: String::new(),
         top_downstream_key: String::new(),
+        top_client_ip: String::new(),
     }
 }
 
@@ -538,6 +551,7 @@ mod tests {
             cache_decision: None,
             upstream_result: None,
             phase_durations_ms: None,
+            client_ip: None,
         }
     }
 
@@ -592,6 +606,47 @@ mod tests {
         assert!(b.upstream_latency_ms.is_none());
         assert!(b.ttft_ms.is_none());
         assert!(b.input_tokens_ohlc.is_none());
+        assert!(b.top_client_ip.is_empty());
+    }
+
+    #[test]
+    fn top_client_ip_picks_mode() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let bucket_ms = 5_000;
+        let t0 = (now_ms / bucket_ms) * bucket_ms;
+        let entries = vec![
+            entry(t0 + 100, "c", 10.0, Some(8.0), 1, 1),
+            entry(t0 + 200, "c", 20.0, Some(18.0), 1, 1),
+            entry(t0 + 300, "c", 30.0, Some(28.0), 1, 1),
+        ];
+        // Set distinct IPs: 2x "10.0.0.1", 1x "10.0.0.2".
+        let mut e0 = entries[0].clone();
+        e0.client_ip = Some("10.0.0.1".into());
+        let mut e1 = entries[1].clone();
+        e1.client_ip = Some("10.0.0.2".into());
+        let mut e2 = entries[2].clone();
+        e2.client_ip = Some("10.0.0.1".into());
+        let resp = aggregate_live_metrics(
+            &[e0, e1, e2],
+            "*",
+            "",
+            "",
+            300,
+            5,
+            true,
+            vec!["c".into()],
+            &[],
+        );
+        let bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.request_count > 0)
+            .expect("active bucket");
+        assert_eq!(bucket.top_client_ip, "10.0.0.1");
+        assert_eq!(bucket.request_count, 3);
     }
 
     #[test]
@@ -616,6 +671,7 @@ mod tests {
                 top_model: String::new(),
                 top_upstream_key: String::new(),
                 top_downstream_key: String::new(),
+                top_client_ip: String::new(),
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -636,6 +692,7 @@ mod tests {
                 top_model: String::new(),
                 top_upstream_key: String::new(),
                 top_downstream_key: String::new(),
+                top_client_ip: String::new(),
             },
         ];
         let s = summarize_window(&buckets);

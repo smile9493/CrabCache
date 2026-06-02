@@ -111,7 +111,7 @@ const TRACE_LOGS_SELECT: &str =
                     session_fingerprint, is_coalesced, client_key_id,
                     request_passthrough, request_passthrough_prefix_len,
                     status_code, error_code, limit_source, cache_decision,
-                    upstream_result, phase_durations_ms";
+                    upstream_result, phase_durations_ms, client_ip";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
     // composition is stored as jsonb in PG — read as serde_json::Value then deserialize.
@@ -170,6 +170,7 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
         phase_durations_ms: row
             .get::<_, Option<serde_json::Value>>(48)
             .and_then(|v| serde_json::from_value(v).ok()),
+        client_ip: row.get(49),
     }
 }
 
@@ -1180,25 +1181,43 @@ impl PgStore {
             .await?;
 
         let model_limits_json =
-            serde_json::to_string(&meta.model_limits).context("serialize model_limits")?;
+            serde_json::to_value(&meta.model_limits).context("serialize model_limits")?;
+        let model_limits_pg = Json(&model_limits_json);
+        let expired_at: Option<i64> = meta.expired_at.map(to_pg_bigint);
+        let rpm_limit = to_pg_bigint(meta.rpm_limit);
+        let monthly_token_limit = to_pg_bigint(meta.monthly_token_limit);
+        let max_concurrent = meta.max_concurrent as i32;
+        let tokens_this_month = to_pg_bigint(meta.tokens_this_month);
+        let input_tokens = to_pg_bigint(meta.input_tokens);
+        let output_tokens = to_pg_bigint(meta.output_tokens);
+        tracing::debug!(
+            key_id = %meta.id,
+            rpm_limit,
+            monthly_token_limit,
+            ?expired_at,
+            model_limits_json = %model_limits_json,
+            remain_quota = meta.remain_quota,
+            max_concurrent,
+            "upsert_key params"
+        );
         client
             .execute(
                 &stmt,
                 &[
-                    &meta.id,
-                    &meta.token,
-                    &meta.name,
-                    &to_pg_bigint(meta.rpm_limit),
-                    &to_pg_bigint(meta.monthly_token_limit),
-                    &meta.expired_at.map(to_pg_bigint),
-                    &model_limits_json,
-                    &meta.remain_quota,
-                    &meta.unlimited_quota,
-                    &(meta.max_concurrent as i32),
-                    &meta.usage_month,
-                    &to_pg_bigint(meta.tokens_this_month),
-                    &to_pg_bigint(meta.input_tokens),
-                    &to_pg_bigint(meta.output_tokens),
+                    &meta.id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.token as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.name as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &rpm_limit as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &monthly_token_limit as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &expired_at as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &model_limits_pg as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.remain_quota as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.unlimited_quota as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &max_concurrent as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.usage_month as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &tokens_this_month as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &input_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &output_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
                 ],
             )
             .await?;
@@ -1227,9 +1246,8 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let model_limits_raw: String = row.get(6);
             let model_limits: Vec<String> =
-                serde_json::from_str(&model_limits_raw).unwrap_or_default();
+                serde_json::from_value(row.get(6)).unwrap_or_default();
             out.push(PersistedKeyMetadata {
                 id: row.get(0),
                 token: row.get(1),
@@ -1419,12 +1437,21 @@ impl PgStore {
         last_test: Option<&UpstreamTestResult>,
     ) -> Result<()> {
         let client = self.pool.get().await?;
-        let endpoints_json = serde_json::to_string(endpoints).context("serialize endpoints")?;
+        let endpoints_json = serde_json::to_value(endpoints).context("serialize endpoints")?;
         let last_test_json = last_test
-            .map(serde_json::to_string)
+            .map(serde_json::to_value)
             .transpose()
             .context("serialize last_test")?;
-
+        let notes_owned: Option<String> = notes.map(|s| s.to_string());
+        let endpoints_pg = Json(&endpoints_json);
+        let last_test_pg = last_test_json.as_ref().map(Json);
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
+            &base_url,
+            &model,
+            &endpoints_pg,
+            &notes_owned,
+            &last_test_pg,
+        ];
         client
             .execute(
                 "INSERT INTO upstream_config (singleton, base_url, model, endpoints, notes, last_test)
@@ -1435,7 +1462,7 @@ impl PgStore {
                     endpoints = EXCLUDED.endpoints,
                     notes = EXCLUDED.notes,
                     last_test = EXCLUDED.last_test",
-                &[&base_url, &model, &endpoints_json, &notes, &last_test_json],
+                &params,
             )
             .await?;
         Ok(())
@@ -1462,12 +1489,10 @@ impl PgStore {
         }
 
         let row = &rows[0];
-        let endpoints_raw: String = row.get(2);
-        let endpoints: Vec<String> = serde_json::from_str(&endpoints_raw).unwrap_or_default();
+        let endpoints: Vec<String> = serde_json::from_value(row.get(2)).unwrap_or_default();
         let notes: Option<String> = row.get(3);
-        let last_test_raw: Option<String> = row.get(4);
         let last_test: Option<UpstreamTestResult> =
-            last_test_raw.and_then(|s| serde_json::from_str(&s).ok());
+            row.get::<_, Option<serde_json::Value>>(4).and_then(|v| serde_json::from_value(v).ok());
 
         Ok((
             StoredUpstreamConfig {
@@ -1525,6 +1550,7 @@ impl PgStore {
                 secret: row.get(1),
                 enabled: row.get(2),
                 account_id: String::new(),
+                priority: 0,
             })
             .collect())
     }
@@ -1588,6 +1614,7 @@ impl PgStore {
                     secret: row.get(2),
                     enabled: row.get(3),
                     account_id: row.get(4),
+                    priority: 0,
                 });
         }
         Ok(map)
@@ -1685,13 +1712,19 @@ impl PgStore {
         let client = self.pool.get().await?;
         let sampled_at = to_pg_bigint(snapshot.sampled_at);
         let gateway_uptime = to_pg_bigint(gateway_uptime_secs);
-        let payload = serde_json::to_string(snapshot).context("serialize metrics snapshot")?;
+        let payload = serde_json::to_value(snapshot).context("serialize metrics snapshot")?;
+        let payload_pg = Json(&payload);
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
+            &sampled_at,
+            &gateway_uptime,
+            &payload_pg,
+        ];
         client
             .execute(
                 "INSERT INTO metrics_snapshots (sampled_at, gateway_uptime_secs, payload)
                  VALUES ($1, $2, $3::jsonb)
                  ON CONFLICT (sampled_at) DO NOTHING",
-                &[&sampled_at, &gateway_uptime, &payload],
+                &params,
             )
             .await?;
         Ok(())
@@ -1712,8 +1745,8 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let payload: String = row.get(0);
-            if let Ok(snap) = serde_json::from_str::<MetricsCounterSnapshot>(&payload) {
+            let payload: serde_json::Value = row.get(0);
+            if let Ok(snap) = serde_json::from_value::<MetricsCounterSnapshot>(payload) {
                 out.push(snap);
             }
         }
@@ -1968,55 +2001,55 @@ impl PgStore {
             tx.execute(
                 &stmt,
                 &[
-                    &e.request_hash,
-                    &timestamp_ms,
-                    &content_length,
-                    &semantic_cluster,
-                    &e.model,
-                    &prompt_tokens,
-                    &e.latency_ms,
-                    &e.cache_hit,
-                    &e.conversation_id,
-                    &e.consumer,
-                    &e.domain,
-                    &e.project_id,
-                    &e.upstream_latency_ms,
-                    &e.ttft_ms,
-                    &input_tokens,
-                    &output_tokens,
-                    &e.cache_tier,
-                    &composition_pg,
-                    &e.request_messages_snapshot,
-                    &e.response_preview,
-                    &retired_prefix_messages,
-                    &e.reasoning_strategy,
-                    &e.prompt_cache_hit_ratio,
-                    &e.upstream_profile_id,
-                    &e.pipeline,
-                    &e.upstream_model,
-                    &e.client_body_user_id,
-                    &e.upstream_user_id,
-                    &e.user_id_audit,
-                    &e.upstream_key_id,
-                    &e.session_store,
-                    &e.stable_session_kind,
-                    &upstream_outbound_bytes,
-                    &e.prefill_ms,
-                    &e.pre_header_ms,
-                    &e.affinity_key,
-                    &e.affinity_kind,
-                    &e.backend_name,
-                    &e.session_fingerprint,
-                    &e.is_coalesced,
-                    &e.client_key_id,
-                    &e.request_passthrough,
-                    &request_passthrough_prefix_len,
-                    &status_code,
-                    &e.error_code,
-                    &e.limit_source,
-                    &e.cache_decision,
-                    &e.upstream_result,
-                    &phase_durations_pg,
+                    &e.request_hash as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &timestamp_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &content_length as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &semantic_cluster as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.model as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &prompt_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.latency_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.cache_hit as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.conversation_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.consumer as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.domain as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.project_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_latency_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.ttft_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &input_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &output_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.cache_tier as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &composition_pg as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.request_messages_snapshot as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.response_preview as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &retired_prefix_messages as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.reasoning_strategy as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.prompt_cache_hit_ratio as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_profile_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.pipeline as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_model as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.client_body_user_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_user_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.user_id_audit as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_key_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.session_store as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.stable_session_kind as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &upstream_outbound_bytes as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.prefill_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.pre_header_ms as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.affinity_key as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.affinity_kind as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.backend_name as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.session_fingerprint as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.is_coalesced as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.client_key_id as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.request_passthrough as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &request_passthrough_prefix_len as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &status_code as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.error_code as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.limit_source as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.cache_decision as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.upstream_result as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &phase_durations_pg as &(dyn tokio_postgres::types::ToSql + Sync),
                 ],
             )
             .await?;
@@ -2461,7 +2494,8 @@ impl PgStore {
 
         for log in logs {
             let payload_json =
-                serde_json::to_string(&log.request_payload).context("serialize request_payload")?;
+                serde_json::to_value(&log.request_payload).context("serialize request_payload")?;
+            let payload_pg = Json(&payload_json);
             tx.execute(
                 &stmt,
                 &[
@@ -2477,7 +2511,7 @@ impl PgStore {
                     &(log.status_code as i32),
                     &log.conversation_id,
                     &log.route_backend,
-                    &payload_json,
+                    &payload_pg,
                     &log.response_body,
                 ],
             )
@@ -2542,9 +2576,7 @@ impl PgStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let payload_raw: Option<String> = row.get(12);
-            let request_payload: serde_json::Value = payload_raw
-                .and_then(|s| serde_json::from_str(&s).ok())
+            let request_payload: serde_json::Value = row.get::<_, Option<serde_json::Value>>(12)
                 .unwrap_or(serde_json::Value::Null);
             out.push(StoredRequestLog {
                 id: row.get(0),
@@ -2780,7 +2812,8 @@ impl PgStore {
         ip_address: Option<&str>,
     ) -> Result<()> {
         let client = self.pool.get().await?;
-        let detail_json = detail.map(|v| serde_json::to_string(v).unwrap_or_default());
+        let detail_json = detail.map(|v| serde_json::to_value(v).unwrap_or_default());
+        let detail_pg = detail_json.as_ref().map(Json);
         client
             .execute(
                 "INSERT INTO audit_log (action, actor, target, detail, ip_address)
@@ -2789,7 +2822,7 @@ impl PgStore {
                     &action,
                     &actor,
                     &target,
-                    &detail_json.as_deref(),
+                    &detail_pg,
                     &ip_address,
                 ],
             )
@@ -3961,12 +3994,14 @@ mod tests {
                 secret: "sk-ds-test123".to_string(),
                 enabled: true,
                 account_id: String::new(),
+                priority: 0,
             },
             PersistedUpstreamPoolSecret {
                 id: "key-2".to_string(),
                 secret: "sk-ds-test456".to_string(),
                 enabled: false,
                 account_id: String::new(),
+                priority: 0,
             },
         ];
 
@@ -3990,6 +4025,7 @@ mod tests {
             secret: "sk-openai-test".to_string(),
             enabled: true,
             account_id: String::new(),
+            priority: 0,
         }];
 
         pg.replace_profile_secrets("openai", &secrets)
@@ -4077,6 +4113,7 @@ mod tests {
                 secret: "sk-ds-pool1".to_string(),
                 enabled: true,
                 account_id: String::new(),
+                priority: 0,
             }],
             upstream_profile_secrets: crate::persist::PersistedProfileSecrets {
                 by_profile: [(
@@ -4086,6 +4123,7 @@ mod tests {
                         secret: "sk-oai-1".to_string(),
                         enabled: true,
                         account_id: String::new(),
+                        priority: 0,
                     }],
                 )]
                 .into_iter()

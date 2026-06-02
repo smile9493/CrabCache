@@ -56,6 +56,20 @@
   --cc-breakpoint-md: 768px;
   --cc-breakpoint-lg: 1024px;
   --cc-breakpoint-xl: 1280px;
+
+  /* Latency heatmap (12-level) for live heatmap table */
+  --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
+  --cc-latency-2: color-mix(in srgb, var(--cc-info) 46%, transparent);
+  --cc-latency-3: color-mix(in srgb, var(--cc-success) 26%, transparent);
+  --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
+  --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
+  --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, #f97316 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, #f97316 46%, transparent);
+  --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
+  --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
+  --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
+  --cc-latency-12: color-mix(in srgb, var(--cc-purple) 46%, transparent);
 }
 
 .theme-light {
@@ -87,6 +101,20 @@
   --cc-tier-l2: #9a6700;
   --cc-tier-l3: #8250df;
   --cc-tier-miss: #a8a29e;
+
+  /* Latency heatmap (12-level) for live heatmap table */
+  --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
+  --cc-latency-2: color-mix(in srgb, var(--cc-info) 46%, transparent);
+  --cc-latency-3: color-mix(in srgb, var(--cc-success) 26%, transparent);
+  --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
+  --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
+  --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, #d97706 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, #d97706 46%, transparent);
+  --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
+  --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
+  --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
+  --cc-latency-12: color-mix(in srgb, var(--cc-purple) 46%, transparent);
 }
 
 .theme-midnight {
@@ -118,6 +146,20 @@
   --cc-tier-l2: #d2991d;
   --cc-tier-l3: #bc8cff;
   --cc-tier-miss: #5a516e;
+
+  /* Latency heatmap (12-level) for live heatmap table */
+  --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
+  --cc-latency-2: color-mix(in srgb, var(--cc-info) 46%, transparent);
+  --cc-latency-3: color-mix(in srgb, var(--cc-success) 26%, transparent);
+  --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
+  --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
+  --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, #f97316 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, #f97316 46%, transparent);
+  --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
+  --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
+  --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
+  --cc-latency-12: color-mix(in srgb, var(--cc-purple) 46%, transparent);
 }
 
 .theme-ocean {
@@ -149,6 +191,20 @@
   --cc-tier-l2: #c9a227;
   --cc-tier-l3: #8b9cf6;
   --cc-tier-miss: #5a6f80;
+
+  /* Latency heatmap (12-level) for live heatmap table */
+  --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
+  --cc-latency-2: color-mix(in srgb, var(--cc-info) 46%, transparent);
+  --cc-latency-3: color-mix(in srgb, var(--cc-success) 26%, transparent);
+  --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
+  --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
+  --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, #d97706 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, #d97706 46%, transparent);
+  --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
+  --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
+  --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
+  --cc-latency-12: color-mix(in srgb, var(--cc-purple) 46%, transparent);
 }
 
 .theme-sand {
