@@ -1576,12 +1576,6 @@ impl Translations {
     pub const fn overview_l2_label() -> &'static str {
         "L2 (Semantic)"
     }
-    pub fn overview_miss_label(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "未命中",
-            Locale::EnUS => "Miss",
-        }
-    }
     pub fn overview_hit_rate(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "总体命中率",
@@ -3234,6 +3228,127 @@ impl Translations {
             }
         }
     }
+    pub fn overview_l3_hit_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "L3 命中率",
+            Locale::EnUS => "L3 hit ratio",
+        }
+    }
+    pub fn overview_coalesce_share_5m(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "5 分钟合并占比",
+            Locale::EnUS => "5m coalesce share",
+        }
+    }
+    pub fn overview_coalesce_saved(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "节省",
+            Locale::EnUS => "saved",
+        }
+    }
+    pub fn overview_coalesce_unique(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "唯一",
+            Locale::EnUS => "unique",
+        }
+    }
+    pub fn overview_semantic_rejected(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "拒绝",
+            Locale::EnUS => "rejected",
+        }
+    }
+    pub fn overview_semantic_skipped(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "跳过",
+            Locale::EnUS => "skipped",
+        }
+    }
+    pub fn overview_consumer_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无消费者数据",
+            Locale::EnUS => "No consumer data.",
+        }
+    }
+    pub fn overview_consumer_hit_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中 Token",
+            Locale::EnUS => "hit tokens",
+        }
+    }
+    pub fn overview_consumer_miss_tokens(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未命中 Token",
+            Locale::EnUS => "miss tokens",
+        }
+    }
+    pub fn overview_consumer_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "比率",
+            Locale::EnUS => "ratio",
+        }
+    }
+    pub fn overview_consumer_trend(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "趋势",
+            Locale::EnUS => "trend",
+        }
+    }
+    pub fn overview_prefix_model(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型",
+            Locale::EnUS => "model",
+        }
+    }
+    pub fn overview_prefix_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "命中",
+            Locale::EnUS => "hit",
+        }
+    }
+    pub fn overview_prefix_miss(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "未命中",
+            Locale::EnUS => "miss",
+        }
+    }
+    pub fn overview_prefix_ratio(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "比率",
+            Locale::EnUS => "ratio",
+        }
+    }
+    pub fn overview_prefix_health_prefix_break(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "前缀失效",
+            Locale::EnUS => "prefix_break",
+        }
+    }
+    pub fn overview_prefix_health_sse_omitted(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "SSE 省略",
+            Locale::EnUS => "sse_omitted",
+        }
+    }
+    pub fn overview_prefix_health_reasoning_hit(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理命中",
+            Locale::EnUS => "reasoning hit",
+        }
+    }
+    pub fn overview_prefix_health_reasoning_miss(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "推理未命中",
+            Locale::EnUS => "reasoning miss",
+        }
+    }
+    pub fn overview_prefix_health_cache_reasoning_link(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "缓存 / 推理 →",
+            Locale::EnUS => "Cache / reasoning →",
+        }
+    }
+
     pub fn overview_legend_l0_l2(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "L0–L2：网关整响应缓存（精确 + 语义 tier）",
@@ -3410,6 +3525,12 @@ impl Translations {
             Locale::EnUS => format!(
                 "Default profile \"{default_profile_id}\" available/configured; see other profiles on Upstream page"
             ),
+        }
+    }
+    pub fn overview_upstream_keys_hint_default(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "与上游配置页默认 Profile 的 Key 池一致",
+            Locale::EnUS => "Matches the default profile key pool on Upstream page",
         }
     }
     pub fn overview_prefix_health_title(self) -> &'static str {
@@ -3621,6 +3742,12 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "Admin 登录",
             Locale::EnUS => "Admin Sign In",
+        }
+    }
+    pub fn auth_desc(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "输入管理员密钥以访问控制台",
+            Locale::EnUS => "Enter your admin key to access the console",
         }
     }
     pub fn auth_key_label(self) -> &'static str {
@@ -5582,6 +5709,55 @@ impl Translations {
         }
     }
 
+    pub fn overview_request_timed_out(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Overview 请求超时，请刷新或重新登录 admin key。",
+            Locale::EnUS => "Overview request timed out. Please refresh or re-login admin key.",
+        }
+    }
+    pub fn overview_hit_label(self, val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("命中: {val}"),
+            Locale::EnUS => format!("hit: {val}"),
+        }
+    }
+    pub fn overview_miss_label(self, val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("未命中: {val}"),
+            Locale::EnUS => format!("miss: {val}"),
+        }
+    }
+    pub fn overview_ops_coalesced_total(self, val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("累计 {val}"),
+            Locale::EnUS => format!("Σ {val}"),
+        }
+    }
+    pub fn overview_ops_rejected_total(self, val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("累计 {val}"),
+            Locale::EnUS => format!("Σ {val}"),
+        }
+    }
+    pub fn overview_coalesce_5m_total(self, ops_val: u64, metrics_val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("5 分钟 · 累计 {ops_val}（指标 {metrics_val}）"),
+            Locale::EnUS => format!("5m · Σ {ops_val} (metrics {metrics_val})"),
+        }
+    }
+    pub fn overview_reasoning_store_hit(self, pct: f64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("推理缓存命中 {pct:.1}%"),
+            Locale::EnUS => format!("reasoning store hit {pct:.1}%"),
+        }
+    }
+    pub fn overview_total_tokens_label(self, val: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("总 Token: {val}"),
+            Locale::EnUS => format!("total tokens: {val}"),
+        }
+    }
+
     pub fn overview_auto_refresh(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "自动刷新",
@@ -5593,6 +5769,30 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "最后更新",
             Locale::EnUS => "Last update",
+        }
+    }
+    pub fn overview_relative_just_now(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "刚刚",
+            Locale::EnUS => "just now",
+        }
+    }
+    pub fn overview_relative_seconds_ago(self, secs: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{secs} 秒前"),
+            Locale::EnUS => format!("{secs}s ago"),
+        }
+    }
+    pub fn overview_relative_minutes_ago(self, mins: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{mins} 分钟前"),
+            Locale::EnUS => format!("{mins}m ago"),
+        }
+    }
+    pub fn overview_relative_hours_ago(self, hours: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{hours} 小时前"),
+            Locale::EnUS => format!("{hours}h ago"),
         }
     }
 
@@ -6370,6 +6570,102 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "诊断",
             Locale::EnUS => "Diagnostics",
+        }
+    }
+    pub fn overview_peak_hours_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "模型高峰时段",
+            Locale::EnUS => "Model Peak Hours",
+        }
+    }
+    pub fn overview_peak_hours_no_data(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "暂无高峰期数据",
+            Locale::EnUS => "No peak hours data yet",
+        }
+    }
+    pub fn overview_peak_hours_pg_unavailable(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "PostgreSQL 未连接",
+            Locale::EnUS => "PostgreSQL not connected",
+        }
+    }
+    pub fn overview_peak_hours_load_failed(self, err: &str) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("加载失败: {err}"),
+            Locale::EnUS => format!("Load failed: {err}"),
+        }
+    }
+    pub fn overview_peak_hours_clear_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清除全部",
+            Locale::EnUS => "Clear all",
+        }
+    }
+    pub fn overview_peak_hours_day_mon(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周一",
+            Locale::EnUS => "Mon",
+        }
+    }
+    pub fn overview_peak_hours_day_tue(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周二",
+            Locale::EnUS => "Tue",
+        }
+    }
+    pub fn overview_peak_hours_day_wed(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周三",
+            Locale::EnUS => "Wed",
+        }
+    }
+    pub fn overview_peak_hours_day_thu(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周四",
+            Locale::EnUS => "Thu",
+        }
+    }
+    pub fn overview_peak_hours_day_fri(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周五",
+            Locale::EnUS => "Fri",
+        }
+    }
+    pub fn overview_peak_hours_day_sat(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周六",
+            Locale::EnUS => "Sat",
+        }
+    }
+    pub fn overview_peak_hours_day_sun(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "周日",
+            Locale::EnUS => "Sun",
+        }
+    }
+    pub fn overview_peak_hours_total_requests(self, count: &str) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("总计: {count} 次请求"),
+            Locale::EnUS => format!("Total: {count} requests"),
+        }
+    }
+    pub fn overview_peak_hours_cell_title(self, day: &str, hour: usize, count: u64) -> String {
+        match self.locale {
+            Locale::ZhCN => format!("{day} {:02}:00 — {} 次请求", hour, count),
+            Locale::EnUS => format!("{day} {:02}:00 — {} requests", hour, count),
+        }
+    }
+    pub fn overview_peak_hours_legend_low(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "少",
+            Locale::EnUS => "Low",
+        }
+    }
+    pub fn overview_peak_hours_legend_high(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "多",
+            Locale::EnUS => "High",
         }
     }
 

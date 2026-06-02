@@ -160,7 +160,9 @@ pub fn OverviewPage() -> impl IntoView {
                         // Self-reschedule: re-register the same persistent closure
                         // instead of allocating a new Closure::once every frame.
                         if let Some(func) = raf_state_inner.borrow().as_ref() {
-                            let _ = web_sys::window().unwrap().request_animation_frame(func);
+                            if let Some(window) = web_sys::window() {
+                                let _ = window.request_animation_frame(func);
+                            }
                         }
                     }
                 };
@@ -197,7 +199,9 @@ pub fn OverviewPage() -> impl IntoView {
 
                 // Kick off the rAF loop if not already running.
                 if let Some(func) = raf_state.borrow().as_ref() {
-                    let _ = web_sys::window().unwrap().request_animation_frame(func);
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.request_animation_frame(func);
+                    }
                 }
 
                 // Bridge EventSource callbacks to an async channel.
@@ -874,14 +878,14 @@ pub fn OpsMetricsRow(ops: OverviewOpsMetrics) -> impl IntoView {
                     <div class="text-xl font-mono tabular-nums text-accent">
                         {format!("{:.0}", ops.coalesced_5m)}
                     </div>
-                    <div class="text-xs text-theme-muted">{format!("Σ {}", ops.coalesced_total)}</div>
+                    <div class="text-xs text-theme-muted">{t.overview_ops_coalesced_total(ops.coalesced_total)}</div>
                 </div>
                 <div>
                     <div class="text-xs text-theme-muted">{t.overview_ops_rejected_5m()}</div>
                     <div class="text-xl font-mono tabular-nums text-warning">
                         {format!("{:.0}", ops.rejected_5m)}
                     </div>
-                    <div class="text-xs text-theme-muted">{format!("Σ {}", ops.rejected_total)}</div>
+                    <div class="text-xs text-theme-muted">{t.overview_ops_rejected_total(ops.rejected_total)}</div>
                 </div>
                 <div>
                     <div class="text-xs text-theme-muted">{t.overview_cost_saved_5m()}</div>
@@ -919,9 +923,9 @@ pub fn PrefixCacheCard(prefix: PrefixCacheMetricsSnapshot) -> impl IntoView {
                     <div class="text-xs text-theme-muted mt-1">{t.overview_l3_hit_ratio()}</div>
                 </div>
                 <div class="text-sm font-mono tabular-nums text-theme-secondary space-y-1">
-                    <div>{format!("hit: {}", prefix.hit_tokens)}</div>
-                    <div>{format!("miss: {}", prefix.miss_tokens)}</div>
-                    <div class="text-theme-muted">{format!("total tokens: {}", total)}</div>
+                    <div>{t.overview_hit_label(prefix.hit_tokens)}</div>
+                    <div>{t.overview_miss_label(prefix.miss_tokens)}</div>
+                    <div class="text-theme-muted">{t.overview_total_tokens_label(total)}</div>
                 </div>
             </div>
             {(!by_model.is_empty()).then(|| view! {
@@ -1181,7 +1185,7 @@ pub fn CoalescingCard(metrics: MetricsSnapshot, ops: OverviewOpsMetrics) -> impl
                 {format!("{:.0}", ops.coalesced_5m)}
             </div>
             <div class="text-xs text-theme-muted mt-1">
-                {format!("5m · Σ {} (metrics {})", ops.coalesced_total, metrics.coalesced_total)}
+                {t.overview_coalesce_5m_total(ops.coalesced_total, metrics.coalesced_total)}
             </div>
             <div class="mt-4 space-y-1.5">
                 <div class="flex items-center justify-between text-xs text-theme-muted">
@@ -1443,7 +1447,7 @@ pub fn CacheHitSection(metrics: MetricsSnapshot) -> impl IntoView {
             color: "var(--cc-tier-l2)",
         },
         crate::components::donut_chart::DonutSegment {
-            label: t.overview_miss_label().to_string(),
+            label: t.overview_prefix_miss().to_string(),
             value: d.miss as f64,
             color: "var(--cc-tier-miss)",
         },
@@ -1493,17 +1497,11 @@ pub fn CostSavingsSection(ops: OverviewOpsMetrics) -> impl IntoView {
 #[component]
 pub fn UpstreamKeyStrip(ops: OverviewOpsMetrics) -> impl IntoView {
     let t = use_translations();
-    let locale = crate::locale::use_locale();
     let hint = ops
         .upstream_default_profile_id
         .as_deref()
         .map(|id| t.overview_upstream_keys_hint(id))
-        .unwrap_or_else(|| match locale.get() {
-            crate::locale::Locale::ZhCN => "与上游配置页默认 Profile 的 Key 池一致".to_string(),
-            crate::locale::Locale::EnUS => {
-                "Matches the default profile key pool on Upstream page".to_string()
-            }
-        });
+        .unwrap_or_else(|| t.overview_upstream_keys_hint_default().to_string());
     view! {
         <div class="glass-card h-full flex flex-col justify-between">
             <div>
@@ -1553,7 +1551,7 @@ pub fn PrefixHealthCard(ops: OverviewOpsMetrics) -> impl IntoView {
                 </div>
             </div>
             <p class="text-xs text-theme-muted mt-3">
-                {format!("reasoning store hit {:.1}%", reasoning_hit_pct)}
+                {t.overview_reasoning_store_hit(reasoning_hit_pct)}
             </p>
             <a href="/cache" class="text-xs text-accent hover:underline mt-2 inline-block">
                 {t.overview_prefix_health_cache_reasoning_link()}

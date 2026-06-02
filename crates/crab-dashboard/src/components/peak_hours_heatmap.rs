@@ -2,9 +2,9 @@
 
 use leptos::prelude::*;
 
+use crate::locale::use_translations;
 use crate::types::ModelPeakHourRow;
 
-const DAY_LABELS: [&str; 7] = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const HOUR_COUNT: usize = 24;
 
 /// Green → Yellow → Orange → Red based on intensity (0.0–1.0).
@@ -81,6 +81,16 @@ pub fn PeakHoursHeatmap(
 ) -> impl IntoView {
     let selected_model: RwSignal<usize> = RwSignal::new(0);
     let hovered_cell: RwSignal<Option<(usize, usize)>> = RwSignal::new(None);
+    let t = use_translations();
+    let day_labels = [
+        t.overview_peak_hours_day_mon(),
+        t.overview_peak_hours_day_tue(),
+        t.overview_peak_hours_day_wed(),
+        t.overview_peak_hours_day_thu(),
+        t.overview_peak_hours_day_fri(),
+        t.overview_peak_hours_day_sat(),
+        t.overview_peak_hours_day_sun(),
+    ];
 
     let current_model = Memo::new(move |_| {
         let m = models.get();
@@ -107,7 +117,7 @@ pub fn PeakHoursHeatmap(
     view! {
         <div class="peak-hours-container">
             <div class="peak-hours-header">
-                <h3 class="peak-hours-title">"模型高峰时段"</h3>
+                <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
                 <div class="peak-hours-actions">
                     <button
                         class="btn btn-sm btn-ghost"
@@ -121,7 +131,7 @@ pub fn PeakHoursHeatmap(
                             }
                         }
                     >
-                        "清除全部"
+                        {t.overview_peak_hours_clear_all()}
                     </button>
                 </div>
             </div>
@@ -149,7 +159,7 @@ pub fn PeakHoursHeatmap(
             // Stats row
             <div class="peak-hours-stats">
                 <span class="peak-hours-stat">
-                    "总计: " {move || format_number(total_requests.get())} " 次请求"
+                    {t.overview_peak_hours_total_requests(&format_number(total_requests.get()))}
                 </span>
             </div>
 
@@ -170,7 +180,7 @@ pub fn PeakHoursHeatmap(
                 <div class="peak-hours-grid">
                     // Day headers
                     <div class="peak-hours-day-header-row">
-                        {DAY_LABELS.iter().map(|label| {
+                        {day_labels.iter().map(|label| {
                             view! {
                                 <span class="peak-hours-day-header">{*label}</span>
                             }
@@ -230,7 +240,7 @@ pub fn PeakHoursHeatmap(
                                             }
                                             title=move || {
                                                 let val = val_text.get();
-                                                format!("{} {:02}:00 — {} 次请求", DAY_LABELS[day], hour, val)
+                                                t.overview_peak_hours_cell_title(day_labels[day], hour, val)
                                             }
                                         />
                                     }
@@ -243,13 +253,13 @@ pub fn PeakHoursHeatmap(
 
             // Legend
             <div class="peak-hours-legend">
-                <span class="peak-hours-legend-label">"少"</span>
+                <span class="peak-hours-legend-label">{t.overview_peak_hours_legend_low()}</span>
                 <div class="peak-hours-legend-cell" style:background-color="var(--cc-peak-empty, var(--cc-bg-tertiary))"></div>
                 <div class="peak-hours-legend-cell" style:background-color="var(--cc-peak-low, #16a34a)"></div>
                 <div class="peak-hours-legend-cell" style:background-color="var(--cc-peak-mid, #eab308)"></div>
                 <div class="peak-hours-legend-cell" style:background-color="var(--cc-peak-high, #f97316)"></div>
                 <div class="peak-hours-legend-cell" style:background-color="var(--cc-peak-max, #ef4444)"></div>
-                <span class="peak-hours-legend-label">"多"</span>
+                <span class="peak-hours-legend-label">{t.overview_peak_hours_legend_high()}</span>
             </div>
         </div>
     }
