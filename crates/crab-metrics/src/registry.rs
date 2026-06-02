@@ -139,6 +139,18 @@ pub struct GatewayMetrics {
     pub model_lockout_total: IntCounterVec,
     /// Fallback decisions from upstream errors (by failure kind).
     pub fallback_decision_total: IntCounterVec,
+
+    // ── Content density tracking ──────────────────────────────────────
+    /// Bytes flowing through each transformation stage (stage × pipeline).
+    /// Stages: `client_body`, `upstream_outbound`, `client_outbound`, `reasoning_stripped`,
+    /// `reasoning_mirrored`, `thinking_block_stripped`, `message_retire_est_tokens`.
+    pub content_density_bytes: IntCounterVec,
+    /// Ratio of client_outbound / upstream_outbound per pipeline (histogram).
+    /// Values > 1.0 mean the gateway expanded content (e.g. reasoning folded into content).
+    /// Values < 1.0 mean the gateway stripped content (e.g. silent strip).
+    pub content_density_ratio: HistogramVec,
+    /// SSE chunk rewrite counts by pipeline and action.
+    pub sse_chunk_rewrite: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -694,6 +706,32 @@ impl GatewayMetrics {
             &["failure_kind"],
         )?;
 
+        // ── Content density tracking ──────────────────────────────────────
+        let content_density_bytes = IntCounterVec::new(
+            Opts::new(
+                "gateway_content_density_bytes_total",
+                "Bytes flowing through each transformation stage (client_body, upstream_outbound, client_outbound, reasoning_stripped, reasoning_mirrored, thinking_block_stripped, message_retire_est_tokens)",
+            ),
+            &["stage", "pipeline"],
+        )?;
+
+        let content_density_ratio = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_content_density_ratio",
+                "Ratio of client_outbound / upstream_outbound per pipeline (1.0 = no change)",
+            )
+            .buckets(vec![0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0, 1.05, 1.1, 1.25, 1.5, 2.0, 3.0, 5.0]),
+            &["pipeline"],
+        )?;
+
+        let sse_chunk_rewrite = IntCounterVec::new(
+            Opts::new(
+                "gateway_sse_chunk_rewrite_total",
+                "SSE chunk rewrite actions by pipeline and action type",
+            ),
+            &["pipeline", "action"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -771,6 +809,9 @@ impl GatewayMetrics {
             client_lockout_total,
             model_lockout_total,
             fallback_decision_total,
+            content_density_bytes,
+            content_density_ratio,
+            sse_chunk_rewrite,
         })
     }
 
@@ -851,6 +892,9 @@ impl GatewayMetrics {
         registry.register(Box::new(self.client_lockout_total.clone()))?;
         registry.register(Box::new(self.model_lockout_total.clone()))?;
         registry.register(Box::new(self.fallback_decision_total.clone()))?;
+        registry.register(Box::new(self.content_density_bytes.clone()))?;
+        registry.register(Box::new(self.content_density_ratio.clone()))?;
+        registry.register(Box::new(self.sse_chunk_rewrite.clone()))?;
         Ok(())
     }
 
@@ -1453,6 +1497,34 @@ impl GatewayMetrics {
     pub fn record_fallback_decision(&self, failure_kind: &str) {
         self.fallback_decision_total
             .with_label_values(&[failure_kind])
+            .inc();
+    }
+
+    // ── Content density tracking ──────────────────────────────────────
+
+    /// Record bytes at a transformation stage.
+    /// `stage`: "client_body" | "upstream_outbound" | "client_outbound" |
+    ///          "reasoning_stripped" | "reasoning_mirrored" | "thinking_block_stripped" |
+    ///          "message_retire_est_tokens"
+    pub fn record_content_density_bytes(&self, stage: &str, pipeline: &str, bytes: u64) {
+        self.content_density_bytes
+            .with_label_values(&[stage, pipeline])
+            .inc_by(bytes);
+    }
+
+    /// Record the ratio of client_outbound to upstream_outbound bytes.
+    pub fn record_content_density_ratio(&self, pipeline: &str, ratio: f64) {
+        self.content_density_ratio
+            .with_label_values(&[pipeline])
+            .observe(ratio);
+    }
+
+    /// Record an SSE chunk rewrite action.
+    /// `action`: "reasoning_mirror" | "reasoning_strip" | "thinking_strip" |
+    ///           "model_rename" | "recovery_notice" | "passthrough"
+    pub fn record_sse_chunk_rewrite(&self, pipeline: &str, action: &str) {
+        self.sse_chunk_rewrite
+            .with_label_values(&[pipeline, action])
             .inc();
     }
 }

@@ -423,6 +423,77 @@ pub(crate) async fn run(
                 {
                     entry.phase_durations_ms = Some(phases);
                 }
+                // ── Content density tracking ──────────────────────────────
+                let pipeline_str = ctx
+                    .request_pipeline
+                    .as_ref()
+                    .map(|p| p.as_str())
+                    .unwrap_or("unknown");
+                // client_outbound_bytes: streaming → client_sse_body len; non-streaming → response_body_preview len
+                let client_outbound = if ctx.is_streaming {
+                    ctx.stream.client_sse_body.len()
+                } else {
+                    ctx.response_body_preview.len()
+                };
+                entry.client_outbound_bytes = Some(client_outbound);
+                // Record Prometheus metrics for content density
+                global_metrics().record_content_density_bytes(
+                    "client_body",
+                    pipeline_str,
+                    ctx.content_length as u64,
+                );
+                global_metrics().record_content_density_bytes(
+                    "upstream_outbound",
+                    pipeline_str,
+                    ctx.upstream_outbound_body_len as u64,
+                );
+                global_metrics().record_content_density_bytes(
+                    "client_outbound",
+                    pipeline_str,
+                    client_outbound as u64,
+                );
+                // Content density ratio: client_outbound / upstream_outbound
+                if ctx.upstream_outbound_body_len > 0 {
+                    let ratio = client_outbound as f64 / ctx.upstream_outbound_body_len as f64;
+                    global_metrics().record_content_density_ratio(pipeline_str, ratio);
+                }
+                // Reasoning content tracking: estimate from pipeline behavior
+                if ctx.request_pipeline == Some(RequestPipeline::CursorDeepSeekV4) {
+                    // For CursorDeepSeekV4: if display_reasoning=false, reasoning was stripped
+                    // The ratio tells us how much content was lost
+                    if !ctx.cached_reasoning_config.display_reasoning {
+                        // SilentStrip: client < upstream (reasoning stripped)
+                        // Estimate stripped bytes from the ratio difference
+                        if ctx.upstream_outbound_body_len > client_outbound {
+                            let stripped =
+                                ctx.upstream_outbound_body_len.saturating_sub(client_outbound);
+                            entry.reasoning_stripped_bytes = Some(stripped);
+                            global_metrics().record_content_density_bytes(
+                                "reasoning_stripped",
+                                pipeline_str,
+                                stripped as u64,
+                            );
+                        }
+                    } else {
+                        // ReasoningRewrite: client >= upstream (reasoning folded into content)
+                        // The overhead is the <details> tags
+                        if client_outbound > ctx.upstream_outbound_body_len {
+                            let mirrored =
+                                client_outbound.saturating_sub(ctx.upstream_outbound_body_len);
+                            entry.reasoning_mirrored_bytes = Some(mirrored);
+                            global_metrics().record_content_density_bytes(
+                                "reasoning_mirrored",
+                                pipeline_str,
+                                mirrored as u64,
+                            );
+                        }
+                    }
+                }
+                // Message retirement: estimated tokens saved (rough: 1 token ≈ 4 bytes)
+                if let Some(retired) = ctx.retired_prefix_messages {
+                    entry.message_retire_est_tokens = Some(retired);
+                    // This is a count, not bytes — record as-is for visibility
+                }
                 if let Some(backend) = &ctx.upstream.backend_name {
                     let result = if ctx.upstream.http_status.is_some_and(|s| s >= 400) {
                         "error"

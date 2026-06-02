@@ -169,6 +169,23 @@ pub struct SanitizedLogEntry {
     /// Only populated when timeline watermarks are set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_durations_ms: Option<serde_json::Value>,
+
+    // ── Content density tracking ──────────────────────────────────────
+    /// Bytes actually sent to the client after all transformations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_outbound_bytes: Option<usize>,
+    /// Bytes of reasoning_content stripped (SilentStrip mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_stripped_bytes: Option<usize>,
+    /// Bytes of reasoning_content mirrored to content (display mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_mirrored_bytes: Option<usize>,
+    /// Bytes of Cursor thinking markup (`<thinking>`, `<details>`) stripped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_block_stripped_bytes: Option<usize>,
+    /// Estimated tokens saved by message retirement (prefix pruning).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_retire_est_tokens: Option<usize>,
 }
 
 impl SanitizedLogEntry {
@@ -286,6 +303,11 @@ impl SanitizedLogEntry {
             cache_decision: None,
             upstream_result: None,
             phase_durations_ms: None,
+            client_outbound_bytes: None,
+            reasoning_stripped_bytes: None,
+            reasoning_mirrored_bytes: None,
+            thinking_block_stripped_bytes: None,
+            message_retire_est_tokens: None,
         }
     }
 }

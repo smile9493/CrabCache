@@ -21,7 +21,11 @@ pub fn strip_reasoning_delta_for_client(chunk: &mut Value) {
             Some(d) => d,
             None => continue,
         };
-        delta.remove("reasoning_content");
+        let had_reasoning = delta.remove("reasoning_content").is_some();
+        if had_reasoning {
+            // Record that reasoning was stripped from this chunk
+            crab_metrics::global_metrics().record_sse_chunk_rewrite("reasoning", "reasoning_strip");
+        }
         if !delta.contains_key("content")
             || delta.get("content").map(|v| v.is_null()).unwrap_or(false)
         {
@@ -64,6 +68,9 @@ fn mirror_reasoning_delta_incremental(chunk: &mut Value) {
             let text = rc.as_str().unwrap_or("").to_string();
             if !text.is_empty() {
                 delta.insert("content".into(), Value::String(text));
+                // Record that reasoning was mirrored into content
+                crab_metrics::global_metrics()
+                    .record_sse_chunk_rewrite("reasoning", "reasoning_mirror");
             } else if delta.get("role").is_some() && !delta.contains_key("content") {
                 delta.insert("content".into(), Value::String(String::new()));
             }
@@ -91,7 +98,14 @@ pub fn sanitize_client_message_content(content: &str, display_reasoning: bool) -
     if display_reasoning {
         content.to_string()
     } else {
-        strip_cursor_thinking_blocks(content)
+        let stripped = strip_cursor_thinking_blocks(content);
+        let delta = content.len().saturating_sub(stripped.len());
+        if delta > 0 {
+            // Record thinking block bytes stripped
+            crab_metrics::global_metrics()
+                .record_sse_chunk_rewrite("reasoning", "thinking_strip");
+        }
+        stripped
     }
 }
 
@@ -445,6 +459,11 @@ pub fn rewrite_sse_chunk(
         }
     }
     if let Some(obj) = chunk.get_mut("model") {
+        let upstream_model = obj.as_str().unwrap_or("");
+        if upstream_model != original_model {
+            crab_metrics::global_metrics()
+                .record_sse_chunk_rewrite("reasoning", "model_rename");
+        }
         *obj = Value::String(original_model.to_string());
     }
     let ending = if line.ends_with(b"\r\n") {
