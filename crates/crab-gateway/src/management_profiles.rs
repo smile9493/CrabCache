@@ -573,9 +573,11 @@ pub async fn put_profile_keys(
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
         UpstreamKeysPutMode::Replace => UpstreamKeyPool::hot_replace(&current, specs),
     };
-    // Wire quota cache to the new pool before replacing
+    // Wire quota cache to the new pool before replacing (only for Codex provider)
     if let Some(qc) = &state.codex_quota_cache {
-        new_pool.set_quota_cache(qc.clone());
+        if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+            new_pool.set_quota_cache(qc.clone());
+        }
     }
     state
         .runtime
@@ -690,9 +692,11 @@ pub async fn delete_profile_key(
         )
             .into_response());
     };
-    // Wire quota cache to the new pool before replacing
+    // Wire quota cache to the new pool before replacing (only for Codex provider)
     if let Some(qc) = &state.codex_quota_cache {
-        new_pool.set_quota_cache(qc.clone());
+        if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+            new_pool.set_quota_cache(qc.clone());
+        }
     }
     state
         .runtime

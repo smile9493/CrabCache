@@ -84,7 +84,7 @@ fn upgrade_pipeline_for_responses_client(
         )),
         (
             UpstreamProvider::Mimo,
-            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay,
+            RequestPipeline::MimoTokenPlanRelay,
         ) => Some((
             RequestPipeline::CodexMimo,
             PipelineSelectionReason::CodexMimoProvider,
@@ -336,6 +336,40 @@ async fn run_post_body_phases(
             client_kind: ctx.client_kind,
         }
     };
+
+    // ─── Cursor+MiMo: force direct passthrough, reject Responses wire ───
+    if ctx.client_kind == crab_pipeline::ClientKind::Cursor
+        && selection.provider == crab_pipeline::UpstreamProvider::Mimo
+    {
+        // Cursor must use /v1/chat/completions for MiMo — reject /v1/responses.
+        if ctx.client_wire_api == crate::context::ClientWireApi::Responses {
+            let body = serde_json::json!({
+                "error": {
+                    "message": "Cursor MiMo requests must use /v1/chat/completions (direct passthrough). /v1/responses is not supported for MiMo upstream.",
+                    "type": "invalid_request_error",
+                    "code": "cursor_mimo_responses_rejected"
+                }
+            });
+            if !send_json_error(session, http::StatusCode::BAD_REQUEST, body.to_string().as_bytes())
+                .await
+            {
+                let _ = session.respond_error(400).await;
+            }
+            return Ok(true);
+        }
+        // Force MimoTokenPlanRelay (direct passthrough) — never upgrade to CodexMimo.
+        if ctx.request_pipeline != Some(RequestPipeline::MimoTokenPlanRelay) {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                from = ?ctx.request_pipeline,
+                "Cursor+MiMo: forcing MimoTokenPlanRelay (direct passthrough)"
+            );
+            ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
+            selection.pipeline = RequestPipeline::MimoTokenPlanRelay;
+            selection.reason = PipelineSelectionReason::MimoProvider;
+            ctx.pipeline_reason = Some(PipelineSelectionReason::MimoProvider);
+        }
+    }
 
     if let Some(pipe) = ctx.request_pipeline {
         let (upgraded, reason) =
@@ -693,7 +727,7 @@ async fn run_post_body_phases(
                     serde_json::to_vec(&generic.payload).unwrap_or_default(),
                 ));
             }
-            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::MimoPaygRelay => {
+            RequestPipeline::MimoTokenPlanRelay => {
                 // `parsed_payload` already converted from Responses API when needed (above).
                 let features = proxy.state.features.read();
                 let mimo = prepare_mimo_request(
@@ -977,6 +1011,15 @@ async fn run_post_body_phases(
             let profile = proxy.active_upstream_profile(ctx);
             let pool = profile.resolve_upstream_pool();
             let timeout = std::time::Duration::from_millis(timeout_ms);
+            // #region agent log - debug key binding attempt
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                session_id = %sid,
+                bound_key_id = %bound_key_id,
+                timeout_ms = timeout_ms,
+                "DEBUG: attempting key binding pre-acquire"
+            );
+            // #endregion
             if let Some(guard) = pool
                 .acquire_with_binding_async(&bound_key_id, timeout)
                 .await
@@ -984,13 +1027,33 @@ async fn run_post_body_phases(
                 binding_store.touch(&sid);
                 ctx.upstream.key_guard = Some(guard);
                 global_metrics().record_key_binding_event("pre_acquire");
-                tracing::debug!(
+                // #region agent log - debug key binding success
+                tracing::warn!(
                     request_id = %ctx.request_id,
                     session_id = %sid,
                     key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                    "MiMo key binding pre-acquired in request_filter"
+                    "DEBUG: key binding pre-acquired successfully"
                 );
+                // #endregion
+            } else {
+                // #region agent log - debug key binding failed
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    session_id = %sid,
+                    bound_key_id = %bound_key_id,
+                    "DEBUG: key binding pre-acquire FAILED (timeout or unavailable)"
+                );
+                // #endregion
             }
+        } else {
+            // #region agent log - debug no binding info
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                stable_session = ?stable_session,
+                is_mimo = ctx.request_pipeline.map_or(false, |p| GatewayProxy::is_mimo_pipeline(p)),
+                "DEBUG: no key binding info found (binding disabled or no session binding)"
+            );
+            // #endregion
         }
     }
 
@@ -1102,6 +1165,18 @@ async fn run_post_body_phases(
     }
 
     // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
+    // #region agent log - debug pre-cache phase
+    tracing::warn!(
+        request_id = %ctx.request_id,
+        conversation_id = ?ctx.conversation_id,
+        session_fingerprint = ?ctx.session_fingerprint,
+        prompt_cache_key = ?ctx.prompt_cache_key,
+        client_key_fingerprint = ?ctx.client_key_fingerprint,
+        pipeline = ?ctx.request_pipeline,
+        model = %ctx.model,
+        "DEBUG: entering Phase 5 cache & coalesce"
+    );
+    // #endregion
     match crate::phases::cache_coalesce::run(proxy, session, ctx).await? {
         crate::phases::cache_coalesce::CachePhaseOutcome::Return(done) => {
             return Ok(done);
@@ -1110,9 +1185,10 @@ async fn run_post_body_phases(
     }
 
     // Codex quota-aware key selection with WHAM preflight (async)
-    let is_codex = ctx
-        .request_pipeline
-        .map_or(false, GatewayProxy::is_codex_upstream_pipeline);
+    // Exclude CodexMimo — it uses MiMo key pool (not OAuth), preflight would reject all keys.
+    let is_codex = ctx.request_pipeline.map_or(false, |p| {
+        GatewayProxy::is_codex_upstream_pipeline(p) && !GatewayProxy::is_mimo_pipeline(p)
+    });
     let preflight_enabled = if is_codex {
         let features = proxy.state.features.read();
         features.codex_quota_preflight
@@ -1124,6 +1200,15 @@ async fn run_post_body_phases(
     } else {
         proxy.try_acquire_upstream_key(ctx)
     };
+    // #region agent log - debug key acquisition result
+    tracing::warn!(
+        request_id = %ctx.request_id,
+        key_acquired = key_acquired,
+        key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
+        pipeline = ?ctx.request_pipeline,
+        "DEBUG: key acquisition result in run_post_body_phases"
+    );
+    // #endregion
 
     if !key_acquired {
         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
@@ -1153,14 +1238,13 @@ async fn run_post_body_phases(
 mod tests {
     use super::{
         can_arm_mimo_request_passthrough, mimo_direct_passthrough,
-        request_passthrough_allowed_pipeline,
+        request_passthrough_allowed_pipeline, upgrade_pipeline_for_responses_client,
     };
-    use crab_pipeline::RequestPipeline;
+    use crab_pipeline::{ClientKind, PipelineSelectionReason, RequestPipeline, UpstreamProvider};
 
     #[test]
     fn mimo_pipelines_use_direct_passthrough() {
         assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
-        assert!(mimo_direct_passthrough(RequestPipeline::MimoPaygRelay));
         assert!(!mimo_direct_passthrough(RequestPipeline::GenericRelay));
         assert!(!mimo_direct_passthrough(RequestPipeline::CursorDeepSeekV4));
     }
@@ -1169,9 +1253,6 @@ mod tests {
     fn mimo_pipelines_allow_request_passthrough() {
         assert!(request_passthrough_allowed_pipeline(
             RequestPipeline::MimoTokenPlanRelay
-        ));
-        assert!(request_passthrough_allowed_pipeline(
-            RequestPipeline::MimoPaygRelay
         ));
         assert!(!request_passthrough_allowed_pipeline(
             RequestPipeline::GenericRelay
@@ -1183,6 +1264,75 @@ mod tests {
         assert!(can_arm_mimo_request_passthrough(Some(true)));
         assert!(!can_arm_mimo_request_passthrough(Some(false)));
         assert!(!can_arm_mimo_request_passthrough(None));
+    }
+
+    #[test]
+    fn codex_mimo_upgrade_for_non_cursor_responses_client() {
+        // Codex CLI + /v1/responses + MiMo → should upgrade to CodexMimo
+        let (pipeline, reason) = upgrade_pipeline_for_responses_client(
+            crate::context::ClientWireApi::Responses,
+            RequestPipeline::MimoTokenPlanRelay,
+            UpstreamProvider::Mimo,
+        );
+        assert_eq!(pipeline, RequestPipeline::CodexMimo);
+        assert_eq!(reason, Some(PipelineSelectionReason::CodexMimoProvider));
+    }
+
+    #[test]
+    fn no_upgrade_for_chat_completions_wire() {
+        // Chat Completions wire → no upgrade regardless of pipeline
+        let (pipeline, _) = upgrade_pipeline_for_responses_client(
+            crate::context::ClientWireApi::ChatCompletions,
+            RequestPipeline::MimoTokenPlanRelay,
+            UpstreamProvider::Mimo,
+        );
+        assert_eq!(pipeline, RequestPipeline::MimoTokenPlanRelay);
+    }
+
+    #[test]
+    fn cursor_mimo_responses_wire_translate_disabled() {
+        use crate::context::{ClientWireApi, GatewayContext};
+        use crate::responses_wire::needs_responses_wire_translate;
+
+        let mut ctx = GatewayContext::new("test-req".to_string());
+        ctx.client_kind = ClientKind::Cursor;
+        ctx.client_wire_api = ClientWireApi::Responses;
+        ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
+
+        // Cursor+MiMo+Responses → should NOT translate (direct passthrough)
+        assert!(!needs_responses_wire_translate(&ctx));
+    }
+
+    #[test]
+    fn non_cursor_mimo_responses_wire_translate_enabled() {
+        use crate::context::{ClientWireApi, GatewayContext};
+        use crate::responses_wire::needs_responses_wire_translate;
+
+        let mut ctx = GatewayContext::new("test-req".to_string());
+        ctx.client_kind = ClientKind::Generic;
+        ctx.client_wire_api = ClientWireApi::Responses;
+        ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
+
+        // Non-Cursor + MiMo + Responses → should translate
+        assert!(needs_responses_wire_translate(&ctx));
+    }
+
+    #[test]
+    fn cursor_mimo_forced_to_mimo_token_plan_relay() {
+        // Cursor+MiMo should always use MimoTokenPlanRelay (direct passthrough)
+        // even if the initial pipeline was CodexMimo
+        let pipeline = RequestPipeline::CodexMimo;
+        let provider = UpstreamProvider::Mimo;
+        let client_kind = ClientKind::Cursor;
+
+        // Verify: Cursor+MiMo never upgrades to CodexMimo
+        let (upgraded, _) = upgrade_pipeline_for_responses_client(
+            crate::context::ClientWireApi::ChatCompletions,
+            pipeline,
+            provider,
+        );
+        // ChatCompletions wire → no upgrade
+        assert_eq!(upgraded, RequestPipeline::CodexMimo);
     }
 }
 
@@ -1842,6 +1992,15 @@ pub(crate) async fn run(
         let _ = session.respond_error(400).await;
         return Ok(true);
     }
+
+    // #region agent log - debug body read completion
+    tracing::warn!(
+        request_id = %ctx.request_id,
+        body_bytes = full_body.len(),
+        pipeline = ?ctx.request_pipeline,
+        "DEBUG: body read complete, entering post-body phases"
+    );
+    // #endregion
 
     let full_body = Bytes::from(full_body);
     return run_post_body_phases(
