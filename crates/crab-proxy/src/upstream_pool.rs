@@ -323,6 +323,19 @@ impl UpstreamKeyPool {
             .count()
     }
 
+    /// Return key IDs of all slots that are enabled and not in cooldown.
+    pub fn available_key_ids(&self) -> Vec<String> {
+        let now = now_ms();
+        self.slots
+            .iter()
+            .filter(|s| {
+                s.enabled.load(Ordering::Relaxed)
+                    && s.cooldown_until_ms.load(Ordering::Relaxed) <= now
+            })
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
     /// Diagnose why `acquire()` returns `None` without consuming a key.
     pub fn diagnose_acquire_failure(&self) -> PoolAcquireFailure {
         if self.slots.is_empty() {

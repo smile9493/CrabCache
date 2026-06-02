@@ -240,6 +240,17 @@ impl GatewayProxy {
         let pool = profile.resolve_upstream_pool();
         let available_before = pool.available_count();
         let total = pool.len();
+        // #region agent log - debug key acquire entry
+        tracing::warn!(
+            request_id = %ctx.request_id,
+            pipeline = ?ctx.request_pipeline,
+            profile = %profile.id,
+            available_keys = available_before,
+            total_keys = total,
+            upstream_model = ?ctx.upstream_model,
+            "DEBUG: entering try_acquire_upstream_key"
+        );
+        // #endregion
         let canonical_model = ctx
             .upstream_model
             .as_deref()
@@ -265,8 +276,19 @@ impl GatewayProxy {
                 if let Some(sid) = stable_session {
                     if let Some(binding) = binding_store.get(sid) {
                         let max_inflight = features.mimo_key_max_inflight;
+                        let current_inflight = pool.inflight_of(&binding.key_id);
+                        // #region agent log - debug MiMo binding check
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            session_id = %sid,
+                            bound_key_id = %binding.key_id,
+                            current_inflight = current_inflight,
+                            max_inflight = max_inflight,
+                            "DEBUG: MiMo key binding found, checking inflight"
+                        );
+                        // #endregion
                         // Bound key available and under concurrency limit?
-                        if max_inflight == 0 || pool.inflight_of(&binding.key_id) < max_inflight {
+                        if max_inflight == 0 || current_inflight < max_inflight {
                             if let Some(guard) = pool.acquire_specific(&binding.key_id) {
                                 binding_store.touch(sid);
                                 ctx.upstream.miss = true;
@@ -292,10 +314,26 @@ impl GatewayProxy {
                         return false;
                     }
                     // No binding for this session: create one.
-                    if let Some(guard) = pool
-                        .acquire_for_upstream_model(&upstream_model, false)
-                        .or_else(|| pool.acquire())
-                    {
+                    // Prefer a key that is under the max_sessions-per-key cap.
+                    // #region agent log - debug new binding creation
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        session_id = %sid,
+                        available_keys = pool.available_count(),
+                        max_sessions_per_key = features.mimo_key_max_sessions_per_key,
+                        "DEBUG: no existing binding for session, creating new one"
+                    );
+                    // #endregion
+                    let max_sessions = features.mimo_key_max_sessions_per_key;
+                    let available_ids = pool.available_key_ids();
+                    let available_refs: Vec<&str> = available_ids.iter().map(|s| s.as_str()).collect();
+                    let preferred = binding_store.least_loaded_key(&available_refs, max_sessions);
+                    let guard = preferred
+                        .as_deref()
+                        .and_then(|kid| pool.acquire_specific(kid))
+                        .or_else(|| pool.acquire_for_upstream_model(&upstream_model, false))
+                        .or_else(|| pool.acquire());
+                    if let Some(guard) = guard {
                         let kid = guard.key_id().to_string();
                         binding_store.put(sid.to_string(), kid);
                         ctx.upstream.miss = true;

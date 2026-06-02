@@ -143,3 +143,4 @@ mimo_keep_recent_turns = 3
 mimo_key_binding = true
 mimo_key_binding_ttl_secs = 300  # 5 minutes idle TTL
 mimo_key_max_inflight = 3        # max concurrent requests per bound key
+mimo_key_max_sessions_per_key = 2  # max sessions bound to a single MiMo key

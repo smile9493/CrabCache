@@ -731,6 +731,11 @@ pub struct FeaturesConfig {
     /// another key. Protects prefix-cache affinity while bounding tail latency.
     #[serde(default = "default_mimo_key_overflow_wait_ms")]
     pub mimo_key_overflow_wait_ms: u64,
+    /// Max sessions that can be bound to a single MiMo upstream key (1:N binding).
+    /// When a key reaches this limit, the least-loaded key under the cap is chosen instead.
+    /// Set to 1 for strict 1:1 binding (original behavior).
+    #[serde(default = "default_mimo_key_max_sessions_per_key")]
+    pub mimo_key_max_sessions_per_key: u32,
     /// Conversation-level upstream key binding for Codex pipelines (OAuth account affinity).
     #[serde(default)]
     pub codex_key_binding: bool,
@@ -842,6 +847,7 @@ impl Default for FeaturesConfig {
             mimo_key_binding_ttl_secs: default_mimo_key_binding_ttl_secs(),
             mimo_key_max_inflight: default_mimo_key_max_inflight(),
             mimo_key_overflow_wait_ms: default_mimo_key_overflow_wait_ms(),
+            mimo_key_max_sessions_per_key: default_mimo_key_max_sessions_per_key(),
             codex_key_binding: false,
             codex_key_binding_ttl_secs: default_codex_key_binding_ttl_secs(),
             codex_key_max_inflight: default_codex_key_max_inflight(),
@@ -929,6 +935,10 @@ fn default_mimo_key_max_inflight() -> usize {
 
 fn default_mimo_key_overflow_wait_ms() -> u64 {
     200
+}
+
+fn default_mimo_key_max_sessions_per_key() -> u32 {
+    2
 }
 
 fn default_codex_key_binding_ttl_secs() -> u64 {
