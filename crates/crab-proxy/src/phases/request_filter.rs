@@ -47,16 +47,16 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-fn mimo_direct_passthrough(pipeline: RequestPipeline) -> bool {
+fn mimo_eligible_pipeline(pipeline: RequestPipeline) -> bool {
     GatewayProxy::is_mimo_pipeline(pipeline)
 }
 
 fn mimo_uses_direct_body_relay(ctx: &GatewayContext, pipeline: RequestPipeline) -> bool {
-    mimo_direct_passthrough(pipeline) && !crate::responses_wire::needs_responses_wire_translate(ctx)
+    mimo_eligible_pipeline(pipeline) && !crate::responses_wire::needs_responses_wire_translate(ctx)
 }
 
 fn request_passthrough_allowed_pipeline(pipeline: RequestPipeline) -> bool {
-    mimo_direct_passthrough(pipeline)
+    mimo_eligible_pipeline(pipeline)
 }
 
 fn can_arm_mimo_request_passthrough(stream: Option<bool>) -> bool {
@@ -1259,7 +1259,7 @@ async fn run_post_body_phases(
 #[cfg(test)]
 mod tests {
     use super::{
-        UpstreamKeyAcquireStrategy, can_arm_mimo_request_passthrough, mimo_direct_passthrough,
+        UpstreamKeyAcquireStrategy, can_arm_mimo_request_passthrough, mimo_eligible_pipeline,
         request_passthrough_allowed_pipeline, upstream_key_acquire_strategy,
         upgrade_pipeline_for_responses_client,
     };
@@ -1310,9 +1310,9 @@ mod tests {
 
     #[test]
     fn mimo_pipelines_use_direct_passthrough() {
-        assert!(mimo_direct_passthrough(RequestPipeline::MimoTokenPlanRelay));
-        assert!(!mimo_direct_passthrough(RequestPipeline::GenericRelay));
-        assert!(!mimo_direct_passthrough(RequestPipeline::CursorDeepSeekV4));
+        assert!(mimo_eligible_pipeline(RequestPipeline::MimoTokenPlanRelay));
+        assert!(!mimo_eligible_pipeline(RequestPipeline::GenericRelay));
+        assert!(!mimo_eligible_pipeline(RequestPipeline::CursorDeepSeekV4));
     }
 
     #[test]

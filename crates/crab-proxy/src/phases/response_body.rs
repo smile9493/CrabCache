@@ -259,9 +259,13 @@ pub(crate) fn run(
                     if let Some(guard) = ctx.upstream.key_guard.as_ref() {
                         let key_id = guard.key_id().to_string();
                         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
-                        let scope = if crate::codex_rate_limit::is_codex_upstream_pipeline(
+                        let codex = crate::codex_rate_limit::is_codex_upstream_pipeline(
                             ctx.request_pipeline,
-                        ) {
+                        );
+                        let mimo = ctx
+                            .request_pipeline
+                            .is_some_and(GatewayProxy::is_mimo_pipeline);
+                        let scope = if codex || mimo {
                             Some(crate::codex_rate_limit::codex_model_scope(
                                 ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
                             ))

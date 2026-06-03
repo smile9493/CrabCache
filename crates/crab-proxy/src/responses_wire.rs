@@ -24,7 +24,7 @@ pub enum ResponsesWireProfile {
     Codex,
     /// `CodexDeepSeek` / `CursorDeepSeekV4` / `DeepSeekLight` → api.deepseek.com.
     DeepSeek,
-    /// `CodexMimo` / `MimoTokenPlanRelay` / `MimoPaygRelay` → MiMo OpenAI-compatible API.
+    /// `CodexMimo` / `MimoTokenPlanRelay` → MiMo OpenAI-compatible API.
     Mimo,
 }
 
