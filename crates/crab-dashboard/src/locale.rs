@@ -1279,6 +1279,12 @@ impl Translations {
             Locale::EnUS => "Client IP",
         }
     }
+    pub fn live_heatmap_client_location(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "IP位置",
+            Locale::EnUS => "IP Location",
+        }
+    }
     pub fn live_heatmap_up_latency(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游延迟",
@@ -1289,12 +1295,6 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "下游延迟",
             Locale::EnUS => "Down Latency",
-        }
-    }
-    pub fn live_recent_requests(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "最近请求",
-            Locale::EnUS => "Recent requests",
         }
     }
     pub fn live_affinity_migrations(self) -> &'static str {

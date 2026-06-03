@@ -228,6 +228,13 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
             .client_ip_counts
             .entry(ip.to_string())
             .or_insert(0) += 1;
+        // Resolve IP geolocation if not already cached.
+        if !slot.client_ip_locations.contains_key(ip) {
+            let location = crate::geoip::resolve_ip_location(ip);
+            if !location.is_empty() {
+                slot.client_ip_locations.insert(ip.to_string(), location);
+            }
+        }
     }
 
     // OHLC tracking for input tokens.
@@ -311,11 +318,22 @@ struct BucketAcc {
     upstream_key_counts: HashMap<String, u32>,
     downstream_key_counts: HashMap<String, u32>,
     client_ip_counts: HashMap<String, u32>,
+    /// Map from client IP to its geolocation string.
+    client_ip_locations: HashMap<String, String>,
 }
 
 impl BucketAcc {
     fn into_bucket(self) -> LiveMetricsBucket {
         let n = f64::from(self.request_count.max(1));
+        let top_client_ip = top_value(&self.client_ip_counts);
+        let top_client_ip_location = if top_client_ip.is_empty() {
+            String::new()
+        } else {
+            self.client_ip_locations
+                .get(&top_client_ip)
+                .cloned()
+                .unwrap_or_default()
+        };
         LiveMetricsBucket {
             timestamp_ms: self.timestamp_ms,
             request_count: self.request_count,
@@ -351,7 +369,8 @@ impl BucketAcc {
             top_model: top_value(&self.model_counts),
             top_upstream_key: top_value(&self.upstream_key_counts),
             top_downstream_key: top_value(&self.downstream_key_counts),
-            top_client_ip: top_value(&self.client_ip_counts),
+            top_client_ip,
+            top_client_ip_location,
         }
     }
 }
@@ -403,6 +422,7 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         top_upstream_key: String::new(),
         top_downstream_key: String::new(),
         top_client_ip: String::new(),
+        top_client_ip_location: String::new(),
     }
 }
 

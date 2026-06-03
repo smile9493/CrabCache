@@ -2027,36 +2027,7 @@ fn LiveKeyActivityPanel(
                                 }
                             }).collect_view()}
                         </div>
-                        {if let Some(Ok(c)) = concurrency {
-                            let recent: Vec<_> = c.entries.iter().rev().take(5).collect();
-                            view! {
-                                <div class="border-t border-theme pt-2 space-y-1">
-                                    <div class="text-[11px] font-medium text-theme-muted uppercase tracking-wide">
-                                        {t.live_recent_requests()}
-                                    </div>
-                                    {if recent.is_empty() {
-                                        view! { <p class="text-[11px] text-theme-muted">{t.live_no_data()}</p> }.into_any()
-                                    } else {
-                                        recent.into_iter().map(|e| {
-                                            let cache = if e.cache_hit {
-                                                e.cache_tier.clone().unwrap_or_else(|| "hit".into())
-                                            } else {
-                                                "miss".into()
-                                            };
-                                            let backend = e.backend_name.clone().unwrap_or_else(|| "—".into());
-                                            view! {
-                                                <div class="text-[11px] font-mono flex justify-between gap-2 border-b border-theme/50 py-1 last:border-0">
-                                                    <span class="truncate text-theme">{e.model.clone()}</span>
-                                                    <span class="text-theme-muted shrink-0">
-                                                        {format!("{backend} · {cache} · {:.0}ms", e.latency_ms)}
-                                                    </span>
-                                                </div>
-                                            }
-                                        }).collect_view().into_any()
-                                    }}
-                                </div>
-                            }.into_any()
-                        } else if let Some(Err(e)) = concurrency {
+                        {if let Some(Err(e)) = concurrency {
                             view! { <p class="text-[11px] text-error">{e}</p> }.into_any()
                         } else {
                             ().into_any()

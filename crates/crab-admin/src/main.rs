@@ -2,7 +2,9 @@ mod composition;
 mod credential_persist;
 mod dataplane;
 mod domain_usage_sync;
+mod gateway_profile_push;
 mod gateway_state_sync;
+mod geoip;
 mod health_probe_sync;
 mod infra;
 mod key_usage_sync;
@@ -211,8 +213,23 @@ async fn main() -> anyhow::Result<()> {
             }
 
             if init_state.pg_store.read().is_some() {
+                if init_state.hydrate_profile_configs_from_pg().await {
+                    info!("Upstream profile configs hydrated from PostgreSQL");
+                }
                 if init_state.hydrate_profile_secrets_from_pg().await {
                     info!("Profile key pools hydrated from PostgreSQL");
+                }
+                if init_state.hydrate_client_keys_from_pg().await {
+                    info!("Client key metadata hydrated from PostgreSQL");
+                }
+                if init_state.hydrate_domain_policies_from_pg().await {
+                    info!("Domain policies hydrated from PostgreSQL");
+                    init_state.sync_domain_policies_to_gateway().await;
+                }
+                init_state.sync_keys_meta_from_gateway().await;
+                let restored = init_state.reconcile_client_keys_to_gateway().await;
+                if restored > 0 {
+                    info!(restored, "Client keys reconciled to gateway from Admin PG");
                 }
                 if crate::credential_persist::hydrate_credentials_from_pg(&init_state).await {
                     info!("OAuth credentials hydrated from PostgreSQL");
@@ -272,7 +289,8 @@ async fn main() -> anyhow::Result<()> {
             init_state.reconcile_upstream_from_gateway().await;
             init_state.sync_profile_secrets_from_gateway().await;
             crate::oauth_codex::prepare_auth_dir(&init_state).await;
-            init_state.push_all_profile_pools_to_gateway().await;
+            init_state.bootstrap_profile_configs_from_gateway_if_empty().await;
+            init_state.push_all_upstream_to_gateway().await;
         });
         if pg_configured {
             info!("Background PG init started (non-blocking + 30s retry)");
@@ -379,7 +397,10 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    state.sync_domain_policies_to_gateway().await;
+    // When PG will hydrate authoritative domain policies, defer pushing JSON mirror.
+    if state.pg_pending_config.read().is_none() {
+        state.sync_domain_policies_to_gateway().await;
+    }
 
     // Start key usage sync (reads trace, accumulates keys_meta monthly counters).
     crate::key_usage_sync::spawn(Arc::clone(&state));
@@ -387,6 +408,7 @@ async fn main() -> anyhow::Result<()> {
     // Start domain_usage sync (fetches from Gateway, persists to PG, restores on restart).
     crate::domain_usage_sync::spawn(Arc::clone(&state));
     crate::gateway_state_sync::spawn(Arc::clone(&state));
+    crate::gateway_profile_push::spawn(Arc::clone(&state));
     crate::health_probe_sync::spawn(Arc::clone(&state));
 
     {
@@ -437,53 +459,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Log retention enforcement task started");
     }
 
-    match state.gateway.list_keys().await {
-        Ok(specs) => {
-            for spec in specs {
-                use dashmap::mapref::entry::Entry;
-                match state.keys_meta.entry(spec.id.clone()) {
-                    Entry::Vacant(v) => {
-                        v.insert(crate::state::KeyMetadata {
-                            id: spec.id.clone(),
-                            name: spec.name.clone(),
-                            token: spec.key_full.clone().unwrap_or_default(),
-                            rpm_limit: spec.rpm_limit as u64,
-                            monthly_token_limit: 0,
-                            current_rpm: 0,
-                            tokens_this_month: 0,
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            expired_at: None,
-                            model_limits: Vec::new(),
-                            remain_quota: -1,
-                            unlimited_quota: true,
-                            max_concurrent: spec.max_concurrent,
-                            usage_month: String::new(),
-                        });
-                    }
-                    Entry::Occupied(mut o) => {
-                        let m = o.get_mut();
-                        m.name = spec.name.clone();
-                        m.max_concurrent = spec.max_concurrent;
-                        m.rpm_limit = spec.rpm_limit as u64;
-                        if let Some(full) = spec.key_full.filter(|t| !t.is_empty()) {
-                            m.token = full;
-                        }
-                    }
-                }
-            }
-            info!(
-                count = state.keys_meta.len(),
-                "Synced API keys from gateway"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Gateway management API unreachable; key operations may fail until gateway is up"
-            );
-        }
-    }
+    state.sync_keys_meta_from_gateway().await;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

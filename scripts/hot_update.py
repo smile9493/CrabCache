@@ -30,6 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STAGING_DIR = ROOT / ".cargo-target" / "release"
 DASHBOARD_DIST = ROOT / "crates" / "crab-dashboard" / "dist"
+GEODB_DIR = ROOT / "models"
 DashboardBuildInfo = dict[str, object]
 BUILD_DASHBOARD = ROOT / "scripts" / "build_dashboard.sh"
 THEME_RE = re.compile(r"theme-(?:midnight|ocean|sand|dark)")
@@ -190,6 +191,26 @@ def ssh_run(ssh_host: str, remote_cmd: str, *, check: bool = True) -> subprocess
     return run(["ssh", ssh_host, remote_cmd], check=check)
 
 
+def deploy_geodb(docker_host: str, admin_container: str) -> None:
+    """Copy GeoIP MMDB database into the admin container if present locally."""
+    mmdb_candidates = [
+        GEODB_DIR / "dbip-city-lite.mmdb",
+        GEODB_DIR / "GeoLite2-City.mmdb",
+    ]
+    mmdb_src: Path | None = None
+    for candidate in mmdb_candidates:
+        if candidate.is_file():
+            mmdb_src = candidate
+            break
+    if mmdb_src is None:
+        log("No GeoIP MMDB found in models/, skipping geodb deploy")
+        return
+    log(f"Deploying GeoIP database ({mmdb_src.name}, {mmdb_src.stat().st_size // (1024*1024)} MB)")
+    docker_exec(docker_host, admin_container, "mkdir -p /app/models")
+    docker_cp(docker_host, mmdb_src, f"{admin_container}:/app/models/{mmdb_src.name}")
+    log(f"GeoIP database deployed to {admin_container}:/app/models/{mmdb_src.name}")
+
+
 def wait_remote_gateway_ready(ssh_host: str, timeout_sec: int = 60) -> None:
     log(f"Waiting for gateway ready on {ssh_host} (loopback 9080)")
     deadline = time.monotonic() + timeout_sec
@@ -324,8 +345,8 @@ def hot_update_gateway(
         docker_host,
         gateway_container,
         "cp /app/crab-gateway /app/crab-gateway.bak && "
-        "mv /app/crab-gateway.new /app/crab-gateway && "
-        "chmod +x /app/crab-gateway",
+        "mv /app/crab-gateway.new /app/crab-gateway; "
+        "(chmod +x /app/crab-gateway || true)",
     )
     ctr_sha = docker_sha256(docker_host, gateway_container, "/app/crab-gateway")
     if ctr_sha != host_sha:
@@ -347,16 +368,17 @@ def hot_update_admin(
         docker_host,
         admin_container,
         "cp /app/crab-admin /app/crab-admin.bak && "
-        "mv /app/crab-admin.new /app/crab-admin && "
-        "chmod +x /app/crab-admin && "
+        "mv /app/crab-admin.new /app/crab-admin; "
+        "(chmod +x /app/crab-admin || true); "
         "rm -rf /app/crates/crab-dashboard/dist && "
         "mkdir -p /app/crates/crab-dashboard/dist && "
-        "tar -C /app/crates/crab-dashboard/dist -xf /tmp/dashboard-dist.tar && "
-        "rm -f /tmp/dashboard-dist.tar",
+        "tar -C /app/crates/crab-dashboard/dist -xf /tmp/dashboard-dist.tar; "
+        "(rm -f /tmp/dashboard-dist.tar || true)",
     )
     ctr_sha = docker_sha256(docker_host, admin_container, "/app/crab-admin")
     if ctr_sha != host_sha:
         raise RuntimeError(f"Admin checksum mismatch host={host_sha} container={ctr_sha}")
+    deploy_geodb(docker_host, admin_container)
     docker_restart(docker_host, admin_container)
 
 

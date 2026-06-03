@@ -85,6 +85,9 @@ pub struct LiveMetricsBucket {
     /// Most frequent client IP in this bucket.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub top_client_ip: String,
+    /// Geolocation of the most frequent client IP (city, country).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub top_client_ip_location: String,
 }
 
 fn is_zero_u32(v: &u32) -> bool {
