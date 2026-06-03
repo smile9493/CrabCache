@@ -149,6 +149,7 @@ impl Default for WebhookStore {
 }
 
 /// HTTP client for webhook delivery with HMAC signing and retry logic.
+#[derive(Clone)]
 pub struct WebhookDelivery {
     store: WebhookStore,
     client: reqwest::Client,
@@ -186,6 +187,40 @@ impl WebhookDelivery {
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     info!("Webhook delivery channel closed, stopping");
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Like [`start`](Self::start), but respects a Pingora shutdown signal.
+    ///
+    /// When the `shutdown` watch transitions to `true`, the loop exits
+    /// gracefully without waiting for the broadcast channel to close.
+    pub async fn start_with_shutdown(
+        &self,
+        mut rx: broadcast::Receiver<GatewayEvent>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        info!("Webhook delivery task started (shutdown-aware)");
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            self.handle_event(event).await;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("Webhook delivery lagged by {} events", n);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            info!("Webhook delivery channel closed, stopping");
+                            break;
+                        }
+                    }
+                }
+                _ = shutdown.changed() => {
+                    info!("Webhook delivery shutting down");
                     break;
                 }
             }

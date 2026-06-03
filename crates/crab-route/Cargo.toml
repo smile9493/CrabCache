@@ -20,5 +20,6 @@ hex.workspace = true
 http.workspace = true
 serde.workspace = true
 arc-swap.workspace = true
+crab-metrics.workspace = true
 tokio.workspace = true
 futures = "0.3"

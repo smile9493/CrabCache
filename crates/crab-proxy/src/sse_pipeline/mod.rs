@@ -44,10 +44,10 @@ pub struct FlushResult {
 /// Trait for pipeline-specific SSE processing.
 pub(crate) trait SsePipeline: Send {
     /// Process one upstream SSE chunk. Returns bytes to forward to the client.
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult;
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult;
 
     /// Flush the internal remainder buffer at end-of-stream.
-    fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult;
+    fn flush_remainder(&mut self, client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult;
 
     /// Whether reasoning was finalized during processing.
     fn reasoning_finalized(&self) -> bool;
@@ -71,7 +71,7 @@ pub(crate) enum StreamPipeline {
 }
 
 impl SsePipeline for StreamPipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         match self {
             Self::ReasoningRewrite(p) => p.process_chunk(data, client_sse_body),
             Self::SilentStrip(p) => p.process_chunk(data, client_sse_body),
@@ -81,7 +81,7 @@ impl SsePipeline for StreamPipeline {
         }
     }
 
-    fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         match self {
             Self::ReasoningRewrite(p) => p.flush_remainder(client_sse_body),
             Self::SilentStrip(p) => p.flush_remainder(client_sse_body),

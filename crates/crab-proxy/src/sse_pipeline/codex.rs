@@ -22,7 +22,7 @@ impl CodexTranslatePipeline {
         }
     }
 
-    fn process_lines(&mut self, data: &[u8], client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_lines(&mut self, data: &[u8], client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         self.sse_remainder.extend_from_slice(data);
         let mut client_out = Vec::new();
         let mut usage = None;
@@ -56,11 +56,11 @@ impl CodexTranslatePipeline {
 }
 
 impl SsePipeline for CodexTranslatePipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         self.process_lines(&data, client_sse_body)
     }
 
-    fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         if self.sse_remainder.is_empty() {
             return FlushResult {
                 client_bytes: None,

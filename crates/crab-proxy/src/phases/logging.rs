@@ -13,11 +13,11 @@ use crate::trace_logger::SanitizedLogEntry;
 use crate::trace_logger::composition_debug_tx;
 use crate::user_id_audit::apply_user_id_audit_to_entry;
 use crab_capture::affinity_kind_from_key;
+use crab_metrics::global_metrics;
 use crab_composition::{
     CompositionDebugEntry, CompositionHints, extract_composition, extract_system_text,
     extract_tools_json,
 };
-use crab_metrics::global_metrics;
 use crab_pipeline::RequestPipeline;
 use hex;
 use pingora_proxy::Session;
@@ -39,6 +39,7 @@ pub(crate) async fn run(
         finalize_affinity_backend_hint(&proxy.state.affinity_backend_hints, ctx);
     }
     observe_request_timeline(ctx);
+    global_metrics().dec_active_requests();
 
     if let Some(e) = error {
         warn!(

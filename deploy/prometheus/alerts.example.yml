@@ -91,3 +91,74 @@ groups:
           description: |
             One or more domains exceeded monthly token or cost budget configured via
             PUT /v1/domains/policies. Adjust budgets or key assignment.
+
+  - name: crabcache_data_plane
+    rules:
+      - alert: CrabCacheBackgroundTaskUnhealthy
+        expr: gateway_background_task_healthy == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache background task {{ $labels.task }} unhealthy"
+          description: "A background task has reported unhealthy status for >2 minutes."
+
+      - alert: CrabCacheActiveRequestsHigh
+        expr: |
+          gateway_active_requests > 800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache active requests near limit ({{ $value }})"
+          description: "Active requests approaching max_concurrent_requests. Check for upstream slowdowns."
+
+      - alert: CrabCacheStreamCaptureTruncated
+        expr: |
+          rate(gateway_stream_capture_truncated_total[15m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache stream capture truncation elevated"
+          description: "SSE stream buffers being truncated at a high rate. Check max_sse_cache_bytes."
+
+      - alert: CrabCacheRetryBufferTruncated
+        expr: |
+          rate(gateway_retry_buffer_truncated_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache retry buffer truncation detected"
+          description: "Pingora 64 KiB retry buffer truncation events detected. Request bodies may be incomplete."
+
+      - alert: CrabCachePgTraceFailures
+        expr: |
+          rate(gateway_trace_write_total{sink="pg",result="failure"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache PG trace write failures"
+          description: "PG trace batch inserts failing. Check PG connectivity and disk space."
+
+      - alert: CrabCachePgTraceDrops
+        expr: |
+          rate(gateway_trace_pg_dropped_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache PG trace entries dropped"
+          description: "PG trace queue is full or disconnected. Entries are being dropped."
+
+      - alert: CrabCacheHighGlobalRps
+        expr: |
+          gateway_global_rps > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrabCache global RPS elevated ({{ $value }})"
+          description: "Request rate is high. Monitor upstream latency and cache hit rate."

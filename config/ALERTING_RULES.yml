@@ -132,8 +132,64 @@ groups:
         annotations:
           summary: "Trace log write failures"
           description: >
-            Trace log entries failing to write. Check disk space and
-            JSONL path permissions.
+            Trace log entries failing to write (JSONL or PG sink).
+            Check disk space, JSONL path permissions, and PG connectivity.
+
+      - alert: PgTraceDrops
+        expr: |
+          rate(gateway_trace_pg_dropped_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PG trace entries dropped ({{ $labels.reason }})"
+          description: >
+            PG trace queue overflow or disconnect causing entry drops.
+            Check PG writer health and queue depth.
+
+      # ── 后台任务健康 ─────────────────────────────────────────────
+      - alert: BackgroundTaskUnhealthy
+        expr: gateway_background_task_healthy == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Background task {{ $labels.task }} unhealthy"
+          description: >
+            A background task has reported unhealthy for >2 minutes.
+            Check the task logs for errors.
+
+      # ── 数据面 ───────────────────────────────────────────────────
+      - alert: ActiveRequestsHigh
+        expr: gateway_active_requests > 800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Active requests high ({{ $value }})"
+          description: >
+            In-flight requests near max_concurrent_requests limit.
+            Monitor upstream latency and consider scaling.
+
+      - alert: StreamCaptureTruncated
+        expr: rate(gateway_stream_capture_truncated_total[15m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream capture truncation elevated"
+          description: >
+            SSE stream buffers exceeding max_sse_cache_bytes at a high rate.
+
+      - alert: RetryBufferTruncated
+        expr: rate(gateway_retry_buffer_truncated_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pingora retry buffer truncation detected"
+          description: >
+            Request body truncated during retry (64 KiB buffer exceeded).
 
       # ── 系统 ─────────────────────────────────────────────────────
       - alert: GatewayDown

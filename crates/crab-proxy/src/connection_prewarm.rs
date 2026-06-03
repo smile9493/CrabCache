@@ -73,6 +73,9 @@ impl BackgroundService for StartupPrewarmService {
             count = results.len(),
             "Startup connection pre-warm completed"
         );
+        crab_metrics::global_metrics().set_background_task_healthy("connection_prewarm", true);
+        crab_metrics::global_metrics().set_background_task_last_success_now("connection_prewarm");
+        crab_metrics::global_metrics().record_background_task_shutdown_drained("connection_prewarm");
     }
 }
 

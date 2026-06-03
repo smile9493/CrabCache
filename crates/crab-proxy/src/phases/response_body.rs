@@ -248,6 +248,11 @@ pub(crate) fn run(
                     select_sse_pipeline(ctx, proxy.state.reasoning_store.clone());
             }
 
+            // Configure StreamCapture memory limit on first streaming chunk.
+            if ctx.stream.client_sse_body.max_bytes() == 0 {
+                ctx.stream.client_sse_body.reconfigure(proxy.state.max_sse_cache_bytes);
+            }
+
             // Detect rate-limit errors embedded in SSE data chunks.
             // Only cooldown the key — do NOT acquire a new key because the upstream
             // connection is already established and a new key cannot be used mid-stream.
@@ -294,7 +299,25 @@ pub(crate) fn run(
 
             if let Some(pipeline) = ctx.stream.stream_pipeline.as_mut() {
                 ctx.accumulated_body.extend_from_slice(&data);
+                // Enforce streaming memory bounds on accumulated_body.
+                let max_sse = proxy.state.max_sse_cache_bytes;
+                if max_sse > 0 && ctx.accumulated_body.len() > max_sse {
+                    const STREAMING_TAIL_CAP: usize = 64 * 1024; // 64 KiB
+                    if ctx.accumulated_body.len() > STREAMING_TAIL_CAP {
+                        ctx.accumulated_body.drain(..(ctx.accumulated_body.len() - STREAMING_TAIL_CAP));
+                    }
+                }
                 let mut result = pipeline.process_chunk(data, &mut ctx.stream.client_sse_body);
+                if ctx.stream.client_sse_body.is_over_limit()
+                    && !ctx.stream.stream_capture_truncated_recorded
+                {
+                    let pl = ctx
+                        .request_pipeline
+                        .map(|p| p.as_str())
+                        .unwrap_or("unknown");
+                    global_metrics().record_stream_capture_truncated(pl);
+                    ctx.stream.stream_capture_truncated_recorded = true;
+                }
                 if let Some(u) = result.usage {
                     apply_usage_to_ctx(proxy, ctx, u);
                 }
@@ -733,7 +756,7 @@ pub(crate) fn run(
                         reasoning_cfg.display_reasoning,
                     )
                 {
-                    let sse_body = std::mem::take(&mut ctx.stream.client_sse_body);
+                    let sse_body = ctx.stream.client_sse_body.take();
                     let max_sse = proxy.state.max_sse_cache_bytes;
                     let stream_cache_usage = UsageInfo {
                         prompt_tokens: ctx.tokens.last_input,

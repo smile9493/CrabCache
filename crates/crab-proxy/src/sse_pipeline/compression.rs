@@ -88,7 +88,7 @@ impl CompressionPipeline {
 }
 
 impl SsePipeline for CompressionPipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         self.chunks_processed += 1;
 
         if self.config.deduplicate_content_deltas {
@@ -129,7 +129,7 @@ impl SsePipeline for CompressionPipeline {
         result
     }
 
-    fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         self.inner.flush_remainder(client_sse_body)
     }
 
@@ -153,13 +153,13 @@ mod tests {
 
     struct Passthrough;
     impl SsePipeline for Passthrough {
-        fn process_chunk(&mut self, data: Bytes, _client_sse_body: &mut Vec<u8>) -> ChunkResult {
+        fn process_chunk(&mut self, data: Bytes, _client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
             ChunkResult {
                 client_bytes: Some(data),
                 usage: None,
             }
         }
-        fn flush_remainder(&mut self, _client_sse_body: &mut Vec<u8>) -> FlushResult {
+        fn flush_remainder(&mut self, _client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
             FlushResult {
                 client_bytes: None,
                 usage: None,

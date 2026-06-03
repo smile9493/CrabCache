@@ -302,6 +302,7 @@ async fn recover_from_pg_snapshot(
 struct MetricsServer {
     addr: String,
     registry: Registry,
+    global_rate: Arc<pingora_limits::rate::Rate>,
 }
 
 #[async_trait]
@@ -311,13 +312,24 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
             Ok(l) => l,
             Err(e) => {
                 tracing::error!(addr = %self.addr, error = %e, "Failed to bind metrics addr");
+                global_metrics().set_background_task_healthy("metrics_server", false);
                 return;
             }
         };
+        global_metrics().set_background_task_healthy("metrics_server", true);
+        global_metrics().set_background_task_last_success_now("metrics_server");
+
+        let mut rate_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        rate_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             let accept = tokio::select! {
                 _ = shutdown.changed() => break,
+                _ = rate_tick.tick() => {
+                    let rps = self.global_rate.rate(&crab_gateway::GLOBAL_RATE_KEY);
+                    global_metrics().record_global_rps(rps);
+                    continue;
+                }
                 result = listener.accept() => result,
             };
             let Ok((mut stream, _)) = accept else {
@@ -353,6 +365,7 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
                 let _ = stream.flush().await;
             });
         }
+        global_metrics().record_background_task_shutdown_drained("metrics_server");
     }
 }
 
@@ -651,7 +664,7 @@ async fn pg_trace_writer_loop(
             Ok(e) => e,
             Err(_) => {
                 // Channel closed — final flush with retries.
-                drain_with_retry(&store, &mut buf, MAX_BACKOFF).await;
+                drain_with_retry(&mut store, &mut buf, MAX_BACKOFF).await;
                 global_metrics().record_background_task_shutdown_drained("pg_trace_writer");
                 info!("PG trace writer exiting (channel closed)");
                 return;
@@ -787,10 +800,29 @@ fn main() -> Result<()> {
         .with_writer(std::io::stdout)
         .with_filter(stdout_filter);
 
-    tracing_subscriber::registry()
+    // Optional: OpenTelemetry tracing layer (feature-gated + env-gated).
+    #[cfg(feature = "otel")]
+    let otel_layer = {
+        let otel_config = crab_gateway::otel::OtelConfig::from_env();
+        if otel_config.should_activate() {
+            info!(
+                endpoint = ?otel_config.endpoint,
+                service_name = %otel_config.service_name,
+                sample_ratio = otel_config.sample_ratio,
+                "OpenTelemetry tracing enabled"
+            );
+        }
+        crab_gateway::otel::build_otel_layer(&otel_config)
+    };
+
+    let registry = tracing_subscriber::registry()
         .with(file_layer)
-        .with(stdout_layer)
-        .init();
+        .with(stdout_layer);
+
+    #[cfg(feature = "otel")]
+    let registry = registry.with(otel_layer);
+
+    registry.init();
 
     let (config_path, clear_reasoning_cache) = parse_cli_args();
 
@@ -855,9 +887,14 @@ fn main() -> Result<()> {
     let registry = Registry::new();
     global_metrics().register(&registry)?;
 
+    let global_rate = Arc::new(pingora_limits::rate::Rate::new(
+        std::time::Duration::from_secs(1),
+    ));
+
     let metrics_service = MetricsServer {
         addr: config.metrics_addr.clone(),
         registry,
+        global_rate: global_rate.clone(),
     };
     server.add_service(background_service("metrics", metrics_service));
 
@@ -1408,10 +1445,6 @@ fn main() -> Result<()> {
             },
         )));
 
-    let global_rate = Arc::new(pingora_limits::rate::Rate::new(
-        std::time::Duration::from_secs(1),
-    ));
-
     let client_endpoint = Arc::new(RwLock::new({
         let snap = discover(&DiscoveryConfig::from_env());
         info!(
@@ -1540,9 +1573,6 @@ fn main() -> Result<()> {
         Arc::new(RequestCoalescer::with_config(max_inflight, timeout))
     };
     let prewarm_semaphore = Arc::new(tokio::sync::Semaphore::new(4));
-    let startup_global_rate = Arc::new(pingora_limits::rate::Rate::new(
-        std::time::Duration::from_secs(1),
-    ));
 
     // Register webhook delivery as a BackgroundService
     server.add_service(background_service(
@@ -1592,7 +1622,7 @@ fn main() -> Result<()> {
             .build(),
         backend_load: Arc::new(crab_proxy::backend_state::BackendLoadRegistry::default()),
         prewarm_semaphore,
-        global_rate: startup_global_rate,
+        global_rate: global_rate.clone(),
         client_endpoint: client_endpoint.clone(),
         session_store,
         key_binding_store,

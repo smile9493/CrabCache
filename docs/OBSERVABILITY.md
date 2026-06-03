@@ -500,6 +500,120 @@ sum by (domain) (rate(gateway_deepseek_input_tokens_total{cache_status="hit"}[5m
 / sum by (domain) (rate(gateway_deepseek_input_tokens_total[5m]))
 ```
 
+## 数据面可观测性指标
+
+以下指标补充了请求级可观测性，覆盖全局 RPS、在途请求、流式截断、PG trace 写入和后台任务健康。
+
+### 新增 Prometheus 指标
+
+| 指标 | 类型 | 标签 | 说明 |
+|------|------|------|------|
+| `gateway_active_requests` | Gauge | — | 全局在途请求数（semaphore 准入后 +1，logging 结束 -1） |
+| `gateway_admitted_requests_total` | Counter | `wire_api` | 准入请求计数（`chat_completions` / `responses`） |
+| `gateway_global_rps` | Gauge | — | 估算的全局 RPS（pingora-limits 1s 双缓冲） |
+| `gateway_stream_capture_truncated_total` | Counter | `pipeline` | StreamCapture 超限事件 |
+| `gateway_retry_buffer_truncated_total` | Counter | — | Pingora 64 KiB 重试缓冲区截断事件 |
+| `gateway_pingora_upstream_body_retry_emit_total` | Counter | `reason` | 请求体重发次数（`truncated` / `eos`） |
+| `gateway_trace_write_total` | Counter | `sink`, `result` | 追踪日志写入状态（`jsonl` / `pg`，`success` / `failure`） |
+| `gateway_trace_pg_dropped_total` | Counter | `reason` | PG trace 队列丢弃（`queue_full` / `shutdown`） |
+| `gateway_trace_pg_reconnect_total` | Counter | `result` | PG trace 重连次数 |
+| `gateway_trace_pg_queue_depth` | Gauge | — | PG trace 队列深度（近似） |
+| `gateway_trace_pg_flush_latency_seconds` | Histogram | — | PG trace 批量写入延迟 |
+| `gateway_background_task_healthy` | IntGauge | `task` | 后台任务健康状态（1=健康，0=异常） |
+| `gateway_background_task_last_success_timestamp_seconds` | IntGauge | `task` | 后台任务最后成功时间戳 |
+| `gateway_background_task_shutdown_drained_total` | Counter | `task` | 后台任务关停排水计数 |
+
+`task` 标签值：`metrics_server`、`lb_health_check`、`connection_prewarm`、`pg_trace_writer`、`management_api`、`codex_quota_refresh`。
+
+### PromQL 示例
+
+全局 RPS：
+
+```promql
+gateway_global_rps
+```
+
+在途请求：
+
+```promql
+gateway_active_requests
+```
+
+按 wire API 的准入请求速率：
+
+```promql
+sum(rate(gateway_admitted_requests_total[5m])) by (wire_api)
+```
+
+PG trace 写入失败率：
+
+```promql
+rate(gateway_trace_write_total{sink="pg",result="failure"}[5m])
+```
+
+后台任务健康：
+
+```promql
+gateway_background_task_healthy == 0
+```
+
+### Grafana 面板建议
+
+- **全局 RPS**：单值面板 + 趋势线
+- **在途请求**：面积图，叠加 `max_concurrent_requests` 阈值线
+- **PG trace 队列深度**：面积图，配合写入失败率告警
+- **后台任务健康**：状态网格（每行一个 task，红绿表示 0/1）
+
+## OpenTelemetry（可选）
+
+CrabCache 支持通过 `--features otel` 编译 OpenTelemetry tracing 集成。默认关闭，不增加二进制体积。
+
+### 编译启用
+
+```bash
+cargo build --release -p crab-gateway --features otel
+```
+
+### 运行时配置
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `CRABCACHE_OTEL_ENABLED` | `false` | 设为 `true` 启用 OTel tracing |
+| `CRABCACHE_OTEL_EXPORTER_OTLP_ENDPOINT` | （无） | OTLP gRPC 端点（如 `http://otel-collector:4317`） |
+| `CRABCACHE_OTEL_SERVICE_NAME` | `crabcache-gateway` | 服务名 |
+| `CRABCACHE_OTEL_SAMPLE_RATIO` | `0.05` | 采样率（0.0–1.0） |
+
+**约束**：`enabled=false` 或 endpoint 缺失时，OTel 不连接 collector，不阻塞启动。
+
+### OTel Collector 示例配置
+
+```yaml
+# otel-collector-config.yml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [jaeger]
+```
+
+### 敏感数据红线
+
+- Prometheus labels **禁止**包含 `request_id`、API Key、prompt 原文
+- OTel span attributes 仅包含低基数字段：`request_id`、`wire_api`、`pipeline`、`profile`、`backend`、`model`、`cache_tier`、`status_class`
+- `x-request-id` 用于日志/trace/OTel 关联，**不进入** Prometheus labels
+
 ## 客户端验证
 
 从网关响应头中获取信息：

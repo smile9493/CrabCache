@@ -25,7 +25,7 @@ impl PassthroughPipeline {
 }
 
 impl SsePipeline for PassthroughPipeline {
-    fn process_chunk(&mut self, data: Bytes, _client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, _client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         let usage = extract_usage_from_bytes(&data);
         ChunkResult {
             client_bytes: Some(data),
@@ -33,7 +33,7 @@ impl SsePipeline for PassthroughPipeline {
         }
     }
 
-    fn flush_remainder(&mut self, _client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, _client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         FlushResult {
             client_bytes: None,
             usage: None,

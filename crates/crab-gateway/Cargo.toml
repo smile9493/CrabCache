@@ -9,7 +9,15 @@ name = "crab_gateway"
 path = "src/lib.rs"
 
 [features]
+default = []
 fault-injection = ["crab-proxy/fault-injection"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry-semantic-conventions",
+]
 
 [[bin]]
 name = "crab-gateway"
@@ -71,3 +79,10 @@ tokio-postgres.workspace = true
 subtle.workspace = true
 indexmap.workspace = true
 chrono.workspace = true
+getrandom = "0.3"
+# Optional: OpenTelemetry tracing (feature = "otel")
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", optional = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", optional = true, features = ["grpc-tonic"] }
+tracing-opentelemetry = { version = "0.33", optional = true }
+opentelemetry-semantic-conventions = { version = "0.32", optional = true }

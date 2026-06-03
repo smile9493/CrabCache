@@ -4,6 +4,7 @@
 
 use crate::metrics_helpers::timeline_stamp;
 use crate::proxy::GatewayProxy;
+use crab_metrics::global_metrics;
 use crate::upstream_body::apply_prepared_upstream_body;
 use crate::upstream_body_compress::maybe_gzip_request_body;
 use crate::upstream_headers::{
@@ -274,6 +275,8 @@ pub(crate) async fn run_request_body_filter(
             apply_prepared_upstream_body(new_body, body, end_of_stream, force_emit);
         if emit_now && body.as_ref().is_some_and(|b| !b.is_empty()) {
             ctx.upstream.prepared_upstream_body_emitted = true;
+            let reason = if force_emit { "truncated" } else { "eos" };
+            global_metrics().record_upstream_body_retry_emit(reason);
         }
     } else {
         debug!(

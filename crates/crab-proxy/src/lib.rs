@@ -24,6 +24,7 @@ mod responses_wire;
 mod runtime;
 mod sse;
 mod stored_key;
+pub mod stream_capture;
 mod tenant;
 mod trace_logger;
 pub mod upstream_body;
@@ -65,8 +66,9 @@ pub use cache_response::{
 pub use client_key_limiter::{ClientKeyGuard, ClientKeyLimitError, ClientKeyLimiter};
 pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
-    BackendRouteStrategy, ConnectionConfig, FeaturesConfig, GatewayContext, GatewayState,
-    ModelPricing, PreflightConfig, PricingConfig, ReasoningConfig, ScoreWeightsConfig,
+    BackendRouteStrategy, ClientWireApi, ConnectionConfig, FeaturesConfig, GatewayContext,
+    GatewayState, ModelPricing, PreflightConfig, PricingConfig, ReasoningConfig,
+    ScoreWeightsConfig,
 };
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
@@ -84,6 +86,7 @@ pub use profile_build::{
 pub use proxy::{
     GatewayProxy, should_defer_upstream_request_body, should_skip_upstream_trailing_empty_eos,
 };
+pub use responses_wire::build_graceful_responses_stream_tail;
 pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
 pub use responses_chain_store::ResponsesChainStore;
 pub use runtime::{DomainPolicy, DomainUsage, RuntimeConfig};

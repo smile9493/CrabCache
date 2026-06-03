@@ -89,7 +89,7 @@
 | 错误归因 | ✅ | PG `query_top_errors_since` + Prometheus 拒绝来源聚合 |
 | RequestDetail 新字段 | ✅ | `status_code`、`error_code`、`cache_decision`、`upstream_result`、`phase_durations_ms` |
 | Raw capture 异步化 / logging &lt;1ms | ⬜ | 仍为 writer 线程 + 同步通道 |
-| OpenTelemetry | ⬜ | 仅 `x-request-id` |
+| OpenTelemetry | ✅ | `--features otel` 可选编译；`CRABCACHE_OTEL_ENABLED` 运行时门禁；OTLP gRPC 导出 |
 
 ### 六、长期 / P3
 

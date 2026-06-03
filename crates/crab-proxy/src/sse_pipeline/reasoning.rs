@@ -46,7 +46,7 @@ impl ReasoningRewritePipeline {
 }
 
 impl SsePipeline for ReasoningRewritePipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         let (rewritten, finalized) = rewrite_upstream_sse_bytes(
             &data,
             &mut self.sse_remainder,
@@ -76,7 +76,7 @@ impl SsePipeline for ReasoningRewritePipeline {
         }
     }
 
-    fn flush_remainder(&mut self, client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         let (rewritten, finalized) = rewrite_upstream_sse_bytes(
             b"",
             &mut self.sse_remainder,

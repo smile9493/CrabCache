@@ -962,6 +962,7 @@ async fn run_post_body_phases(
             model = %ctx.model,
             "Upstream retry buffer truncated — request body may be incomplete for retry"
         );
+        global_metrics().record_retry_buffer_truncated();
     }
 
     // ─── Phase 4.5: Quota Preflight ──────────────────────────────────────
@@ -1992,6 +1993,14 @@ pub(crate) async fn run(
             return Ok(true);
         }
     }
+
+    proxy.state.global_rate.observe(&crab_metrics::GLOBAL_RATE_KEY, 1);
+    let wire_api_label = match ctx.client_wire_api {
+        crate::context::ClientWireApi::Responses => "responses",
+        _ => "chat_completions",
+    };
+    global_metrics().record_admitted_request(wire_api_label);
+    global_metrics().inc_active_requests();
 
     ctx.authorization = Some(auth);
     if !provided_key.is_empty() {

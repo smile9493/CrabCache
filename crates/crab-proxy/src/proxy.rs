@@ -1,5 +1,3 @@
-const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
-
 use crate::cache_helpers::{
     build_semantic_query_text, cache_entry_matches_stream_mode, tiered_exact_lookup,
 };

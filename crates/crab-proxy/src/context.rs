@@ -427,7 +427,9 @@ pub struct StreamState {
     /// Incomplete SSE line bytes spanning upstream body chunks.
     pub sse_remainder: Vec<u8>,
     /// Client-shaped SSE bytes accumulated for L0/L1 `sse_body` (not upstream raw).
-    pub client_sse_body: Vec<u8>,
+    pub client_sse_body: crate::stream_capture::StreamCapture,
+    /// One-shot flag to avoid duplicate `stream_capture_truncated_total` increments.
+    pub stream_capture_truncated_recorded: bool,
     pub pending_recovery_notice: Option<String>,
     /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
     pub reasoning_bypass_warned: bool,

@@ -444,6 +444,7 @@ impl BackgroundService for LbHealthService {
             lb.health_check_frequency.unwrap_or(Duration::from_secs(30))
         };
 
+        crab_metrics::global_metrics().set_background_task_healthy("lb_health_check", true);
         loop {
             // Load the latest LB from the ArcSwap (picks up rebuild() swaps).
             let lb = self.lb_swap.load_full();
@@ -453,10 +454,13 @@ impl BackgroundService for LbHealthService {
                 .run_health_check(lb.parallel_health_check)
                 .await;
 
+            crab_metrics::global_metrics().set_background_task_last_success_now("lb_health_check");
+
             tokio::select! {
                 () = tokio::time::sleep(freq) => {}
                 _ = shutdown.changed() => {
                     debug!("LbHealthService shutting down");
+                    crab_metrics::global_metrics().record_background_task_shutdown_drained("lb_health_check");
                     return;
                 }
             }

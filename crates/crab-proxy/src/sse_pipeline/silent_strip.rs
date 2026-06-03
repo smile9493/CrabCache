@@ -19,7 +19,7 @@ impl SilentStripPipeline {
 }
 
 impl SsePipeline for SilentStripPipeline {
-    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut Vec<u8>) -> ChunkResult {
+    fn process_chunk(&mut self, data: Bytes, client_sse_body: &mut crate::stream_capture::StreamCapture) -> ChunkResult {
         if !self.warned {
             self.warned = true;
             tracing::warn!(
@@ -35,7 +35,7 @@ impl SsePipeline for SilentStripPipeline {
         }
     }
 
-    fn flush_remainder(&mut self, _client_sse_body: &mut Vec<u8>) -> FlushResult {
+    fn flush_remainder(&mut self, _client_sse_body: &mut crate::stream_capture::StreamCapture) -> FlushResult {
         FlushResult {
             client_bytes: None,
             usage: None,

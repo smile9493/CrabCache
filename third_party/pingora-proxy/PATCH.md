@@ -61,3 +61,31 @@ server.add_service(Service::new("crab-gateway", proxy));
 Runtime pre-warm then calls `connector.get_http_session(&peer)` followed by
 `connector.release_http_session(session, &peer, idle_timeout)` to populate the
 pool without sending any HTTP traffic.
+
+---
+
+## Regression test index
+
+Each patch maps to test functions in `crates/crab-gateway/tests/pingora_lifecycle.rs`
+(and existing test modules). Run with `cargo test -p crab-gateway --test pingora_lifecycle`.
+
+| Patch | Test name | What it verifies |
+|-------|-----------|------------------|
+| 1 | `patch1_retry_buffer_truncated_emits_prepared_body` | Prepared body emitted immediately when `retry_buffer_truncated=true` |
+| 1 | `patch1_large_body_over_64kib_triggers_truncated_path` | Large body context flag triggers emission path |
+| 1 | `patch1_normal_body_not_truncated_waits_for_eos` | Normal (non-truncated) body held until EOS |
+| 1b | `patch1b_defer_body_active_when_passthrough_armed` | `defer_upstream_request_body` returns true only while passthrough is active and not finalized |
+| 1b | `patch1b_skip_trailing_empty_eos_while_passthrough_buffering` | `skip_upstream_trailing_empty_eos` returns true during passthrough buffering or after prepared body emitted |
+| 1b | `patch1b_defer_body_end_stream_follows_passthrough_state` | End-stream flag follows passthrough finalization state |
+| 1c | `patch1c_finalize_aborted_returns_none_when_no_response_written` | `finalize_aborted_upstream_stream` returns None when no response written |
+| 1c | `patch1c_responses_wire_force_downstream_eos` | `responses_wire_force_downstream_eos` flag can be set/consumed |
+| 1d | `patch1d_force_eos_does_not_cause_panic` | Force downstream EOS flag is a valid operation |
+| 2 | `patch2_connector_arc_compiles` | Arc-wrapped Connector API compiles (compilation = contract) |
+| StreamCapture | `stream_capture_under_limit_appends_fully` | Under-limit data appended fully |
+| StreamCapture | `stream_capture_over_limit_retains_tail` | Over-limit data retains tail window |
+| StreamCapture | `stream_capture_sliding_tail_window` | Tail window slides as more data arrives |
+| StreamCapture | `stream_capture_take_returns_vec_and_resets` | `take()` returns Vec and resets state |
+| StreamCapture | `stream_capture_reconfigure_applies_limit` | `reconfigure()` applies new limit retroactively |
+| StreamCapture | `stream_capture_zero_max_means_unbounded` | `max_bytes=0` means unbounded (backward compat) |
+| StreamCapture | `stream_capture_deref_allows_slice_operations` | `Deref<Target=[u8]>` enables slice operations |
+| StreamCapture | `streaming_accumulated_body_enforcement_truncates_to_tail` | `accumulated_body` enforcement in streaming path |

@@ -25,8 +25,6 @@ pub(crate) enum CachePhaseOutcome {
     Continue,
 }
 
-const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
-
 /// Run Phase 5: generate cache key, probe L0/L1/L2, acquire coalesce guard.
 pub(crate) async fn run(
     proxy: &GatewayProxy,
@@ -37,8 +35,6 @@ pub(crate) async fn run(
         return Ok(CachePhaseOutcome::Continue);
     }
     let fingerprint = proxy.state.runtime.fingerprint.read().clone();
-    // Observe global RPS via pingora-limits
-    proxy.state.global_rate.observe(&GLOBAL_RATE_KEY, 1);
 
     let cache_namespace = effective_cache_namespace(
         proxy.state.cache_key_namespace.as_deref(),

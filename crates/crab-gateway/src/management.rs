@@ -777,7 +777,7 @@ async fn status(
         stream_cache_enabled: state.runtime.stream_cache_enabled(),
         upstream_key_count,
         upstream_keys_available,
-        global_rps_estimate: 0.0,
+        global_rps_estimate: state.global_rate.rate(&crate::GLOBAL_RATE_KEY),
         upstream_base_url,
         upstream_model,
     }))
@@ -2561,6 +2561,23 @@ pub async fn serve(listen_addr: &str, state: ManagementState) -> anyhow::Result<
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
     tracing::info!(addr = %listen_addr, "Management API listening");
     axum::serve(listener, router).await?;
+    Ok(())
+}
+
+/// Like [`serve`], but gracefully stops when the Pingora shutdown signal fires.
+pub async fn serve_with_shutdown(
+    listen_addr: &str,
+    state: ManagementState,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let router = router(state);
+    let listener = tokio::net::TcpListener::bind(listen_addr).await?;
+    tracing::info!(addr = %listen_addr, "Management API listening");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.changed().await;
+        })
+        .await?;
     Ok(())
 }
 

@@ -39,6 +39,9 @@ fn metric_domain(domain: Option<&str>) -> &str {
     domain.unwrap_or("unclassified")
 }
 
+/// Shared key for `pingora_limits::rate::Rate` global RPS tracking.
+pub const GLOBAL_RATE_KEY: &str = "__global_gateway_rps__";
+
 impl LatencyKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -152,7 +155,17 @@ pub struct GatewayMetrics {
     /// SSE chunk rewrite counts by pipeline and action.
     pub sse_chunk_rewrite: IntCounterVec,
 
-    // ── PG trace writer resilience ─────────────────────────────────
+    // ── Data-plane observability ──────────────────────────────────────
+    /// Currently in-flight requests (semaphore admits).
+    pub active_requests: Gauge,
+    /// Requests that passed auth + semaphore admission.
+    pub admitted_requests: IntCounterVec,
+    /// StreamCapture over-limit events by pipeline.
+    pub stream_capture_truncated_total: IntCounterVec,
+    /// Pingora retry buffer truncation events.
+    pub retry_buffer_truncated_total: IntCounter,
+    /// Request body filter forced emit (truncated retry / eos).
+    pub pingora_upstream_body_retry_emit_total: IntCounterVec,
     /// PG trace queue drops (queue_full / drain_overflow / shutdown).
     pub trace_pg_dropped_total: IntCounterVec,
     /// PG trace reconnect outcomes.
@@ -748,11 +761,45 @@ impl GatewayMetrics {
             &["pipeline", "action"],
         )?;
 
-        // ── PG trace writer resilience ─────────────────────────────────
+        // ── Data-plane observability ──────────────────────────────────────
+        let active_requests = Gauge::with_opts(Opts::new(
+            "gateway_active_requests",
+            "Number of in-flight requests after auth + semaphore admission",
+        ))?;
+
+        let admitted_requests = IntCounterVec::new(
+            Opts::new(
+                "gateway_admitted_requests_total",
+                "Requests admitted through auth + semaphore, by wire API",
+            ),
+            &["wire_api"],
+        )?;
+
+        let stream_capture_truncated_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_stream_capture_truncated_total",
+                "StreamCapture over-limit events by pipeline",
+            ),
+            &["pipeline"],
+        )?;
+
+        let retry_buffer_truncated_total = IntCounter::with_opts(Opts::new(
+            "gateway_retry_buffer_truncated_total",
+            "Pingora 64 KiB retry buffer truncation events",
+        ))?;
+
+        let pingora_upstream_body_retry_emit_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_pingora_upstream_body_retry_emit_total",
+                "Request body filter forced emit count by reason",
+            ),
+            &["reason"],
+        )?;
+
         let trace_pg_dropped_total = IntCounterVec::new(
             Opts::new(
                 "gateway_trace_pg_dropped_total",
-                "PG trace queue drops by reason",
+                "PG trace entries dropped before writing",
             ),
             &["reason"],
         )?;
@@ -760,35 +807,36 @@ impl GatewayMetrics {
         let trace_pg_reconnect_total = IntCounterVec::new(
             Opts::new(
                 "gateway_trace_pg_reconnect_total",
-                "PG trace reconnect outcomes",
+                "PG trace writer reconnection attempts",
             ),
             &["result"],
         )?;
 
         let trace_pg_queue_depth = Gauge::with_opts(Opts::new(
             "gateway_trace_pg_queue_depth",
-            "Approximate PG trace writer queue depth",
+            "Approximate PG trace writer queue depth (pending batch length)",
         ))?;
 
         let trace_pg_flush_latency = HistogramVec::new(
             HistogramOpts::new(
                 "gateway_trace_pg_flush_latency_seconds",
-                "PG trace insert_batch duration",
-            ),
+                "PG trace insert_batch latency in seconds",
+            )
+            .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]),
             &[],
         )?;
 
         let background_task_healthy = IntGaugeVec::new(
             Opts::new(
                 "gateway_background_task_healthy",
-                "Background task health (1=healthy, 0=unhealthy)",
+                "Background task health (1 = healthy, 0 = unhealthy)",
             ),
             &["task"],
         )?;
 
         let background_task_last_success_timestamp = IntGaugeVec::new(
             Opts::new(
-                "gateway_background_task_last_success_timestamp",
+                "gateway_background_task_last_success_timestamp_seconds",
                 "Background task last success Unix timestamp",
             ),
             &["task"],
@@ -797,7 +845,7 @@ impl GatewayMetrics {
         let background_task_shutdown_drained_total = IntCounterVec::new(
             Opts::new(
                 "gateway_background_task_shutdown_drained_total",
-                "Background task shutdown drain counters",
+                "Background task shutdown drain completions",
             ),
             &["task"],
         )?;
@@ -882,6 +930,11 @@ impl GatewayMetrics {
             content_density_bytes,
             content_density_ratio,
             sse_chunk_rewrite,
+            active_requests,
+            admitted_requests,
+            stream_capture_truncated_total,
+            retry_buffer_truncated_total,
+            pingora_upstream_body_retry_emit_total,
             trace_pg_dropped_total,
             trace_pg_reconnect_total,
             trace_pg_queue_depth,
@@ -972,6 +1025,12 @@ impl GatewayMetrics {
         registry.register(Box::new(self.content_density_bytes.clone()))?;
         registry.register(Box::new(self.content_density_ratio.clone()))?;
         registry.register(Box::new(self.sse_chunk_rewrite.clone()))?;
+        // ── Data-plane observability ──────────────────────────────────────
+        registry.register(Box::new(self.active_requests.clone()))?;
+        registry.register(Box::new(self.admitted_requests.clone()))?;
+        registry.register(Box::new(self.stream_capture_truncated_total.clone()))?;
+        registry.register(Box::new(self.retry_buffer_truncated_total.clone()))?;
+        registry.register(Box::new(self.pingora_upstream_body_retry_emit_total.clone()))?;
         registry.register(Box::new(self.trace_pg_dropped_total.clone()))?;
         registry.register(Box::new(self.trace_pg_reconnect_total.clone()))?;
         registry.register(Box::new(self.trace_pg_queue_depth.clone()))?;
@@ -1612,7 +1671,35 @@ impl GatewayMetrics {
             .inc();
     }
 
-    // ── PG trace writer resilience helpers ──────────────────────────
+    // ── Data-plane observability ──────────────────────────────────────
+
+    pub fn inc_active_requests(&self) {
+        self.active_requests.inc();
+    }
+
+    pub fn dec_active_requests(&self) {
+        self.active_requests.dec();
+    }
+
+    pub fn record_admitted_request(&self, wire_api: &str) {
+        self.admitted_requests.with_label_values(&[wire_api]).inc();
+    }
+
+    pub fn record_stream_capture_truncated(&self, pipeline: &str) {
+        self.stream_capture_truncated_total
+            .with_label_values(&[pipeline])
+            .inc();
+    }
+
+    pub fn record_retry_buffer_truncated(&self) {
+        self.retry_buffer_truncated_total.inc();
+    }
+
+    pub fn record_upstream_body_retry_emit(&self, reason: &str) {
+        self.pingora_upstream_body_retry_emit_total
+            .with_label_values(&[reason])
+            .inc();
+    }
 
     pub fn record_trace_pg_dropped(&self, reason: &str) {
         self.trace_pg_dropped_total
@@ -1630,7 +1717,7 @@ impl GatewayMetrics {
         self.trace_pg_queue_depth.set(depth);
     }
 
-    pub fn record_trace_pg_flush_latency(&self, duration: std::time::Duration) {
+    pub fn record_trace_pg_flush_latency(&self, duration: Duration) {
         self.trace_pg_flush_latency
             .with_label_values(&[])
             .observe(duration.as_secs_f64());
@@ -1643,13 +1730,13 @@ impl GatewayMetrics {
     }
 
     pub fn set_background_task_last_success_now(&self, task: &str) {
-        let now = std::time::SystemTime::now()
+        let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
         self.background_task_last_success_timestamp
             .with_label_values(&[task])
-            .set(now);
+            .set(ts);
     }
 
     pub fn record_background_task_shutdown_drained(&self, task: &str) {
@@ -1752,5 +1839,61 @@ mod tests {
             "v4-pro",
             Some(CacheTier::L0Moka),
         );
+    }
+
+    #[test]
+    fn test_dataplane_metrics_registration() {
+        let metrics = GatewayMetrics::new().expect("Failed to create metrics");
+        let registry = Registry::new();
+        metrics.register(&registry).expect("Failed to register");
+
+        // Trigger each metric so Prometheus has samples to emit.
+        metrics.inc_active_requests();
+        metrics.record_admitted_request("chat_completions");
+        metrics.record_stream_capture_truncated("reasoning_rewrite");
+        metrics.record_retry_buffer_truncated();
+        metrics.record_upstream_body_retry_emit("truncated");
+        metrics.record_trace_pg_dropped("queue_full");
+        metrics.record_trace_pg_reconnect("success");
+        metrics.set_trace_pg_queue_depth(0.0);
+        metrics.record_trace_pg_flush_latency(Duration::from_millis(1));
+        metrics.set_background_task_healthy("metrics_server", true);
+        metrics.set_background_task_last_success_now("metrics_server");
+        metrics.record_background_task_shutdown_drained("pg_trace_writer");
+
+        let text = prometheus::TextEncoder::new()
+            .encode_to_string(&registry.gather())
+            .unwrap();
+        assert!(text.contains("gateway_active_requests"));
+        assert!(text.contains("gateway_admitted_requests_total"));
+        assert!(text.contains("gateway_stream_capture_truncated_total"));
+        assert!(text.contains("gateway_retry_buffer_truncated_total"));
+        assert!(text.contains("gateway_pingora_upstream_body_retry_emit_total"));
+        assert!(text.contains("gateway_trace_pg_dropped_total"));
+        assert!(text.contains("gateway_trace_pg_reconnect_total"));
+        assert!(text.contains("gateway_trace_pg_queue_depth"));
+        assert!(text.contains("gateway_trace_pg_flush_latency"));
+        assert!(text.contains("gateway_background_task_healthy"));
+        assert!(text.contains("gateway_background_task_last_success_timestamp"));
+        assert!(text.contains("gateway_background_task_shutdown_drained_total"));
+    }
+
+    #[test]
+    fn test_dataplane_record_methods() {
+        let metrics = global_metrics();
+        metrics.inc_active_requests();
+        metrics.dec_active_requests();
+        metrics.record_admitted_request("chat_completions");
+        metrics.record_admitted_request("responses");
+        metrics.record_stream_capture_truncated("reasoning_rewrite");
+        metrics.record_retry_buffer_truncated();
+        metrics.record_upstream_body_retry_emit("truncated");
+        metrics.record_trace_pg_dropped("queue_full");
+        metrics.record_trace_pg_reconnect("success");
+        metrics.set_trace_pg_queue_depth(42.0);
+        metrics.record_trace_pg_flush_latency(Duration::from_millis(15));
+        metrics.set_background_task_healthy("metrics_server", true);
+        metrics.set_background_task_last_success_now("metrics_server");
+        metrics.record_background_task_shutdown_drained("pg_trace_writer");
     }
 }
