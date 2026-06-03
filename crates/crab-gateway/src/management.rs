@@ -1583,6 +1583,7 @@ fn connection_runtime_view(conn: &crab_proxy::ConnectionConfig) -> ConnectionRun
         tcp_keepalive_count: conn.tcp_keepalive_count.unwrap_or(3),
         idle_timeout_secs: conn.idle_timeout_secs.unwrap_or(90),
         h2_ping_interval_secs: conn.h2_ping_interval_secs.unwrap_or(30),
+        h2_ping_timeout_secs: conn.h2_ping_timeout_secs.unwrap_or(0),
         upstream_force_http1: conn.upstream_force_http1,
         upstream_disable_keepalive: conn.upstream_disable_keepalive,
         upstream_tls_curves: conn.upstream_tls_curves.clone(),
@@ -1613,6 +1614,7 @@ async fn put_connection_runtime(
     conn.tcp_keepalive_count = Some(req.tcp_keepalive_count);
     conn.idle_timeout_secs = Some(req.idle_timeout_secs);
     conn.h2_ping_interval_secs = Some(req.h2_ping_interval_secs);
+    conn.h2_ping_timeout_secs = Some(req.h2_ping_timeout_secs);
     conn.upstream_force_http1 = req.upstream_force_http1;
     conn.upstream_disable_keepalive = req.upstream_disable_keepalive;
     conn.upstream_tls_curves = req.upstream_tls_curves.clone();

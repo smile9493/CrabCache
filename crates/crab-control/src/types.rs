@@ -539,6 +539,9 @@ pub struct ConnectionRuntimeView {
     pub tcp_keepalive_count: usize,
     pub idle_timeout_secs: u64,
     pub h2_ping_interval_secs: u64,
+    /// Timeout in seconds waiting for H2 PONG after sending a PING frame (0 = pingora default 5s).
+    #[serde(default)]
+    pub h2_ping_timeout_secs: u64,
     /// When true, force upstream HTTP/1.1 ALPN.
     #[serde(default)]
     pub upstream_force_http1: bool,

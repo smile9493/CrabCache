@@ -1,5 +1,6 @@
 [patch.crates-io]
 pingora-proxy = { path = "third_party/pingora-proxy" }
+pingora-core  = { path = "third_party/pingora-core" }
 
 [workspace]
 resolver = "2"

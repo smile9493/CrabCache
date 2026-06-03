@@ -77,6 +77,10 @@ pub struct ConnectionConfig {
     pub tcp_keepalive_count: Option<usize>,
     pub idle_timeout_secs: Option<u64>,
     pub h2_ping_interval_secs: Option<u64>,
+    /// Timeout in seconds waiting for H2 PONG after sending a PING frame.
+    /// If not set, defaults to pingora's built-in 5s constant.
+    #[serde(default)]
+    pub h2_ping_timeout_secs: Option<u64>,
     /// Max seconds waiting for upstream response bytes (0 = no limit).
     #[serde(default = "default_upstream_request_timeout_secs")]
     pub upstream_request_timeout_secs: Option<u64>,
@@ -131,6 +135,7 @@ impl Default for ConnectionConfig {
             tcp_keepalive_count: Some(3),
             idle_timeout_secs: Some(120),
             h2_ping_interval_secs: Some(30),
+            h2_ping_timeout_secs: None,
             upstream_request_timeout_secs: default_upstream_request_timeout_secs(),
             upstream_force_http1: false,
             upstream_write_timeout_secs: default_upstream_write_timeout_secs(),

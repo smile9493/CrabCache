@@ -6,7 +6,7 @@
 
 use crab_reasoning::CODEX_FILE_TOOL_NAMES;
 use serde_json::Value;
-use tracing::warn;
+use tracing::{info, warn};
 
 const NATIVE_FILE_TOOLS: &[&str] = &["apply_patch", "read_file", "list_dir"];
 
@@ -112,7 +112,7 @@ pub fn log_mimo_codex_tool_registry_warnings(
     mimo: Option<&MimoToolPipelineAudit>,
 ) {
     if registry.missing_apply_patch {
-        warn!(
+        info!(
             request_id = %request_id,
             model = %model,
             registered_tools = ?registry.registered_tool_names,
@@ -121,7 +121,7 @@ pub fn log_mimo_codex_tool_registry_warnings(
         );
     }
     if registry.tool_search_count > 0 {
-        warn!(
+        info!(
             request_id = %request_id,
             model = %model,
             tool_search_count = registry.tool_search_count,

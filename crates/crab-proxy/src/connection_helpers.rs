@@ -18,6 +18,11 @@ pub fn apply_connection_options(config: &ConnectionConfig, options: &mut PeerOpt
         {
             options.h2_ping_interval = Some(Duration::from_secs(ping_secs));
         }
+        if let Some(timeout_secs) = config.h2_ping_timeout_secs
+            && timeout_secs > 0
+        {
+            options.h2_ping_timeout = Some(Duration::from_secs(timeout_secs));
+        }
     }
 
     if !config.upstream_tls_curves.is_empty() {
