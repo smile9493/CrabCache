@@ -71,7 +71,7 @@ fn MiniTierDonut(metrics: MetricsSnapshot) -> impl IntoView {
             color: "var(--cc-tier-l2)",
         },
         DonutSegment {
-            label: t.overview_miss_label().to_string(),
+            label: t.overview_miss_label(d.miss).to_string(),
             value: d.miss as f64,
             color: "var(--cc-tier-miss)",
         },
@@ -241,9 +241,122 @@ pub fn OverviewCardGrid(
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
     });
 
+    // Suggestions for the always-visible TimeSeriesChart (no dependency on core memos).
+    let ts_suggestions: Vec<OverviewSuggestion> =
+        suggestions_memo.get().unwrap_or_default();
+
     view! {
         <div class="space-y-4">
-            // Reactive block: reads memos, rebuilds ONLY view fragments — not the parent component.
+            // --- Always-visible: segment navigation ---
+            <nav class="overview-segment-nav">
+                <a class="overview-segment-link segment-active"
+                    href="#ov-hero"
+                    on:click=move |ev| {
+                        ev.prevent_default();
+                        if let Some(el) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.get_element_by_id("ov-hero"))
+                        {
+                            el.scroll_into_view_with_bool(true);
+                        }
+                    }
+                >{t.overview_section_hero()}</a>
+                <a class="overview-segment-link"
+                    href="#ov-ts"
+                    on:click=move |ev| {
+                        ev.prevent_default();
+                        if let Some(el) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.get_element_by_id("ov-ts"))
+                        {
+                            el.scroll_into_view_with_bool(true);
+                        }
+                    }
+                >{t.overview_section_timeseries()}</a>
+                <a class="overview-segment-link"
+                    href="#ov-detail"
+                    on:click=move |ev| {
+                        ev.prevent_default();
+                        if let Some(el) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.get_element_by_id("ov-detail"))
+                        {
+                            el.scroll_into_view_with_bool(true);
+                        }
+                    }
+                >{t.overview_section_detail()}</a>
+                <a class="overview-segment-link"
+                    href="#ov-diag"
+                    on:click=move |ev| {
+                        ev.prevent_default();
+                        if let Some(el) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.get_element_by_id("ov-diag"))
+                        {
+                            el.scroll_into_view_with_bool(true);
+                        }
+                    }
+                >{t.overview_section_diagnostics()}</a>
+            </nav>
+
+            // --- Always-visible: trend chart + peak hours ---
+            <div id="ov-ts" class="overview-section-anchor overview-analytics-row">
+                <TimeSeriesChart
+                    points=ts_points
+                    selected_view=ts_window
+                    suggestions=ts_suggestions
+                    compact=true
+                />
+                {move || {
+                    if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {
+                        let resp = ph.get();
+                        if let Some(err) = ph_err.get() {
+                            view! {
+                                <div class="peak-hours-container peak-hours-side">
+                                    <div class="peak-hours-header">
+                                    <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
+                                </div>
+                                <p class="text-xs text-theme-muted">
+                                    {if err.contains("PG not available") || err.contains("503") {
+                                        t.overview_peak_hours_pg_unavailable().to_string()
+                                    } else {
+                                        t.overview_peak_hours_load_failed(&err)
+                                    }}
+                                </p>
+                            </div>
+                        }.into_any()
+                        } else if resp.models.is_empty() {
+                            view! {
+                                <div class="peak-hours-container peak-hours-side">
+                                    <div class="peak-hours-header">
+                                        <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
+                                    </div>
+                                    <p class="text-xs text-theme-muted">{t.overview_peak_hours_no_data()}</p>
+                                </div>
+                            }.into_any()
+                        } else {
+                            let data_sig = Signal::derive(move || ph.get().data);
+                            let models_sig = Signal::derive(move || ph.get().models);
+                            let on_del = Callback::new(move |(model, bucket): (String, i64)| {
+                                leptos::task::spawn_local(async move {
+                                    if api::delete_model_peak_hour(&model, bucket).await.is_ok() {
+                                        if let Ok(resp) = api::fetch_model_peak_hours(7).await {
+                                            ph.set(resp);
+                                        }
+                                    }
+                                });
+                            });
+                            view! {
+                                <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
+                            }.into_any()
+                        }
+                    } else {
+                        ().into_any()
+                    }
+                }}
+            </div>
+
+            // --- Conditional: core metric cards (require all 6 memos) ---
             // The 14 open/close signals live outside this block and survive re-renders.
             {move || {
                 let h = health_memo.get();
@@ -340,57 +453,6 @@ pub fn OverviewCardGrid(
 
                         view! {
                             <div class="overview-compact space-y-2">
-                                <nav class="overview-segment-nav">
-                                    <a class="overview-segment-link segment-active"
-                                        href="#ov-hero"
-                                        on:click=move |ev| {
-                                            ev.prevent_default();
-                                            if let Some(el) = web_sys::window()
-                                                .and_then(|w| w.document())
-                                                .and_then(|d| d.get_element_by_id("ov-hero"))
-                                            {
-                                                el.scroll_into_view_with_bool(true);
-                                            }
-                                        }
-                                    >{t.overview_section_hero()}</a>
-                                    <a class="overview-segment-link"
-                                        href="#ov-ts"
-                                        on:click=move |ev| {
-                                            ev.prevent_default();
-                                            if let Some(el) = web_sys::window()
-                                                .and_then(|w| w.document())
-                                                .and_then(|d| d.get_element_by_id("ov-ts"))
-                                            {
-                                                el.scroll_into_view_with_bool(true);
-                                            }
-                                        }
-                                    >{t.overview_section_timeseries()}</a>
-                                    <a class="overview-segment-link"
-                                        href="#ov-detail"
-                                        on:click=move |ev| {
-                                            ev.prevent_default();
-                                            if let Some(el) = web_sys::window()
-                                                .and_then(|w| w.document())
-                                                .and_then(|d| d.get_element_by_id("ov-detail"))
-                                            {
-                                                el.scroll_into_view_with_bool(true);
-                                            }
-                                        }
-                                    >{t.overview_section_detail()}</a>
-                                    <a class="overview-segment-link"
-                                        href="#ov-diag"
-                                        on:click=move |ev| {
-                                            ev.prevent_default();
-                                            if let Some(el) = web_sys::window()
-                                                .and_then(|w| w.document())
-                                                .and_then(|d| d.get_element_by_id("ov-diag"))
-                                            {
-                                                el.scroll_into_view_with_bool(true);
-                                            }
-                                        }
-                                    >{t.overview_section_diagnostics()}</a>
-                                </nav>
-
                                 <TraceCompareBanner trace=trace.clone() metrics=metrics.clone() compact=true />
 
                                 // Section: Key Metrics (Core indicators - always visible)
@@ -517,62 +579,6 @@ pub fn OverviewCardGrid(
                                     />
                                     </div>
                                 </div> // close ov-hero
-
-                                <div id="ov-ts" class="overview-section-anchor overview-analytics-row">
-                                    <TimeSeriesChart
-                                        points=ts_points
-                                        selected_view=ts_window
-                                        suggestions=sugg.clone()
-                                        compact=true
-                                    />
-                                    {move || {
-                                        if let (Some(ph), Some(ph_err)) = (peak_hours_data, peak_hours_error) {
-                                            let resp = ph.get();
-                                            if let Some(err) = ph_err.get() {
-                                                view! {
-                                                    <div class="peak-hours-container peak-hours-side">
-                                                        <div class="peak-hours-header">
-                                                        <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
-                                                    </div>
-                                                    <p class="text-xs text-theme-muted">
-                                                        {if err.contains("PG not available") || err.contains("503") {
-                                                            t.overview_peak_hours_pg_unavailable().to_string()
-                                                        } else {
-                                                            t.overview_peak_hours_load_failed(&err)
-                                                        }}
-                                                    </p>
-                                                </div>
-                                            }.into_any()
-                                            } else if resp.models.is_empty() {
-                                                view! {
-                                                    <div class="peak-hours-container peak-hours-side">
-                                                        <div class="peak-hours-header">
-                                                            <h3 class="peak-hours-title">{t.overview_peak_hours_title()}</h3>
-                                                        </div>
-                                                        <p class="text-xs text-theme-muted">{t.overview_peak_hours_no_data()}</p>
-                                                    </div>
-                                                }.into_any()
-                                            } else {
-                                                let data_sig = Signal::derive(move || ph.get().data);
-                                                let models_sig = Signal::derive(move || ph.get().models);
-                                                let on_del = Callback::new(move |(model, bucket): (String, i64)| {
-                                                    leptos::task::spawn_local(async move {
-                                                        if api::delete_model_peak_hour(&model, bucket).await.is_ok() {
-                                                            if let Ok(resp) = api::fetch_model_peak_hours(7).await {
-                                                                ph.set(resp);
-                                                            }
-                                                        }
-                                                    });
-                                                });
-                                                view! {
-                                                    <PeakHoursHeatmap data=data_sig models=models_sig on_delete=on_del />
-                                                }.into_any()
-                                            }
-                                        } else {
-                                            ().into_any()
-                                        }
-                                    }}
-                                </div>
 
                                 // Section: Details (single dense mosaic)
                                 <div id="ov-detail" class="overview-section-anchor">
