@@ -121,6 +121,8 @@ pub struct PersistedKeyMetadata {
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
+    #[serde(default)]
+    pub dashboard_created: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -314,6 +316,7 @@ impl From<&KeyMetadata> for PersistedKeyMetadata {
             tokens_this_month: m.tokens_this_month,
             input_tokens: m.input_tokens,
             output_tokens: m.output_tokens,
+            dashboard_created: m.dashboard_created,
         }
     }
 }
@@ -336,6 +339,7 @@ impl From<PersistedKeyMetadata> for KeyMetadata {
             unlimited_quota: p.unlimited_quota,
             max_concurrent: p.max_concurrent,
             usage_month: p.usage_month,
+            dashboard_created: p.dashboard_created,
         }
     }
 }

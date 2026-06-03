@@ -126,6 +126,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/admin/pg/health", get(get_pg_health))
         .route("/api/admin/network/info", get(get_network_info))
         .route("/api/admin/keys", get(list_keys).post(create_key))
+        .route("/api/admin/keys/prune-duplicates", post(post_prune_duplicate_keys))
+        .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
         .route("/api/admin/keys/:id", delete(revoke_key).patch(patch_key))
         .route("/api/admin/keys/:id/concurrency", get(get_key_concurrency))
         .route("/api/admin/keys/:id/routing", get(get_key_routing))
@@ -133,7 +135,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/admin/sessions/:fingerprint",
             get(get_session_timeline),
         )
-        .route("/api/admin/keys/batch-revoke", post(batch_revoke_keys))
         .route(
             "/api/admin/cache/config",
             get(get_cache_config).put(update_cache_config),
@@ -1521,53 +1522,34 @@ fn generate_monthly_stats(
     stats
 }
 
-async fn list_keys(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ApiKey>>, StatusCode> {
-    let specs = state
-        .gateway
-        .list_keys()
+#[derive(Debug, Deserialize)]
+struct ListKeysQuery {
+    #[serde(default)]
+    include_synced: bool,
+}
+
+async fn list_keys(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ListKeysQuery>,
+) -> Result<Json<Vec<ApiKey>>, StatusCode> {
+    let mut keys = crate::keys_cleanup::build_api_keys(&state)
         .await
         .map_err(|e| gateway_status_code(&e))?;
-
-    let keys: Vec<ApiKey> = specs
-        .into_iter()
-        .map(|spec| {
-            let meta = state.keys_meta.get(&spec.id);
-            ApiKey {
-                id: spec.id.clone(),
-                name: spec.name,
-                key_preview: spec.key_preview,
-                key_full: meta
-                    .as_ref()
-                    .and_then(|m| {
-                        if m.token.is_empty() {
-                            None
-                        } else {
-                            Some(m.token.clone())
-                        }
-                    })
-                    .or(spec.key_full),
-                active: spec.enabled,
-                domain: spec.domain,
-                project_id: spec.project_id,
-                pipeline: spec.pipeline,
-                upstream_profile: spec.upstream_profile,
-                rpm_limit: spec.rpm_limit,
-                monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
-                tokens_used_this_month: meta.as_ref().map(|m| m.tokens_this_month).unwrap_or(0),
-                expired_at: meta.as_ref().and_then(|m| m.expired_at),
-                model_limits: meta
-                    .as_ref()
-                    .map(|m| m.model_limits.clone())
-                    .unwrap_or_default(),
-                remain_quota: meta.as_ref().map(|m| m.remain_quota).unwrap_or(-1),
-                unlimited_quota: meta.as_ref().map(|m| m.unlimited_quota).unwrap_or(true),
-                max_concurrent: spec.max_concurrent,
-                inflight: spec.inflight,
-            }
-        })
-        .collect();
-
+    if !query.include_synced {
+        keys.retain(|k| k.manually_created);
+    }
     Ok(Json(keys))
+}
+
+async fn post_prune_duplicate_keys(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<PruneDuplicateKeysResponse>, StatusCode> {
+    let dry_run = req.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(true);
+    crate::keys_cleanup::prune_duplicate_keys(&state, dry_run)
+        .await
+        .map(Json)
+        .map_err(|e| gateway_status_code(&e))
 }
 
 fn normalize_optional_project_id(
@@ -1631,6 +1613,7 @@ async fn create_key(
         unlimited_quota,
         max_concurrent,
         usage_month: String::new(),
+        dashboard_created: true,
     };
     state.keys_meta.insert(created.id.clone(), meta.clone());
     state.persist_key_meta_to_pg(&meta).await;
@@ -1663,6 +1646,8 @@ async fn create_key(
         unlimited_quota,
         max_concurrent: created.max_concurrent,
         inflight: 0,
+        manually_created: true,
+        duplicate_name_count: 1,
     }))
 }
 
@@ -1677,6 +1662,12 @@ async fn revoke_key(
         .map_err(|e| gateway_status_code(&e))?;
 
     state.keys_meta.remove(&id);
+    let pg = state.pg_store.read().clone();
+    if let Some(pg) = pg {
+        if let Err(e) = pg.delete_key(&id).await {
+            tracing::warn!(error = %e, key_id = %id, "PG delete_key failed on revoke");
+        }
+    }
     state.flush_persist();
 
     audit_log(&state, "revoke_key", Some(&id), None).await;
@@ -1744,17 +1735,29 @@ async fn patch_key(
                 unlimited_quota: req.unlimited_quota.unwrap_or(true),
                 max_concurrent: updated.max_concurrent,
                 usage_month: String::new(),
+                dashboard_created: false,
             },
         );
     }
     state.flush_persist();
 
     let meta = state.keys_meta.get(&id);
+    let duplicate_name_count = state
+        .keys_meta
+        .iter()
+        .filter(|e| e.value().name == updated.name)
+        .count() as u32;
     Ok(Json(ApiKey {
         id: updated.id.clone(),
         name: updated.name,
         key_preview: updated.key_preview,
-        key_full: meta.as_ref().map(|m| m.token.clone()),
+        key_full: meta.as_ref().and_then(|m| {
+            if m.token.is_empty() {
+                None
+            } else {
+                Some(m.token.clone())
+            }
+        }),
         active: updated.enabled,
         rpm_limit: updated.rpm_limit,
         monthly_token_budget: meta.as_ref().map(|m| m.monthly_token_limit).unwrap_or(0),
@@ -1772,6 +1775,10 @@ async fn patch_key(
         upstream_profile: updated.upstream_profile,
         max_concurrent: updated.max_concurrent,
         inflight: updated.inflight,
+        manually_created: meta
+            .as_ref()
+            .is_some_and(|m| m.dashboard_created),
+        duplicate_name_count: duplicate_name_count.max(1),
     }))
 }
 
@@ -1790,6 +1797,12 @@ async fn batch_revoke_keys(
         match state.gateway.revoke_key_by_id(id).await {
             Ok(_) => {
                 state.keys_meta.remove(id);
+                let pg = state.pg_store.read().clone();
+                if let Some(pg) = pg {
+                    if let Err(e) = pg.delete_key(id).await {
+                        tracing::warn!(error = %e, key_id = %id, "PG delete_key failed on batch revoke");
+                    }
+                }
                 revoked.push(id.clone());
             }
             Err(e) => {

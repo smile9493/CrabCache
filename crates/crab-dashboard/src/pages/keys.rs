@@ -9,9 +9,16 @@ use crate::components::ui::*;
 use crate::locale::use_translations;
 use crate::types::{
     ApiKey, CreateKeyRequest, KeyConcurrencyResponse, KeyRoutingResponse, NetworkInfo,
-    PatchKeyRequest,
+    PatchKeyRequest, PruneDuplicateKeysResponse,
 };
 use std::collections::{HashMap, HashSet};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeysOriginFilter {
+    All,
+    Manual,
+    Duplicates,
+}
 
 fn build_key_usage_top10(keys: &[ApiKey]) -> (Vec<String>, Vec<f64>) {
     let mut rows: Vec<&ApiKey> = keys
@@ -40,6 +47,7 @@ pub fn KeysPage() -> impl IntoView {
     let keys: RwSignal<Option<Result<Vec<ApiKey>, String>>> = RwSignal::new(None);
     let network_info: RwSignal<Option<Result<NetworkInfo, String>>> = RwSignal::new(None);
     let search_query: RwSignal<String> = RwSignal::new(String::new());
+    let origin_filter: RwSignal<KeysOriginFilter> = RwSignal::new(KeysOriginFilter::Manual);
     let copy_notice: RwSignal<Option<CopyNoticeKind>> = RwSignal::new(None);
     let created_key: RwSignal<Option<ApiKey>> = RwSignal::new(None);
     let key_routing: RwSignal<HashMap<String, Result<KeyRoutingResponse, String>>> =
@@ -64,8 +72,14 @@ pub fn KeysPage() -> impl IntoView {
     };
 
     let load_keys = move || {
+        let include_synced = origin_filter.get() != KeysOriginFilter::Manual;
         leptos::task::spawn_local(async move {
-            match api::fetch_keys().await {
+            let result = if include_synced {
+                api::fetch_keys_include_synced().await
+            } else {
+                api::fetch_keys().await
+            };
+            match result {
                 Ok(k) => {
                     keys.try_set(Some(Ok(k)));
                 }
@@ -156,6 +170,9 @@ pub fn KeysPage() -> impl IntoView {
     let show_confirm_revoke: RwSignal<Option<String>> = RwSignal::new(None);
     let show_confirm_batch_revoke = RwSignal::new(false);
     let revoke_message: RwSignal<String> = RwSignal::new(String::new());
+    let prune_preview: RwSignal<Option<Result<PruneDuplicateKeysResponse, String>>> =
+        RwSignal::new(None);
+    let pruning = RwSignal::new(false);
 
     let toggle_select = move |id: &str| {
         let mut set = selected_keys.get();
@@ -193,6 +210,29 @@ pub fn KeysPage() -> impl IntoView {
                     revoke_message.try_set(e);
                 }
             }
+        });
+    };
+
+    let preview_prune = move |_| {
+        leptos::task::spawn_local(async move {
+            let result = api::prune_duplicate_keys(true).await;
+            let _ = prune_preview.try_set(Some(result));
+        });
+    };
+
+    let confirm_prune = move |_| {
+        pruning.set(true);
+        leptos::task::spawn_local(async move {
+            match api::prune_duplicate_keys(false).await {
+                Ok(_) => {
+                    let _ = prune_preview.try_set(None);
+                    load_keys();
+                }
+                Err(e) => {
+                    let _ = revoke_message.try_set(e);
+                }
+            }
+            pruning.try_set(false);
         });
     };
 
@@ -526,6 +566,27 @@ pub fn KeysPage() -> impl IntoView {
                                     }}
                                 </div>
                                 <div class="flex items-center gap-3">
+                                    <select
+                                        class="input w-36 text-sm"
+                                        on:change=move |ev| {
+                                            origin_filter.set(match event_target_value(&ev).as_str() {
+                                                "manual" => KeysOriginFilter::Manual,
+                                                "duplicates" => KeysOriginFilter::Duplicates,
+                                                _ => KeysOriginFilter::All,
+                                            });
+                                            load_keys();
+                                        }
+                                    >
+                                        <option value="all">{t.keys_filter_all()}</option>
+                                        <option value="manual">{t.keys_filter_manual()}</option>
+                                        <option value="duplicates">{t.keys_filter_duplicates()}</option>
+                                    </select>
+                                    <button
+                                        on:click=preview_prune
+                                        class="btn btn-secondary text-xs"
+                                    >
+                                        {t.keys_prune_btn()}
+                                    </button>
                                     <input
                                         type="text"
                                         placeholder=t.keys_search_placeholder()
@@ -785,11 +846,19 @@ pub fn KeysPage() -> impl IntoView {
                         .into_iter()
                         .filter(|key| {
                             let query = search_query.get().to_lowercase();
-                            if query.is_empty() {
+                            let matches_search = if query.is_empty() {
                                 true
                             } else {
                                 key.name.to_lowercase().contains(&query)
                                     || key.key_preview.to_lowercase().contains(&query)
+                            };
+                            if !matches_search {
+                                return false;
+                            }
+                            match origin_filter.get() {
+                                KeysOriginFilter::All => true,
+                                KeysOriginFilter::Manual => key.manually_created,
+                                KeysOriginFilter::Duplicates => key.duplicate_name_count > 1,
                             }
                         })
                         .collect();
@@ -1002,7 +1071,25 @@ pub fn KeysPage() -> impl IntoView {
                                                                         class="rounded"
                                                                     />
                                                                 </td>
-                                                                <td class="text-theme font-medium">{key_for_edit.name.clone()}</td>
+                                                                <td class="text-theme font-medium">
+                                                                    <div class="flex items-center gap-2 flex-wrap">
+                                                                        <span>{key_for_edit.name.clone()}</span>
+                                                                        {if key_for_edit.manually_created {
+                                                                            view! { <Badge text=t.keys_origin_manual().to_string() color="teal" /> }.into_any()
+                                                                        } else {
+                                                                            view! { <Badge text=t.keys_origin_sync().to_string() color="rose" /> }.into_any()
+                                                                        }}
+                                                                        {if key_for_edit.duplicate_name_count > 1 {
+                                                                            view! {
+                                                                                <span class="text-[11px] text-amber-400 font-mono">
+                                                                                    {format!("×{}", key_for_edit.duplicate_name_count)}
+                                                                                </span>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            ().into_any()
+                                                                        }}
+                                                                    </div>
+                                                                </td>
                                                                 <td>
                                                                     <div class="flex items-center gap-2 max-w-md">
                                                                         <code class="text-xs font-mono text-theme-secondary bg-theme-tertiary px-2 py-0.5 rounded break-all">
@@ -1144,6 +1231,69 @@ pub fn KeysPage() -> impl IntoView {
                             </div>
                         }.into_any()
                     }
+                }
+            }}
+
+            {move || {
+                if let Some(result) = prune_preview.get() {
+                    let t = use_translations();
+                    let can_confirm = matches!(&result, Ok(r) if !r.revoked.is_empty());
+                    view! {
+                        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                            <div class="glass-card max-w-2xl w-full space-y-4 max-h-[80vh] overflow-y-auto">
+                                <h4 class="text-sm font-semibold text-theme">{t.keys_prune_title()}</h4>
+                                <p class="text-xs text-theme-muted">{t.keys_prune_preview_body()}</p>
+                                {match &result {
+                                    Ok(resp) => {
+                                        view! {
+                                            <div class="space-y-3 text-xs">
+                                                <p class="text-theme-secondary">
+                                                    {format!("{}: {} · {}: {}", t.keys_prune_kept(), resp.kept.len(), t.keys_prune_revoke(), resp.revoked.len())}
+                                                </p>
+                                                {if !resp.kept.is_empty() {
+                                                    view! {
+                                                        <div>
+                                                            <p class="font-semibold text-teal-400 mb-1">{t.keys_prune_kept()}</p>
+                                                            <ul class="space-y-1 font-mono text-theme-muted">
+                                                                {resp.kept.iter().map(|k| view! {
+                                                                    <li>{format!("{} · {} · {}", k.name, k.key_preview, k.reason)}</li>
+                                                                }).collect_view()}
+                                                            </ul>
+                                                        </div>
+                                                    }.into_any()
+                                                } else { ().into_any() }}
+                                                {if !resp.revoked.is_empty() {
+                                                    view! {
+                                                        <div>
+                                                            <p class="font-semibold text-rose-400 mb-1">{t.keys_prune_revoke()}</p>
+                                                            <ul class="space-y-1 font-mono text-theme-muted max-h-48 overflow-y-auto">
+                                                                {resp.revoked.iter().map(|k| view! {
+                                                                    <li>{format!("{} · {}", k.name, k.key_preview)}</li>
+                                                                }).collect_view()}
+                                                            </ul>
+                                                        </div>
+                                                    }.into_any()
+                                                } else { ().into_any() }}
+                                            </div>
+                                        }.into_any()
+                                    }
+                                    Err(e) => view! { <p class="text-xs text-error">{e.clone()}</p> }.into_any(),
+                                }}
+                                <div class="flex gap-2 justify-end">
+                                    <button class="btn btn-secondary text-xs" on:click=move |_| prune_preview.set(None)>{t.keys_cancel()}</button>
+                                    <button
+                                        class="btn btn-primary text-xs"
+                                        disabled=move || pruning.get() || !can_confirm
+                                        on:click=confirm_prune
+                                    >
+                                        {move || if pruning.get() { t.keys_creating() } else { t.keys_prune_confirm() }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
                 }
             }}
 

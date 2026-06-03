@@ -395,6 +395,11 @@ pub async fn fetch_keys() -> Result<Vec<ApiKey>, String> {
     fetch_json(&format!("{}/keys", API_BASE)).await
 }
 
+/// All gateway keys including sync/reconcile artifacts (for live monitoring dropdowns).
+pub async fn fetch_keys_include_synced() -> Result<Vec<ApiKey>, String> {
+    fetch_json(&format!("{}/keys?include_synced=true", API_BASE)).await
+}
+
 fn percent_encode_query(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -482,6 +487,16 @@ pub async fn batch_revoke_keys(ids: &[String]) -> Result<serde_json::Value, Stri
     post_json(
         &format!("{}/keys/batch-revoke", API_BASE),
         &serde_json::json!({ "ids": ids }),
+    )
+    .await
+}
+
+pub async fn prune_duplicate_keys(
+    dry_run: bool,
+) -> Result<crab_admin_types::PruneDuplicateKeysResponse, String> {
+    post_json(
+        &format!("{}/keys/prune-duplicates", API_BASE),
+        &serde_json::json!({ "dry_run": dry_run }),
     )
     .await
 }

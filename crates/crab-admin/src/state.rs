@@ -8,7 +8,7 @@ use crate::types::{
 use crab_control::{GatewayAdminClient, GatewayStatus, PutUpstreamKeysRequest, UpstreamKeyInput};
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,6 +35,8 @@ pub struct KeyMetadata {
     /// Month key (YYYY-MM) for the accumulated tokens_this_month/input_tokens/output_tokens.
     /// When the current month differs from this value on load, counters are reset.
     pub usage_month: String,
+    /// Set only by Dashboard `POST /api/admin/keys`; never by gateway sync/reconcile.
+    pub dashboard_created: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -833,18 +835,31 @@ impl AppState {
         let Some(pg) = pg else {
             return false;
         };
+        match pg.dedupe_keys_meta_by_token().await {
+            Ok(removed) if removed > 0 => {
+                tracing::info!(
+                    removed,
+                    "Deduplicated keys_meta rows by token in PostgreSQL"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "keys_meta PG dedupe failed (non-fatal)");
+            }
+        }
         match pg.load_all_keys().await {
             Ok(keys) if !keys.is_empty() => {
                 self.keys_meta.clear();
                 for key in keys {
                     let meta: KeyMetadata = key.into();
-                    self.keys_meta.insert(meta.id.clone(), meta);
+                    self.insert_keys_meta_deduped_by_token(meta);
                 }
                 self.flush_persist();
                 tracing::info!(
                     count = self.keys_meta.len(),
                     "Client key metadata restored from PostgreSQL"
                 );
+                crate::keys_cleanup::backfill_dashboard_created_from_audit(self).await;
                 true
             }
             Ok(_) => false,
@@ -897,12 +912,23 @@ impl AppState {
             Ok(specs) => {
                 use dashmap::mapref::entry::Entry;
                 for spec in specs {
+                    let full_token = spec.key_full.clone().unwrap_or_default();
+                    if !self.keys_meta.contains_key(&spec.id)
+                        && !full_token.is_empty()
+                        && let Some(old_id) =
+                            self.find_keys_meta_id_by_token(&full_token, &spec.id)
+                    {
+                        self.merge_keys_meta_from_gateway_spec(&old_id, &spec)
+                            .await;
+                        continue;
+                    }
+
                     match self.keys_meta.entry(spec.id.clone()) {
                         Entry::Vacant(v) => {
                             v.insert(KeyMetadata {
                                 id: spec.id.clone(),
                                 name: spec.name.clone(),
-                                token: spec.key_full.clone().unwrap_or_default(),
+                                token: full_token,
                                 rpm_limit: spec.rpm_limit as u64,
                                 monthly_token_limit: 0,
                                 current_rpm: 0,
@@ -915,16 +941,11 @@ impl AppState {
                                 unlimited_quota: true,
                                 max_concurrent: spec.max_concurrent,
                                 usage_month: String::new(),
+                                dashboard_created: false,
                             });
                         }
                         Entry::Occupied(mut o) => {
-                            let m = o.get_mut();
-                            m.name = spec.name.clone();
-                            m.max_concurrent = spec.max_concurrent;
-                            m.rpm_limit = spec.rpm_limit as u64;
-                            if let Some(full) = spec.key_full.filter(|t| !t.is_empty()) {
-                                m.token = full;
-                            }
+                            Self::apply_gateway_spec_to_meta(o.get_mut(), &spec);
                         }
                     }
                 }
@@ -951,15 +972,37 @@ impl AppState {
                 return 0;
             }
         };
-        // Gateway list_keys never returns key_full; match by stable key id instead.
-        let gateway_ids: std::collections::HashSet<String> = gateway_specs
+        let gateway_ids: HashSet<String> = gateway_specs.iter().map(|s| s.id.clone()).collect();
+        let gateway_token_to_id: HashMap<String, String> = gateway_specs
             .iter()
-            .map(|s| s.id.clone())
+            .filter_map(|s| {
+                s.key_full
+                    .as_ref()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| (t.clone(), s.id.clone()))
+            })
+            .collect();
+        let snapshot: Vec<(String, KeyMetadata)> = self
+            .keys_meta
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
         let mut restored = 0usize;
-        for entry in self.keys_meta.iter() {
-            let meta = entry.value();
-            if meta.token.is_empty() || gateway_ids.contains(&meta.id) {
+        for (local_id, meta) in snapshot {
+            if meta.token.is_empty() || gateway_ids.contains(&local_id) {
+                continue;
+            }
+            if let Some(gw_id) = gateway_token_to_id.get(&meta.token) {
+                if local_id != *gw_id {
+                    self.migrate_keys_meta_id(&local_id, gw_id.clone(), Some(meta.token.clone()))
+                        .await;
+                    tracing::info!(
+                        old_key_id = %local_id,
+                        new_key_id = %gw_id,
+                        name = %meta.name,
+                        "Aligned Admin key id with gateway for existing token"
+                    );
+                }
                 continue;
             }
             match self
@@ -979,6 +1022,14 @@ impl AppState {
             {
                 Ok(created) => {
                     restored += 1;
+                    if local_id != created.id {
+                        self.migrate_keys_meta_id(
+                            &local_id,
+                            created.id.clone(),
+                            Some(created.key_full.clone()),
+                        )
+                        .await;
+                    }
                     tracing::info!(
                         key_id = %created.id,
                         name = %meta.name,
@@ -988,13 +1039,176 @@ impl AppState {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
-                        key_id = %meta.id,
+                        key_id = %local_id,
                         "Failed to restore client key on gateway"
                     );
                 }
             }
         }
         restored
+    }
+
+    fn find_keys_meta_id_by_token(&self, token: &str, except_id: &str) -> Option<String> {
+        if token.is_empty() {
+            return None;
+        }
+        for entry in self.keys_meta.iter() {
+            if entry.key() != except_id && entry.value().token == token {
+                return Some(entry.key().clone());
+            }
+        }
+        None
+    }
+
+    fn insert_keys_meta_deduped_by_token(&self, meta: KeyMetadata) {
+        if meta.token.is_empty() {
+            self.keys_meta.insert(meta.id.clone(), meta);
+            return;
+        }
+        if let Some(old_id) = self.find_keys_meta_id_by_token(&meta.token, &meta.id) {
+            if let Some((_, existing)) = self.keys_meta.remove(&old_id) {
+                let merged = Self::merge_key_metadata(existing, meta);
+                self.keys_meta.insert(merged.id.clone(), merged);
+                return;
+            }
+        }
+        self.keys_meta.insert(meta.id.clone(), meta);
+    }
+
+    fn merge_key_metadata(existing: KeyMetadata, incoming: KeyMetadata) -> KeyMetadata {
+        KeyMetadata {
+            id: incoming.id,
+            name: if incoming.name.is_empty() {
+                existing.name
+            } else {
+                incoming.name
+            },
+            token: if incoming.token.is_empty() {
+                existing.token
+            } else {
+                incoming.token
+            },
+            rpm_limit: if incoming.rpm_limit == 0 {
+                existing.rpm_limit
+            } else {
+                incoming.rpm_limit
+            },
+            monthly_token_limit: incoming
+                .monthly_token_limit
+                .max(existing.monthly_token_limit),
+            current_rpm: existing.current_rpm.max(incoming.current_rpm),
+            tokens_this_month: existing
+                .tokens_this_month
+                .max(incoming.tokens_this_month),
+            input_tokens: existing.input_tokens.max(incoming.input_tokens),
+            output_tokens: existing.output_tokens.max(incoming.output_tokens),
+            expired_at: incoming.expired_at.or(existing.expired_at),
+            model_limits: if incoming.model_limits.is_empty() {
+                existing.model_limits
+            } else {
+                incoming.model_limits
+            },
+            remain_quota: if existing.remain_quota >= 0 {
+                existing.remain_quota
+            } else {
+                incoming.remain_quota
+            },
+            unlimited_quota: existing.unlimited_quota || incoming.unlimited_quota,
+            max_concurrent: if incoming.max_concurrent == 0 {
+                existing.max_concurrent
+            } else {
+                incoming.max_concurrent
+            },
+            usage_month: if incoming.usage_month.is_empty() {
+                existing.usage_month
+            } else {
+                incoming.usage_month
+            },
+            dashboard_created: existing.dashboard_created || incoming.dashboard_created,
+        }
+    }
+
+    fn apply_gateway_spec_to_meta(meta: &mut KeyMetadata, spec: &crab_control::ApiKeySpec) {
+        meta.name = spec.name.clone();
+        meta.max_concurrent = spec.max_concurrent;
+        meta.rpm_limit = spec.rpm_limit as u64;
+        if let Some(full) = spec.key_full.as_ref().filter(|t| !t.is_empty()) {
+            meta.token = full.clone();
+        }
+    }
+
+    async fn merge_keys_meta_from_gateway_spec(
+        &self,
+        old_id: &str,
+        spec: &crab_control::ApiKeySpec,
+    ) {
+        let new_id = spec.id.clone();
+        if old_id == new_id {
+            if let Some(mut entry) = self.keys_meta.get_mut(old_id) {
+                Self::apply_gateway_spec_to_meta(entry.value_mut(), spec);
+            }
+            return;
+        }
+        let Some((_, mut meta)) = self.keys_meta.remove(old_id) else {
+            return;
+        };
+        meta.id = new_id.clone();
+        Self::apply_gateway_spec_to_meta(&mut meta, spec);
+        let persisted = meta.clone();
+        self.keys_meta.insert(new_id.clone(), meta);
+        self.finalize_keys_meta_id_migration(old_id, &new_id, &persisted)
+            .await;
+        tracing::info!(
+            old_key_id = %old_id,
+            new_key_id = %new_id,
+            "Merged duplicate Admin key metadata by token during gateway sync"
+        );
+    }
+
+    async fn migrate_keys_meta_id(
+        &self,
+        old_id: &str,
+        new_id: String,
+        token: Option<String>,
+    ) {
+        if old_id == new_id {
+            return;
+        }
+        let Some((_, mut meta)) = self.keys_meta.remove(old_id) else {
+            return;
+        };
+        meta.id = new_id.clone();
+        if let Some(t) = token.filter(|t| !t.is_empty()) {
+            meta.token = t;
+        }
+        let persisted = meta.clone();
+        self.keys_meta.insert(new_id.clone(), meta);
+        self.finalize_keys_meta_id_migration(old_id, &new_id, &persisted)
+            .await;
+    }
+
+    async fn finalize_keys_meta_id_migration(
+        &self,
+        old_id: &str,
+        new_id: &str,
+        meta: &KeyMetadata,
+    ) {
+        let pg = self.pg_store.read().clone();
+        if let Some(pg) = pg {
+            if let Err(e) = pg.delete_key(old_id).await {
+                tracing::warn!(
+                    error = %e,
+                    old_key_id = %old_id,
+                    "Failed to delete stale keys_meta row after id migration"
+                );
+            }
+            self.persist_key_meta_to_pg(meta).await;
+        }
+        tracing::debug!(
+            old_key_id = %old_id,
+            new_key_id = %new_id,
+            "Migrated Admin client key metadata id"
+        );
     }
 
     /// Restore upstream profile metadata from PostgreSQL into memory.
@@ -1740,5 +1954,41 @@ fn load_retention_policy() -> RetentionPolicy {
         pg_retention_days: 7,
         compress_before_delete: false,
         compressed_retention_days: 30,
+    }
+}
+
+#[cfg(test)]
+mod keys_meta_tests {
+    use super::KeyMetadata;
+
+    fn sample_meta(id: &str, token: &str, tokens: u64) -> KeyMetadata {
+        KeyMetadata {
+            id: id.to_string(),
+            name: format!("name-{id}"),
+            token: token.to_string(),
+            rpm_limit: 100,
+            monthly_token_limit: 1_000_000,
+            current_rpm: 0,
+            tokens_this_month: tokens,
+            input_tokens: tokens / 2,
+            output_tokens: tokens / 2,
+            expired_at: None,
+            model_limits: Vec::new(),
+            remain_quota: 500_000,
+            unlimited_quota: false,
+            max_concurrent: 5,
+            usage_month: "2026-06".to_string(),
+            dashboard_created: false,
+        }
+    }
+
+    #[test]
+    fn merge_key_metadata_keeps_highest_usage_and_incoming_id() {
+        let existing = sample_meta("uuid-a", "sk-cc-abc", 100);
+        let incoming = sample_meta("uuid-b", "sk-cc-abc", 250);
+        let merged = super::AppState::merge_key_metadata(existing, incoming);
+        assert_eq!(merged.id, "uuid-b");
+        assert_eq!(merged.tokens_this_month, 250);
+        assert_eq!(merged.name, "name-uuid-b");
     }
 }

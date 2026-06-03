@@ -8,6 +8,7 @@ mod geoip;
 mod health_probe_sync;
 mod infra;
 mod key_usage_sync;
+mod keys_cleanup;
 mod live_metrics;
 mod log_management;
 mod metrics_history;

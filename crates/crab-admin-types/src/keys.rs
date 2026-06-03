@@ -18,6 +18,12 @@ pub struct ApiKey {
     pub max_concurrent: u32,
     #[serde(default)]
     pub inflight: usize,
+    /// True when created via Dashboard (audit log or non-zero monthly budget).
+    #[serde(default)]
+    pub manually_created: bool,
+    /// How many active keys share this display name (duplicate-name detector).
+    #[serde(default)]
+    pub duplicate_name_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,4 +79,29 @@ pub struct CreateKeyRequest {
     pub upstream_profile: Option<String>,
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneDuplicateKeysRequest {
+    #[serde(default = "default_true")]
+    pub dry_run: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneDuplicateKeysResponse {
+    pub dry_run: bool,
+    pub kept: Vec<PruneKeyDecision>,
+    pub revoked: Vec<PruneKeyDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneKeyDecision {
+    pub id: String,
+    pub name: String,
+    pub key_preview: String,
+    pub reason: String,
 }

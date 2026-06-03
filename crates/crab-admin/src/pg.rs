@@ -1177,8 +1177,9 @@ impl PgStore {
                 "INSERT INTO keys_meta
                     (id, token, name, rpm_limit, monthly_token_limit, expired_at,
                      model_limits, remain_quota, unlimited_quota, max_concurrent,
-                     usage_month, tokens_this_month, input_tokens, output_tokens)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14)
+                     usage_month, tokens_this_month, input_tokens, output_tokens,
+                     dashboard_created)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15)
                  ON CONFLICT (id) DO UPDATE SET
                     token = EXCLUDED.token,
                     name = EXCLUDED.name,
@@ -1193,6 +1194,7 @@ impl PgStore {
                     tokens_this_month = EXCLUDED.tokens_this_month,
                     input_tokens = EXCLUDED.input_tokens,
                     output_tokens = EXCLUDED.output_tokens,
+                    dashboard_created = EXCLUDED.dashboard_created,
                     updated_at = now()",
             )
             .await?;
@@ -1235,6 +1237,7 @@ impl PgStore {
                     &tokens_this_month as &(dyn tokio_postgres::types::ToSql + Sync),
                     &input_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
                     &output_tokens as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &meta.dashboard_created as &(dyn tokio_postgres::types::ToSql + Sync),
                 ],
             )
             .await?;
@@ -1249,13 +1252,38 @@ impl PgStore {
         Ok(())
     }
 
+    /// Remove duplicate rows that share the same non-empty token, keeping the newest.
+    pub async fn dedupe_keys_meta_by_token(&self) -> Result<usize> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "WITH ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY token
+                               ORDER BY updated_at DESC NULLS LAST, id DESC
+                           ) AS rn
+                    FROM keys_meta
+                    WHERE token <> ''
+                 )
+                 DELETE FROM keys_meta k
+                 USING ranked r
+                 WHERE k.id = r.id AND r.rn > 1
+                 RETURNING k.id",
+                &[],
+            )
+            .await?;
+        Ok(rows.len())
+    }
+
     pub async fn load_all_keys(&self) -> Result<Vec<PersistedKeyMetadata>> {
         let client = self.pool.get().await?;
         let rows = client
             .query(
                 "SELECT id, token, name, rpm_limit, monthly_token_limit, expired_at,
                         model_limits, remain_quota, unlimited_quota, max_concurrent,
-                        usage_month, tokens_this_month, input_tokens, output_tokens
+                        usage_month, tokens_this_month, input_tokens, output_tokens,
+                        dashboard_created
                  FROM keys_meta ORDER BY id",
                 &[],
             )
@@ -1280,6 +1308,7 @@ impl PgStore {
                 tokens_this_month: from_pg_bigint(row.get(11)),
                 input_tokens: from_pg_bigint(row.get(12)),
                 output_tokens: from_pg_bigint(row.get(13)),
+                dashboard_created: row.get(14),
             });
         }
         Ok(out)
@@ -3770,6 +3799,12 @@ impl PgStore {
                 &[],
             )
             .await?;
+        client
+            .execute(
+                "ALTER TABLE keys_meta ADD COLUMN IF NOT EXISTS dashboard_created BOOLEAN NOT NULL DEFAULT false",
+                &[],
+            )
+            .await?;
 
         // upstream_profile_secrets: last_used_at, error_count_24h
         client
@@ -3991,6 +4026,7 @@ mod tests {
             tokens_this_month: 42_000,
             input_tokens: 30_000,
             output_tokens: 12_000,
+            dashboard_created: true,
         };
         pg.upsert_key(&meta).await.unwrap();
 
@@ -4016,6 +4052,49 @@ mod tests {
         pg.delete_key("test-key-1").await.unwrap();
         let loaded = pg.load_all_keys().await.unwrap();
         assert!(loaded.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_keys_meta_dedupe_by_token() {
+        let Some(pg) = test_pg().await else { return };
+        let client = pg.pool.get().await.unwrap();
+        let _ = client.execute("DELETE FROM keys_meta", &[]).await;
+
+        pg.upsert_key(&PersistedKeyMetadata {
+            id: "old-id".to_string(),
+            token: "sk-cc-dup".to_string(),
+            name: "old".to_string(),
+            rpm_limit: 0,
+            monthly_token_limit: 0,
+            expired_at: None,
+            model_limits: Vec::new(),
+            remain_quota: -1,
+            unlimited_quota: true,
+            max_concurrent: 0,
+            usage_month: String::new(),
+            tokens_this_month: 10,
+            input_tokens: 0,
+            output_tokens: 0,
+            dashboard_created: false,
+        })
+        .await
+        .unwrap();
+        client
+            .execute(
+                "INSERT INTO keys_meta (id, token, name, updated_at)
+                 VALUES ($1, $2, $3, now() - interval '1 hour')",
+                &[&"newer-id", &"sk-cc-dup", &"newer"],
+            )
+            .await
+            .unwrap();
+
+        let removed = pg.dedupe_keys_meta_by_token().await.unwrap();
+        assert_eq!(removed, 1);
+
+        let loaded = pg.load_all_keys().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "newer-id");
+        assert_eq!(loaded[0].token, "sk-cc-dup");
     }
 
     #[tokio::test]
@@ -4219,6 +4298,7 @@ mod tests {
                 tokens_this_month: 1000,
                 input_tokens: 800,
                 output_tokens: 200,
+                dashboard_created: false,
             }],
             models: PersistedModels {
                 models: vec![PersistedModel {

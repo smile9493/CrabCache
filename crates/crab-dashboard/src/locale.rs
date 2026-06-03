@@ -3669,6 +3669,72 @@ impl Translations {
             Locale::EnUS => "Batch Revoke Keys",
         }
     }
+    pub fn keys_filter_all(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "全部",
+            Locale::EnUS => "All",
+        }
+    }
+    pub fn keys_filter_manual(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "仅 Dashboard 创建",
+            Locale::EnUS => "Dashboard created only",
+        }
+    }
+    pub fn keys_filter_duplicates(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "仅重复项",
+            Locale::EnUS => "Duplicates only",
+        }
+    }
+    pub fn keys_origin_manual(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "Dashboard",
+            Locale::EnUS => "Dashboard",
+        }
+    }
+    pub fn keys_origin_sync(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "同步",
+            Locale::EnUS => "Synced",
+        }
+    }
+    pub fn keys_prune_btn(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清理重复密钥",
+            Locale::EnUS => "Prune duplicates",
+        }
+    }
+    pub fn keys_prune_title(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "清理重复密钥",
+            Locale::EnUS => "Prune duplicate keys",
+        }
+    }
+    pub fn keys_prune_preview_body(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "将按名称分组，保留带预算/审计记录的人工密钥，吊销其余重复项。",
+            Locale::EnUS => "Groups keys by name, keeps manual keys (budget/audit), revokes duplicate sync artifacts.",
+        }
+    }
+    pub fn keys_prune_confirm(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "确认清理",
+            Locale::EnUS => "Confirm prune",
+        }
+    }
+    pub fn keys_prune_kept(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "保留",
+            Locale::EnUS => "Keep",
+        }
+    }
+    pub fn keys_prune_revoke(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "吊销",
+            Locale::EnUS => "Revoke",
+        }
+    }
     pub fn keys_confirm_revoke_body(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "确定吊销此密钥？此操作不可撤销。",

@@ -301,7 +301,7 @@ pub fn LivePage() -> impl IntoView {
                     return;
                 }
             }
-            match api::fetch_keys().await {
+            match api::fetch_keys_include_synced().await {
                 Ok(keys) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
@@ -455,7 +455,7 @@ pub fn LivePage() -> impl IntoView {
                 return;
             }
             routing_profiles_for_routing.try_set(Some(api::fetch_routing_profiles().await));
-            match api::fetch_keys().await {
+            match api::fetch_keys_include_synced().await {
                 Ok(keys) => {
                     if !alive.load(Ordering::Relaxed) {
                         return;
