@@ -2186,3 +2186,180 @@ async fn pipeline_test_simulate() {
     assert!(json2["rule_name"].is_null());
     assert!(json2["pipeline"].is_null());
 }
+
+#[tokio::test]
+async fn upstream_keys_show_model_cooldowns() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state.clone());
+
+    // Create a key
+    let put_body = serde_json::json!({
+        "keys": [{"secret": "sk-cooldown-test-key-12345"}]
+    });
+    let put_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    // Report a model rate-limit on the key
+    let pool = state.runtime.default_profile().resolve_upstream_pool();
+    let statuses = pool.list_status();
+    let key_id = statuses.last().unwrap().id.clone();
+    pool.report_rate_limited_for_model(&key_id, "deepseek-chat", 60, None);
+
+    // List keys and verify model_cooldowns is populated
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/upstream/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let keys = json["keys"].as_array().unwrap();
+    let target = keys.iter().find(|k| k["id"].as_str() == Some(&key_id)).unwrap();
+    let cooldowns = target["model_cooldowns"].as_array().unwrap();
+    assert!(!cooldowns.is_empty(), "should have model cooldowns");
+    assert_eq!(cooldowns[0]["model"].as_str(), Some("deepseek-chat"));
+    assert!(cooldowns[0]["remaining_secs"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn reset_model_cooldown_endpoint() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state.clone());
+
+    // Create a key
+    let put_body = serde_json::json!({
+        "keys": [{"secret": "sk-reset-cd-test-key-12345"}]
+    });
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Report rate limit
+    let pool = state.runtime.default_profile().resolve_upstream_pool();
+    let statuses = pool.list_status();
+    let key_id = statuses.last().unwrap().id.clone();
+    pool.report_rate_limited_for_model(&key_id, "deepseek-chat", 60, None);
+
+    // Reset model cooldown via API
+    let reset_body = serde_json::json!({"model": "deepseek-chat"});
+    let reset_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/upstream/keys/{key_id}/reset-model-cooldown"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(reset_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reset_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(reset_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["key_id"].as_str(), Some(key_id.as_str()));
+    assert!(json["model_cooldowns_cleared"].as_u64().unwrap() >= 1);
+
+    // Verify cooldown is cleared via list_status
+    let statuses = pool.list_status();
+    let target = statuses.iter().find(|s| s.id == key_id).unwrap();
+    assert!(target.model_cooldowns.is_empty());
+}
+
+#[tokio::test]
+async fn reset_model_cooldown_not_found() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let reset_body = serde_json::json!({"model": "deepseek-chat"});
+    let reset_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/upstream/keys/nonexistent-key/reset-model-cooldown")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(reset_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reset_resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn features_config_contains_account_pool_flags() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/features")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // Verify new account pool flags exist in response
+    assert!(json.get("progressive_backoff_enabled").is_some());
+    assert!(json.get("strict_priority_bucketing").is_some());
+    assert!(json.get("per_model_round_robin").is_some());
+    // Defaults should be true
+    assert_eq!(json["progressive_backoff_enabled"].as_bool(), Some(true));
+    assert_eq!(json["strict_priority_bucketing"].as_bool(), Some(true));
+    assert_eq!(json["per_model_round_robin"].as_bool(), Some(true));
+}

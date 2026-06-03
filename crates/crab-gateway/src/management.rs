@@ -17,7 +17,8 @@ use crab_control::{
     PipelineRuntimeConfigView, PreflightView, PricingConfigView, PutBackendsRequest, PutDomainPoliciesRequest,
     PutDomainUsageRequest, PutTtlConfigRequest, PutUpstreamKeysRequest,
     PutUpstreamRelayConfigRequest, ReasoningRuntimeConfigView, RoutingBackendsView,
-    RoutingSummaryView, ScoreWeightsView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView, UpstreamKeyView,
+    RoutingSummaryView, ScoreWeightsView, SemanticRuntimeView, StreamCacheConfig, TtlConfigView,
+    ModelCooldownView, ResetModelCooldownRequest, UpstreamKeyView,
     UpstreamKeysPutMode, UpstreamKeysView, UpstreamRelayConfigView, constant_time_eq_str,
     parse_backend_endpoints, parse_upstream_base_url,
 };
@@ -308,6 +309,10 @@ pub fn router(state: ManagementState) -> Router {
             patch(patch_upstream_key).delete(delete_upstream_key),
         )
         .route(
+            "/v1/upstream/keys/:id/reset-model-cooldown",
+            post(reset_model_cooldown),
+        )
+        .route(
             "/v1/upstream/relay",
             get(get_upstream_relay).put(put_upstream_relay),
         )
@@ -332,6 +337,10 @@ pub fn router(state: ManagementState) -> Router {
             "/v1/upstream/profiles/:id/keys/:key_id",
             patch(management_profiles::patch_profile_key)
                 .delete(management_profiles::delete_profile_key),
+        )
+        .route(
+            "/v1/upstream/profiles/:id/keys/:key_id/reset-model-cooldown",
+            post(management_profiles::reset_profile_key_model_cooldown),
         )
         .route(
             "/v1/upstream/profiles/:id/keys/:key_id/test",
@@ -1071,6 +1080,15 @@ async fn patch_upstream_key(
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
             priority: k.priority,
+            model_cooldowns: k
+                .model_cooldowns
+                .into_iter()
+                .map(|mc| ModelCooldownView {
+                    model: mc.model,
+                    remaining_secs: mc.remaining_secs,
+                    backoff_level: mc.backoff_level,
+                })
+                .collect(),
         })
         .ok_or_else(|| {
             (
@@ -1119,6 +1137,32 @@ async fn delete_upstream_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// POST `/v1/upstream/keys/:id/reset-model-cooldown`
+async fn reset_model_cooldown(
+    State(state): State<ManagementState>,
+    Path(key_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ResetModelCooldownRequest>,
+) -> Result<impl IntoResponse, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let pool = state.runtime.default_profile().resolve_upstream_pool();
+    let removed = pool.reset_model_cooldowns(&key_id, body.model.as_deref());
+    if removed == 0 && !pool.key_exists(&key_id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response());
+    }
+    schedule_persist_state(&state);
+    Ok(Json(serde_json::json!({
+        "key_id": key_id,
+        "model_cooldowns_cleared": removed,
+    })))
+}
+
 fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
     let pool = runtime.default_profile().resolve_upstream_pool();
     UpstreamKeysView {
@@ -1133,6 +1177,15 @@ fn upstream_keys_view(runtime: &RuntimeConfig) -> UpstreamKeysView {
                 inflight: k.inflight,
                 cooldown_remaining_secs: k.cooldown_remaining_secs,
                 priority: k.priority,
+                model_cooldowns: k
+                    .model_cooldowns
+                    .into_iter()
+                    .map(|mc| ModelCooldownView {
+                        model: mc.model,
+                        remaining_secs: mc.remaining_secs,
+                        backoff_level: mc.backoff_level,
+                    })
+                    .collect(),
             })
             .collect(),
     }

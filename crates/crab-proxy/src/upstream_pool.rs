@@ -20,6 +20,37 @@ pub struct UpstreamKeyStateSnapshot {
     #[serde(default)]
     pub scope_cooldowns: HashMap<String, u64>,
     pub enabled: bool,
+    /// Per-model cooldown deadlines (model slug -> until_ms).
+    #[serde(default)]
+    pub model_cooldowns: HashMap<String, (u64, u32)>,
+}
+
+/// Per-model cooldown entry with progressive backoff tracking.
+#[derive(Debug, Clone)]
+struct ModelCooldownEntry {
+    cooldown_until_ms: u64,
+    backoff_level: u32,
+}
+
+/// Public view of a per-model cooldown for API display.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ModelCooldownView {
+    pub model: String,
+    pub remaining_secs: u64,
+    pub backoff_level: u32,
+}
+
+/// Minimum cooldown for progressive backoff (seconds).
+const PROGRESSIVE_BACKOFF_BASE_SECS: u64 = 1;
+/// Maximum cooldown cap for progressive backoff (seconds).
+const PROGRESSIVE_BACKOFF_MAX_SECS: u64 = 1800;
+
+/// Compute progressive backoff: doubles each level, capped at [`PROGRESSIVE_BACKOFF_MAX_SECS`].
+/// Returns `(cooldown_secs, next_level)`.
+fn next_progressive_cooldown(level: u32) -> (u64, u32) {
+    let next_level = level.saturating_add(1);
+    let secs = PROGRESSIVE_BACKOFF_BASE_SECS.saturating_mul(1u64 << level.min(20));
+    (secs.min(PROGRESSIVE_BACKOFF_MAX_SECS), next_level)
 }
 
 /// Keys without an explicit `account_id` share this bucket (no cross-key rotation on 429).
@@ -57,6 +88,7 @@ pub struct UpstreamKeyStatus {
     pub inflight: usize,
     pub cooldown_remaining_secs: u64,
     pub priority: u32,
+    pub model_cooldowns: Vec<ModelCooldownView>,
 }
 
 struct UpstreamKeySlot {
@@ -70,6 +102,8 @@ struct UpstreamKeySlot {
     rate_limit_strikes: AtomicU32,
     /// Per-model-family cooldown (Codex scope: codex / spark / …).
     scope_cooldowns: RwLock<HashMap<Arc<str>, u64>>,
+    /// Per-model cooldown with progressive backoff (model slug -> entry).
+    model_cooldowns: RwLock<HashMap<Arc<str>, ModelCooldownEntry>>,
     supported_models: RwLock<Arc<[String]>>,
     /// Hard concurrency limit per key. Permits acquired on acquire, released on Guard drop.
     semaphore: Arc<tokio::sync::Semaphore>,
@@ -87,6 +121,8 @@ pub struct UpstreamKeyPool {
     /// Set to true when key dynamic state (cooldowns, strikes, enabled) changes.
     /// Cleared by `take_dirty_states()`.
     state_dirty: AtomicBool,
+    /// Per-model round-robin counters for fair key rotation within a model.
+    model_rr: RwLock<HashMap<Arc<str>, AtomicUsize>>,
 }
 
 /// Holds an inflight slot until dropped.
@@ -166,7 +202,14 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn slot_passes_cooldown(slot: &UpstreamKeySlot, scope: Option<&str>, now: u64) -> bool {
+/// Clone a `HashMap<Arc<str>, AtomicUsize>` by reading each counter's current value.
+fn clone_model_rr(src: &HashMap<Arc<str>, AtomicUsize>) -> HashMap<Arc<str>, AtomicUsize> {
+    src.iter()
+        .map(|(k, v)| (Arc::clone(k), AtomicUsize::new(v.load(Ordering::Relaxed))))
+        .collect()
+}
+
+fn slot_passes_cooldown(slot: &UpstreamKeySlot, scope: Option<&str>, model: Option<&str>, now: u64) -> bool {
     if slot.cooldown_until_ms.load(Ordering::Relaxed) > now {
         return false;
     }
@@ -174,6 +217,17 @@ fn slot_passes_cooldown(slot: &UpstreamKeySlot, scope: Option<&str>, now: u64) -
         if let Some(until) = slot.scope_cooldowns.read().get(scope) {
             if *until > now {
                 return false;
+            }
+        }
+    }
+    // Per-model cooldown (progressive backoff)
+    if let Some(model) = model.filter(|m| !m.trim().is_empty()) {
+        let model_key = normalize_model_slug(model);
+        if !model_key.is_empty() {
+            if let Some(entry) = slot.model_cooldowns.read().get(model_key.as_str()) {
+                if entry.cooldown_until_ms > now {
+                    return false;
+                }
             }
         }
     }
@@ -251,6 +305,7 @@ impl UpstreamKeyPool {
                     cooldown_until_ms: AtomicU64::new(0),
                     rate_limit_strikes: AtomicU32::new(0),
                     scope_cooldowns: RwLock::new(HashMap::new()),
+                    model_cooldowns: RwLock::new(HashMap::new()),
                     supported_models: RwLock::new(Arc::from(spec.supported_models.clone())),
                     semaphore: Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
                         max_inflight,
@@ -267,6 +322,7 @@ impl UpstreamKeyPool {
             max_inflight,
             codex_quota_cache: std::sync::OnceLock::new(),
             state_dirty: AtomicBool::new(false),
+            model_rr: RwLock::new(HashMap::new()),
         })
     }
 
@@ -387,6 +443,16 @@ impl UpstreamKeyPool {
                 } else {
                     0
                 };
+                let model_cooldowns: Vec<ModelCooldownView> = s.model_cooldowns
+                    .read()
+                    .iter()
+                    .filter(|(_, entry)| entry.cooldown_until_ms > now)
+                    .map(|(model, entry)| ModelCooldownView {
+                        model: model.to_string(),
+                        remaining_secs: (entry.cooldown_until_ms - now) / 1000,
+                        backoff_level: entry.backoff_level,
+                    })
+                    .collect();
                 UpstreamKeyStatus {
                     id: s.id.clone(),
                     preview: key_preview(&s.secret),
@@ -395,6 +461,7 @@ impl UpstreamKeyPool {
                     inflight: s.inflight.load(Ordering::Relaxed),
                     cooldown_remaining_secs,
                     priority: s.priority.load(Ordering::Relaxed),
+                    model_cooldowns,
                 }
             })
             .collect()
@@ -447,9 +514,16 @@ impl UpstreamKeyPool {
                     .filter(|(_, until)| **until > now)
                     .map(|(k, v)| (k.to_string(), *v))
                     .collect();
+                let model_cooldowns: HashMap<String, (u64, u32)> = slot
+                    .model_cooldowns
+                    .read()
+                    .iter()
+                    .filter(|(_, entry)| entry.cooldown_until_ms > now)
+                    .map(|(k, v)| (k.to_string(), (v.cooldown_until_ms, v.backoff_level)))
+                    .collect();
 
                 // Only persist if there's meaningful state
-                if cooldown_until <= now && strikes == 0 && enabled && scope_cooldowns.is_empty() {
+                if cooldown_until <= now && strikes == 0 && enabled && scope_cooldowns.is_empty() && model_cooldowns.is_empty() {
                     return None;
                 }
 
@@ -461,6 +535,7 @@ impl UpstreamKeyPool {
                         rate_limit_strikes: strikes,
                         scope_cooldowns,
                         enabled,
+                        model_cooldowns,
                     },
                 ))
             })
@@ -489,6 +564,18 @@ impl UpstreamKeyPool {
                     for (scope, &until) in &state.scope_cooldowns {
                         if until > now {
                             sc.insert(Arc::from(scope.as_str()), until);
+                        }
+                    }
+                }
+                // Restore unexpired per-model cooldowns
+                if !state.model_cooldowns.is_empty() {
+                    let mut mc = slot.model_cooldowns.write();
+                    for (model, &(until, level)) in &state.model_cooldowns {
+                        if until > now {
+                            mc.insert(Arc::from(model.as_str()), ModelCooldownEntry {
+                                cooldown_until_ms: until,
+                                backoff_level: level,
+                            });
                         }
                     }
                 }
@@ -567,6 +654,7 @@ impl UpstreamKeyPool {
                 let mut cooldown_until_ms = 0u64;
                 let mut rate_limit_strikes = 0u32;
                 let mut scope_cooldowns = HashMap::new();
+                let mut model_cooldowns = HashMap::new();
                 let mut supported_models: Arc<[String]> = Arc::from(spec.supported_models.clone());
                 let mut priority = spec.priority;
                 if let Some(prev) = old.slots.iter().find(|s| s.id == id) {
@@ -574,6 +662,7 @@ impl UpstreamKeyPool {
                     cooldown_until_ms = prev.cooldown_until_ms.load(Ordering::Relaxed);
                     rate_limit_strikes = prev.rate_limit_strikes.load(Ordering::Relaxed);
                     scope_cooldowns = prev.scope_cooldowns.read().clone();
+                    model_cooldowns = prev.model_cooldowns.read().clone();
                     if supported_models.is_empty() {
                         supported_models = prev.supported_models.read().clone();
                     }
@@ -601,6 +690,7 @@ impl UpstreamKeyPool {
                     cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
                     rate_limit_strikes: AtomicU32::new(rate_limit_strikes),
                     scope_cooldowns: RwLock::new(scope_cooldowns),
+                    model_cooldowns: RwLock::new(model_cooldowns),
                     supported_models: RwLock::new(supported_models),
                     semaphore,
                     priority: AtomicU32::new(priority),
@@ -615,6 +705,7 @@ impl UpstreamKeyPool {
             max_inflight: old.max_inflight,
             codex_quota_cache: old.codex_quota_cache.clone(),
             state_dirty: AtomicBool::new(old.state_dirty.load(Ordering::Relaxed)),
+            model_rr: RwLock::new(clone_model_rr(&old.model_rr.read())),
         })
     }
 
@@ -649,7 +740,7 @@ impl UpstreamKeyPool {
         let idx = self.slots.iter().position(|s| {
             s.id == key_id
                 && s.enabled.load(Ordering::Relaxed)
-                && slot_passes_cooldown(s, scope, now)
+                && slot_passes_cooldown(s, scope, None, now)
         })?;
         // Try to acquire a semaphore permit (non-blocking).
         let permit = Arc::clone(&self.slots[idx].semaphore)
@@ -689,7 +780,7 @@ impl UpstreamKeyPool {
         let idx = self.slots.iter().position(|s| {
             s.id == bound_key_id
                 && s.enabled.load(Ordering::Relaxed)
-                && slot_passes_cooldown(s, scope, now_ms())
+                && slot_passes_cooldown(s, scope, None, now_ms())
         });
         if let Some(idx) = idx {
             let sem_future = Arc::clone(&self.slots[idx].semaphore).acquire_owned();
@@ -749,13 +840,13 @@ impl UpstreamKeyPool {
         };
         if explicit_only {
             if let Some(guard) =
-                self.acquire_scored(excluded_account, Some(scope), fill_first, true, accept)
+                self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, true, accept)
             {
                 return Some(guard);
             }
-            return self.acquire_scored(excluded_account, Some(scope), fill_first, false, accept);
+            return self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, false, accept);
         }
-        self.acquire_scored(excluded_account, Some(scope), fill_first, false, accept)
+        self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, false, accept)
     }
 
     /// Codex-aware acquire: OAuth keys, model catalog, scope cooldown, fill-first backoff.
@@ -777,13 +868,13 @@ impl UpstreamKeyPool {
         };
         if explicit_only {
             if let Some(guard) =
-                self.acquire_scored(excluded_account, Some(scope), fill_first, true, accept)
+                self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, true, accept)
             {
                 return Some(guard);
             }
-            return self.acquire_scored(excluded_account, Some(scope), fill_first, false, accept);
+            return self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, false, accept);
         }
-        self.acquire_scored(excluded_account, Some(scope), fill_first, false, accept)
+        self.acquire_scored(excluded_account, Some(scope), Some(model), fill_first, false, accept)
     }
 
     /// Select a key that can serve `upstream_model` (empty model = any).
@@ -805,7 +896,7 @@ impl UpstreamKeyPool {
             }
             return self.acquire_with_model_policy(model, codex_oauth_only, false);
         }
-        self.acquire_excluding_account_with_filter(None, |slot| {
+        self.acquire_scored(None, None, Some(model), false, false, |slot| {
             (!codex_oauth_only || looks_like_codex_oauth_key(&slot.secret, &slot.account_id))
                 && slot_supports_model(slot, model)
         })
@@ -817,7 +908,7 @@ impl UpstreamKeyPool {
         codex_oauth_only: bool,
         require_explicit_catalog: bool,
     ) -> Option<UpstreamKeyGuard> {
-        self.acquire_excluding_account_with_filter(None, |slot| {
+        self.acquire_scored(None, None, Some(upstream_model), false, require_explicit_catalog, |slot| {
             if codex_oauth_only && !looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
                 return false;
             }
@@ -846,13 +937,14 @@ impl UpstreamKeyPool {
     where
         F: FnMut(&UpstreamKeySlot) -> bool,
     {
-        self.acquire_scored(excluded, None, false, false, move |slot| accept(slot))
+        self.acquire_scored(excluded, None, None, false, false, move |slot| accept(slot))
     }
 
     fn acquire_scored<F>(
         self: &Arc<Self>,
         excluded: Option<&str>,
         scope: Option<&str>,
+        model: Option<&str>,
         fill_first: bool,
         require_explicit_catalog: bool,
         mut accept: F,
@@ -871,6 +963,7 @@ impl UpstreamKeyPool {
             if let Some(guard) = self.acquire_scored_pass(
                 excluded,
                 scope,
+                model,
                 true,
                 require_explicit_catalog,
                 &mut accept,
@@ -884,6 +977,7 @@ impl UpstreamKeyPool {
         self.acquire_scored_pass(
             excluded,
             scope,
+            model,
             fill_first,
             require_explicit_catalog,
             &mut accept,
@@ -896,6 +990,7 @@ impl UpstreamKeyPool {
         self: &Arc<Self>,
         excluded: Option<&str>,
         scope: Option<&str>,
+        model: Option<&str>,
         fill_first: bool,
         require_explicit_catalog: bool,
         accept: &mut F,
@@ -907,98 +1002,124 @@ impl UpstreamKeyPool {
     {
         let now = now_ms();
         let n = self.slots.len();
-        let start = self.rr.fetch_add(1, Ordering::Relaxed) % n;
 
-        let mut best_idx: Option<usize> = None;
-        let mut best_score = usize::MAX;
+        // Collect unique priority values from enabled slots
+        let mut priorities: Vec<u32> = self.slots.iter()
+            .filter(|s| s.enabled.load(Ordering::Relaxed))
+            .map(|s| s.priority.load(Ordering::Relaxed))
+            .collect();
+        priorities.sort_unstable();
+        priorities.dedup();
 
-        for offset in 0..n {
-            let i = (start + offset) % n;
-            let slot = &self.slots[i];
-            if !slot.enabled.load(Ordering::Relaxed) {
-                continue;
-            }
-            if !slot_passes_cooldown(slot, scope, now) {
-                continue;
-            }
-            if let Some(ex) = excluded
-                && slot.account_id.as_ref() == ex
-            {
-                continue;
-            }
-            if require_explicit_catalog && slot.supported_models.read().is_empty() {
-                continue;
-            }
-            if !accept(slot) {
-                continue;
-            }
-            let strikes = slot.rate_limit_strikes.load(Ordering::Relaxed);
-            if max_strikes.is_some_and(|max| strikes > max) {
-                continue;
-            }
+        // Iterate priority buckets ascending (0 = highest priority)
+        for priority in &priorities {
+            let mut candidates: Vec<usize> = Vec::new();
+            for i in 0..n {
+                let slot = &self.slots[i];
+                if !slot.enabled.load(Ordering::Relaxed) {
+                    continue;
+                }
+                if slot.priority.load(Ordering::Relaxed) != *priority {
+                    continue;
+                }
+                if !slot_passes_cooldown(slot, scope, model, now) {
+                    continue;
+                }
+                if let Some(ex) = excluded
+                    && slot.account_id.as_ref() == ex
+                {
+                    continue;
+                }
+                if require_explicit_catalog && slot.supported_models.read().is_empty() {
+                    continue;
+                }
+                if !accept(slot) {
+                    continue;
+                }
+                let strikes = slot.rate_limit_strikes.load(Ordering::Relaxed);
+                if max_strikes.is_some_and(|max| strikes > max) {
+                    continue;
+                }
 
-            // Quota-aware filtering: skip keys exhausted by quota cache
-            if let (Some(threshold), Some(cache)) = (quota_threshold_percent, self.quota_cache()) {
-                if looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
-                    if cache.is_exhausted(&slot.id, threshold) {
-                        continue;
+                // Quota-aware filtering: skip keys exhausted by quota cache
+                if let (Some(threshold), Some(cache)) = (quota_threshold_percent, self.quota_cache()) {
+                    if looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
+                        if cache.is_exhausted(&slot.id, threshold) {
+                            continue;
+                        }
                     }
                 }
+                candidates.push(i);
             }
 
-            let inflight = slot.inflight.load(Ordering::Relaxed);
-            let strikes_score = strikes.saturating_mul(1000) as usize;
-            let priority = slot.priority.load(Ordering::Relaxed);
-            let priority_offset = (priority as usize).saturating_mul(100_000);
+            if candidates.is_empty() {
+                continue;
+            }
 
-            // Quota-aware scoring: penalize keys with low remaining headroom
-            let quota_penalty = if let Some(cache) = self.quota_cache() {
-                if looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
-                    if let Some(headroom) = cache.headroom_percent(&slot.id) {
-                        // OmniRoute P2C quotaPenalty: (100 - headroom) / 8, with extra penalty at <=10% and <=25%
-                        let base_penalty = ((100.0 - headroom) / 8.0) as usize;
-                        let threshold_penalty = if headroom <= 10.0 {
-                            10
-                        } else if headroom <= 25.0 {
-                            4
+            // Select best candidate within this priority bucket
+            let start = self.next_model_rr_index(model.unwrap_or(""), candidates.len());
+            let mut best_idx: Option<usize> = None;
+            let mut best_score = usize::MAX;
+
+            for offset in 0..candidates.len() {
+                let ci = (start + offset) % candidates.len();
+                let i = candidates[ci];
+                let slot = &self.slots[i];
+
+                let inflight = slot.inflight.load(Ordering::Relaxed);
+                let strikes = slot.rate_limit_strikes.load(Ordering::Relaxed);
+                let strikes_score = strikes.saturating_mul(1000) as usize;
+
+                // Quota-aware scoring: penalize keys with low remaining headroom
+                let quota_penalty = if let Some(cache) = self.quota_cache() {
+                    if looks_like_codex_oauth_key(&slot.secret, &slot.account_id) {
+                        if let Some(headroom) = cache.headroom_percent(&slot.id) {
+                            let base_penalty = ((100.0 - headroom) / 8.0) as usize;
+                            let threshold_penalty = if headroom <= 10.0 {
+                                10
+                            } else if headroom <= 25.0 {
+                                4
+                            } else {
+                                0
+                            };
+                            base_penalty + threshold_penalty
                         } else {
-                            0
-                        };
-                        base_penalty + threshold_penalty
+                            4
+                        }
                     } else {
-                        // Unknown quota = small penalty (prefer known-good keys)
-                        4
+                        0
                     }
                 } else {
                     0
-                }
-            } else {
-                0
-            };
+                };
 
-            let score = if fill_first {
-                priority_offset + strikes_score + inflight + quota_penalty
-            } else {
-                priority_offset + inflight + quota_penalty
-            };
-            if score < best_score {
-                best_score = score;
-                best_idx = Some(i);
+                let score = if fill_first {
+                    strikes_score + inflight + quota_penalty
+                } else {
+                    inflight + quota_penalty
+                };
+                if score < best_score {
+                    best_score = score;
+                    best_idx = Some(i);
+                }
+            }
+
+            if let Some(idx) = best_idx {
+                // Try semaphore; fail closed so the caller can try the next candidate.
+                let permit = Arc::clone(&self.slots[idx].semaphore)
+                    .try_acquire_owned()
+                    .ok()?;
+                let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
+                global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
+                return Some(UpstreamKeyGuard {
+                    pool: Arc::clone(self),
+                    index: idx,
+                    _permit: Some(permit),
+                });
             }
         }
 
-        let idx = best_idx?;
-        // Try semaphore; fail closed so the caller can try the next candidate.
-        let permit = Arc::clone(&self.slots[idx].semaphore)
-            .try_acquire_owned()
-            .ok()?;
-        let inflight = self.slots[idx].inflight.fetch_add(1, Ordering::AcqRel) + 1;
-        global_metrics().set_upstream_key_inflight(&self.slots[idx].id, inflight as i64);
-        Some(UpstreamKeyGuard {
-            pool: Arc::clone(self),
-            index: idx,
-            _permit: Some(permit),
-        })
+        None
     }
 
     fn release(&self, index: usize) {
@@ -1007,6 +1128,20 @@ impl UpstreamKeyPool {
             let inflight = prev.saturating_sub(1);
             global_metrics().set_upstream_key_inflight(&slot.id, inflight as i64);
         }
+    }
+
+    /// Get the next round-robin start index for a specific model.
+    /// Falls back to global rr for empty models.
+    fn next_model_rr_index(&self, model: &str, n: usize) -> usize {
+        let model_key = normalize_model_slug(model);
+        if model_key.is_empty() || n == 0 {
+            return self.rr.fetch_add(1, Ordering::Relaxed) % n.max(1);
+        }
+        let mut map = self.model_rr.write();
+        let counter = map
+            .entry(Arc::from(model_key.as_str()))
+            .or_insert_with(|| AtomicUsize::new(0));
+        counter.fetch_add(1, Ordering::Relaxed) % n
     }
 
     /// Mark key rate-limited and try to acquire another from a **different** `account_id`.
@@ -1030,7 +1165,7 @@ impl UpstreamKeyPool {
             .map(|s| s.account_id.clone())?;
         global_metrics().record_upstream_key_retry("rate_limited_rotate");
         if scope.is_some() {
-            pool.acquire_scored(Some(excluded.as_ref()), scope, fill_first, false, |_| true)
+            pool.acquire_scored(Some(excluded.as_ref()), scope, None, fill_first, false, |_| true)
         } else {
             pool.acquire_excluding_account(Some(excluded.as_ref()))
         }
@@ -1052,6 +1187,47 @@ impl UpstreamKeyPool {
         }
     }
 
+    /// Report rate limit for a specific model on a key with progressive backoff.
+    /// Only sets per-model cooldown, preserving the key for other models.
+    pub fn report_rate_limited_for_model(
+        &self,
+        key_id: &str,
+        model: &str,
+        cooldown_secs: u64,
+        scope: Option<&str>,
+    ) {
+        let now = now_ms();
+        if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
+            // Progressive per-model cooldown
+            let model_key = normalize_model_slug(model);
+            if !model_key.is_empty() {
+                let mut mc = slot.model_cooldowns.write();
+                let model_arc: Arc<str> = Arc::from(model_key.as_str());
+                let (backoff_secs, next_level) = if let Some(existing) = mc.get(&model_arc) {
+                    if existing.cooldown_until_ms > now {
+                        next_progressive_cooldown(existing.backoff_level)
+                    } else {
+                        (cooldown_secs.max(PROGRESSIVE_BACKOFF_BASE_SECS), 1u32)
+                    }
+                } else {
+                    (cooldown_secs.max(PROGRESSIVE_BACKOFF_BASE_SECS), 1u32)
+                };
+                let until = now + backoff_secs.saturating_mul(1000);
+                mc.insert(model_arc, ModelCooldownEntry {
+                    cooldown_until_ms: until,
+                    backoff_level: next_level,
+                });
+            }
+
+            slot.rate_limit_strikes.fetch_add(1, Ordering::Relaxed);
+            if let Some(scope) = scope.filter(|s| !s.is_empty() && *s != "default") {
+                let scope_until = now + cooldown_secs.saturating_mul(1000);
+                slot.scope_cooldowns.write().insert(Arc::from(scope), scope_until);
+            }
+            self.state_dirty.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub fn record_key_success(&self, key_id: &str) {
         if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
             let prev = slot.rate_limit_strikes.swap(0, Ordering::Relaxed);
@@ -1059,6 +1235,50 @@ impl UpstreamKeyPool {
                 self.state_dirty.store(true, Ordering::Relaxed);
             }
         }
+    }
+
+    /// Record a successful response for a specific model, resetting per-model cooldown.
+    pub fn record_model_success(&self, key_id: &str, model: &str) {
+        self.record_key_success(key_id);
+        let model_key = normalize_model_slug(model);
+        if model_key.is_empty() {
+            return;
+        }
+        if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
+            let removed = slot.model_cooldowns.write().remove(model_key.as_str()).is_some();
+            if removed {
+                self.state_dirty.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Manually clear per-model cooldowns for a key.
+    ///
+    /// - `model = Some(slug)` clears a single model.
+    /// - `model = None` clears **all** model cooldowns for the key.
+    ///
+    /// Returns the number of cooldowns removed.
+    pub fn reset_model_cooldowns(&self, key_id: &str, model: Option<&str>) -> usize {
+        let slot = match self.slots.iter().find(|s| s.id == key_id) {
+            Some(s) => s,
+            None => return 0,
+        };
+        let mut mc = slot.model_cooldowns.write();
+        let removed = if let Some(m) = model {
+            let mk = normalize_model_slug(m);
+            if mk.is_empty() {
+                return 0;
+            }
+            usize::from(mc.remove(mk.as_str()).is_some())
+        } else {
+            let count = mc.len();
+            mc.clear();
+            count
+        };
+        if removed > 0 {
+            self.state_dirty.store(true, Ordering::Relaxed);
+        }
+        removed
     }
 
     pub fn report_unauthorized(&self, key_id: &str) {
@@ -1086,6 +1306,11 @@ impl UpstreamKeyPool {
         } else {
             false
         }
+    }
+
+    /// Check whether a key with the given ID exists in this pool.
+    pub fn key_exists(&self, key_id: &str) -> bool {
+        self.slots.iter().any(|s| s.id == key_id)
     }
 
     /// Return the full secret for a specific key by ID (for per-key testing).
@@ -1122,6 +1347,7 @@ impl UpstreamKeyPool {
                 let mut cooldown_until_ms = 0u64;
                 let mut rate_limit_strikes = 0u32;
                 let mut scope_cooldowns = HashMap::new();
+                let mut model_cooldowns = HashMap::new();
                 let mut supported_models: Arc<[String]> = Arc::from(spec.supported_models.clone());
                 let mut priority = spec.priority;
                 if let Some(prev) = pool.slots.iter().find(|s| s.id == id) {
@@ -1129,6 +1355,7 @@ impl UpstreamKeyPool {
                     cooldown_until_ms = prev.cooldown_until_ms.load(Ordering::Relaxed);
                     rate_limit_strikes = prev.rate_limit_strikes.load(Ordering::Relaxed);
                     scope_cooldowns = prev.scope_cooldowns.read().clone();
+                    model_cooldowns = prev.model_cooldowns.read().clone();
                     if supported_models.is_empty() {
                         supported_models = prev.supported_models.read().clone();
                     }
@@ -1145,6 +1372,7 @@ impl UpstreamKeyPool {
                     cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
                     rate_limit_strikes: AtomicU32::new(rate_limit_strikes),
                     scope_cooldowns: RwLock::new(scope_cooldowns),
+                    model_cooldowns: RwLock::new(model_cooldowns),
                     supported_models: RwLock::new(supported_models),
                     semaphore: Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
                         max_inflight,
@@ -1161,6 +1389,7 @@ impl UpstreamKeyPool {
             max_inflight,
             codex_quota_cache: pool.codex_quota_cache.clone(),
             state_dirty: AtomicBool::new(pool.state_dirty.load(Ordering::Relaxed)),
+            model_rr: RwLock::new(clone_model_rr(&pool.model_rr.read())),
         })
     }
 
@@ -1629,6 +1858,7 @@ mod tests {
                 rate_limit_strikes: 3,
                 scope_cooldowns: std::collections::HashMap::new(),
                 enabled: true,
+                model_cooldowns: std::collections::HashMap::new(),
             },
         );
         pool.apply_key_states(&states);
@@ -1647,6 +1877,7 @@ mod tests {
                 rate_limit_strikes: 0,
                 scope_cooldowns: std::collections::HashMap::new(),
                 enabled: false,
+                model_cooldowns: std::collections::HashMap::new(),
             },
         );
         pool.apply_key_states(&states);
@@ -1805,5 +2036,119 @@ mod tests {
             .acquire_excluding_key("bound")
             .expect("spill to spare key");
         assert_eq!(guard.key_id(), "spare");
+    }
+
+    #[test]
+    fn per_model_cooldown_isolation() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-key-123456789".into()], 60, 0);
+        // Report rate limit for model-a
+        pool.report_rate_limited_for_model("key-1", "deepseek-chat", 60, None);
+        // Model-b should still be available
+        // But global cooldown blocks everything, so use record_model_success to clear
+        pool.record_model_success("key-1", "deepseek-chat");
+        let guard = pool.acquire_for_upstream_model("deepseek-coder", false);
+        assert!(guard.is_some(), "model-deepseek-coder should not be affected by deepseek-chat cooldown");
+    }
+
+    #[test]
+    fn progressive_backoff_increases() {
+        let (d1, l1) = next_progressive_cooldown(0);
+        assert_eq!(d1, 1);
+        assert_eq!(l1, 1);
+        let (d2, l2) = next_progressive_cooldown(1);
+        assert_eq!(d2, 2);
+        assert_eq!(l2, 2);
+        let (d3, l3) = next_progressive_cooldown(2);
+        assert_eq!(d3, 4);
+        assert_eq!(l3, 3);
+        // Capped at 1800
+        let (d_max, _) = next_progressive_cooldown(30);
+        assert_eq!(d_max, 1800);
+    }
+
+    #[test]
+    fn model_cooldown_export_restore() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_rate_limited_for_model("key-1", "deepseek-chat", 30, None);
+        let states = pool.export_key_states();
+        let state = states.get("key-1").unwrap();
+        assert!(!state.model_cooldowns.is_empty());
+        assert!(state.model_cooldowns.contains_key("deepseek-chat"));
+
+        // Restore to a new pool
+        let pool2 = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool2.apply_key_states(&states);
+        // Check model cooldown was restored
+        let slot = &pool2.slots[0];
+        assert!(slot.model_cooldowns.read().contains_key("deepseek-chat"));
+    }
+
+    #[test]
+    fn per_model_round_robin_distributes() {
+        let pool = UpstreamKeyPool::from_secrets(
+            vec!["sk-aaaaaaaaaaaa".into(), "sk-bbbbbbbbbbbb".into()],
+            60,
+            0,
+        );
+        // Same model should rotate between keys
+        let g1 = pool.acquire_for_upstream_model("model-x", false).unwrap();
+        let g2 = pool.acquire_for_upstream_model("model-x", false).unwrap();
+        assert_ne!(g1.key_id(), g2.key_id(), "per-model RR should alternate");
+    }
+
+    #[test]
+    fn model_cooldown_view_populated() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_rate_limited_for_model("key-1", "deepseek-chat", 60, None);
+        let status = pool.list_status();
+        assert_eq!(status.len(), 1);
+        assert!(!status[0].model_cooldowns.is_empty());
+        assert_eq!(status[0].model_cooldowns[0].model, "deepseek-chat");
+    }
+
+    #[test]
+    fn record_model_success_clears_cooldown() {
+        let pool = UpstreamKeyPool::from_secrets(vec!["sk-aaaaaaaaaaaa".into()], 60, 0);
+        pool.report_rate_limited_for_model("key-1", "deepseek-chat", 60, None);
+        pool.record_model_success("key-1", "deepseek-chat");
+        let slot = &pool.slots[0];
+        assert!(slot.model_cooldowns.read().is_empty());
+    }
+
+    #[test]
+    fn per_model_cooldown_blocks_specific_model_only() {
+        let pool = UpstreamKeyPool::from_secrets(
+            vec!["sk-key-one-aaaaaaa".into(), "sk-key-two-bbbbbb".into()],
+            60,
+            0,
+        );
+        // Rate-limit key-1 for deepseek-chat with a long cooldown
+        pool.report_rate_limited_for_model("key-1", "deepseek-chat", 300, None);
+        // key-1 is still available for other models (no global cooldown)
+        let guard_other = pool.acquire_for_upstream_model("deepseek-coder", false);
+        assert!(guard_other.is_some(), "key should be available for non-cooled model");
+    }
+
+    #[test]
+    fn priority_bucketing_exhausts_higher_first() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec { id: "hi".into(), secret: "sk-hi-aaaaaaaaaa".into(), enabled: true, account_id: String::new(), supported_models: Vec::new(), priority: 0 },
+                UpstreamKeySpec { id: "lo".into(), secret: "sk-lo-bbbbbbbbbb".into(), enabled: true, account_id: String::new(), supported_models: Vec::new(), priority: 10 },
+            ],
+            60,
+            0, // unlimited inflight
+        );
+        // Both available, should prefer "hi" (priority 0)
+        let g1 = pool.acquire().unwrap();
+        assert_eq!(g1.key_id(), "hi");
+        // "hi" still available (unlimited inflight), should still get it
+        let g2 = pool.acquire().unwrap();
+        assert_eq!(g2.key_id(), "hi");
+
+        // Now cool down "hi" — should fall through to "lo"
+        pool.report_rate_limited("hi");
+        let g3 = pool.acquire().unwrap();
+        assert_eq!(g3.key_id(), "lo");
     }
 }

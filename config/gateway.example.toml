@@ -890,6 +890,22 @@ max_files = 5
 # client_lockout_attempt_window_secs = 300  # Sliding window for counting failures (5 minutes)
 # model_lockout_enabled = true           # Model-level lockout (per-profile/backend/model cooldowns)
 #
+# ── Account Pool Enhancements (from CLIProxyAPI) ────────────────
+# Progressive backoff for per-model 429 rate-limit cooldowns.
+# Backoff levels: 1s → 2s → 4s → 8s → 16s → ... → 1800s (cap).
+# Resets to level 0 on successful request through that key+model pair.
+# progressive_backoff_enabled = true
+#
+# Strict priority bucketing: keys with the highest priority are exhausted
+# (all on cooldown or at max inflight) before any lower-priority key is tried.
+# Within a priority group, round-robin applies.
+# strict_priority_bucketing = true
+#
+# Per-model round-robin cursors: each model maintains its own cursor into
+# the key pool, ensuring balanced distribution across models that may have
+# very different key availability patterns.
+# per_model_round_robin = true
+#
 # ── P1-1: Multi-factor Weighted Routing ──────────────────────────
 # When backend_route_strategy = "weighted_ketama", the gateway scores all
 # ready backends on 5 factors and picks the highest-scoring one.

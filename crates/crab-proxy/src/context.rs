@@ -812,6 +812,25 @@ pub struct FeaturesConfig {
     /// Enable model-level lockout (per-profile/backend/model cooldowns).
     #[serde(default = "default_true")]
     pub model_lockout_enabled: bool,
+
+    // ── CLIProxyAPI-derived features (progressive backoff, strict priority, session affinity) ──
+
+    /// Enable per-model 429 progressive exponential backoff on upstream keys.
+    /// When a key returns 429 for a specific model, the cooldown escalates:
+    /// 1s → 2s → 4s → … → 1800s (cap). Success resets the level.
+    #[serde(default = "default_true")]
+    pub progressive_backoff_enabled: bool,
+
+    /// Enable strict priority bucketing: keys in the highest-priority group are
+    /// exhausted before any lower-priority key is tried. Within a group, round-robin
+    /// applies. When all keys in a group are on cooldown/inflight, the next group opens.
+    #[serde(default = "default_true")]
+    pub strict_priority_bucketing: bool,
+
+    /// Enable per-model round-robin cursors (each model maintains its own cursor
+    /// into the key pool for balanced distribution).
+    #[serde(default = "default_true")]
+    pub per_model_round_robin: bool,
 }
 
 /// Configuration for quota preflight / backend health gating.
@@ -893,6 +912,9 @@ impl Default for FeaturesConfig {
             client_lockout_duration_secs: default_client_lockout_duration_secs(),
             client_lockout_attempt_window_secs: default_client_lockout_attempt_window_secs(),
             model_lockout_enabled: default_true(),
+            progressive_backoff_enabled: default_true(),
+            strict_priority_bucketing: default_true(),
+            per_model_round_robin: default_true(),
         }
     }
 }

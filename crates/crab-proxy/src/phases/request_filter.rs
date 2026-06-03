@@ -245,8 +245,6 @@ async fn run_post_body_phases(
         x_client_kind,
         originator,
         detection_payload.as_ref(),
-        full_body.len(),
-        quick.model.as_deref(),
     );
 
     let mut selection = if !skip_early_pipeline_select {

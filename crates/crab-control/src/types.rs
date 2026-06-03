@@ -75,6 +75,17 @@ pub struct PutUpstreamRelayConfigRequest {
     pub tls_sni: Option<String>,
 }
 
+/// Per-model cooldown state for a single upstream key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCooldownView {
+    /// Model slug (e.g. "deepseek-chat", "mimo-v2-pro").
+    pub model: String,
+    /// Seconds remaining until this model is usable again on this key.
+    pub remaining_secs: u64,
+    /// Progressive backoff level (0 = first cooldown, increments on repeated 429s).
+    pub backoff_level: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamKeyView {
     pub id: String,
@@ -87,6 +98,9 @@ pub struct UpstreamKeyView {
     /// Key priority: 0 = highest, higher values = lower priority.
     #[serde(default)]
     pub priority: u32,
+    /// Per-model cooldown states (progressive 429 backoff).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_cooldowns: Vec<ModelCooldownView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +177,14 @@ pub struct PatchUpstreamKeyRequest {
     pub secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<u32>,
+}
+
+/// POST `/v1/upstream/keys/:id/reset-model-cooldown` — clear per-model cooldowns for a key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetModelCooldownRequest {
+    /// Model slug to clear. If `None`, clears all model cooldowns for the key.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

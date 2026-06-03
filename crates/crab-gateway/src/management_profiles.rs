@@ -508,6 +508,15 @@ pub async fn get_profile_keys(
             inflight: s.inflight,
             cooldown_remaining_secs: s.cooldown_remaining_secs,
             priority: s.priority,
+            model_cooldowns: s
+                .model_cooldowns
+                .into_iter()
+                .map(|mc| crab_control::ModelCooldownView {
+                    model: mc.model,
+                    remaining_secs: mc.remaining_secs,
+                    backoff_level: mc.backoff_level,
+                })
+                .collect(),
         })
         .collect();
     Ok(Json(UpstreamProfileKeysView {
@@ -664,6 +673,15 @@ pub async fn patch_profile_key(
             inflight: k.inflight,
             cooldown_remaining_secs: k.cooldown_remaining_secs,
             priority: k.priority,
+            model_cooldowns: k
+                .model_cooldowns
+                .into_iter()
+                .map(|mc| crab_control::ModelCooldownView {
+                    model: mc.model,
+                    remaining_secs: mc.remaining_secs,
+                    backoff_level: mc.backoff_level,
+                })
+                .collect(),
         })
         .ok_or_else(|| {
             (
@@ -713,6 +731,39 @@ pub async fn delete_profile_key(
         .map_err(|e| bad_request(&e))?;
     schedule_persist_state(&state);
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST `/v1/upstream/profiles/:id/keys/:key_id/reset-model-cooldown`
+pub async fn reset_profile_key_model_cooldown(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+    Path(path): Path<ProfileKeyPath>,
+    Json(body): Json<crab_control::ResetModelCooldownRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    authorize(&headers, &state.admin_key)?;
+    let profile_id = path.id.trim();
+    let key_id = path.key_id.trim();
+    let profile = state
+        .runtime
+        .profile(profile_id)
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
+    let pool = profile.resolve_upstream_pool();
+    let removed = pool.reset_model_cooldowns(key_id, body.model.as_deref());
+    if removed == 0 && !pool.key_exists(key_id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("upstream key '{key_id}' not found"),
+            }),
+        )
+            .into_response());
+    }
+    schedule_persist_state(&state);
+    Ok(Json(serde_json::json!({
+        "profile_id": profile_id,
+        "key_id": key_id,
+        "model_cooldowns_cleared": removed,
+    })))
 }
 
 pub async fn test_upstream_profile(
