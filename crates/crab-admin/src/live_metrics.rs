@@ -670,6 +670,40 @@ mod tests {
     }
 
     #[test]
+    fn client_key_id_fallback_for_cache_hit_top_upstream_key() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let bucket_ms = 5_000;
+        let t0 = (now_ms / bucket_ms) * bucket_ms;
+        let mut e = entry(t0 + 100, "c", 10.0, None, 1, 1);
+        e.upstream_key_id = None;
+        e.client_key_id = Some("client-key-1".into());
+        e.cache_hit = true;
+        let resp = aggregate_live_metrics(
+            &[e],
+            "*",
+            "",
+            "",
+            300,
+            5,
+            true,
+            vec!["c".into()],
+            &[],
+        );
+        let bucket = resp
+            .buckets
+            .iter()
+            .find(|b| b.request_count > 0)
+            .expect("active bucket");
+        assert_eq!(
+            bucket.top_upstream_key, "client-key-1",
+            "cache hit: upstream_key_id absent, client_key_id should feed top_upstream_key"
+        );
+    }
+
+    #[test]
     fn weighted_summary_uneven_buckets() {
         let buckets = vec![
             LiveMetricsBucket {
@@ -692,6 +726,7 @@ mod tests {
                 top_upstream_key: String::new(),
                 top_downstream_key: String::new(),
                 top_client_ip: String::new(),
+                top_client_ip_location: String::new(),
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -713,6 +748,7 @@ mod tests {
                 top_upstream_key: String::new(),
                 top_downstream_key: String::new(),
                 top_client_ip: String::new(),
+                top_client_ip_location: String::new(),
             },
         ];
         let s = summarize_window(&buckets);

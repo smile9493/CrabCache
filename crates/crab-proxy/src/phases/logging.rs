@@ -370,8 +370,7 @@ pub(crate) async fn run(
                 };
                 entry.pipeline_degraded = false;
                 entry.client_key_id = ctx
-                    .upstream
-                    .key_guard
+                    .client_key_guard
                     .as_ref()
                     .map(|g| g.key_id().to_string());
                 entry.session_fingerprint = ctx.session_fingerprint.clone();

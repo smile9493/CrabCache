@@ -884,6 +884,10 @@ mod tests {
             semantic: SemanticConfig {
                 enabled: false,
                 similarity_threshold: 0.95,
+                ttl_secs: 0,
+                min_query_chars: 0,
+                max_query_chars: 0,
+                max_concurrent_embeds: 0,
             },
             ops: OverviewOpsMetrics::default(),
             suggestions: vec![],

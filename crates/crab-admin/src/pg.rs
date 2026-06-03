@@ -3863,6 +3863,10 @@ impl PgStore {
     }
 
     /// Update keys_meta last_used_at from trace_logs.
+    ///
+    /// TODO: Dead code — no call sites in crab-admin today. Before wiring this up,
+    /// ensure trace_logs.client_key_id is populated from the downstream client key
+    /// (`client_key_guard`), not upstream_key_id; historical rows may need backfill.
     pub async fn update_keys_last_used(&self) -> Result<u64> {
         let client = self.pool.get().await?;
         let count = client
