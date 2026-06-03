@@ -1,6 +1,6 @@
 use crate::client_kind::ClientKind;
 use crate::is_deepseek_v4_model;
-use crate::profile::{model_prefix_to_profile, resolve_upstream_profile_id};
+use crate::profile::{model_prefix_to_profile, pick_profile_by_provider, resolve_upstream_profile_id};
 use crate::rule_engine::RuleMatchInput;
 #[allow(deprecated)]
 use crate::signals::{cursor_agent_signals, user_agent_suggests_cursor};
@@ -88,12 +88,15 @@ fn pipeline_override_matches_model(override_pipe: PipelineOverride, model: &str)
     }
 }
 
-/// Legacy Codex profiles may still store `provider=openai` while `id=codex`.
+/// Legacy Codex profiles may still store `provider=openai` while id is codex-like.
 fn normalize_legacy_codex_provider(
     provider: UpstreamProvider,
     upstream_profile_id: &str,
 ) -> UpstreamProvider {
-    if provider == UpstreamProvider::Openai && upstream_profile_id.eq_ignore_ascii_case("codex") {
+    let id_lower = upstream_profile_id.to_ascii_lowercase();
+    if provider == UpstreamProvider::Openai
+        && (id_lower == "codex" || id_lower.starts_with("codex-") || id_lower.starts_with("codex_"))
+    {
         UpstreamProvider::Codex
     } else {
         provider
@@ -105,23 +108,17 @@ fn profile_for_pipeline(
     pipeline: RequestPipeline,
     profiles: &[ProfileDescriptor],
 ) -> Option<String> {
-    let target_id = match pipeline {
+    let (provider, canonical) = match pipeline {
         RequestPipeline::CursorDeepSeekV4
         | RequestPipeline::DeepSeekLight
-        | RequestPipeline::CodexDeepSeek => "deepseek",
-        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::CodexMimo => "mimo",
-        RequestPipeline::CodexRelay => {
-            return profiles
-                .iter()
-                .find(|p| p.id == "codex" || p.id == "openai")
-                .map(|p| p.id.clone());
+        | RequestPipeline::CodexDeepSeek => (UpstreamProvider::Deepseek, Some("deepseek")),
+        RequestPipeline::MimoTokenPlanRelay | RequestPipeline::CodexMimo => {
+            (UpstreamProvider::Mimo, Some("mimo"))
         }
+        RequestPipeline::CodexRelay => (UpstreamProvider::Codex, Some("codex")),
         RequestPipeline::GenericRelay => return None,
     };
-    profiles
-        .iter()
-        .find(|p| p.id == target_id)
-        .map(|p| p.id.clone())
+    pick_profile_by_provider(profiles, provider, canonical).map(|(id, _)| id)
 }
 
 fn pipeline_from_override(
@@ -683,5 +680,49 @@ mod tests {
             PipelineOverride::from_str("mimo_token_plan_relay"),
             PipelineOverride::MimoTokenPlanRelay
         );
+    }
+
+    #[test]
+    fn custom_mimo_tp_sgp_selects_mimo_relay() {
+        let globals = PipelineGlobals::with_profiles(
+            "deepseek",
+            ["deepseek", "mimo-tp-sgp"].map(String::from),
+        );
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "deepseek".into(),
+                provider: UpstreamProvider::Deepseek,
+            },
+            ProfileDescriptor {
+                id: "mimo-tp-sgp".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "mimo-tp-sgp");
+        assert_eq!(sel.pipeline, RequestPipeline::MimoTokenPlanRelay);
+        assert_eq!(sel.reason, PipelineSelectionReason::MimoProvider);
+    }
+
+    #[test]
+    fn custom_codex_plus_selects_codex_relay() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "codex-plus".into(),
+            provider: UpstreamProvider::Codex,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "gpt-5-codex",
+            ..Default::default()
+        };
+        let sel = select_request_pipeline(&globals, &profiles, &ctx);
+        assert_eq!(sel.upstream_profile_id, "codex-plus");
+        assert_eq!(sel.provider, UpstreamProvider::Codex);
+        assert_eq!(sel.pipeline, RequestPipeline::CodexRelay);
+        assert_eq!(sel.reason, PipelineSelectionReason::CodexProvider);
     }
 }

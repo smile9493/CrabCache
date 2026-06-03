@@ -29,15 +29,14 @@ impl ClientKind {
 /// Unified client detector — replaces scattered Cursor/Codex detection logic.
 ///
 /// Detection priority (highest first):
-/// 1. P0: `/v1/responses` path + GPT/Codex model → `Codex`
-/// 2. P1: `X-Client-Kind` header → explicit declaration
-/// 3. P2: User-Agent contains `cursor` → `Cursor`
-/// 4. P3: User-Agent contains `codex_cli` → `Codex`
-/// 5. P4: User-Agent contains `windsurf` → `Windsurf`
-/// 6. P5: User-Agent contains `aider` → `Aider`
-/// 7. P6: User-Agent contains `continue` → `Continue`
-/// 8. P7: payload signals (`tools` / `conversation_id` / `reasoning_content`) → `Cursor`
-/// 9. P8: fallback → `Generic`
+/// 1. P0: `/v1/responses` wire → `Codex` (unless User-Agent is explicitly Cursor)
+/// 2. P0b: `/v1/responses` + GPT/Codex model → `Codex` (Cursor UA + GPT on Responses)
+/// 3. P1: `X-Client-Kind` header → explicit declaration
+/// 4. P2: User-Agent contains `cursor` → `Cursor`
+/// 5. P3: User-Agent contains `codex_cli` → `Codex`
+/// 6. P4–P6: windsurf / aider / continue User-Agent
+/// 7. P7: Chat Completions payload signals (`tools` / `conversation_id` / …) → `Cursor`
+/// 8. P8: fallback → `Generic`
 pub struct ClientDetector;
 
 impl ClientDetector {
@@ -47,14 +46,37 @@ impl ClientDetector {
     /// * `path` — request URI path (e.g. `/v1/chat/completions`)
     /// * `user_agent` — `User-Agent` header value
     /// * `client_kind_header` — `X-Client-Kind` header value (explicit override)
+    /// * `originator` — `Originator` header (Codex CLI sends `codex_cli_rs`)
     /// * `payload` — parsed JSON request body
     pub fn detect(
         path: &str,
         user_agent: Option<&str>,
         client_kind_header: Option<&str>,
+        originator: Option<&str>,
         payload: Option<&Value>,
     ) -> ClientKind {
-        // P0: /v1/responses endpoint + GPT/Codex model → Codex
+        // P0: /v1/responses wire — Codex CLI/Desktop unless explicitly Cursor UA.
+        // Responses + `tools` must not fall through to Cursor payload heuristics (P7).
+        if path.ends_with("/v1/responses") {
+            if originator
+                .is_some_and(|o| o.trim().eq_ignore_ascii_case("codex_cli_rs"))
+            {
+                return ClientKind::Codex;
+            }
+            if let Some(ua) = user_agent {
+                let ua_lower = ua.to_ascii_lowercase();
+                if ua_lower.contains("codex_cli") || ua_lower.contains("codex/") {
+                    return ClientKind::Codex;
+                }
+                if !ua_lower.contains("cursor") {
+                    return ClientKind::Codex;
+                }
+            } else {
+                return ClientKind::Codex;
+            }
+        }
+
+        // P0b: /v1/responses + GPT/Codex model (legacy path when Cursor UA present)
         if path.ends_with("/v1/responses") {
             if let Some(model) = payload_model(payload) {
                 if is_codex_family_model(model) {
@@ -97,8 +119,8 @@ impl ClientDetector {
             }
         }
 
-        // P7: payload signals (Cursor agent patterns)
-        if has_cursor_payload_signals(payload) {
+        // P7: payload signals (Cursor agent patterns) — Chat Completions wire only.
+        if !path.ends_with("/v1/responses") && has_cursor_payload_signals(payload) {
             return ClientKind::Cursor;
         }
 
@@ -185,6 +207,7 @@ mod tests {
                 Some("Cursor/0.45.0"),
                 None,
                 None,
+                None,
             ),
             ClientKind::Cursor,
         );
@@ -196,6 +219,7 @@ mod tests {
             ClientDetector::detect(
                 "/v1/chat/completions",
                 Some("codex_cli/1.0"),
+                None,
                 None,
                 None,
             ),
@@ -211,6 +235,7 @@ mod tests {
                 Some("Mozilla/5.0"),
                 Some("cursor"),
                 None,
+                None,
             ),
             ClientKind::Cursor,
         );
@@ -220,17 +245,51 @@ mod tests {
     fn responses_endpoint_codex_model() {
         let payload = json!({"model": "gpt-5", "messages": []});
         assert_eq!(
-            ClientDetector::detect("/v1/responses", None, None, Some(&payload)),
+            ClientDetector::detect("/v1/responses", None, None, None, Some(&payload)),
             ClientKind::Codex,
         );
     }
 
     #[test]
     fn responses_endpoint_non_codex_model() {
-        let payload = json!({"model": "deepseek-v4-pro", "messages": []});
+        let payload = json!({"model": "deepseek-v4-pro", "input": []});
         assert_eq!(
-            ClientDetector::detect("/v1/responses", None, None, Some(&payload)),
-            ClientKind::Generic,
+            ClientDetector::detect("/v1/responses", None, None, None, Some(&payload)),
+            ClientKind::Codex,
+        );
+    }
+
+    #[test]
+    fn responses_mimo_with_tools_is_codex_not_cursor() {
+        let payload = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            "tools": []
+        });
+        assert_eq!(
+            ClientDetector::detect(
+                "/v1/responses",
+                Some("codex_cli_rs/0.133.0"),
+                None,
+                Some("codex_cli_rs"),
+                Some(&payload),
+            ),
+            ClientKind::Codex,
+        );
+    }
+
+    #[test]
+    fn responses_cursor_ua_mimo_stays_cursor() {
+        let payload = json!({"model": "mimo-v2.5-pro", "input": []});
+        assert_eq!(
+            ClientDetector::detect(
+                "/v1/responses",
+                Some("Cursor/1.0.0"),
+                None,
+                None,
+                Some(&payload),
+            ),
+            ClientKind::Cursor,
         );
     }
 
@@ -238,7 +297,7 @@ mod tests {
     fn tools_in_payload_signals_cursor() {
         let payload = json!({"model": "deepseek-v4-pro", "tools": [], "messages": []});
         assert_eq!(
-            ClientDetector::detect("/v1/chat/completions", None, None, Some(&payload)),
+            ClientDetector::detect("/v1/chat/completions", None, None, None, Some(&payload)),
             ClientKind::Cursor,
         );
     }
@@ -247,7 +306,7 @@ mod tests {
     fn conversation_id_signals_cursor() {
         let payload = json!({"model": "mimo-v2.5-pro", "conversation_id": "abc"});
         assert_eq!(
-            ClientDetector::detect("/v1/chat/completions", None, None, Some(&payload)),
+            ClientDetector::detect("/v1/chat/completions", None, None, None, Some(&payload)),
             ClientKind::Cursor,
         );
     }
@@ -259,6 +318,7 @@ mod tests {
             ClientDetector::detect(
                 "/v1/chat/completions",
                 Some("curl/7.0"),
+                None,
                 None,
                 Some(&payload),
             ),
@@ -287,7 +347,7 @@ mod tests {
     #[test]
     fn windsurf_user_agent() {
         assert_eq!(
-            ClientDetector::detect("/v1/chat/completions", Some("Windsurf/1.0"), None, None),
+            ClientDetector::detect("/v1/chat/completions", Some("Windsurf/1.0"), None, None, None),
             ClientKind::Windsurf,
         );
     }

@@ -127,30 +127,72 @@ pub fn model_prefix_to_profile(model: &str) -> &'static str {
     "deepseek"
 }
 
-/// Profile id for OpenAI routes.
+/// Map model-family canonical id (from [`model_prefix_to_profile`]) to upstream provider.
+pub fn provider_for_model_family(canonical_id: &str) -> UpstreamProvider {
+    match canonical_id {
+        "codex" => UpstreamProvider::Codex,
+        other => UpstreamProvider::from_str(other),
+    }
+}
+
+/// Pick a profile by upstream provider, preferring exact canonical id when present.
+pub fn pick_profile_by_provider(
+    profiles: &[ProfileDescriptor],
+    provider: UpstreamProvider,
+    preferred_canonical_id: Option<&str>,
+) -> Option<(String, UpstreamProvider)> {
+    if let Some(canonical) = preferred_canonical_id
+        && let Some(p) = profiles.iter().find(|p| p.id == canonical && p.provider == provider)
+    {
+        return Some((p.id.clone(), p.provider));
+    }
+
+    let mut candidates: Vec<&ProfileDescriptor> =
+        profiles.iter().filter(|p| p.provider == provider).collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        let p = candidates[0];
+        return Some((p.id.clone(), p.provider));
+    }
+
+    if let Some(canonical) = preferred_canonical_id {
+        candidates.sort_by(|a, b| {
+            let rank = |p: &ProfileDescriptor| -> u8 {
+                if p.id == canonical {
+                    0
+                } else if p.id.starts_with(canonical) {
+                    1
+                } else {
+                    2
+                }
+            };
+            rank(a).cmp(&rank(b)).then_with(|| a.id.cmp(&b.id))
+        });
+    } else {
+        candidates.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    let p = candidates[0];
+    Some((p.id.clone(), p.provider))
+}
+
+/// Profile id for OpenAI routes (supports custom ids such as `openai-prod`).
 pub fn resolve_openai_profile_id(profiles: &[ProfileDescriptor]) -> Option<String> {
-    if profiles.iter().any(|p| p.id == "openai") {
-        return Some("openai".into());
-    }
-    None
+    pick_profile_by_provider(profiles, UpstreamProvider::Openai, Some("openai"))
+        .map(|(id, _)| id)
 }
 
-/// Profile id for Codex OAuth routes.
+/// Profile id for Codex OAuth routes (supports custom ids such as `codex-plus`).
 pub fn resolve_codex_profile_id(profiles: &[ProfileDescriptor]) -> Option<String> {
-    if profiles.iter().any(|p| p.id == "codex") {
-        return Some("codex".into());
-    }
-    None
+    pick_profile_by_provider(profiles, UpstreamProvider::Codex, Some("codex")).map(|(id, _)| id)
 }
 
-/// True when an explicit key/domain profile id matches the model's implied upstream family.
-pub fn explicit_profile_matches_model(profile_id: &str, model: &str) -> bool {
+/// True when an explicit key/domain profile matches the model's implied upstream family.
+pub fn explicit_profile_matches_model(profile: &ProfileDescriptor, model: &str) -> bool {
     let implied = model_prefix_to_profile(model);
-    match implied {
-        "openai" => profile_id == "openai",
-        "codex" => profile_id == "codex",
-        other => profile_id == other,
-    }
+    let expected = provider_for_model_family(implied);
+    profile.provider == expected
 }
 
 pub fn resolve_upstream_profile_id(
@@ -166,41 +208,49 @@ pub fn resolve_upstream_profile_id(
     };
 
     if let Some(id) = ctx.key_upstream_profile.filter(|s| !s.trim().is_empty())
-        && let Some(found) = pick(id)
-        && explicit_profile_matches_model(id, ctx.model)
+        && let Some(profile) = profiles.iter().find(|p| p.id == id)
+        && explicit_profile_matches_model(profile, ctx.model)
     {
-        return (found.0, found.1, true);
+        return (profile.id.clone(), profile.provider, true);
     }
     if let Some(id) = ctx.domain_upstream_profile.filter(|s| !s.trim().is_empty())
-        && let Some(found) = pick(id)
-        && explicit_profile_matches_model(id, ctx.model)
+        && let Some(profile) = profiles.iter().find(|p| p.id == id)
+        && explicit_profile_matches_model(profile, ctx.model)
     {
-        return (found.0, found.1, true);
+        return (profile.id.clone(), profile.provider, true);
     }
 
     if globals
         .cursor_models
         .should_force_deepseek_profile(ctx.model)
-        && pick("deepseek").is_some()
+        && let Some(found) =
+            pick("deepseek").or_else(|| pick_profile_by_provider(profiles, UpstreamProvider::Deepseek, Some("deepseek")))
     {
-        let found = pick("deepseek").unwrap();
         return (found.0, found.1, false);
     }
 
     let from_model = model_prefix_to_profile(ctx.model);
+    let provider = provider_for_model_family(from_model);
     if from_model == "openai" {
-        if let Some(openai_id) = resolve_openai_profile_id(profiles)
-            && let Some(found) = pick(&openai_id)
+        if let Some(found) = pick_profile_by_provider(profiles, UpstreamProvider::Openai, Some("openai"))
+            .or_else(|| resolve_openai_profile_id(profiles).and_then(|id| pick(&id)))
+            // Codex CLI sends gpt-* display names; prefer OAuth codex pool when no openai profile exists.
+            .or_else(|| {
+                pick_profile_by_provider(profiles, UpstreamProvider::Codex, Some("codex"))
+                    .or_else(|| resolve_codex_profile_id(profiles).and_then(|id| pick(&id)))
+            })
         {
             return (found.0, found.1, false);
         }
     } else if from_model == "codex" {
-        if let Some(codex_id) = resolve_codex_profile_id(profiles)
-            && let Some(found) = pick(&codex_id)
+        if let Some(found) = pick_profile_by_provider(profiles, UpstreamProvider::Codex, Some("codex"))
+            .or_else(|| resolve_codex_profile_id(profiles).and_then(|id| pick(&id)))
         {
             return (found.0, found.1, false);
         }
-    } else if let Some(found) = pick(from_model) {
+    } else if let Some(found) = pick(from_model)
+        .or_else(|| pick_profile_by_provider(profiles, provider, Some(from_model)))
+    {
         return (found.0, found.1, false);
     }
 
@@ -301,6 +351,36 @@ mod tests {
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
         assert_eq!(id, "codex");
         assert_eq!(provider, UpstreamProvider::Openai);
+    }
+
+    #[test]
+    fn gpt_model_prefers_codex_oauth_profile_over_default_deepseek() {
+        let globals = PipelineGlobals::with_profiles(
+            "deepseek",
+            ["deepseek", "codex", "mimo-tp-sgp"].map(String::from),
+        );
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "deepseek".into(),
+                provider: UpstreamProvider::Deepseek,
+            },
+            ProfileDescriptor {
+                id: "codex".into(),
+                provider: UpstreamProvider::Codex,
+            },
+            ProfileDescriptor {
+                id: "mimo-tp-sgp".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "gpt-5.4-mini",
+            ..Default::default()
+        };
+        let (id, provider, explicit) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "codex");
+        assert_eq!(provider, UpstreamProvider::Codex);
+        assert!(!explicit);
     }
 
     #[test]
@@ -408,5 +488,87 @@ mod tests {
         let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
         assert_eq!(id, "codex");
         assert_eq!(provider, UpstreamProvider::Codex);
+    }
+
+    #[test]
+    fn custom_mimo_profile_id_resolves_by_provider() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "deepseek".into(),
+                provider: UpstreamProvider::Deepseek,
+            },
+            ProfileDescriptor {
+                id: "mimo-tp-sgp".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let (id, provider, explicit) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "mimo-tp-sgp");
+        assert_eq!(provider, UpstreamProvider::Mimo);
+        assert!(!explicit);
+    }
+
+    #[test]
+    fn custom_codex_profile_id_resolves_by_provider() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "codex-plus".into(),
+            provider: UpstreamProvider::Codex,
+        }];
+        assert_eq!(
+            resolve_codex_profile_id(&profiles).as_deref(),
+            Some("codex-plus")
+        );
+        let ctx = PipelineRequestContext {
+            model: "codex-mini",
+            ..Default::default()
+        };
+        let (id, provider, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "codex-plus");
+        assert_eq!(provider, UpstreamProvider::Codex);
+    }
+
+    #[test]
+    fn explicit_key_profile_matches_custom_codex_id() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![ProfileDescriptor {
+            id: "codex-plus".into(),
+            provider: UpstreamProvider::Codex,
+        }];
+        let ctx = PipelineRequestContext {
+            model: "codex-mini",
+            key_upstream_profile: Some("codex-plus"),
+            ..Default::default()
+        };
+        let (id, provider, explicit) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "codex-plus");
+        assert_eq!(provider, UpstreamProvider::Codex);
+        assert!(explicit);
+    }
+
+    #[test]
+    fn canonical_mimo_id_still_works() {
+        let globals = PipelineGlobals::default();
+        let profiles = vec![
+            ProfileDescriptor {
+                id: "mimo".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+            ProfileDescriptor {
+                id: "mimo-tp-sgp".into(),
+                provider: UpstreamProvider::Mimo,
+            },
+        ];
+        let ctx = PipelineRequestContext {
+            model: "mimo-v2.5-pro",
+            ..Default::default()
+        };
+        let (id, _, _) = resolve_upstream_profile_id(&globals, &profiles, &ctx);
+        assert_eq!(id, "mimo");
     }
 }
