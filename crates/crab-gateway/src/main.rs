@@ -893,11 +893,7 @@ fn main() -> Result<()> {
             .await
         })?;
         let store = Arc::new(store);
-        let pg_url = config
-            .trace_logging
-            .as_ref()
-            .and_then(|t| t.pg_url.as_deref())
-            .map(str::to_string);
+        let pg_url = crab_gateway::config::resolve_control_pg_url(&config);
 
         let redis_missing = rt.block_on(store.is_empty())?;
         let (version, snap) = if redis_missing {
@@ -957,9 +953,19 @@ fn main() -> Result<()> {
                         );
                     }
                 }
-                let snap = build_snapshot_from_runtime(&runtime);
-                rt.block_on(store.save_all(&snap))?;
-                info!("Initialized empty Redis control plane state");
+                if !runtime.keys.is_empty() {
+                    let snap = build_snapshot_from_runtime(&runtime);
+                    rt.block_on(store.save_all(&snap))?;
+                    info!(
+                        keys = snap.keys.len(),
+                        "Initialized Redis control plane state from bootstrap keys"
+                    );
+                } else {
+                    tracing::warn!(
+                        "Redis control plane empty; not writing empty snapshot — \
+                         Admin will reconcile client keys from PostgreSQL"
+                    );
+                }
             } else if !recovered_from_pg && keys_empty {
                 tracing::warn!(
                     version,
@@ -1020,50 +1026,54 @@ fn main() -> Result<()> {
     };
 
     // PG control-plane snapshot writer (P1: disaster recovery).
-    // Reuses the same pg_url as the trace writer.
-    if let Some(ref trace_cfg) = config.trace_logging {
-        if let Some(ref pg_url_str) = trace_cfg.pg_url {
-            let pg_url_owned = pg_url_str.clone();
-            let rt_ref = runtime.clone();
-            std::thread::Builder::new()
-                .name("crab-pg-control-writer".into())
-                .spawn(move || {
-                    let pg_url = pg_url_owned;
-                    let rt = match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
+    if let Some(pg_url_owned) = crab_gateway::config::resolve_control_pg_url(&config) {
+        let rt_ref = runtime.clone();
+        std::thread::Builder::new()
+            .name("crab-pg-control-writer".into())
+            .spawn(move || {
+                let pg_url = pg_url_owned;
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        tracing::warn!("Failed to create PG control writer runtime: {}", e);
+                        return;
+                    }
+                };
+                rt.block_on(async {
+                    let store = match crab_gateway::pg_control_store::PgControlStore::connect(&pg_url)
+                        .await
                     {
-                        Ok(rt) => rt,
+                        Ok(s) => s,
                         Err(e) => {
-                            tracing::warn!("Failed to create PG control writer runtime: {}", e);
+                            tracing::warn!("Failed to connect PG control store: {}", e);
                             return;
                         }
                     };
-                    rt.block_on(async {
-                        let store = match crab_gateway::pg_control_store::PgControlStore::connect(&pg_url).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!("Failed to connect PG control store: {}", e);
-                                return;
-                            }
-                        };
-                        let interval_secs = crab_gateway::pg_control_store::snapshot_interval_secs();
-                        info!(interval_secs, "PG control-plane snapshot writer started");
-                        loop {
-                            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
-                            let snap = crab_gateway::pg_control_store::build_snapshot(&rt_ref);
-                            let ver = 0i64;
-                            if let Err(e) = store.upsert_snapshot(&snap, ver).await {
-                                tracing::warn!("PG control snapshot write failed: {:#}", e);
-                            }
+                    let interval_secs = crab_gateway::pg_control_store::snapshot_interval_secs();
+                    info!(interval_secs, "PG control-plane snapshot writer started");
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                        let snap = crab_gateway::pg_control_store::build_snapshot(&rt_ref);
+                        let ver = 0i64;
+                        if snap.keys.is_empty() {
+                            tracing::debug!(
+                                "Skipping PG control snapshot write: no client keys in runtime"
+                            );
+                            continue;
                         }
-                    });
-                })
-                .map_err(|e| {
-                    tracing::error!("Failed to spawn PG control writer thread: {}", e);
-                })
-                .ok();
-        }
+                        if let Err(e) = store.upsert_snapshot(&snap, ver).await {
+                            tracing::warn!("PG control snapshot write failed: {:#}", e);
+                        }
+                    }
+                });
+            })
+            .map_err(|e| {
+                tracing::error!("Failed to spawn PG control writer thread: {}", e);
+            })
+            .ok();
     }
 
     // Health checking is now handled by Pingora's LoadBalancer<Consistent> with

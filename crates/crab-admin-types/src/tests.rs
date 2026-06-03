@@ -21,6 +21,9 @@ fn api_key_roundtrip() {
         project_id: Some("proj-a".into()),
         pipeline: None,
         upstream_profile: None,
+        manually_created: false,
+        pending_gateway_sync: false,
+        duplicate_name_count: 1,
     };
     let json = serde_json::to_string(&key).unwrap();
     let back: ApiKey = serde_json::from_str(&json).unwrap();

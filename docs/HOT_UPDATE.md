@@ -51,6 +51,12 @@ python3 scripts/hot_update.py --target wuming
 
 镜像层（基础系统依赖、OpenSSL、运行时包）不变时，热更新即可覆盖绝大多数代码改动。
 
+### 仅热更新 Gateway 时密钥不会丢
+
+Admin 容器**无需**随 Gateway 一起重启。后台任务 `client_keys_reconcile_sync`（默认每 30s）会在检测到 Gateway 重启或 PG 密钥多于 Gateway 时，自动把 `keys_meta` / 域策略推回 Redis。Dashboard Keys 列表在短暂不同步时仍显示 PG 中的密钥（`pending_gateway_sync`）。
+
+详见 [`PERSISTENCE.md`](./PERSISTENCE.md)「热更新 / 网关重启后的自动对账」。
+
 ## 何时仍需要重建镜像
 
 出现以下任一情况，建议执行完整 `docker compose build`：

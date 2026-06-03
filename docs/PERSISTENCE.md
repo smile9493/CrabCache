@@ -122,6 +122,19 @@ docker compose --profile admin up -d
 
 **双源说明**：Admin 的 `domain_policies` 写入 PG 与 `admin-state.json`，并在启动时 `sync_domain_policies_to_gateway` 推到 Gateway。**Gateway 运行时**仍读 Redis；策略冷存以 PG 为准。
 
+### 热更新 / 网关重启后的自动对账（无需手工操作）
+
+| 机制 | 默认间隔 | 作用 |
+|------|----------|------|
+| `client_keys_reconcile_sync` | 30s（`CRABCACHE_CLIENT_KEYS_RECONCILE_INTERVAL_SECS`） | 检测 Gateway uptime 回退或 PG/Admin 密钥数多于 Gateway → 从 PG `keys_meta` **reconcile** 回 Redis |
+| `gateway_profile_push` | 30s | Profile 元数据与上游 Key 池推回 Gateway |
+| `gateway_state_sync` | 60s | 拉取 Gateway 快照写 PG；**网关 keys 为空且 PG 仍有密钥时跳过写入**，避免空快照覆盖灾难恢复数据 |
+| Gateway `resolve_control_pg_url` | — | `CRABCACHE_CONTROL_PG_URL` → `CRABCACHE_TRACE_PG_URL` → `CRADMIN_PG_URL`；用于启动从 `gateway_state_snapshots` 恢复 + 每 30s 直写快照 |
+
+Docker Compose 默认将 `CRABCACHE_CONTROL_PG_URL=${CRADMIN_PG_URL}` 注入 **gateway** 容器。仅热更新 gateway、Admin 不重启时，后台对账会在约 30s 内把 sk-cc 与域策略推回 Gateway。
+
+Dashboard `GET /api/admin/keys` 在短暂不同步时会合并 PG 中尚未在 Gateway 的条目（`pending_gateway_sync: true`），避免 Keys/预算页闪空。
+
 ## 备份
 
 | 资产 | 方法 |
@@ -136,6 +149,8 @@ docker compose --profile admin up -d
 ### Trace 日志 PG 直写（推荐）
 
 Gateway 通过 `CRABCACHE_TRACE_PG_URL` / `[trace_logging].pg_url` **直写** PostgreSQL `trace_logs` 表，消除旧 `pg_sync`（JSONL→PG 10 秒同步延迟）的瓶颈。JSONL 仅作为本地 fallback 缓冲写入，Admin 查询和 `LiveTraceCache` 均以 PG 为唯一权威数据源。
+
+控制面灾难恢复另用同一 PG URL（推荐 `CRABCACHE_CONTROL_PG_URL`，Compose 默认同 `CRADMIN_PG_URL`）：表 `gateway_state_snapshots` + Gateway 每 30s `gateway_direct` 写入。
 
 Live metrics 直接从 PG 查询，不再依赖 JSONL 文件尾读。
 

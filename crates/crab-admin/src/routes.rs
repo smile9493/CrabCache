@@ -1647,6 +1647,7 @@ async fn create_key(
         max_concurrent: created.max_concurrent,
         inflight: 0,
         manually_created: true,
+        pending_gateway_sync: false,
         duplicate_name_count: 1,
     }))
 }
@@ -1778,6 +1779,7 @@ async fn patch_key(
         manually_created: meta
             .as_ref()
             .is_some_and(|m| m.dashboard_created),
+        pending_gateway_sync: false,
         duplicate_name_count: duplicate_name_count.max(1),
     }))
 }

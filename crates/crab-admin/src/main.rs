@@ -1,9 +1,12 @@
+mod client_keys_reconcile_sync;
 mod composition;
+mod control_plane_restore;
 mod credential_persist;
 mod dataplane;
 mod domain_usage_sync;
 mod gateway_profile_push;
 mod gateway_state_sync;
+mod gateway_uptime;
 mod geoip;
 mod health_probe_sync;
 mod infra;
@@ -409,6 +412,7 @@ async fn main() -> anyhow::Result<()> {
     // Start domain_usage sync (fetches from Gateway, persists to PG, restores on restart).
     crate::domain_usage_sync::spawn(Arc::clone(&state));
     crate::gateway_state_sync::spawn(Arc::clone(&state));
+    crate::client_keys_reconcile_sync::spawn(Arc::clone(&state));
     crate::gateway_profile_push::spawn(Arc::clone(&state));
     crate::health_probe_sync::spawn(Arc::clone(&state));
 

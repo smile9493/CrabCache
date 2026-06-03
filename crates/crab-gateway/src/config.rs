@@ -957,6 +957,34 @@ impl GatewayConfig {
     }
 }
 
+/// PostgreSQL URL for control-plane snapshot write/recovery (disaster recovery).
+///
+/// Priority: `CRABCACHE_CONTROL_PG_URL` → trace `pg_url` / `CRABCACHE_TRACE_PG_URL` → `CRADMIN_PG_URL`.
+pub fn resolve_control_pg_url(config: &GatewayConfig) -> Option<String> {
+    if let Ok(url) = std::env::var("CRABCACHE_CONTROL_PG_URL") {
+        let url = url.trim().to_string();
+        if !url.is_empty() {
+            return Some(url);
+        }
+    }
+    if let Some(url) = config
+        .trace_logging
+        .as_ref()
+        .and_then(|t| t.pg_url.as_ref())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(url.to_string());
+    }
+    if let Ok(url) = std::env::var("CRADMIN_PG_URL") {
+        let url = url.trim().to_string();
+        if !url.is_empty() {
+            return Some(url);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,6 +1001,51 @@ mod tests {
         let mgmt = ManagementConfig::default();
         assert_eq!(mgmt.listen_addr, "127.0.0.1:9080");
         assert_eq!(mgmt.invalidate_scan_timeout_secs, 300);
+    }
+
+    #[test]
+    fn resolve_control_pg_url_prefers_control_env() {
+        let dir = std::env::temp_dir().join(format!("crabcache_pgurl_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.toml");
+        std::fs::write(
+            &path,
+            r#"
+listen_addr = "127.0.0.1:8080"
+metrics_addr = "127.0.0.1:9090"
+api_key = "sk-test-key-1234567890"
+[upstream]
+base_url = "https://api.deepseek.com"
+deepseek_endpoints = ["api.deepseek.com:443"]
+[cache]
+l1_redis_url = "redis://127.0.0.1:6379"
+[semantic]
+enabled = false
+model_path = ""
+tokenizer_path = ""
+qdrant_url = ""
+collection_name = ""
+[trace_logging]
+enabled = true
+path = "/tmp/trace.jsonl"
+pg_url = "postgres://trace/db"
+"#,
+        )
+        .unwrap();
+        let config = GatewayConfig::load(path.to_str().unwrap()).unwrap();
+        unsafe {
+            std::env::set_var("CRABCACHE_CONTROL_PG_URL", "postgres://control/db");
+            std::env::set_var("CRADMIN_PG_URL", "postgres://admin/db");
+        }
+        assert_eq!(
+            resolve_control_pg_url(&config).as_deref(),
+            Some("postgres://control/db")
+        );
+        unsafe {
+            std::env::remove_var("CRABCACHE_CONTROL_PG_URL");
+            std::env::remove_var("CRADMIN_PG_URL");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -1276,6 +1276,19 @@ impl PgStore {
         Ok(rows.len())
     }
 
+    /// Keys with a non-empty token (authoritative for reconcile drift checks).
+    pub async fn count_keys_meta_with_token(&self) -> Result<i64> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::bigint FROM keys_meta
+                 WHERE token IS NOT NULL AND btrim(token) <> ''",
+                &[],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
     pub async fn load_all_keys(&self) -> Result<Vec<PersistedKeyMetadata>> {
         let client = self.pool.get().await?;
         let rows = client

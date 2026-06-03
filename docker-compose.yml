@@ -50,6 +50,8 @@ services:
       - CRABCACHE_MANAGEMENT_LISTEN=0.0.0.0:9080
       - CRABCACHE_BOOTSTRAP_CLIENT_KEYS=${CRABCACHE_BOOTSTRAP_CLIENT_KEYS:-}
       - CRABCACHE_STATE_BACKEND=${CRABCACHE_STATE_BACKEND:-redis}
+      # Control-plane PG snapshots (recovery when Redis empty); defaults to Admin DB when profile admin is up
+      - CRABCACHE_CONTROL_PG_URL=${CRABCACHE_CONTROL_PG_URL:-${CRADMIN_PG_URL:-}}
       # Opt-in NDJSON debug (H-G stagnation verify); set on host before `docker compose up`
       - CRABCACHE_DEBUG_LOG_PATH=${CRABCACHE_DEBUG_LOG_PATH:-}
       - CRABCACHE_DEBUG_RUN_ID=${CRABCACHE_DEBUG_RUN_ID:-}

@@ -48,6 +48,40 @@ pub fn api_key_from_spec(
         max_concurrent: spec.max_concurrent,
         inflight: spec.inflight,
         manually_created,
+        pending_gateway_sync: false,
+        duplicate_name_count,
+    }
+}
+
+fn preview_token(token: &str) -> String {
+    if token.len() <= 12 {
+        return "sk-cc-****".to_string();
+    }
+    format!("{}...{}", &token[..7], &token[token.len().saturating_sub(4)..])
+}
+
+fn api_key_from_pg_meta(meta: &KeyMetadata, duplicate_name_count: u32) -> ApiKey {
+    ApiKey {
+        id: meta.id.clone(),
+        name: meta.name.clone(),
+        key_preview: preview_token(&meta.token),
+        key_full: Some(meta.token.clone()),
+        active: false,
+        domain: None,
+        project_id: None,
+        pipeline: None,
+        upstream_profile: None,
+        rpm_limit: meta.rpm_limit as u32,
+        monthly_token_budget: meta.monthly_token_limit,
+        tokens_used_this_month: meta.tokens_this_month,
+        expired_at: meta.expired_at,
+        model_limits: meta.model_limits.clone(),
+        remain_quota: meta.remain_quota,
+        unlimited_quota: meta.unlimited_quota,
+        max_concurrent: meta.max_concurrent,
+        inflight: 0,
+        manually_created: meta.dashboard_created,
+        pending_gateway_sync: true,
         duplicate_name_count,
     }
 }
@@ -127,11 +161,27 @@ fn keeper_reason(key: &ApiKey, audit_created_ids: &HashSet<String>) -> String {
 
 pub async fn build_api_keys(state: &AppState) -> Result<Vec<ApiKey>, crab_control::ControlError> {
     let specs = state.gateway.list_keys().await?;
+    let gateway_tokens: HashSet<String> = specs
+        .iter()
+        .filter_map(|s| s.key_full.as_ref().filter(|t| !t.is_empty()).cloned())
+        .collect();
+
     let mut name_counts: HashMap<String, u32> = HashMap::new();
     for spec in &specs {
         *name_counts.entry(spec.name.clone()).or_insert(0) += 1;
     }
-    let keys = specs
+    for entry in state.keys_meta.iter() {
+        let meta = entry.value();
+        if meta.token.is_empty() {
+            continue;
+        }
+        if gateway_tokens.contains(&meta.token) {
+            continue;
+        }
+        *name_counts.entry(meta.name.clone()).or_insert(0) += 1;
+    }
+
+    let mut keys: Vec<ApiKey> = specs
         .into_iter()
         .map(|spec| {
             let duplicate_name_count = name_counts.get(&spec.name).copied().unwrap_or(1);
@@ -139,6 +189,20 @@ pub async fn build_api_keys(state: &AppState) -> Result<Vec<ApiKey>, crab_contro
             api_key_from_spec(spec, meta, duplicate_name_count)
         })
         .collect();
+
+    let on_gateway_ids: HashSet<String> = keys.iter().map(|k| k.id.clone()).collect();
+    for entry in state.keys_meta.iter() {
+        let meta = entry.value();
+        if meta.token.is_empty() || on_gateway_ids.contains(&meta.id) {
+            continue;
+        }
+        if gateway_tokens.contains(&meta.token) {
+            continue;
+        }
+        let duplicate_name_count = name_counts.get(&meta.name).copied().unwrap_or(1);
+        keys.push(api_key_from_pg_meta(meta, duplicate_name_count));
+    }
+
     Ok(keys)
 }
 
@@ -285,5 +349,12 @@ mod tests {
             dashboard_created: false,
         };
         assert!(!is_manually_created(Some(&meta)));
+    }
+
+    #[test]
+    fn preview_token_masks_middle() {
+        let p = preview_token("sk-cc-1234567890abcdef");
+        assert!(p.contains("..."));
+        assert!(p.starts_with("sk-cc-1"));
     }
 }

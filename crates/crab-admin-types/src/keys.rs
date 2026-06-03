@@ -21,6 +21,9 @@ pub struct ApiKey {
     /// True when created via Dashboard (audit log or non-zero monthly budget).
     #[serde(default)]
     pub manually_created: bool,
+    /// Present in Admin PG but not yet on Gateway (transient after gateway restart / hot-update).
+    #[serde(default)]
+    pub pending_gateway_sync: bool,
     /// How many active keys share this display name (duplicate-name detector).
     #[serde(default)]
     pub duplicate_name_count: u32,
