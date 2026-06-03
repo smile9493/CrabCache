@@ -52,6 +52,8 @@ pub struct UpstreamPoolSecret {
     pub secret: String,
     pub enabled: bool,
     pub account_id: String,
+    /// Key priority: 0 = highest (default), higher values = lower priority.
+    pub priority: u32,
 }
 
 pub struct AppState {
@@ -552,6 +554,7 @@ impl AppState {
                     secret: secret.to_string(),
                     enabled: true,
                     account_id: String::new(),
+                    priority: 0,
                 });
             }
         } else if !upstream_api_key.is_empty() {
@@ -560,6 +563,7 @@ impl AppState {
                 secret: upstream_api_key.clone(),
                 enabled: true,
                 account_id: String::new(),
+                priority: 0,
             });
         }
 
@@ -575,6 +579,7 @@ impl AppState {
                     secret: s.secret.clone(),
                     enabled: s.enabled,
                     account_id: s.account_id.clone(),
+                    priority: s.priority,
                 })
                 .collect();
         }
@@ -783,6 +788,7 @@ impl AppState {
                                 secret: s.secret,
                                 enabled: s.enabled,
                                 account_id: s.account_id,
+                                priority: s.priority,
                             })
                             .collect(),
                     );
@@ -925,6 +931,7 @@ impl AppState {
                 secret: s.secret,
                 enabled: s.enabled,
                 account_id: s.account_id,
+                priority: s.priority,
             })
             .collect();
         let _guard = self.pg_write_lock.lock().await;
@@ -978,6 +985,7 @@ impl AppState {
                 secret: k.secret.clone(),
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
+                priority: k.priority,
             })
             .collect();
         *self.upstream_pool_secrets.write() = secrets;
@@ -1014,6 +1022,7 @@ impl AppState {
                 secret: s.secret.clone(),
                 enabled: s.enabled,
                 account_id: s.account_id.clone(),
+                priority: s.priority,
             })
             .collect();
         let file = persist::build_state_file(
@@ -1228,6 +1237,7 @@ impl AppState {
                                 secret: s.secret.clone(),
                                 enabled: s.enabled,
                                 account_id: String::new(),
+                                priority: s.priority,
                             })
                             .collect(),
                         mode: crab_control::UpstreamKeysPutMode::Replace,
@@ -1307,6 +1317,7 @@ impl AppState {
                     secret: k.secret,
                     enabled: k.enabled,
                     account_id: k.account_id,
+                    priority: 0,
                 })
                 .collect();
             if secrets.is_empty() {

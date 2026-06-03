@@ -41,12 +41,98 @@ use crab_state::{RedisStateStore, persist_runtime_state_with_retry};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 #[path = "management_profiles.rs"]
 mod management_profiles;
+
+/// Extract the host portion from a URL string.
+/// Handles IPv6 bracket notation (`[::1]`), userinfo, and port stripping.
+fn extract_url_host(url: &str) -> Option<&str> {
+    let after_scheme = url.split("://").nth(1)?;
+    let host_port = after_scheme.split('/').next()?;
+    // Handle IPv6 bracket notation: [::1]:8080 → extract ::1
+    if let Some(end) = host_port.find(']') {
+        let inner = &host_port[..end];
+        let inner = inner.strip_prefix('[').unwrap_or(inner);
+        return Some(inner);
+    }
+    // IPv4 / hostname: strip port, then userinfo
+    let host = host_port.split(':').next()?;
+    let host = host.rsplit('@').next()?;
+    Some(host)
+}
+
+/// Check if a URL points to a private, loopback, or reserved IP address.
+/// Returns `true` if the URL should be rejected for SSRF protection.
+pub(crate) fn is_private_or_reserved_url(url: &str) -> bool {
+    let Some(host) = extract_url_host(url) else {
+        return false; // Malformed URL, let the actual request fail naturally
+    };
+    let lower = host.to_lowercase();
+
+    // Check for loopback hostnames
+    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" {
+        return true;
+    }
+
+    // Try to parse as IP address for precise private/reserved range checks
+    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                return v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast();
+            }
+            std::net::IpAddr::V6(v6) => {
+                return v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_multicast();
+            }
+        }
+    }
+
+    // Fallback: string-based checks for IPv4 private ranges (when host is an IP string)
+    // 10.0.0.0/8
+    if lower.starts_with("10.") {
+        return true;
+    }
+    // 172.16.0.0/12
+    if lower.starts_with("172.") {
+        let after = &lower[4..];
+        if let Some(dot) = after.find('.') {
+            if let Ok(octet) = after[..dot].parse::<u8>() {
+                if (16..=31).contains(&octet) {
+                    return true;
+                }
+            }
+        }
+    }
+    // 192.168.0.0/16
+    if lower.starts_with("192.168.") {
+        return true;
+    }
+    // 169.254.0.0/16 (link-local)
+    if lower.starts_with("169.254.") {
+        return true;
+    }
+    // IPv6 unique-local addresses fc00::/7 (fd00::/8 and fc00::/8)
+    if lower.starts_with("fc") || lower.starts_with("fd") {
+        if let Ok(ip) = lower.parse::<std::net::Ipv6Addr>() {
+            // fc00::/7: first 7 bits are 1111 110x
+            let octets = ip.octets();
+            if octets[0] == 0xfc || octets[0] == 0xfd {
+                return true;
+            }
+        }
+    }
+
+    false
+}
 
 const INVALIDATE_WINDOW: Duration = Duration::from_secs(60);
 const INVALIDATE_MAX_PER_WINDOW: usize = 10;
@@ -87,6 +173,8 @@ pub struct ManagementState {
     pub webhook_client: reqwest::Client,
     /// Codex quota cache (shared with gateway runtime for background refresh).
     pub codex_quota_cache: Option<Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>>,
+    /// Shared HTTP client for upstream key/profile testing.
+    pub test_http_client: reqwest::Client,
     /// Fault injection for integration testing.
     pub fault_injection: Arc<crab_proxy::fault_injection::FaultInjection>,
 }
@@ -467,6 +555,20 @@ async fn invalidate_cache(
     }
 
     tokio::spawn(async move {
+        /// Guard that resets `invalidate_all_in_progress` on drop (even on panic).
+        struct InProgressGuard {
+            flag: Arc<AtomicBool>,
+        }
+        impl Drop for InProgressGuard {
+            fn drop(&mut self) {
+                self.flag.store(false, Ordering::SeqCst);
+            }
+        }
+
+        // If this is a scope=all job, the guard guarantees the flag is cleared
+        // even if the match arms panic.
+        let _guard = is_all.then(|| InProgressGuard { flag: in_progress.clone() });
+
         let result = match action {
             InvalidateAction::All => {
                 tracing::info!(scope = %scope_label, "Starting full cache invalidation");
@@ -508,10 +610,6 @@ async fn invalidate_cache(
                 r
             }
         };
-
-        if is_all {
-            in_progress.store(false, Ordering::SeqCst);
-        }
 
         {
             let mut slot = invalidate_job.lock().await;
@@ -701,7 +799,14 @@ async fn get_client_endpoint(
 fn upstream_relay_view(runtime: &RuntimeConfig) -> UpstreamRelayConfigView {
     let base_url = runtime.upstream_base_url.read().clone();
     let model = runtime.fallback_model.read().clone();
-    let api_key = runtime.upstream_pool().admin_secret();
+    let api_key = {
+        let raw = runtime.upstream_pool().admin_secret();
+        match raw {
+            Some(ref s) if s.len() > 8 => Some(format!("{}****", &s[..4])),
+            Some(_) => Some("****".to_string()),
+            None => None,
+        }
+    };
     UpstreamRelayConfigView {
         base_url,
         model,
@@ -1069,6 +1174,35 @@ async fn create_key(
             &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
         )
     });
+
+    // Validate token format and length
+    if token.len() > 512 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "token must not exceed 512 characters".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    if token.contains(|c: char| c.is_control()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "token must not contain control characters".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    if token.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "token must not be empty or whitespace-only".to_string(),
+            }),
+        )
+            .into_response());
+    }
 
     if state.runtime.keys.contains_key(&token) {
         return Err((
@@ -1486,13 +1620,13 @@ async fn get_limits_config(
 ) -> Result<Json<LimitsConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
     Ok(Json(LimitsConfigView {
-        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
+        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Acquire),
         max_concurrent_requests: state.max_concurrent_requests,
         legacy_api_key_as_client_auth: state
             .runtime
             .legacy_api_key_as_client_auth
-            .load(Ordering::Relaxed),
-        cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
+            .load(Ordering::Acquire),
+        cors_enabled: state.cors_enabled.load(Ordering::Acquire),
     }))
 }
 
@@ -1504,22 +1638,22 @@ async fn put_limits_config(
     authorize(&headers, &state.admin_key)?;
     state
         .max_request_body_bytes
-        .store(req.max_request_body_bytes, Ordering::Relaxed);
+        .store(req.max_request_body_bytes, Ordering::Release);
     state
         .cors_enabled
-        .store(req.cors_enabled, Ordering::Relaxed);
+        .store(req.cors_enabled, Ordering::Release);
     state
         .runtime
         .legacy_api_key_as_client_auth
-        .store(req.legacy_api_key_as_client_auth, Ordering::Relaxed);
+        .store(req.legacy_api_key_as_client_auth, Ordering::Release);
     Ok(Json(LimitsConfigView {
-        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Relaxed),
+        max_request_body_bytes: state.max_request_body_bytes.load(Ordering::Acquire),
         max_concurrent_requests: state.max_concurrent_requests,
         legacy_api_key_as_client_auth: state
             .runtime
             .legacy_api_key_as_client_auth
-            .load(Ordering::Relaxed),
-        cors_enabled: state.cors_enabled.load(Ordering::Relaxed),
+            .load(Ordering::Acquire),
+        cors_enabled: state.cors_enabled.load(Ordering::Acquire),
     }))
 }
 
@@ -2050,7 +2184,9 @@ fn mask_redis_url(url: &str) -> String {
     }
     if let Some(at) = trimmed.find('@') {
         let scheme_end = trimmed.find("://").map(|i| i + 3).unwrap_or(0);
-        format!("{}***@{}", &trimmed[..scheme_end], &trimmed[at + 1..])
+        let scheme_end = scheme_end.min(at);
+        let host_start = (at + 1).min(trimmed.len());
+        format!("{}***@{}", &trimmed[..scheme_end], &trimmed[host_start..])
     } else {
         trimmed.to_string()
     }
@@ -2283,12 +2419,36 @@ async fn put_backends(
 /// Trigger a graceful restart of the gateway process.
 /// Returns 200 OK, then spawns a task that calls std::process::exit(0)
 /// after a short delay to allow the response to be sent.
+/// Rejects requests made within 60 seconds of a previous restart request.
 async fn restart_gateway_handler(
     headers: HeaderMap,
     State(state): State<ManagementState>,
 ) -> Result<Json<serde_json::Value>, Response> {
     authorize(&headers, &state.admin_key)?;
 
+    static LAST_RESTART_SECS: AtomicU64 = AtomicU64::new(0);
+    const RESTART_COOLDOWN_SECS: u64 = 60;
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let prev = LAST_RESTART_SECS.load(Ordering::SeqCst);
+    if prev != 0 && now_secs.saturating_sub(prev) < RESTART_COOLDOWN_SECS {
+        let remaining = RESTART_COOLDOWN_SECS - now_secs.saturating_sub(prev);
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: format!(
+                    "restart cooldown active, retry after {}s",
+                    remaining
+                ),
+            }),
+        )
+            .into_response());
+    }
+
+    LAST_RESTART_SECS.store(now_secs, Ordering::SeqCst);
     tracing::info!("Gateway restart requested via management API");
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -2307,7 +2467,49 @@ async fn get_state_snapshot(
     authorize(&headers, &state.admin_key)?;
 
     let snap = crab_state::build_snapshot_from_runtime(&state.runtime);
-    let keys_json = serde_json::to_value(&snap.keys).unwrap_or_default();
+    // Mask sensitive key_hash fields and token map keys in the snapshot
+    let keys_json = {
+        let mut val = serde_json::to_value(&snap.keys).unwrap_or_default();
+        if let Some(map) = val.as_object_mut() {
+            // Collect keys to mask (can't mutate map while iterating keys)
+            let keys_to_mask: Vec<String> = map.keys().cloned().collect();
+            // Track used masked keys to avoid collisions
+            let mut used_masked_keys = std::collections::HashSet::new();
+            for token_key in keys_to_mask {
+                // Mask the map key (which is the full token)
+                let base_masked = if token_key.len() > 8 {
+                    format!("{}****", &token_key[..4])
+                } else if !token_key.is_empty() {
+                    "****".to_string()
+                } else {
+                    continue;
+                };
+                // Append suffix on collision to avoid overwriting entries
+                let mut masked_key = base_masked.clone();
+                let mut suffix = 2u32;
+                while used_masked_keys.contains(&masked_key) {
+                    masked_key = format!("{}-{}", &base_masked, suffix);
+                    suffix += 1;
+                }
+                used_masked_keys.insert(masked_key.clone());
+                if let Some(key_obj) = map.remove(&token_key) {
+                    // Mask key_hash field inside the value
+                    let mut key_obj = key_obj;
+                    if let Some(obj) = key_obj.as_object_mut() {
+                        if let Some(hash) = obj.get_mut("key_hash") {
+                            if let Some(s) = hash.as_str() {
+                                if s.len() > 8 {
+                                    *hash = serde_json::Value::String(format!("{}****", &s[..4]));
+                                }
+                            }
+                        }
+                    }
+                    map.insert(masked_key, key_obj);
+                }
+            }
+        }
+        val
+    };
     let runtime_json = serde_json::to_value(&snap.runtime).unwrap_or_default();
     let profiles_json = serde_json::to_value(&snap.upstream_profiles).unwrap_or_default();
     let key_states_json = serde_json::to_value(&snap.key_states).unwrap_or_default();

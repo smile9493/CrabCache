@@ -218,7 +218,8 @@ async fn main() -> anyhow::Result<()> {
                     info!("OAuth credentials hydrated from PostgreSQL");
                 }
                 // Recover pending OAuth sessions from PG.
-                if let Some(pg) = init_state.pg_store.read().as_ref() {
+                let pg_store = init_state.pg_store.read().clone();
+                if let Some(pg) = pg_store.as_ref() {
                     match pg.load_pending_codex_oauth_sessions().await {
                         Ok(sessions) => {
                             let count = sessions.len();

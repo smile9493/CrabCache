@@ -47,6 +47,9 @@ pub struct PersistedUpstreamPoolSecret {
     pub enabled: bool,
     #[serde(default)]
     pub account_id: String,
+    /// Key priority: 0 = highest (default), higher values = lower priority.
+    #[serde(default)]
+    pub priority: u32,
 }
 
 fn default_true() -> bool {
@@ -401,6 +404,7 @@ impl From<&std::collections::HashMap<String, Vec<crate::state::UpstreamPoolSecre
                                 secret: s.secret.clone(),
                                 enabled: s.enabled,
                                 account_id: s.account_id.clone(),
+                                priority: s.priority,
                             })
                             .collect(),
                     )
@@ -449,12 +453,14 @@ mod tests {
                     secret: "sk-ds-test123456".to_string(),
                     enabled: true,
                     account_id: String::new(),
+                    priority: 0,
                 },
                 PersistedUpstreamPoolSecret {
                     id: "key-2".to_string(),
                     secret: "sk-ds-test789012".to_string(),
                     enabled: false,
                     account_id: String::new(),
+                    priority: 0,
                 },
             ],
             ..Default::default()

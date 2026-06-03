@@ -3045,6 +3045,7 @@ async fn put_upstream_keys_pool(
                 secret,
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
+                priority: k.priority,
             });
         }
         let inputs: Vec<UpstreamKeyInput> = merged
@@ -3054,6 +3055,7 @@ async fn put_upstream_keys_pool(
                 secret: s.secret.clone(),
                 enabled: s.enabled,
                 account_id: String::new(),
+                priority: s.priority,
             })
             .collect();
         let append_ctrl: Vec<crab_control::UpstreamKeyInput> = inputs
@@ -3107,6 +3109,7 @@ async fn delete_upstream_key_pool(
                 secret: k.secret.clone(),
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
+                priority: k.priority,
             })
             .collect::<Vec<_>>(),
     );
@@ -3211,6 +3214,7 @@ async fn update_upstream_config(
                 secret,
                 enabled: true,
                 account_id: String::new(),
+                priority: 0,
             })
             .collect();
         let put_req = PutUpstreamKeysRequest {
@@ -3234,6 +3238,7 @@ async fn update_upstream_config(
                 secret: k.secret.clone(),
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
+                priority: k.priority,
             });
         }
         let merged_inputs: Vec<UpstreamKeyInput> = merged
@@ -3243,6 +3248,7 @@ async fn update_upstream_config(
                 secret: s.secret.clone(),
                 enabled: s.enabled,
                 account_id: String::new(),
+                priority: s.priority,
             })
             .collect();
         let merged_ctrl: Vec<crab_control::UpstreamKeyInput> = merged_inputs

@@ -248,6 +248,7 @@ pub async fn put_profile_keys(
                 secret: s.secret,
                 enabled: s.enabled,
                 account_id: s.account_id,
+                priority: s.priority,
             })
             .collect();
         if let Err(e) = pg.replace_profile_secrets(id, &persisted).await {
@@ -306,6 +307,7 @@ pub async fn patch_profile_key(
                     id: s.id,
                     secret: s.secret,
                     account_id: s.account_id,
+                    priority: s.priority,
                 }
             })
             .collect();
@@ -379,6 +381,7 @@ pub async fn delete_profile_key(
                 secret: s.secret,
                 enabled: s.enabled,
                 account_id: s.account_id,
+                priority: s.priority,
             })
             .collect();
         if let Err(e) = pg.replace_profile_secrets(profile_id, &persisted).await {
