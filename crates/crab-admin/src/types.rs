@@ -105,6 +105,15 @@ pub fn upstream_key_view_from_control(k: crab_control::UpstreamKeyView) -> Upstr
         models: Vec::new(),
         quota: None,
         priority: k.priority,
+        model_cooldowns: k
+            .model_cooldowns
+            .into_iter()
+            .map(|mc| ModelCooldownView {
+                model: mc.model,
+                remaining_secs: mc.remaining_secs,
+                backoff_level: mc.backoff_level,
+            })
+            .collect(),
     }
 }
 

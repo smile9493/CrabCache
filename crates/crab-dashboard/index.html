@@ -9,11 +9,11 @@
     (function () {
         var themes = { dark: 'theme-dark', light: 'theme-light', midnight: 'theme-midnight', ocean: 'theme-ocean', sand: 'theme-sand' };
         var bootColors = {
-            'theme-dark':     { bg: '#0d1117', text: '#e6edf3', accent: '#f78166', spinner: 'rgba(255,255,255,0.15)' },
-            'theme-light':    { bg: '#f6f4f0', text: '#1a1814', accent: '#c44d2f', spinner: 'rgba(0,0,0,0.10)' },
-            'theme-midnight': { bg: '#0c0a14', text: '#ece8f5', accent: '#c4a1ff', spinner: 'rgba(255,255,255,0.12)' },
-            'theme-ocean':    { bg: '#0a1218', text: '#e2edf4', accent: '#3db8c9', spinner: 'rgba(255,255,255,0.12)' },
-            'theme-sand':     { bg: '#f4f0e8', text: '#2a261f', accent: '#b85c28', spinner: 'rgba(0,0,0,0.08)' }
+            'theme-dark':     { bg: '#161311', text: '#f3efec', accent: '#f78166', spinner: 'rgba(255,255,255,0.15)' },
+            'theme-light':    { bg: '#f7f4f2', text: '#1a1814', accent: '#c44d2f', spinner: 'rgba(0,0,0,0.10)' },
+            'theme-midnight': { bg: '#120e18', text: '#ece8f5', accent: '#c4a1ff', spinner: 'rgba(255,255,255,0.12)' },
+            'theme-ocean':    { bg: '#10151c', text: '#e2edf4', accent: '#3db8c9', spinner: 'rgba(255,255,255,0.12)' },
+            'theme-sand':     { bg: '#f3efe5', text: '#2a261f', accent: '#b85c28', spinner: 'rgba(0,0,0,0.08)' }
         };
         var stored = 'dark';
         try { stored = localStorage.getItem('theme') || 'dark'; } catch (e) {}
@@ -30,6 +30,9 @@
         document.documentElement.style.setProperty('--boot-spinner', c.spinner);
     })();
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Outfit:wght@100..900&display=swap" rel="stylesheet">
     <title>CrabCache &mdash; Gateway Control</title>
     <link data-trunk rel="css" href="/style/output.css" />
     <link data-trunk rel="copy-file" href="style/brand.png" />

@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+/// Per-model cooldown state for a single upstream key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelCooldownView {
+    pub model: String,
+    pub remaining_secs: u64,
+    pub backoff_level: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpstreamProfileAdminView {
     pub id: String,
@@ -74,6 +82,9 @@ pub struct UpstreamKeyView {
     /// Key priority: 0 = highest, higher values = lower priority.
     #[serde(default)]
     pub priority: u32,
+    /// Per-model cooldown states (progressive 429 backoff).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_cooldowns: Vec<ModelCooldownView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

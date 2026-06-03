@@ -3,34 +3,34 @@
 /* Fallback before theme class hydrates (default: Dark) */
 :root,
 .theme-dark {
-  --cc-bg: #0d1117;
-  --cc-bg-topnav: #0a0e13;
-  --cc-bg-sidebar: #0a0e13;
-  --cc-bg-card: #161b22;
-  --cc-bg-elevated: #21262d;
-  --cc-bg-input: #0d1117;
-  --cc-border: #30363d;
-  --cc-border-light: #21262d;
-  --cc-text: #e6edf3;
-  --cc-text-muted: #8b949e;
-  --cc-accent: #f78166;
-  --cc-accent-bright: #ff967d;
-  --cc-accent-muted: color-mix(in srgb, #f78166 14%, transparent);
-  --cc-success: #3fb950;
-  --cc-info: #58a6ff;
-  --cc-warning: #d2991d;
-  --cc-error: #f85149;
-  --cc-purple: #bc8cff;
-  --cc-yellow: #d2991d;
-  --cc-shadow: color-mix(in srgb, #010409 18%, transparent);
-  --cc-nav-active-bg: color-mix(in srgb, #f78166 12%, transparent);
-  --cc-brand-gradient: linear-gradient(135deg, #f78166, #d2991d);
-  --cc-focus-ring: color-mix(in srgb, #f78166 45%, transparent);
-  --cc-tier-l0: #f78166;
-  --cc-tier-l1: #58a6ff;
-  --cc-tier-l2: #d2991d;
-  --cc-tier-l3: #bc8cff;
-  --cc-tier-miss: #484f58;
+  --cc-bg: oklch(0.12 0.008 30);
+  --cc-bg-topnav: oklch(0.09 0.006 30);
+  --cc-bg-sidebar: oklch(0.09 0.006 30);
+  --cc-bg-card: oklch(0.16 0.010 30);
+  --cc-bg-elevated: oklch(0.22 0.012 30);
+  --cc-bg-input: oklch(0.12 0.008 30);
+  --cc-border: oklch(0.26 0.014 30);
+  --cc-border-light: oklch(0.20 0.010 30);
+  --cc-text: oklch(0.92 0.010 30);
+  --cc-text-muted: oklch(0.68 0.012 30);
+  --cc-accent: oklch(0.65 0.16 28);
+  --cc-accent-bright: oklch(0.72 0.18 28);
+  --cc-accent-muted: color-mix(in srgb, oklch(0.65 0.16 28) 14%, transparent);
+  --cc-success: oklch(0.72 0.15 142);
+  --cc-info: oklch(0.70 0.14 250);
+  --cc-warning: oklch(0.78 0.15 80);
+  --cc-error: oklch(0.62 0.18 22);
+  --cc-purple: oklch(0.70 0.16 300);
+  --cc-yellow: oklch(0.78 0.15 80);
+  --cc-shadow: color-mix(in srgb, oklch(0.06 0.006 30) 18%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, oklch(0.65 0.16 28) 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, oklch(0.65 0.16 28), oklch(0.78 0.15 80));
+  --cc-focus-ring: color-mix(in srgb, oklch(0.65 0.16 28) 45%, transparent);
+  --cc-tier-l0: oklch(0.65 0.16 28);
+  --cc-tier-l1: oklch(0.70 0.14 250);
+  --cc-tier-l2: oklch(0.78 0.15 80);
+  --cc-tier-l3: oklch(0.70 0.16 300);
+  --cc-tier-miss: oklch(0.40 0.010 30);
   --topnav-height: 52px;
   --sidebar-width: 230px;
   --radius-sm: 6px;
@@ -64,8 +64,8 @@
   --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
   --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
   --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
-  --cc-latency-7: color-mix(in srgb, #f97316 26%, transparent);
-  --cc-latency-8: color-mix(in srgb, #f97316 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, oklch(0.78 0.15 80) 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, oklch(0.78 0.15 80) 46%, transparent);
   --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
   --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
   --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
@@ -73,34 +73,34 @@
 }
 
 .theme-light {
-  --cc-bg: #f6f4f0;
-  --cc-bg-topnav: #ebe8e2;
-  --cc-bg-sidebar: #ebe8e2;
-  --cc-bg-card: #ffffff;
-  --cc-bg-elevated: #f0ede8;
-  --cc-bg-input: #ffffff;
-  --cc-border: #c9c4bc;
-  --cc-border-light: #e5e0d8;
-  --cc-text: #1a1814;
-  --cc-text-muted: #5c574f;
-  --cc-accent: #c44d2f;
-  --cc-accent-bright: #d65a3a;
-  --cc-accent-muted: color-mix(in srgb, #c44d2f 12%, transparent);
-  --cc-success: #1a7f37;
-  --cc-info: #0969da;
-  --cc-warning: #9a6700;
-  --cc-error: #cf222e;
-  --cc-purple: #8250df;
-  --cc-yellow: #9a6700;
-  --cc-shadow: color-mix(in srgb, #1a1814 6%, transparent);
-  --cc-nav-active-bg: color-mix(in srgb, #c44d2f 12%, transparent);
-  --cc-brand-gradient: linear-gradient(135deg, #c44d2f, #9a6700);
-  --cc-focus-ring: color-mix(in srgb, #c44d2f 40%, transparent);
-  --cc-tier-l0: #c44d2f;
-  --cc-tier-l1: #0969da;
-  --cc-tier-l2: #9a6700;
-  --cc-tier-l3: #8250df;
-  --cc-tier-miss: #a8a29e;
+  --cc-bg: oklch(0.96 0.005 35);
+  --cc-bg-topnav: oklch(0.92 0.008 35);
+  --cc-bg-sidebar: oklch(0.92 0.008 35);
+  --cc-bg-card: oklch(1.00 0.002 35);
+  --cc-bg-elevated: oklch(0.90 0.010 35);
+  --cc-bg-input: oklch(1.00 0.002 35);
+  --cc-border: oklch(0.80 0.015 35);
+  --cc-border-light: oklch(0.88 0.010 35);
+  --cc-text: oklch(0.18 0.015 35);
+  --cc-text-muted: oklch(0.48 0.018 35);
+  --cc-accent: oklch(0.50 0.15 28);
+  --cc-accent-bright: oklch(0.45 0.17 28);
+  --cc-accent-muted: color-mix(in srgb, oklch(0.50 0.15 28) 12%, transparent);
+  --cc-success: oklch(0.52 0.13 142);
+  --cc-info: oklch(0.48 0.15 250);
+  --cc-warning: oklch(0.58 0.14 80);
+  --cc-error: oklch(0.46 0.17 22);
+  --cc-purple: oklch(0.48 0.16 300);
+  --cc-yellow: oklch(0.58 0.14 80);
+  --cc-shadow: color-mix(in srgb, oklch(0.18 0.015 35) 6%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, oklch(0.50 0.15 28) 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, oklch(0.50 0.15 28), oklch(0.58 0.14 80));
+  --cc-focus-ring: color-mix(in srgb, oklch(0.50 0.15 28) 40%, transparent);
+  --cc-tier-l0: oklch(0.50 0.15 28);
+  --cc-tier-l1: oklch(0.48 0.15 250);
+  --cc-tier-l2: oklch(0.58 0.14 80);
+  --cc-tier-l3: oklch(0.48 0.16 300);
+  --cc-tier-miss: oklch(0.65 0.010 35);
 
   /* Latency heatmap (12-level) for live heatmap table */
   --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
@@ -109,8 +109,8 @@
   --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
   --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
   --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
-  --cc-latency-7: color-mix(in srgb, #d97706 26%, transparent);
-  --cc-latency-8: color-mix(in srgb, #d97706 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, oklch(0.58 0.14 80) 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, oklch(0.58 0.14 80) 46%, transparent);
   --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
   --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
   --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
@@ -118,34 +118,34 @@
 }
 
 .theme-midnight {
-  --cc-bg: #0c0a14;
-  --cc-bg-topnav: #080610;
-  --cc-bg-sidebar: #080610;
-  --cc-bg-card: #14101f;
-  --cc-bg-elevated: #1e1830;
-  --cc-bg-input: #0c0a14;
-  --cc-border: #2e2842;
-  --cc-border-light: #231e36;
-  --cc-text: #ece8f5;
-  --cc-text-muted: #9b92b0;
-  --cc-accent: #c4a1ff;
-  --cc-accent-bright: #d4b8ff;
-  --cc-accent-muted: color-mix(in srgb, #c4a1ff 14%, transparent);
-  --cc-success: #3fb950;
-  --cc-info: #79b8ff;
-  --cc-warning: #d2991d;
-  --cc-error: #f85149;
-  --cc-purple: #bc8cff;
-  --cc-yellow: #d2991d;
-  --cc-shadow: color-mix(in srgb, #000000 22%, transparent);
-  --cc-nav-active-bg: color-mix(in srgb, #c4a1ff 14%, transparent);
-  --cc-brand-gradient: linear-gradient(135deg, #c4a1ff, #79b8ff);
-  --cc-focus-ring: color-mix(in srgb, #c4a1ff 45%, transparent);
-  --cc-tier-l0: #c4a1ff;
-  --cc-tier-l1: #79b8ff;
-  --cc-tier-l2: #d2991d;
-  --cc-tier-l3: #bc8cff;
-  --cc-tier-miss: #5a516e;
+  --cc-bg: oklch(0.10 0.012 280);
+  --cc-bg-topnav: oklch(0.07 0.008 280);
+  --cc-bg-sidebar: oklch(0.07 0.008 280);
+  --cc-bg-card: oklch(0.14 0.015 280);
+  --cc-bg-elevated: oklch(0.18 0.020 280);
+  --cc-bg-input: oklch(0.10 0.012 280);
+  --cc-border: oklch(0.24 0.025 280);
+  --cc-border-light: oklch(0.18 0.018 280);
+  --cc-text: oklch(0.92 0.015 280);
+  --cc-text-muted: oklch(0.68 0.020 280);
+  --cc-accent: oklch(0.78 0.12 280);
+  --cc-accent-bright: oklch(0.84 0.14 280);
+  --cc-accent-muted: color-mix(in srgb, oklch(0.78 0.12 280) 14%, transparent);
+  --cc-success: oklch(0.72 0.15 142);
+  --cc-info: oklch(0.75 0.12 250);
+  --cc-warning: oklch(0.78 0.15 80);
+  --cc-error: oklch(0.65 0.16 22);
+  --cc-purple: oklch(0.78 0.12 280);
+  --cc-yellow: oklch(0.78 0.15 80);
+  --cc-shadow: color-mix(in srgb, oklch(0.04 0.010 280) 22%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, oklch(0.78 0.12 280) 14%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, oklch(0.78 0.12 280), oklch(0.75 0.12 250));
+  --cc-focus-ring: color-mix(in srgb, oklch(0.78 0.12 280) 45%, transparent);
+  --cc-tier-l0: oklch(0.78 0.12 280);
+  --cc-tier-l1: oklch(0.75 0.12 250);
+  --cc-tier-l2: oklch(0.78 0.15 80);
+  --cc-tier-l3: oklch(0.78 0.12 280);
+  --cc-tier-miss: oklch(0.42 0.015 280);
 
   /* Latency heatmap (12-level) for live heatmap table */
   --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
@@ -154,8 +154,8 @@
   --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
   --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
   --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
-  --cc-latency-7: color-mix(in srgb, #f97316 26%, transparent);
-  --cc-latency-8: color-mix(in srgb, #f97316 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, oklch(0.78 0.15 80) 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, oklch(0.78 0.15 80) 46%, transparent);
   --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
   --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
   --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
@@ -163,34 +163,34 @@
 }
 
 .theme-ocean {
-  --cc-bg: #0a1218;
-  --cc-bg-topnav: #070e14;
-  --cc-bg-sidebar: #070e14;
-  --cc-bg-card: #111c26;
-  --cc-bg-elevated: #182430;
-  --cc-bg-input: #0a1218;
-  --cc-border: #243444;
-  --cc-border-light: #1a2834;
-  --cc-text: #e2edf4;
-  --cc-text-muted: #7d96a8;
-  --cc-accent: #3db8c9;
-  --cc-accent-bright: #5ecfe0;
-  --cc-accent-muted: color-mix(in srgb, #3db8c9 14%, transparent);
-  --cc-success: #46c880;
-  --cc-info: #58a6ff;
-  --cc-warning: #c9a227;
-  --cc-error: #e85d5d;
-  --cc-purple: #8b9cf6;
-  --cc-yellow: #c9a227;
-  --cc-shadow: color-mix(in srgb, #020608 20%, transparent);
-  --cc-nav-active-bg: color-mix(in srgb, #3db8c9 12%, transparent);
-  --cc-brand-gradient: linear-gradient(135deg, #3db8c9, #58a6ff);
-  --cc-focus-ring: color-mix(in srgb, #3db8c9 45%, transparent);
-  --cc-tier-l0: #3db8c9;
-  --cc-tier-l1: #58a6ff;
-  --cc-tier-l2: #c9a227;
-  --cc-tier-l3: #8b9cf6;
-  --cc-tier-miss: #5a6f80;
+  --cc-bg: oklch(0.11 0.010 220);
+  --cc-bg-topnav: oklch(0.08 0.008 220);
+  --cc-bg-sidebar: oklch(0.08 0.008 220);
+  --cc-bg-card: oklch(0.15 0.012 220);
+  --cc-bg-elevated: oklch(0.20 0.015 220);
+  --cc-bg-input: oklch(0.11 0.010 220);
+  --cc-border: oklch(0.24 0.018 220);
+  --cc-border-light: oklch(0.18 0.014 220);
+  --cc-text: oklch(0.92 0.010 220);
+  --cc-text-muted: oklch(0.68 0.015 220);
+  --cc-accent: oklch(0.70 0.12 200);
+  --cc-accent-bright: oklch(0.76 0.14 200);
+  --cc-accent-muted: color-mix(in srgb, oklch(0.70 0.12 200) 14%, transparent);
+  --cc-success: oklch(0.72 0.15 142);
+  --cc-info: oklch(0.72 0.12 220);
+  --cc-warning: oklch(0.78 0.15 80);
+  --cc-error: oklch(0.65 0.16 22);
+  --cc-purple: oklch(0.70 0.14 300);
+  --cc-yellow: oklch(0.78 0.15 80);
+  --cc-shadow: color-mix(in srgb, oklch(0.04 0.008 220) 20%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, oklch(0.70 0.12 200) 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, oklch(0.70 0.12 200), oklch(0.72 0.12 220));
+  --cc-focus-ring: color-mix(in srgb, oklch(0.70 0.12 200) 45%, transparent);
+  --cc-tier-l0: oklch(0.70 0.12 200);
+  --cc-tier-l1: oklch(0.72 0.12 220);
+  --cc-tier-l2: oklch(0.78 0.15 80);
+  --cc-tier-l3: oklch(0.70 0.14 300);
+  --cc-tier-miss: oklch(0.42 0.012 220);
 
   /* Latency heatmap (12-level) for live heatmap table */
   --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
@@ -199,8 +199,8 @@
   --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
   --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
   --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
-  --cc-latency-7: color-mix(in srgb, #d97706 26%, transparent);
-  --cc-latency-8: color-mix(in srgb, #d97706 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, oklch(0.78 0.15 80) 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, oklch(0.78 0.15 80) 46%, transparent);
   --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
   --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
   --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
@@ -208,34 +208,48 @@
 }
 
 .theme-sand {
-  --cc-bg: #f4f0e8;
-  --cc-bg-topnav: #ebe5da;
-  --cc-bg-sidebar: #ebe5da;
-  --cc-bg-card: #faf7f2;
-  --cc-bg-elevated: #e8e2d6;
-  --cc-bg-input: #faf7f2;
-  --cc-border: #cfc6b8;
-  --cc-border-light: #ddd6ca;
-  --cc-text: #2a261f;
-  --cc-text-muted: #6f675c;
-  --cc-accent: #b85c28;
-  --cc-accent-bright: #cc6e38;
-  --cc-accent-muted: color-mix(in srgb, #b85c28 12%, transparent);
-  --cc-success: #2d7a48;
-  --cc-info: #1d6b9a;
-  --cc-warning: #8a6d1a;
-  --cc-error: #b83832;
-  --cc-purple: #7a5cad;
-  --cc-yellow: #8a6d1a;
-  --cc-shadow: color-mix(in srgb, #2a261f 7%, transparent);
-  --cc-nav-active-bg: color-mix(in srgb, #b85c28 12%, transparent);
-  --cc-brand-gradient: linear-gradient(135deg, #b85c28, #8a6d1a);
-  --cc-focus-ring: color-mix(in srgb, #b85c28 40%, transparent);
-  --cc-tier-l0: #b85c28;
-  --cc-tier-l1: #1d6b9a;
-  --cc-tier-l2: #8a6d1a;
-  --cc-tier-l3: #7a5cad;
-  --cc-tier-miss: #a89e90;
+  --cc-bg: oklch(0.94 0.008 70);
+  --cc-bg-topnav: oklch(0.89 0.012 70);
+  --cc-bg-sidebar: oklch(0.89 0.012 70);
+  --cc-bg-card: oklch(0.97 0.004 70);
+  --cc-bg-elevated: oklch(0.87 0.015 70);
+  --cc-bg-input: oklch(0.97 0.004 70);
+  --cc-border: oklch(0.78 0.015 70);
+  --cc-border-light: oklch(0.85 0.010 70);
+  --cc-text: oklch(0.22 0.015 70);
+  --cc-text-muted: oklch(0.50 0.018 70);
+  --cc-accent: oklch(0.48 0.12 45);
+  --cc-accent-bright: oklch(0.42 0.14 45);
+  --cc-accent-muted: color-mix(in srgb, oklch(0.48 0.12 45) 12%, transparent);
+  --cc-success: oklch(0.48 0.12 142);
+  --cc-info: oklch(0.48 0.12 250);
+  --cc-warning: oklch(0.52 0.12 80);
+  --cc-error: oklch(0.45 0.15 22);
+  --cc-purple: oklch(0.46 0.13 300);
+  --cc-yellow: oklch(0.52 0.12 80);
+  --cc-shadow: color-mix(in srgb, oklch(0.22 0.015 70) 7%, transparent);
+  --cc-nav-active-bg: color-mix(in srgb, oklch(0.48 0.12 45) 12%, transparent);
+  --cc-brand-gradient: linear-gradient(135deg, oklch(0.48 0.12 45), oklch(0.52 0.12 80));
+  --cc-focus-ring: color-mix(in srgb, oklch(0.48 0.12 45) 40%, transparent);
+  --cc-tier-l0: oklch(0.48 0.12 45);
+  --cc-tier-l1: oklch(0.48 0.12 250);
+  --cc-tier-l2: oklch(0.52 0.12 80);
+  --cc-tier-l3: oklch(0.46 0.13 300);
+  --cc-tier-miss: oklch(0.68 0.010 70);
+
+  /* Latency heatmap (12-level) for live heatmap table */
+  --cc-latency-1: color-mix(in srgb, var(--cc-info) 26%, transparent);
+  --cc-latency-2: color-mix(in srgb, var(--cc-info) 46%, transparent);
+  --cc-latency-3: color-mix(in srgb, var(--cc-success) 26%, transparent);
+  --cc-latency-4: color-mix(in srgb, var(--cc-success) 46%, transparent);
+  --cc-latency-5: color-mix(in srgb, var(--cc-warning) 26%, transparent);
+  --cc-latency-6: color-mix(in srgb, var(--cc-warning) 46%, transparent);
+  --cc-latency-7: color-mix(in srgb, oklch(0.52 0.12 80) 26%, transparent);
+  --cc-latency-8: color-mix(in srgb, oklch(0.52 0.12 80) 46%, transparent);
+  --cc-latency-9: color-mix(in srgb, var(--cc-error) 26%, transparent);
+  --cc-latency-10: color-mix(in srgb, var(--cc-error) 46%, transparent);
+  --cc-latency-11: color-mix(in srgb, var(--cc-purple) 26%, transparent);
+  --cc-latency-12: color-mix(in srgb, var(--cc-purple) 46%, transparent);
 }
 
 /* Dashboard compatibility aliases (all themes) */
@@ -282,4 +296,30 @@
   --tier-l2: var(--cc-tier-l2);
   --tier-l3: var(--cc-tier-l3);
   --tier-miss: var(--cc-tier-miss);
+}
+
+/* Table Density Overrides */
+html[data-table-density="comfortable"],
+:root:not([data-table-density]) {
+  --cc-spacing-xs: 0.375rem;
+  --cc-spacing-sm: 0.625rem;
+  --cc-spacing-md: 1rem;
+  --cc-spacing-lg: 1.5rem;
+  --cc-spacing-xl: 2.25rem;
+  
+  --cc-card-padding-hero: 1.25rem 1.5rem;
+  --cc-card-padding-mosaic: 1rem 1.25rem;
+  --cc-card-gap: 1rem;
+}
+
+html[data-table-density="compact"] {
+  --cc-spacing-xs: 0.25rem;
+  --cc-spacing-sm: 0.5rem;
+  --cc-spacing-md: 0.75rem;
+  --cc-spacing-lg: 1rem;
+  --cc-spacing-xl: 1.5rem;
+  
+  --cc-card-padding-hero: 0.75rem 1rem;
+  --cc-card-padding-mosaic: 0.625rem 0.75rem;
+  --cc-card-gap: 0.5rem;
 }

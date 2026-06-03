@@ -14,6 +14,7 @@ pub fn OverviewMetricCard<P, D>(
     #[prop(optional)] subtitle: Option<String>,
     open: RwSignal<bool>,
     #[prop(optional)] on_open: Option<Callback<()>>,
+    #[prop(optional, into)] class: Option<String>,
     preview: P,
     detail: D,
 ) -> impl IntoView
@@ -45,7 +46,14 @@ where
 
     view! {
         <div
-            class="overview-metric-card"
+            class=move || {
+                let mut c = "overview-metric-card".to_string();
+                if let Some(ref extra) = class {
+                    c.push(' ');
+                    c.push_str(extra);
+                }
+                c
+            }
             role="button"
             tabindex="0"
             aria-label=format!("{} — {}", label_aria, t.overview_card_click_detail())

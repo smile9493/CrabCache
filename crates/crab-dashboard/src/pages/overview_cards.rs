@@ -589,6 +589,7 @@ pub fn OverviewCardGrid(
                                             subtitle=t.overview_latency_upstream().to_string()
                                             open=open_latency
                                             on_open=on_open_latency
+                                            class="overview-metric-card-wide"
                                             preview=move || {
                                                 let stages = [
                                                     metrics_latency.latency_l0_ms,
@@ -651,6 +652,7 @@ pub fn OverviewCardGrid(
                                             headline=top_consumer
                                             open=open_consumer
                                             on_open=on_open_consumer
+                                            class="overview-metric-card-wide"
                                             preview=move || {
                                                 view! {
                                                     <HorizontalBarChart

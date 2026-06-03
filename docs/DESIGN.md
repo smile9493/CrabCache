@@ -15,7 +15,7 @@ Admin Dashboard（Leptos WASM）与 [demo.html](demo.html) 共用同一套设计
 ## 2. 品牌
 
 - **Logo**：[`favicon.svg`](../crates/crab-dashboard/style/favicon.svg)（侧栏与登录页，组件 `BrandLogo`）
-- **标题渐变**：`linear-gradient(135deg, --cc-accent, --cc-yellow)`（类名 `.brand-gradient-text`）
+- **标题样式**：使用 `Outfit` 字体，品牌强调色 `--cc-accent`（类名 `.brand-text`）
 - **产品名**：CrabCache
 
 ## 3. 设计令牌
@@ -24,24 +24,24 @@ Admin Dashboard（Leptos WASM）与 [demo.html](demo.html) 共用同一套设计
 
 | Token | 用途 | Dark | Light | Midnight | Ocean | Sand |
 |-------|------|------|-------|----------|-------|------|
-| `--cc-bg` | 主内容区背景 | `#0d1117` | `#f6f4f0` | `#0c0a14` | `#0a1218` | `#f4f0e8` |
-| `--cc-bg-sidebar` | 侧栏/顶栏背景 | `#0a0e13` | `#ebe8e2` | `#080610` | `#070e14` | `#ebe5da` |
-| `--cc-bg-card` | 卡片/面板 | `#161b22` | `#ffffff` | `#14101f` | `#111c26` | `#faf7f2` |
-| `--cc-bg-elevated` | 悬停/下拉/表头 | `#21262d` | `#f0ede8` | `#1e1830` | `#182430` | `#e8e2d6` |
-| `--cc-border` | 边框 | `#30363d` | `#c9c4bc` | `#2e2842` | `#243444` | `#cfc6b8` |
-| `--cc-text` | 主文字 | `#e6edf3` | `#1a1814` | `#ece8f5` | `#e2edf4` | `#2a261f` |
-| `--cc-text-muted` | 次要文字 | `#8b949e` | `#5c574f` | `#9b92b0` | `#7d96a8` | `#6f675c` |
-| `--cc-accent` | 主强调 | `#f78166` | `#c44d2f` | `#c4a1ff` | `#3db8c9` | `#b85c28` |
-| `--cc-accent-bright` | 导航 active 文字 | `#ff967d` | `#d65a3a` | `#d4b8ff` | `#5ecfe0` | `#cc6e38` |
-| `--cc-success` | 成功/命中 | `#3fb950` | `#1a7f37` | `#3fb950` | `#46c880` | `#2d7a48` |
-| `--cc-info` | 信息/L2 | `#58a6ff` | `#0969da` | `#79b8ff` | `#58a6ff` | `#1d6b9a` |
-| `--cc-warning` | 警告 | `#d2991d` | `#9a6700` | `#d2991d` | `#c9a227` | `#8a6d1a` |
-| `--cc-error` | 错误/吊销 | `#f85149` | `#cf222e` | `#f85149` | `#e85d5d` | `#b83832` |
-| `--cc-tier-l0` | L0 内存缓存 | `#f78166` | `#c44d2f` | `#c4a1ff` | `#3db8c9` | `#b85c28` |
-| `--cc-tier-l1` | L1 Redis | `#58a6ff` | `#0969da` | `#79b8ff` | `#58a6ff` | `#1d6b9a` |
-| `--cc-tier-l2` | L2 语义缓存 | `#d2991d` | `#9a6700` | `#d2991d` | `#c9a227` | `#8a6d1a` |
-| `--cc-tier-l3` | L3 上游前缀 | `#bc8cff` | `#8250df` | `#bc8cff` | `#8b9cf6` | `#7a5cad` |
-| `--cc-tier-miss` | 缓存未命中 | `#484f58` | `#a8a29e` | `#5a516e` | `#5a6f80` | `#a89e90` |
+| `--cc-bg` | 主内容区背景 | `oklch(0.12 0.008 30)` | `oklch(0.96 0.005 35)` | `oklch(0.10 0.012 280)` | `oklch(0.11 0.010 220)` | `oklch(0.94 0.008 70)` |
+| `--cc-bg-sidebar` | 侧栏/顶栏背景 | `oklch(0.09 0.006 30)` | `oklch(0.92 0.008 35)` | `oklch(0.07 0.008 280)` | `oklch(0.08 0.008 220)` | `oklch(0.89 0.012 70)` |
+| `--cc-bg-card` | 卡片/面板 | `oklch(0.16 0.010 30)` | `oklch(1.00 0.002 35)` | `oklch(0.14 0.015 280)` | `oklch(0.15 0.012 220)` | `oklch(0.97 0.004 70)` |
+| `--cc-bg-elevated` | 悬停/下拉/表头 | `oklch(0.22 0.012 30)` | `oklch(0.90 0.010 35)` | `oklch(0.18 0.020 280)` | `oklch(0.20 0.015 220)` | `oklch(0.87 0.015 70)` |
+| `--cc-border` | 边框 | `oklch(0.26 0.014 30)` | `oklch(0.80 0.015 35)` | `oklch(0.24 0.025 280)` | `oklch(0.24 0.018 220)` | `oklch(0.78 0.015 70)` |
+| `--cc-text` | 主文字 | `oklch(0.92 0.010 30)` | `oklch(0.18 0.015 35)` | `oklch(0.92 0.015 280)` | `oklch(0.92 0.010 220)` | `oklch(0.22 0.015 70)` |
+| `--cc-text-muted` | 次要文字 | `oklch(0.68 0.012 30)` | `oklch(0.48 0.018 35)` | `oklch(0.68 0.020 280)` | `oklch(0.68 0.015 220)` | `oklch(0.50 0.018 70)` |
+| `--cc-accent` | 主强调 | `oklch(0.65 0.16 28)` | `oklch(0.50 0.15 28)` | `oklch(0.78 0.12 280)` | `oklch(0.70 0.12 200)` | `oklch(0.48 0.12 45)` |
+| `--cc-accent-bright` | 导航 active 文字 | `oklch(0.72 0.18 28)` | `oklch(0.45 0.17 28)` | `oklch(0.84 0.14 280)` | `oklch(0.76 0.14 200)` | `oklch(0.42 0.14 45)` |
+| `--cc-success` | 成功/命中 | `oklch(0.72 0.15 142)` | `oklch(0.52 0.13 142)` | `oklch(0.72 0.15 142)` | `oklch(0.72 0.15 142)` | `oklch(0.48 0.12 142)` |
+| `--cc-info` | 信息/L2 | `oklch(0.70 0.14 250)` | `oklch(0.48 0.15 250)` | `oklch(0.75 0.12 250)` | `oklch(0.72 0.12 220)` | `oklch(0.48 0.12 250)` |
+| `--cc-warning` | 警告 | `oklch(0.78 0.15 80)` | `oklch(0.58 0.14 80)` | `oklch(0.78 0.15 80)` | `oklch(0.78 0.15 80)` | `oklch(0.52 0.12 80)` |
+| `--cc-error` | 错误/吊销 | `oklch(0.62 0.18 22)` | `oklch(0.46 0.17 22)` | `oklch(0.65 0.16 22)` | `oklch(0.65 0.16 22)` | `oklch(0.45 0.15 22)` |
+| `--cc-tier-l0` | L0 内存缓存 | `oklch(0.65 0.16 28)` | `oklch(0.50 0.15 28)` | `oklch(0.78 0.12 280)` | `oklch(0.70 0.12 200)` | `oklch(0.48 0.12 45)` |
+| `--cc-tier-l1` | L1 Redis | `oklch(0.70 0.14 250)` | `oklch(0.48 0.15 250)` | `oklch(0.75 0.12 250)` | `oklch(0.72 0.12 220)` | `oklch(0.48 0.12 250)` |
+| `--cc-tier-l2` | L2 语义缓存 | `oklch(0.78 0.15 80)` | `oklch(0.58 0.14 80)` | `oklch(0.78 0.15 80)` | `oklch(0.78 0.15 80)` | `oklch(0.52 0.12 80)` |
+| `--cc-tier-l3` | L3 上游前缀 | `oklch(0.70 0.16 300)` | `oklch(0.48 0.16 300)` | `oklch(0.78 0.12 280)` | `oklch(0.70 0.14 300)` | `oklch(0.46 0.13 300)` |
+| `--cc-tier-miss` | 缓存未命中 | `oklch(0.40 0.010 30)` | `oklch(0.65 0.010 35)` | `oklch(0.42 0.015 280)` | `oklch(0.42 0.012 220)` | `oklch(0.68 0.010 70)` |
 | `--sidebar-width` | 侧栏宽度 | `230px` | 同左 | 同左 | 同左 | 同左 |
 | `--radius-sm` / `--radius-md` | 圆角 | `6px` / `10px` | 同左 | 同左 | 同左 | 同左 |
 
@@ -53,10 +53,10 @@ Dashboard 兼容别名（过渡期）：`--bg-primary`、`--accent-primary` 等�
 
 | 级别 | 大小 | 字重 | 字体 |
 |------|------|------|------|
-| Page title | 1.4rem (22px) | 600 | sans |
-| Panel title | 0.92rem | 600 | sans |
-| Body | 0.8125–0.875rem | 400–500 | sans |
-| Label / 表头 | 0.68–0.8rem | 500–600 | sans, uppercase 可选 |
+| Page title | 1.4rem (22px) | 600 | display (Outfit) |
+| Panel title | 0.95rem | 700 | display (Outfit) |
+| Body | 0.8125–0.875rem | 400–500 | sans (Inter) |
+| Label / 表头 | 0.68–0.8rem | 500–600 | sans (Inter), uppercase 可选 |
 | Metric value | 1.75–1.9rem | 700 | mono, tabular-nums |
 | Code / Token | 0.82rem | 400 | mono |
 

@@ -359,6 +359,7 @@ fn profile_keys_from_admin_pool(
                     models: Vec::new(),
                     quota: None,
                     priority: 0,
+                    model_cooldowns: Vec::new(),
                 }
             };
             if let Some(probe) = models_probe {

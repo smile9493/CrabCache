@@ -34,7 +34,7 @@ fn CardDetailModalBody(
             tabindex="-1"
         >
             <div
-                class="card-detail-modal glass-card"
+                class="card-detail-modal"
                 on:click=move |ev| { ev.stop_propagation(); }
             >
                 <div class="card-detail-header">
