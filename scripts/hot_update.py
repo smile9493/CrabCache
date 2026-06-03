@@ -315,12 +315,17 @@ def verify_remote_admin_homepage(ssh_host: str) -> None:
     log("Admin homepage theme markers OK")
 
 
-def build_rust(skip: bool) -> Path:
+def build_rust(skip: bool, otel: bool = False) -> Path:
     if skip:
         log("Skipping cargo build (--skip-build)")
         return cargo_target_directory()
-    log("Building gateway + admin (release)")
-    run(["cargo", "build", "--release", "-p", "crab-gateway", "-p", "crab-admin"])
+    cmd = ["cargo", "build", "--release", "-p", "crab-gateway", "-p", "crab-admin"]
+    if otel:
+        cmd.extend(["--features", "otel"])
+        log("Building gateway + admin (release, with OTel)")
+    else:
+        log("Building gateway + admin (release)")
+    run(cmd)
     return cargo_target_directory()
 
 
@@ -423,6 +428,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip remote health checks after restart",
     )
+    parser.add_argument(
+        "--otel",
+        action="store_true",
+        default=os.environ.get("CRABCACHE_OTEL", "0") == "1",
+        help="Build with OpenTelemetry support (--features otel); also via CRABCACHE_OTEL=1",
+    )
     return parser.parse_args()
 
 
@@ -447,7 +458,7 @@ def main() -> int:
     tmp_dir: Path | None = None
 
     try:
-        target_dir = build_rust(args.skip_build)
+        target_dir = build_rust(args.skip_build, otel=args.otel)
         gw_bin, admin_bin = stage_binaries(target_dir)
         gw_sha = sha256_file(gw_bin)
         admin_sha = sha256_file(admin_bin)

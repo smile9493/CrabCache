@@ -537,6 +537,8 @@ impl PgStore {
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS cache_decision TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS upstream_result TEXT",
             "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS phase_durations_ms JSONB",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_ip TEXT",
+            "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_kind TEXT",
         ] {
             client.execute(stmt, &[]).await?;
         }
@@ -1094,6 +1096,8 @@ impl PgStore {
                     cache_decision  TEXT,
                     upstream_result TEXT,
                     phase_durations_ms JSONB,
+                    client_ip       TEXT,
+                    client_kind     TEXT,
                     PRIMARY KEY (request_hash, timestamp_ms)
                 ) PARTITION BY RANGE (timestamp_ms)",
                 &[],
