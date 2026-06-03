@@ -10,7 +10,6 @@ use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
 use crate::components::chart::core::ThresholdLine;
 use crate::components::chart_preview_card::ChartPreviewCard;
-use crate::components::horizontal_bar_chart::HorizontalBarChart;
 use crate::components::icons::{Icon, IconName};
 use crate::components::line_chart::{
     ChartSeries, TOKEN_INPUT_PRICE_PER_M, TOKEN_OUTPUT_PRICE_PER_M, TokenLineChart,
@@ -143,34 +142,6 @@ fn cache_hit_pct(data: &LiveMetricsResponse) -> f64 {
     }
 }
 
-fn build_backend_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Option<f64>>) {
-    let mut rows: Vec<_> = r.backends.iter().collect();
-    // Ascending by count so the largest category renders at the top of the horizontal chart.
-    rows.sort_by_key(|b| b.request_count);
-    let labels: Vec<String> = rows
-        .iter()
-        .map(|b| {
-            let kind = b.affinity_kind.as_deref().unwrap_or("n/a");
-            format!("{} · {}", b.backend_name, kind)
-        })
-        .collect();
-    let values: Vec<Option<f64>> = rows.iter().map(|b| Some(b.request_count as f64)).collect();
-    (labels, values)
-}
-
-fn build_affinity_distribution(r: &KeyRoutingResponse) -> (Vec<String>, Vec<Option<f64>>) {
-    let mut map: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
-    for b in &r.backends {
-        let kind = b.affinity_kind.clone().unwrap_or_else(|| "n/a".to_string());
-        *map.entry(kind).or_insert(0) += b.request_count;
-    }
-    let mut pairs: Vec<(String, u64)> = map.into_iter().collect();
-    pairs.sort_by_key(|(_, count)| *count);
-    let labels: Vec<String> = pairs.iter().map(|(k, _)| k.clone()).collect();
-    let values: Vec<Option<f64>> = pairs.iter().map(|(_, v)| Some(*v as f64)).collect();
-    (labels, values)
-}
-
 fn token_cost_usd(tokens: f64, price_per_million: f64) -> f64 {
     (tokens / 1_000_000.0) * price_per_million
 }
@@ -196,10 +167,6 @@ fn max_bucket_latencies(buckets: &[LiveMetricsBucket]) -> (f64, Option<f64>, Opt
 fn format_latency_opt(v: Option<f64>, na: &str) -> String {
     v.map(|x| format!("{x:.0} ms"))
         .unwrap_or_else(|| na.to_string())
-}
-
-fn series_has_points(values: &[Option<f64>]) -> bool {
-    values.iter().any(|v| matches!(v, Some(x) if *x > 0.0))
 }
 
 #[derive(Clone, Copy)]
@@ -242,19 +209,11 @@ pub fn LivePage() -> impl IntoView {
     let latency_e2e_open = RwSignal::new(false);
     let latency_upstream_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
-    let backend_dist_open = RwSignal::new(false);
-    let affinity_dist_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
         RwSignal::new(None);
     let selected_routing_profile = RwSignal::new(String::new());
-    let routing_key_ids: RwSignal<Vec<String>> = RwSignal::new(Vec::new());
-    let selected_routing_key: RwSignal<Option<String>> = RwSignal::new(None);
-    let routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>> =
-        RwSignal::new(None);
-    let routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>> =
-        RwSignal::new(None);
     let alive = Arc::new(AtomicBool::new(true));
     let session_panel_open = RwSignal::new(false);
 
@@ -1280,166 +1239,6 @@ fn LiveRoutingSummaryPanel(
 }
 
 #[component]
-fn LiveKeyDistributionPanel(
-    routing_key_ids: RwSignal<Vec<String>>,
-    selected_routing_key: RwSignal<Option<String>>,
-    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
-    backend_open: RwSignal<bool>,
-    affinity_open: RwSignal<bool>,
-) -> impl IntoView {
-    let t = use_translations();
-    let backend_title = t.live_backend_label().to_string();
-    let affinity_title = t.live_key_affinity_title().to_string();
-    view! {
-        <div class="glass-card p-4 live-detail-card flex flex-col space-y-2">
-            <h3 class="text-sm font-semibold text-theme">{t.live_key_affinity_title()}</h3>
-            <select
-                class="input text-xs font-mono"
-                prop:value=move || selected_routing_key.get().unwrap_or_default()
-                on:change=move |ev| {
-                    let v = event_target_value(&ev);
-                    if v.is_empty() {
-                        selected_routing_key.set(None);
-                    } else {
-                        selected_routing_key.set(Some(v));
-                    }
-                }
-            >
-                <option value="">{t.live_select_key()}</option>
-                {move || routing_key_ids.get().into_iter().map(|id| {
-                    let id_val = id.clone();
-                    view! { <option value=id_val.clone()>{id_val.clone()}</option> }
-                }).collect_view()}
-            </select>
-            {move || match routing_key_data.get() {
-                None => view! {
-                    <p class="text-[11px] text-theme-muted live-chart-compact">{t.live_key_routing_loading()}</p>
-                }.into_any(),
-                Some(Err(e)) => view! {
-                    <p class="text-[11px] text-error live-chart-compact">{e}</p>
-                }.into_any(),
-                Some(Ok(resp)) => {
-                    let (backend_labels, backend_values) = build_backend_distribution(&resp);
-                    let (aff_labels, aff_values) = build_affinity_distribution(&resp);
-                    let backend_has = series_has_points(&backend_values);
-                    let aff_has = series_has_points(&aff_values);
-                    let backend_labels_arc = std::sync::Arc::new(backend_labels);
-                    let backend_values_arc: std::sync::Arc<Vec<f64>> =
-                        std::sync::Arc::new(backend_values.into_iter().flatten().collect());
-                    let aff_labels_arc = std::sync::Arc::new(aff_labels);
-                    let aff_values_arc: std::sync::Arc<Vec<f64>> =
-                        std::sync::Arc::new(aff_values.into_iter().flatten().collect());
-
-                    let backend_labels_sig = {
-                        let arc = std::sync::Arc::clone(&backend_labels_arc);
-                        Signal::derive(move || arc.as_ref().clone())
-                    };
-                    let backend_values_sig = {
-                        let arc = std::sync::Arc::clone(&backend_values_arc);
-                        Signal::derive(move || arc.as_ref().clone())
-                    };
-                    let aff_labels_sig = {
-                        let arc = std::sync::Arc::clone(&aff_labels_arc);
-                        Signal::derive(move || arc.as_ref().clone())
-                    };
-                    let aff_values_sig = {
-                        let arc = std::sync::Arc::clone(&aff_values_arc);
-                        Signal::derive(move || arc.as_ref().clone())
-                    };
-                    view! {
-                        <div class="space-y-2 flex-1 flex flex-col">
-                            <div class="text-[11px] text-theme-muted font-mono">
-                                {format!("prefix_breaks={}", resp.prefix_break_count)}
-                            </div>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
-                                {if backend_has {
-                                    view! {
-                                        <ChartPreviewCard
-                                            title=backend_title.clone()
-                                            open=backend_open
-                                            preview=move || {
-                                                view! {
-                                                    <HorizontalBarChart
-                                                        labels=backend_labels_sig
-                                                        values=backend_values_sig
-                                                        width=280
-                                                        height_px=120
-                                                        empty_message=t.live_no_data()
-                                                    />
-                                                }.into_any()
-                                            }
-                                            detail=move || {
-                                                view! {
-                                                    <HorizontalBarChart
-                                                        labels=backend_labels_sig
-                                                        values=backend_values_sig
-                                                        width=520
-                                                        height_px=280
-                                                        empty_message=t.live_no_data()
-                                                    />
-                                                }.into_any()
-                                            }
-                                        />
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div class="border border-theme rounded-md p-2 flex flex-col">
-                                            <div class="text-[11px] text-theme-muted mb-1">{t.live_backend_label()}</div>
-                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
-                                                {t.live_no_data()}
-                                            </p>
-                                        </div>
-                                    }.into_any()
-                                }}
-                                {if aff_has {
-                                    view! {
-                                        <ChartPreviewCard
-                                            title=affinity_title.clone()
-                                            open=affinity_open
-                                            preview=move || {
-                                                view! {
-                                                    <HorizontalBarChart
-                                                        labels=aff_labels_sig
-                                                        values=aff_values_sig
-                                                        width=280
-                                                        height_px=120
-                                                        empty_message=t.live_no_data()
-                                                    />
-                                                }.into_any()
-                                            }
-                                            detail=move || {
-                                                view! {
-                                                    <HorizontalBarChart
-                                                        labels=aff_labels_sig
-                                                        values=aff_values_sig
-                                                        width=520
-                                                        height_px=280
-                                                        empty_message=t.live_no_data()
-                                                    />
-                                                }.into_any()
-                                            }
-                                        />
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div class="border border-theme rounded-md p-2 flex flex-col">
-                                            <div class="text-[11px] text-theme-muted mb-1">{t.live_key_affinity_title()}</div>
-                                            <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
-                                                {t.live_no_data()}
-                                            </p>
-                                        </div>
-                                    }.into_any()
-                                }}
-                            </div>
-                        </div>
-                    }.into_any()
-                }
-            }}
-        </div>
-    }
-}
-
-#[component]
 fn RoutingMetricRow(label: &'static str, value: String, pct: f64) -> impl IntoView {
     let width = format!("{:.0}%", pct.clamp(0.0, 100.0));
     view! {
@@ -1975,95 +1774,3 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
     }.into_any()
 }
 
-#[component]
-fn LiveKeyActivityPanel(
-    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
-    routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>>,
-) -> impl IntoView {
-    let t = use_translations();
-    view! {
-        <div class="glass-card p-4 live-detail-card space-y-3 flex flex-col">
-            <h3 class="text-sm font-semibold text-theme">{t.live_key_activity_title()}</h3>
-            {move || match (routing_key_concurrency.get(), routing_key_data.get()) {
-                (None, None) => view! {
-                    <p class="text-xs text-theme-muted">{t.live_select_key_hint()}</p>
-                }.into_any(),
-                (concurrency, routing) => {
-                    let mut tiles: Vec<(&'static str, String, LiveTileVariant)> = Vec::new();
-                    if let Some(Ok(c)) = &concurrency {
-                        tiles.push((
-                            t.live_active_now(),
-                            c.active_now.to_string(),
-                            LiveTileVariant::Accent,
-                        ));
-                        tiles.push((
-                            t.live_peak_concurrent(),
-                            c.concurrent_peak.to_string(),
-                            LiveTileVariant::Orange,
-                        ));
-                        tiles.push((
-                            t.live_window_requests(),
-                            c.total_requests.to_string(),
-                            LiveTileVariant::Teal,
-                        ));
-                    }
-                    if let Some(Ok(r)) = &routing {
-                        tiles.push((
-                            t.live_prefix_breaks(),
-                            r.prefix_break_count.to_string(),
-                            LiveTileVariant::Warn,
-                        ));
-                        tiles.push((
-                            t.live_migrations_count(),
-                            r.migrations.len().to_string(),
-                            LiveTileVariant::Muted,
-                        ));
-                    }
-                    view! {
-                        <div class="grid grid-cols-2 gap-2">
-                            {tiles.into_iter().map(|(label, value, variant)| {
-                                view! {
-                                    <LiveStatTile label=label value=value variant=variant />
-                                }
-                            }).collect_view()}
-                        </div>
-                        {if let Some(Err(e)) = concurrency {
-                            view! { <p class="text-[11px] text-error">{e}</p> }.into_any()
-                        } else {
-                            ().into_any()
-                        }}
-                        {if let Some(Ok(r)) = routing {
-                            if r.migrations.is_empty() {
-                                view! { <p class="text-[11px] text-theme-muted">{t.live_no_migrations_hint()}</p> }.into_any()
-                            } else {
-                            view! {
-                                <div class="border-t border-theme pt-2 space-y-1">
-                                    <div class="text-[11px] font-medium text-[var(--cc-warning)] uppercase tracking-wide">
-                                        {t.live_affinity_migrations()}
-                                    </div>
-                                        {r.migrations.iter().rev().take(3).map(|m| {
-                                            view! {
-                                                <div class="text-[11px] font-mono text-[var(--cc-warning)] py-0.5">
-                                                    {format!(
-                                                        "{} → {} ({})",
-                                                        m.from_backend,
-                                                        m.to_backend,
-                                                        crate::datetime::format_ms_china_time(m.timestamp_ms, true)
-                                                    )}
-                                                </div>
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                }.into_any()
-                            }
-                        } else if let Some(Err(e)) = routing {
-                            view! { <p class="text-[11px] text-error">{e}</p> }.into_any()
-                        } else {
-                            ().into_any()
-                        }}
-                    }.into_any()
-                }
-            }}
-        </div>
-    }
-}
