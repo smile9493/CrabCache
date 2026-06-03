@@ -70,7 +70,13 @@ impl PgTraceStore {
             return Ok(());
         }
         let mut client = self.client.lock().await;
-        let tx = client.transaction().await.context("pg trace begin tx")?;
+        let tx = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.transaction(),
+        )
+        .await
+        .context("pg trace begin tx timeout (10s)")?
+        .context("pg trace begin tx")?;
         let stmt = tx
             .prepare(
                 "INSERT INTO trace_logs
@@ -114,10 +120,10 @@ impl PgTraceStore {
                 &[
                     &e.request_hash,
                     &(e.timestamp_ms as i64),
-                    &(e.content_length as i32),
-                    &(e.semantic_cluster as i32),
+                    &(e.content_length.try_into().unwrap_or(i32::MAX)),
+                    &(e.semantic_cluster.try_into().unwrap_or(i32::MAX)),
                     &e.model,
-                    &(e.prompt_tokens as i32),
+                    &(e.prompt_tokens.try_into().unwrap_or(i32::MAX)),
                     &e.latency_ms,
                     &e.cache_hit,
                     &e.conversation_id,
@@ -132,7 +138,7 @@ impl PgTraceStore {
                     &composition_pg,
                     &e.request_messages_snapshot,
                     &e.response_preview,
-                    &e.retired_prefix_messages.map(|v| v as i32),
+                    &e.retired_prefix_messages.map(|v| v.try_into().unwrap_or(i32::MAX)),
                     &e.reasoning_strategy,
                     &e.prompt_cache_hit_ratio,
                     &e.upstream_profile_id,
@@ -144,7 +150,7 @@ impl PgTraceStore {
                     &e.upstream_key_id,
                     &e.session_store,
                     &e.stable_session_kind,
-                    &e.upstream_outbound_bytes.map(|v| v as i32),
+                    &e.upstream_outbound_bytes.map(|v| v.try_into().unwrap_or(i32::MAX)),
                     &e.prefill_ms,
                     &e.pre_header_ms,
                     &e.affinity_key,
@@ -154,7 +160,7 @@ impl PgTraceStore {
                     &e.is_coalesced,
                     &e.client_key_id,
                     &e.request_passthrough,
-                    &e.request_passthrough_prefix_len.map(|v| v as i32),
+                    &e.request_passthrough_prefix_len.map(|v| v.try_into().unwrap_or(i32::MAX)),
                     &e.client_ip,
                 ],
             )
@@ -170,7 +176,13 @@ impl PgTraceStore {
             })?;
         }
 
-        tx.commit().await.context("pg commit insert_trace_logs")?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            tx.commit(),
+        )
+        .await
+        .context("pg commit insert_trace_logs timeout (30s)")?
+        .context("pg commit insert_trace_logs")?;
         global_metrics().inc_admin_log_write("trace");
         Ok(())
     }
@@ -180,7 +192,8 @@ impl PgTraceStore {
 fn redact_pg_url(url: &str) -> String {
     if let Some(at) = url.find('@') {
         if let Some(slash) = url[..at].rfind('/') {
-            let prefix = &url[..slash + 2];
+            let end = (slash + 2).min(url.len());
+            let prefix = &url[..end];
             let suffix = &url[at..];
             return format!("{}****:****{}", prefix, suffix);
         }
@@ -730,7 +743,10 @@ fn main() -> Result<()> {
             // Spawn PG trace writer if configured.
             let pg_sink = trace_config.pg_url.as_ref().and_then(|pg_url_str| {
                 let (pg_tx, pg_rx) =
-                    std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(10_000);
+                    // Buffer sized to 100_000 to make blocking extremely unlikely.
+                    // SyncSender::send() is blocking; the real fix requires changing
+                    // crab-proxy's TraceLogger API to use tokio::sync::mpsc::Sender.
+                    std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(100_000);
                 let pg_url_owned = pg_url_str.clone();
                 match std::thread::Builder::new()
                     .name("crab-pg-trace-writer".into())
@@ -1025,6 +1041,9 @@ fn main() -> Result<()> {
                         }
                     });
                 })
+                .map_err(|e| {
+                    tracing::error!("Failed to spawn PG control writer thread: {}", e);
+                })
                 .ok();
         }
     }
@@ -1120,6 +1139,11 @@ fn main() -> Result<()> {
 
     let fault_injection = Arc::new(crab_proxy::fault_injection::FaultInjection::default());
 
+    let test_http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .expect("Failed to create test HTTP client");
+
     let mgmt_state = ManagementState {
         runtime: runtime.clone(),
         tiered_cache: tiered_cache.clone(),
@@ -1147,6 +1171,7 @@ fn main() -> Result<()> {
         webhook_store: webhook_store.clone(),
         webhook_client: webhook_client.clone(),
         codex_quota_cache: Some(codex_quota_cache.clone()),
+        test_http_client,
         fault_injection: fault_injection.clone(),
     };
 
@@ -1243,7 +1268,7 @@ fn main() -> Result<()> {
         circuit_breakers: Arc::new(crab_proxy::circuit_breaker::CircuitBreakerRegistry::default()),
         model_lockouts,
         client_lockouts,
-        event_bus: Arc::new(crab_proxy::event_bus::EventBus::new(1024)),
+        event_bus: event_bus.clone(),
         codex_quota_cache: codex_quota_cache.clone(),
         fault_injection: fault_injection.clone(),
     });

@@ -118,6 +118,12 @@ pub struct UpstreamKeyModelsEntry {
 pub struct UpstreamProfileKeysModelsView {
     pub profile_id: String,
     pub keys: Vec<UpstreamKeyModelsEntry>,
+    /// Total number of keys in the profile (may differ from `keys.len()` if truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
+    /// Whether the response was truncated due to the key probe limit.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

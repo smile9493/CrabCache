@@ -536,9 +536,6 @@ pub async fn put_profile_keys(
 ) -> Result<Json<UpstreamProfileKeysView>, Response> {
     authorize(&headers, &state.admin_key)?;
     let id = id.trim();
-    if state.runtime.profile(id).is_none() {
-        return Err(bad_request("unknown upstream profile"));
-    }
     if req.keys.is_empty() {
         return Err(bad_request("at least one upstream key is required"));
     }
@@ -567,7 +564,7 @@ pub async fn put_profile_keys(
     let profile = state
         .runtime
         .profile(id)
-        .expect("profile existence verified above");
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
     let current = profile.resolve_upstream_pool();
     let new_pool = match persist_mode {
         UpstreamKeysPutMode::Append => UpstreamKeyPool::merge_append(&current, specs),
@@ -602,9 +599,6 @@ pub async fn patch_profile_key(
     authorize(&headers, &state.admin_key)?;
     let profile_id = path.id.trim();
     let key_id = path.key_id.trim();
-    if state.runtime.profile(profile_id).is_none() {
-        return Err(bad_request("unknown upstream profile"));
-    }
     if req.enabled.is_none() && req.secret.is_none() && req.priority.is_none() {
         return Err(bad_request("no fields to update"));
     }
@@ -616,7 +610,7 @@ pub async fn patch_profile_key(
     let profile = state
         .runtime
         .profile(profile_id)
-        .expect("profile existence verified above");
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
     let pool = profile.resolve_upstream_pool();
     if let Some(enabled) = req.enabled
         && !pool.set_enabled(key_id, enabled)
@@ -675,13 +669,10 @@ pub async fn delete_profile_key(
     authorize(&headers, &state.admin_key)?;
     let profile_id = path.id.trim();
     let key_id = path.key_id.trim();
-    if state.runtime.profile(profile_id).is_none() {
-        return Err(bad_request("unknown upstream profile"));
-    }
     let profile = state
         .runtime
         .profile(profile_id)
-        .expect("profile existence verified above");
+        .ok_or_else(|| bad_request("unknown upstream profile"))?;
     let pool = profile.resolve_upstream_pool();
     let Some(new_pool) = UpstreamKeyPool::remove_key(&pool, key_id) else {
         return Err((
@@ -733,10 +724,7 @@ pub async fn test_upstream_profile(
     drop(guard);
 
     let test_base = profile.base_url.as_str().trim_end_matches('/');
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|_| internal_error("http client"))?;
+    let client = state.test_http_client.clone();
 
     if profile.provider == crab_pipeline::UpstreamProvider::Codex {
         let start = std::time::Instant::now();
@@ -880,10 +868,7 @@ pub async fn test_upstream_profile_key(
         .unwrap_or_default();
 
     let test_base = profile.base_url.as_str().trim_end_matches('/');
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|_| internal_error("http client"))?;
+    let client = state.test_http_client.clone();
 
     if profile.provider == crab_pipeline::UpstreamProvider::Codex {
         let start = std::time::Instant::now();
@@ -1087,13 +1072,14 @@ pub async fn get_profile_keys_models(
         .ok_or_else(|| bad_request("unknown upstream profile"))?;
     let pool = profile.resolve_upstream_pool();
     let test_base = profile.base_url.as_str().trim_end_matches('/');
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|_| internal_error("http client"))?;
+    let client = state.test_http_client.clone();
 
     let mut keys = Vec::new();
-    for status in pool.list_status() {
+    let statuses = pool.list_status();
+    let total_count = statuses.len();
+    let max_probe = 20; // Limit to avoid excessive latency with many keys
+    let truncated = total_count > max_probe;
+    for status in statuses.into_iter().take(max_probe) {
         let Some(api_key) = pool.secret_by_id(&status.id) else {
             keys.push(UpstreamKeyModelsEntry {
                 key_id: status.id.clone(),
@@ -1138,6 +1124,8 @@ pub async fn get_profile_keys_models(
     Ok(Json(UpstreamProfileKeysModelsView {
         profile_id: profile_id.to_string(),
         keys,
+        total_count: Some(total_count),
+        truncated,
     }))
 }
 
@@ -1178,10 +1166,7 @@ pub async fn get_profile_key_models(
             .into_response()
     })?;
     let test_base = profile.base_url.as_str().trim_end_matches('/');
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|_| internal_error("http client"))?;
+    let client = state.test_http_client.clone();
 
     if profile.provider != crab_pipeline::UpstreamProvider::Codex {
         return Ok(Json(UpstreamKeyModelsEntry {

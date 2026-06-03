@@ -7,14 +7,13 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use crab_control::{ErrorResponse, GATEWAY_ADMIN_KEY_HEADER, constant_time_eq_str};
-use std::sync::Arc;
 
 use crate::management::ManagementState;
-use crate::webhook::{RegisterWebhookRequest, WebhookConfig, WebhookDelivery, WebhookStore};
+use crate::management::is_private_or_reserved_url;
+use crate::webhook::{RegisterWebhookRequest, WebhookConfig, WebhookDelivery};
 
 /// Build the webhook admin API router.
 pub fn build_webhook_routes() -> Router<ManagementState> {
@@ -65,6 +64,16 @@ pub async fn register_webhook(
         ));
     }
 
+    // SSRF protection: reject private/reserved network addresses
+    if is_private_or_reserved_url(&payload.url) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Webhook URL must not point to a private or reserved network address".to_string(),
+            }),
+        ));
+    }
+
     // Generate webhook ID and secret
     let webhook_id = uuid::Uuid::new_v4().to_string().replace('-', "");
     let secret = payload
@@ -84,7 +93,7 @@ pub async fn register_webhook(
         failure_count: 0,
     };
 
-    state.webhook_store.register(config.clone()).await;
+    state.webhook_store.register(config.clone());
 
     // Return config with secret (only time secret is visible)
     Ok(Json(config))
@@ -99,8 +108,15 @@ pub async fn list_webhooks(
 ) -> Result<Json<Vec<WebhookConfig>>, (StatusCode, Json<ErrorResponse>)> {
     authorize(&headers, &state)?;
 
-    let webhooks = state.webhook_store.list_all().await;
-    Ok(Json(webhooks))
+    let webhooks = state.webhook_store.list_all();
+    let masked: Vec<WebhookConfig> = webhooks
+        .into_iter()
+        .map(|mut w| {
+            w.secret = format!("{}****", &w.secret[..w.secret.len().min(8)]);
+            w
+        })
+        .collect();
+    Ok(Json(masked))
 }
 
 /// Delete a webhook by ID.
@@ -113,7 +129,7 @@ pub async fn delete_webhook(
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     authorize(&headers, &state)?;
 
-    let removed = state.webhook_store.unregister(&id).await;
+    let removed = state.webhook_store.unregister(&id);
     if removed {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -138,7 +154,7 @@ pub async fn test_webhook(
 ) -> Result<Json<crate::webhook::WebhookTestResult>, (StatusCode, Json<ErrorResponse>)> {
     authorize(&headers, &state)?;
 
-    let webhook = state.webhook_store.get(&id).await.ok_or_else(|| {
+    let webhook = state.webhook_store.get(&id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {

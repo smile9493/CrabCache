@@ -75,7 +75,7 @@ impl WebhookStore {
     }
 
     /// Register a new webhook configuration.
-    pub async fn register(&self, config: WebhookConfig) {
+    pub fn register(&self, config: WebhookConfig) {
         let id = config.id.clone();
         self.webhooks.write().insert(id.clone(), config);
         debug!(webhook_id = %id, "Webhook registered");
@@ -83,7 +83,7 @@ impl WebhookStore {
 
     /// Unregister a webhook by ID.
     /// Returns `true` if the webhook was found and removed.
-    pub async fn unregister(&self, id: &str) -> bool {
+    pub fn unregister(&self, id: &str) -> bool {
         let removed = self.webhooks.write().remove(id).is_some();
         if removed {
             debug!(webhook_id = %id, "Webhook unregistered");
@@ -92,12 +92,12 @@ impl WebhookStore {
     }
 
     /// Get all registered webhooks.
-    pub async fn list_all(&self) -> Vec<WebhookConfig> {
+    pub fn list_all(&self) -> Vec<WebhookConfig> {
         self.webhooks.read().values().cloned().collect()
     }
 
     /// Get a specific webhook by ID.
-    pub async fn get(&self, id: &str) -> Option<WebhookConfig> {
+    pub fn get(&self, id: &str) -> Option<WebhookConfig> {
         self.webhooks.read().get(id).cloned()
     }
 
@@ -106,7 +106,7 @@ impl WebhookStore {
     /// A webhook is considered active if:
     /// 1. `enabled` is `true`
     /// 2. Either `events` is empty (subscribes to all) or contains the event type
-    pub async fn get_active_webhooks(&self, event_type: &str) -> Vec<WebhookConfig> {
+    pub fn get_active_webhooks(&self, event_type: &str) -> Vec<WebhookConfig> {
         self.webhooks
             .read()
             .values()
@@ -119,7 +119,7 @@ impl WebhookStore {
 
     /// Record a trigger attempt for a webhook.
     /// Updates `last_triggered` on success, increments `failure_count` on failure.
-    pub async fn record_trigger(&self, id: &str, success: bool) {
+    pub fn record_trigger(&self, id: &str, success: bool) {
         let mut webhooks = self.webhooks.write();
         if let Some(webhook) = webhooks.get_mut(id) {
             if success {
@@ -137,7 +137,7 @@ impl WebhookStore {
     }
 
     /// Get the count of registered webhooks.
-    pub async fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.webhooks.read().len()
     }
 }
@@ -203,7 +203,7 @@ impl WebhookDelivery {
             GatewayEvent::RateLimitHit(_) => "RateLimitHit",
         };
 
-        let webhooks = self.store.get_active_webhooks(event_type).await;
+        let webhooks = self.store.get_active_webhooks(event_type);
         if webhooks.is_empty() {
             return;
         }
@@ -240,7 +240,7 @@ impl WebhookDelivery {
                 .await;
 
                 // Record the result
-                store.record_trigger(&webhook_id, success).await;
+                store.record_trigger(&webhook_id, success);
 
                 if success {
                     debug!(
@@ -445,151 +445,131 @@ mod tests {
 
     #[test]
     fn test_webhook_store_register_list() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let store = WebhookStore::new();
-            assert_eq!(store.count().await, 0);
+        let store = WebhookStore::new();
+        assert_eq!(store.count(), 0);
 
-            let config = WebhookConfig {
-                id: "webhook-1".to_string(),
-                url: "https://example.com/webhook".to_string(),
-                secret: "secret-1".to_string(),
-                events: vec!["RequestCompleted".to_string()],
-                enabled: true,
-                created_at: 1234567890,
-                last_triggered: None,
-                failure_count: 0,
-            };
+        let config = WebhookConfig {
+            id: "webhook-1".to_string(),
+            url: "https://example.com/webhook".to_string(),
+            secret: "secret-1".to_string(),
+            events: vec!["RequestCompleted".to_string()],
+            enabled: true,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
+        };
 
-            store.register(config).await;
-            assert_eq!(store.count().await, 1);
+        store.register(config);
+        assert_eq!(store.count(), 1);
 
-            let webhooks = store.list_all().await;
-            assert_eq!(webhooks.len(), 1);
-            assert_eq!(webhooks[0].id, "webhook-1");
-        });
+        let webhooks = store.list_all();
+        assert_eq!(webhooks.len(), 1);
+        assert_eq!(webhooks[0].id, "webhook-1");
     }
 
     #[test]
     fn test_webhook_store_unregister() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let store = WebhookStore::new();
+        let store = WebhookStore::new();
 
-            let config = WebhookConfig {
-                id: "webhook-1".to_string(),
-                url: "https://example.com/webhook".to_string(),
-                secret: "secret-1".to_string(),
-                events: vec![],
-                enabled: true,
-                created_at: 1234567890,
-                last_triggered: None,
-                failure_count: 0,
-            };
+        let config = WebhookConfig {
+            id: "webhook-1".to_string(),
+            url: "https://example.com/webhook".to_string(),
+            secret: "secret-1".to_string(),
+            events: vec![],
+            enabled: true,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
+        };
 
-            store.register(config).await;
-            assert!(store.unregister("webhook-1").await);
-            assert!(!store.unregister("webhook-1").await);
-            assert_eq!(store.count().await, 0);
-        });
+        store.register(config);
+        assert!(store.unregister("webhook-1"));
+        assert!(!store.unregister("webhook-1"));
+        assert_eq!(store.count(), 0);
     }
 
     #[test]
     fn test_webhook_store_active_filtering() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let store = WebhookStore::new();
+        let store = WebhookStore::new();
 
-            // Enabled, subscribes to all events
-            store
-                .register(WebhookConfig {
-                    id: "webhook-all".to_string(),
-                    url: "https://example.com/all".to_string(),
-                    secret: "secret".to_string(),
-                    events: vec![],
-                    enabled: true,
-                    created_at: 1234567890,
-                    last_triggered: None,
-                    failure_count: 0,
-                })
-                .await;
-
-            // Enabled, subscribes to RequestCompleted only
-            store
-                .register(WebhookConfig {
-                    id: "webhook-rc".to_string(),
-                    url: "https://example.com/rc".to_string(),
-                    secret: "secret".to_string(),
-                    events: vec!["RequestCompleted".to_string()],
-                    enabled: true,
-                    created_at: 1234567890,
-                    last_triggered: None,
-                    failure_count: 0,
-                })
-                .await;
-
-            // Disabled, subscribes to all events
-            store
-                .register(WebhookConfig {
-                    id: "webhook-disabled".to_string(),
-                    url: "https://example.com/disabled".to_string(),
-                    secret: "secret".to_string(),
-                    events: vec![],
-                    enabled: false,
-                    created_at: 1234567890,
-                    last_triggered: None,
-                    failure_count: 0,
-                })
-                .await;
-
-            // Query for RequestCompleted events
-            let active = store.get_active_webhooks("RequestCompleted").await;
-            assert_eq!(active.len(), 2); // webhook-all and webhook-rc
-            assert!(active.iter().any(|w| w.id == "webhook-all"));
-            assert!(active.iter().any(|w| w.id == "webhook-rc"));
-
-            // Query for CacheInvalidated events
-            let active = store.get_active_webhooks("CacheInvalidated").await;
-            assert_eq!(active.len(), 1); // only webhook-all
-            assert!(active.iter().any(|w| w.id == "webhook-all"));
+        // Enabled, subscribes to all events
+        store.register(WebhookConfig {
+            id: "webhook-all".to_string(),
+            url: "https://example.com/all".to_string(),
+            secret: "secret".to_string(),
+            events: vec![],
+            enabled: true,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
         });
+
+        // Enabled, subscribes to RequestCompleted only
+        store.register(WebhookConfig {
+            id: "webhook-rc".to_string(),
+            url: "https://example.com/rc".to_string(),
+            secret: "secret".to_string(),
+            events: vec!["RequestCompleted".to_string()],
+            enabled: true,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
+        });
+
+        // Disabled, subscribes to all events
+        store.register(WebhookConfig {
+            id: "webhook-disabled".to_string(),
+            url: "https://example.com/disabled".to_string(),
+            secret: "secret".to_string(),
+            events: vec![],
+            enabled: false,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
+        });
+
+        // Query for RequestCompleted events
+        let active = store.get_active_webhooks("RequestCompleted");
+        assert_eq!(active.len(), 2); // webhook-all and webhook-rc
+        assert!(active.iter().any(|w| w.id == "webhook-all"));
+        assert!(active.iter().any(|w| w.id == "webhook-rc"));
+
+        // Query for CacheInvalidated events
+        let active = store.get_active_webhooks("CacheInvalidated");
+        assert_eq!(active.len(), 1); // only webhook-all
+        assert!(active.iter().any(|w| w.id == "webhook-all"));
     }
 
     #[test]
     fn test_webhook_store_record_trigger() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let store = WebhookStore::new();
+        let store = WebhookStore::new();
 
-            store
-                .register(WebhookConfig {
-                    id: "webhook-1".to_string(),
-                    url: "https://example.com".to_string(),
-                    secret: "secret".to_string(),
-                    events: vec![],
-                    enabled: true,
-                    created_at: 1234567890,
-                    last_triggered: None,
-                    failure_count: 0,
-                })
-                .await;
-
-            // Record failure
-            store.record_trigger("webhook-1", false).await;
-            let webhook = store.get("webhook-1").await.unwrap();
-            assert_eq!(webhook.failure_count, 1);
-            assert!(webhook.last_triggered.is_none());
-
-            // Record another failure
-            store.record_trigger("webhook-1", false).await;
-            let webhook = store.get("webhook-1").await.unwrap();
-            assert_eq!(webhook.failure_count, 2);
-
-            // Record success
-            store.record_trigger("webhook-1", true).await;
-            let webhook = store.get("webhook-1").await.unwrap();
-            assert_eq!(webhook.failure_count, 0);
-            assert!(webhook.last_triggered.is_some());
+        store.register(WebhookConfig {
+            id: "webhook-1".to_string(),
+            url: "https://example.com".to_string(),
+            secret: "secret".to_string(),
+            events: vec![],
+            enabled: true,
+            created_at: 1234567890,
+            last_triggered: None,
+            failure_count: 0,
         });
+
+        // Record failure
+        store.record_trigger("webhook-1", false);
+        let webhook = store.get("webhook-1").unwrap();
+        assert_eq!(webhook.failure_count, 1);
+        assert!(webhook.last_triggered.is_none());
+
+        // Record another failure
+        store.record_trigger("webhook-1", false);
+        let webhook = store.get("webhook-1").unwrap();
+        assert_eq!(webhook.failure_count, 2);
+
+        // Record success
+        store.record_trigger("webhook-1", true);
+        let webhook = store.get("webhook-1").unwrap();
+        assert_eq!(webhook.failure_count, 0);
+        assert!(webhook.last_triggered.is_some());
     }
 }

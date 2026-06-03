@@ -57,8 +57,9 @@ impl PgControlStore {
         let domain_policies_pg = tokio_postgres::types::Json(&domain_policies_json);
 
         let client = self.client.lock().await;
-        client
-            .execute(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            client.execute(
                 "INSERT INTO gateway_state_snapshots
                     (snapshot_type, keys_json, runtime_json, profiles_json,
                      key_states_json, domain_policies_json, version, source)
@@ -73,8 +74,10 @@ impl PgControlStore {
                     &version,
                 ],
             )
-            .await
-            .context("pg upsert_gateway_snapshot")?;
+        )
+        .await
+        .context("pg upsert_gateway_snapshot timeout (30s)")?
+        .context("pg upsert_gateway_snapshot")?;
 
         debug!(version, "Gateway control-plane snapshot written to PG");
         Ok(())

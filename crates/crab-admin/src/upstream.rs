@@ -743,6 +743,8 @@ mod tests {
                     error: None,
                 },
             ],
+            total_count: None,
+            truncated: false,
         };
         let merged = merge_codex_key_catalogs(view, "codex").unwrap();
         assert_eq!(merged.models.len(), 3);
