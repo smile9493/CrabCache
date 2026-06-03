@@ -80,6 +80,9 @@ fn metrics_from_core(
         http_5xx_5m: core.http_5xx_5m,
         qps_prev_1h: core.qps_prev_1h,
         hit_rate_prev_1h: core.hit_rate_prev_1h,
+        pg_total_input_tokens: core.pg_total_input_tokens,
+        pg_total_output_tokens: core.pg_total_output_tokens,
+        pg_total_tokens: core.pg_total_tokens,
     }
 }
 
@@ -984,19 +987,19 @@ pub fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) 
                 <div>
                     <div class="text-xs text-theme-muted mb-1">{t.overview_input_tokens()}</div>
                     <div class="text-2xl font-mono tabular-nums text-theme font-semibold">
-                        {format_number(metrics.total_input_tokens)}
+                        {format_number(metrics.pg_total_input_tokens.max(metrics.total_input_tokens))}
                     </div>
                 </div>
                 <div>
                     <div class="text-xs text-theme-muted mb-1">{t.overview_output_tokens()}</div>
                     <div class="text-2xl font-mono tabular-nums text-accent font-semibold">
-                        {format_number(metrics.total_output_tokens)}
+                        {format_number(metrics.pg_total_output_tokens.max(metrics.total_output_tokens))}
                     </div>
                 </div>
                 <div>
                     <div class="text-xs text-theme-muted mb-1">{t.overview_total_tokens()}</div>
                     <div class="text-2xl font-mono tabular-nums text-warning font-semibold">
-                        {format_number(metrics.total_tokens)}
+                        {format_number(metrics.pg_total_tokens.max(metrics.total_tokens))}
                     </div>
                 </div>
                 <div>
@@ -1009,6 +1012,25 @@ pub fn TokenStats(metrics: MetricsSnapshot, prefix: PrefixCacheMetricsSnapshot) 
                     </div>
                 </div>
             </div>
+            {move || {
+                let has_pg = metrics.pg_total_tokens > 0;
+                let has_process = metrics.total_tokens > 0;
+                if has_pg && has_process && metrics.pg_total_tokens != metrics.total_tokens {
+                    view! {
+                        <div class="mt-3 pt-3 border-t border-theme text-[11px] font-mono tabular-nums text-theme-muted flex flex-wrap gap-4">
+                            <span>
+                                {format!("进程累计: input {} | output {} | total {}",
+                                    format_number(metrics.total_input_tokens),
+                                    format_number(metrics.total_output_tokens),
+                                    format_number(metrics.total_tokens),
+                                )}
+                            </span>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
         </div>
     }
 }

@@ -111,7 +111,8 @@ const TRACE_LOGS_SELECT: &str =
                     session_fingerprint, is_coalesced, client_key_id,
                     request_passthrough, request_passthrough_prefix_len,
                     status_code, error_code, limit_source, cache_decision,
-                    upstream_result, phase_durations_ms, client_ip";
+                    upstream_result, phase_durations_ms, client_ip,
+                    client_kind";
 
 fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
     // composition is stored as jsonb in PG — read as serde_json::Value then deserialize.
@@ -171,6 +172,7 @@ fn trace_log_entry_from_row(row: &tokio_postgres::Row) -> TraceLogEntry {
             .get::<_, Option<serde_json::Value>>(48)
             .and_then(|v| serde_json::from_value(v).ok()),
         client_ip: row.get(49),
+        client_kind: row.get(50),
     }
 }
 
@@ -2142,11 +2144,11 @@ impl PgStore {
                      session_fingerprint, is_coalesced, client_key_id,
                      request_passthrough, request_passthrough_prefix_len,
                      status_code, error_code, limit_source, cache_decision,
-                     upstream_result, phase_durations_ms)
+                     upstream_result, phase_durations_ms, client_kind)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb)
+                         $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb,$50)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await?;
@@ -2226,6 +2228,7 @@ impl PgStore {
                     &e.cache_decision as &(dyn tokio_postgres::types::ToSql + Sync),
                     &e.upstream_result as &(dyn tokio_postgres::types::ToSql + Sync),
                     &phase_durations_pg as &(dyn tokio_postgres::types::ToSql + Sync),
+                    &e.client_kind as &(dyn tokio_postgres::types::ToSql + Sync),
                 ],
             )
             .await?;
@@ -2972,6 +2975,29 @@ impl PgStore {
                 )
             })
             .collect())
+    }
+
+    /// Aggregate consumer usage across all months from `consumer_usage_monthly`.
+    ///
+    /// Returns `(total_input_tokens, total_output_tokens, total_tokens)` summed
+    /// over every month, providing a global cumulative view that survives gateway
+    /// restarts.
+    pub async fn aggregate_all_consumer_usage(&self) -> Result<(u64, u64, u64)> {
+        let client = self.pool.get().await?;
+        let row = client
+            .query_one(
+                "SELECT COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(total_tokens), 0)
+                 FROM consumer_usage_monthly",
+                &[],
+            )
+            .await?;
+        Ok((
+            from_pg_bigint(row.get::<_, i64>(0)),
+            from_pg_bigint(row.get::<_, i64>(1)),
+            from_pg_bigint(row.get::<_, i64>(2)),
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -3869,6 +3895,12 @@ impl PgStore {
         client
             .execute(
                 "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_ip TEXT",
+                &[],
+            )
+            .await?;
+        client
+            .execute(
+                "ALTER TABLE trace_logs ADD COLUMN IF NOT EXISTS client_kind TEXT",
                 &[],
             )
             .await?;

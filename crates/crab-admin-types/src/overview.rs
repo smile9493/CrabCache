@@ -192,6 +192,12 @@ pub struct MetricsSnapshot {
     pub qps_prev_1h: f64,
     #[serde(default)]
     pub hit_rate_prev_1h: f64,
+    #[serde(default)]
+    pub pg_total_input_tokens: u64,
+    #[serde(default)]
+    pub pg_total_output_tokens: u64,
+    #[serde(default)]
+    pub pg_total_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -271,6 +277,12 @@ pub struct MetricsSnapshotCore {
     pub qps_prev_1h: f64,
     #[serde(default)]
     pub hit_rate_prev_1h: f64,
+    #[serde(default)]
+    pub pg_total_input_tokens: u64,
+    #[serde(default)]
+    pub pg_total_output_tokens: u64,
+    #[serde(default)]
+    pub pg_total_tokens: u64,
 }
 
 fn fin(v: f64) -> f64 {

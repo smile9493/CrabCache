@@ -385,7 +385,7 @@ pub fn OverviewCardGrid(
                         } else {
                             "0%".to_string()
                         };
-                        let token_headline = format_number(metrics.total_tokens);
+                        let token_headline = format_number(metrics.pg_total_tokens.max(metrics.total_tokens));
                         let coalesce_headline = format!("{:.0}", ops.coalesced_5m);
                         let semantic_headline = metrics.semantic_hits.to_string();
                         let latency_headline = format!("{:.0}ms", metrics.latency_upstream_p99_ms);

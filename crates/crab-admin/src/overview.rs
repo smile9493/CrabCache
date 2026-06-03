@@ -466,6 +466,9 @@ fn metrics_snapshot_from_core(
         http_5xx_5m: core.http_5xx_5m,
         qps_prev_1h: core.qps_prev_1h,
         hit_rate_prev_1h: core.hit_rate_prev_1h,
+        pg_total_input_tokens: core.pg_total_input_tokens,
+        pg_total_output_tokens: core.pg_total_output_tokens,
+        pg_total_tokens: core.pg_total_tokens,
     }
 }
 
@@ -596,6 +599,21 @@ pub async fn build_metrics_snapshot_core(
 
     drop(history);
 
+    // PG cumulative token totals (survives gateway restarts).
+    let (pg_in, pg_out, pg_total) = match timeout(
+        Duration::from_secs(2),
+        async {
+            let pg = state.pg_store.read();
+            let pg = pg.as_ref().ok_or_else(|| anyhow::anyhow!("pg not connected"))?;
+            pg.aggregate_all_consumer_usage().await
+        },
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        _ => (0u64, 0u64, 0u64),
+    };
+
     let mut core = MetricsSnapshotCore {
         qps,
         tps,
@@ -658,6 +676,9 @@ pub async fn build_metrics_snapshot_core(
         http_5xx_5m,
         qps_prev_1h,
         hit_rate_prev_1h,
+        pg_total_input_tokens: pg_in,
+        pg_total_output_tokens: pg_out,
+        pg_total_tokens: pg_total,
     };
     core.sanitize_finite();
     Ok(core)
@@ -725,6 +746,9 @@ pub async fn build_metrics_snapshot(
         http_5xx_5m: core.http_5xx_5m,
         qps_prev_1h: core.qps_prev_1h,
         hit_rate_prev_1h: core.hit_rate_prev_1h,
+        pg_total_input_tokens: core.pg_total_input_tokens,
+        pg_total_output_tokens: core.pg_total_output_tokens,
+        pg_total_tokens: core.pg_total_tokens,
     };
     snap.sanitize_finite();
     Ok(snap)
@@ -865,6 +889,9 @@ mod tests {
             http_5xx_5m: 0,
             qps_prev_1h: 0.0,
             hit_rate_prev_1h: 0.0,
+            pg_total_input_tokens: 0,
+            pg_total_output_tokens: 0,
+            pg_total_tokens: 0,
         }
     }
 
