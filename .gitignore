@@ -99,3 +99,8 @@ implementation_plan*.md
 
 # --- Local logs ---
 logs/
+
+# --- Local trace files & debug scripts ---
+.trace-*.jsonl
+.trace.jsonl
+scripts/test_*.py
