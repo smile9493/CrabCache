@@ -10,55 +10,58 @@ use crate::pages::pipeline::PipelinePage;
 use crate::pages::reasoning::ReasoningPage;
 use crate::types::{LimitsConfig, SystemUpdateResult, SystemVersion, UpdateCheckResult};
 
+/// System management page with tab-based layout to reduce vertical scrolling.
 #[component]
 pub fn SystemPage() -> impl IntoView {
     let t = use_translations();
 
+    let tabs = vec![
+        t.section_core().to_string(),
+        t.section_data().to_string(),
+        t.section_features().to_string(),
+        t.section_design().to_string(),
+    ];
+    let active_tab = RwSignal::new(0);
+    init_tab_from_query(active_tab, &[("core", 0), ("data", 1), ("features", 2), ("design", 3)]);
+
     view! {
-        <div class="page-content space-y-8">
+        <div class="page-content space-y-6">
             <SectionHeader title=t.system_title() description=t.system_desc() />
 
-            // ── Section 1: Core ──
-            <section class="config-section">
-                <h4 class="config-section-title">{t.section_core()}</h4>
-                <div class="cache-card-grid">
-                    <VersionCard />
-                    <AdminKeyCard />
-                </div>
-            </section>
+            <TabBar tabs=tabs active=active_tab />
 
-            // ── Section 2: Data Plane ──
-            <section class="config-section">
-                <h4 class="config-section-title">{t.section_data()}</h4>
-                <div class="cache-card-grid">
-                    <PipelinePage />
-                    <ReasoningPage />
-                </div>
-            </section>
-
-            // ── Section 3: Experimental Features ──
-            <section class="config-section">
-                <h4 class="config-section-title">{t.section_features()}</h4>
-                <div class="cache-card-grid">
-                    <FeaturesGrid />
-                </div>
-            </section>
-
-            // ── Section 4: Limits ──
-            <section class="config-section">
-                <h4 class="config-section-title">{t.section_limits()}</h4>
-                <div class="cache-card-grid">
-                    <LimitsCard />
-                </div>
-            </section>
-
-            // ── Section 5: Design System ──
-            <section class="config-section">
-                <h4 class="config-section-title">{t.section_design()}</h4>
-                <div class="cache-card-grid">
-                    <DesignSystemPage />
-                </div>
-            </section>
+            <div class="tab-panel">
+                {move || match active_tab.get() {
+                    0 => view! {
+                        // ── Core: Version & Admin Key ──
+                        <div class="cache-card-grid">
+                            <VersionCard />
+                            <AdminKeyCard />
+                        </div>
+                    }.into_any(),
+                    1 => view! {
+                        // ── Data Plane: Pipeline & Reasoning ──
+                        <div class="cache-card-grid">
+                            <PipelinePage />
+                            <ReasoningPage />
+                        </div>
+                    }.into_any(),
+                    2 => view! {
+                        // ── Features & Limits ──
+                        <div class="space-y-6">
+                            <FeaturesGrid />
+                            <LimitsCard />
+                        </div>
+                    }.into_any(),
+                    3 => view! {
+                        // ── Design System ──
+                        <div class="space-y-4">
+                            <DesignSystemPage />
+                        </div>
+                    }.into_any(),
+                    _ => ().into_any(),
+                }}
+            </div>
         </div>
     }
 }

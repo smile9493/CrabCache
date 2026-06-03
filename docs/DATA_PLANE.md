@@ -69,7 +69,7 @@
 | `select_with_hint` 真实 weight | ✅ | [`ring.rs`](../crates/crab-route/src/ring.rs) |
 | 多因子路由评分（P1-1） | ✅ | `backend_route_strategy`（round_robin / least_load / weighted_score）；5 维权重（health/latency/load/affinity/429）；Dashboard Routing 卡片 |
 | Quota Preflight（P1-2） | ✅ | 路由前检查后端健康 + 429 冷却，避免浪费连接；Dashboard Preflight 卡片 |
-| Profile 组合回退（P2-3） | ✅ | `fallback_profile_id` + `fallback_max_retries`；DFS 环检测；Dashboard Advanced 区 |
+| Profile 组合回退（P2-3） | ✅ | `fallback_profile_id` + `fallback_max_retries`；存在性 + DFS 环检测；仅在响应未提交时自动切流；Dashboard Advanced 区 |
 | 自适应 Ketama 权重 | ⬜ | 仅 health check 降权（Pingora LB） |
 | HTTP/2 上游多路复用 | ✅ | 默认 `upstream_force_http1 = false`；`h2_ping_interval_secs` |
 | 上游响应 gzip 协商 + 解压 | ✅ | `UPSTREAM_ACCEPT_ENCODING` + `upstream_response_decompress.rs` |

@@ -63,6 +63,15 @@ fn can_arm_mimo_request_passthrough(stream: Option<bool>) -> bool {
     matches!(stream, Some(true))
 }
 
+fn set_selected_upstream_profile(
+    proxy: &GatewayProxy,
+    ctx: &mut GatewayContext,
+    profile_id: String,
+) {
+    ctx.upstream_profile_id = Some(profile_id);
+    proxy.initialize_profile_fallback_state(ctx);
+}
+
 /// Codex and other Responses API clients require Chat↔Responses translation.
 /// Upgrade Chat-Completions upstream pipelines automatically when the client uses `/v1/responses`.
 fn upgrade_pipeline_for_responses_client(
@@ -285,7 +294,7 @@ async fn run_post_body_phases(
         ctx.client_kind = selection.client_kind;
         let reason_str = selection.reason.as_str().to_string();
         ctx.pipeline_reason = Some(selection.reason.clone());
-        ctx.upstream_profile_id = Some(selection.upstream_profile_id.clone());
+        set_selected_upstream_profile(proxy, ctx, selection.upstream_profile_id.clone());
 
         global_metrics().record_pipeline_selected(
             selection.pipeline.as_str(),
@@ -1493,7 +1502,7 @@ fn try_arm_mimo_request_passthrough_on_partial_body(
     let reason_str = selection.reason.as_str().to_string();
     ctx.request_pipeline = Some(sel_pipeline);
     ctx.pipeline_reason = Some(selection.reason);
-    ctx.upstream_profile_id = Some(sel_profile_id.clone());
+    set_selected_upstream_profile(proxy, ctx, sel_profile_id.clone());
     ctx.upstream_model = Some(ctx.model.clone());
     ctx.client_kind = selection.client_kind;
     global_metrics().record_pipeline_selected(
@@ -1738,8 +1747,11 @@ pub(crate) async fn run(
         proxy.state.client_lockouts.record_success(&provided_key);
         ctx.consumer = consumer_from_key;
         ctx.domain = domain_from_key;
-        ctx.upstream_profile_id =
+        let selected_profile_id =
             key_profile.or_else(|| Some(proxy.state.runtime.default_upstream_profile_id()));
+        if let Some(profile_id) = selected_profile_id {
+            set_selected_upstream_profile(proxy, ctx, profile_id);
+        }
         ctx.is_models_list = true;
         let cursor_models = proxy.state.runtime.pipeline_globals().cursor_models;
         if cursor_models.synthetic_models_enabled && !cursor_models.aliases.is_empty() {

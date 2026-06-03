@@ -16,15 +16,15 @@ use crate::types::{
 use axum::Json;
 use crab_admin_types::upstream::UpstreamKeyView;
 use crab_control::{PutUpstreamProfileRequest, UpstreamProfileView, UpstreamProfilesResponse};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 fn profile_config_from_put(id: &str, req: &PutUpstreamProfileAdminRequest) -> PersistedUpstreamProfileConfig {
     PersistedUpstreamProfileConfig {
         profile_id: id.to_string(),
-        provider: req.provider.clone(),
-        base_url: req.base_url.clone(),
-        fallback_model: req.fallback_model.clone(),
+        provider: req.provider.trim().to_lowercase(),
+        base_url: req.base_url.trim().to_string(),
+        fallback_model: req.fallback_model.trim().to_string(),
         endpoints: req.endpoints.clone(),
         tls_sni: req.tls_sni.clone(),
         proxy_url: req.proxy_url.clone(),
@@ -118,6 +118,62 @@ fn overlay_config_metadata(view: &mut UpstreamProfileAdminView, cfg: &PersistedU
     view.fallback_max_retries = cfg.fallback_max_retries.unwrap_or(2);
 }
 
+fn normalize_profile_key_inputs(
+    existing: &[UpstreamPoolSecret],
+    keys: Vec<UpstreamKeyInput>,
+    replace: bool,
+) -> Vec<UpstreamKeyInput> {
+    let mut normalized = Vec::new();
+
+    if replace {
+        let mut id_seen: HashSet<String> = HashSet::new();
+        let mut next_id: usize = keys.len().saturating_add(1);
+        for mut key in keys {
+            if key.secret.trim().is_empty() {
+                continue;
+            }
+            if key.id.is_empty() || id_seen.contains(&key.id) {
+                loop {
+                    let candidate = format!("key-{}", next_id);
+                    next_id += 1;
+                    if !id_seen.contains(&candidate) {
+                        key.id = candidate;
+                        break;
+                    }
+                }
+            }
+            id_seen.insert(key.id.clone());
+            normalized.push(key);
+        }
+        return normalized;
+    }
+
+    let mut seen_secrets: HashSet<String> = existing.iter().map(|s| s.secret.clone()).collect();
+    let mut id_seen: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let mut next_id: usize = existing.len().saturating_add(1);
+    for mut key in keys {
+        let secret = key.secret.trim().to_string();
+        if secret.is_empty() || seen_secrets.contains(&secret) {
+            continue;
+        }
+        seen_secrets.insert(secret.clone());
+        key.secret = secret;
+        if key.id.is_empty() || id_seen.contains(&key.id) {
+            loop {
+                let candidate = format!("key-{}", next_id);
+                next_id += 1;
+                if !id_seen.contains(&candidate) {
+                    key.id = candidate;
+                    break;
+                }
+            }
+        }
+        id_seen.insert(key.id.clone());
+        normalized.push(key);
+    }
+    normalized
+}
+
 fn merge_profiles_with_pg_configs(
     gateway: UpstreamProfilesResponse,
     configs: &HashMap<String, PersistedUpstreamProfileConfig>,
@@ -164,18 +220,18 @@ pub async fn put_profile(
     req: PutUpstreamProfileAdminRequest,
 ) -> Result<UpstreamProfileAdminView, String> {
     let cfg = profile_config_from_put(id, &req);
-    {
-        let mut map = state.upstream_profile_configs.write();
-        map.insert(id.to_string(), cfg.clone());
-    }
-    persist_profile_config_to_pg(state, &cfg).await;
-    state.flush_persist();
 
     let view = state
         .gateway
         .put_upstream_profile(id, &put_request_from_config(&cfg))
         .await
         .map_err(|e| e.to_string())?;
+    {
+        let mut map = state.upstream_profile_configs.write();
+        map.insert(id.to_string(), cfg.clone());
+    }
+    persist_profile_config_to_pg(state, &cfg).await;
+    state.flush_persist();
     state.refresh_profile_providers().await;
     let mut merged = map_profile(view);
     overlay_config_metadata(&mut merged, &cfg);
@@ -183,6 +239,11 @@ pub async fn put_profile(
 }
 
 pub async fn delete_profile(state: &Arc<AppState>, id: &str) -> Result<(), String> {
+    state
+        .gateway
+        .delete_upstream_profile(id)
+        .await
+        .map_err(|e| e.to_string())?;
     {
         let mut map = state.upstream_profile_configs.write();
         map.remove(id);
@@ -202,12 +263,7 @@ pub async fn delete_profile(state: &Arc<AppState>, id: &str) -> Result<(), Strin
         }
     }
     state.flush_persist();
-
-    state
-        .gateway
-        .delete_upstream_profile(id)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(())
 }
 
 pub async fn get_profile_keys(
@@ -326,16 +382,36 @@ pub async fn put_profile_keys(
     } else {
         UpstreamKeysPutMode::Append
     };
-    let incoming: Vec<UpstreamPoolSecret> = keys
+    let existing = state
+        .upstream_profile_secrets
+        .read()
+        .get(id)
+        .cloned()
+        .unwrap_or_default();
+    let normalized_keys = normalize_profile_key_inputs(&existing, keys, replace);
+    let secret_lookup: HashMap<String, String> = existing
         .iter()
-        .filter(|k| !k.secret.is_empty())
+        .map(|s| (s.id.clone(), s.secret.clone()))
+        .chain(
+            normalized_keys
+                .iter()
+                .map(|k| (k.id.clone(), k.secret.clone())),
+        )
+        .collect();
+
+    let req = put_upstream_profile_keys_to_control(&normalized_keys, mode);
+    let view = state
+        .gateway
+        .put_upstream_profile_keys(id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let persisted: Vec<UpstreamPoolSecret> = view
+        .keys
+        .iter()
         .map(|k| UpstreamPoolSecret {
-            id: if k.id.is_empty() {
-                uuid::Uuid::new_v4().to_string()
-            } else {
-                k.id.clone()
-            },
-            secret: k.secret.clone(),
+            id: k.id.clone(),
+            secret: secret_lookup.get(&k.id).cloned().unwrap_or_default(),
             enabled: k.enabled,
             account_id: k.account_id.clone(),
             priority: k.priority,
@@ -343,21 +419,7 @@ pub async fn put_profile_keys(
         .collect();
     {
         let mut map = state.upstream_profile_secrets.write();
-        if replace {
-            map.insert(id.to_string(), incoming);
-        } else {
-            let mut merged = map.get(id).cloned().unwrap_or_default();
-            let mut seen: std::collections::HashSet<String> =
-                merged.iter().map(|s| s.secret.clone()).collect();
-            for s in incoming {
-                if s.secret.is_empty() || seen.contains(&s.secret) {
-                    continue;
-                }
-                seen.insert(s.secret.clone());
-                merged.push(s);
-            }
-            map.insert(id.to_string(), merged);
-        }
+        map.insert(id.to_string(), persisted.clone());
     }
 
     // Persist key pool to PostgreSQL (Admin DB) when available (best-effort).
@@ -365,12 +427,7 @@ pub async fn put_profile_keys(
     let pg = { state.pg_store.read().clone() };
     if let Some(pg) = pg {
         let _guard = state.pg_write_lock.lock().await;
-        let persisted: Vec<PersistedUpstreamPoolSecret> = state
-            .upstream_profile_secrets
-            .read()
-            .get(id)
-            .cloned()
-            .unwrap_or_default()
+        let persisted: Vec<PersistedUpstreamPoolSecret> = persisted
             .into_iter()
             .map(|s| PersistedUpstreamPoolSecret {
                 id: s.id,
@@ -385,16 +442,7 @@ pub async fn put_profile_keys(
         }
     }
 
-    // Always flush in-memory state to admin-state.json BEFORE gateway call,
-    // so a restart mid-operation never loses the user's key edits.
     state.flush_persist();
-
-    let req = put_upstream_profile_keys_to_control(&keys, mode);
-    let view = state
-        .gateway
-        .put_upstream_profile_keys(id, &req)
-        .await
-        .map_err(|e| e.to_string())?;
     if crate::oauth_codex::profile_is_codex_like(state, id) {
         crate::oauth_codex::reconcile_codex_credentials_with_pool(state, id).await;
     }
@@ -420,51 +468,58 @@ pub async fn patch_profile_key(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Best-effort: reflect enabled toggle into Admin in-memory + PG persistence.
-    if let Some(enabled) = req.enabled {
-        let updated: Vec<PersistedUpstreamPoolSecret> = state
-            .upstream_profile_secrets
-            .read()
-            .get(profile_id)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|s| {
-                let id = s.id.clone();
-                PersistedUpstreamPoolSecret {
-                    enabled: if id == key_id { enabled } else { s.enabled },
-                    id: s.id,
+    let current = state
+        .upstream_profile_secrets
+        .read()
+        .get(profile_id)
+        .cloned()
+        .unwrap_or_default();
+    let secret_lookup: HashMap<String, UpstreamPoolSecret> = current
+        .iter()
+        .map(|s| (s.id.clone(), s.clone()))
+        .collect();
+    let updated: Vec<UpstreamPoolSecret> = current
+        .into_iter()
+        .map(|s| {
+            if s.id == key_id {
+                UpstreamPoolSecret {
+                    id: view.id.clone(),
                     secret: s.secret,
-                    account_id: s.account_id,
-                    priority: s.priority,
+                    enabled: view.enabled,
+                    account_id: view.account_id.clone(),
+                    priority: view.priority,
                 }
-            })
-            .collect();
-        if updated.iter().any(|s| s.id == key_id) {
-            // Update in-memory cache immediately.
-            {
-                let mut map = state.upstream_profile_secrets.write();
-                map.insert(
-                    profile_id.to_string(),
-                    updated
-                        .iter()
-                        .map(|p| UpstreamPoolSecret {
-                            id: p.id.clone(),
-                            secret: p.secret.clone(),
-                            enabled: p.enabled,
-                            account_id: p.account_id.clone(),
-                            priority: p.priority,
-                        })
-                        .collect(),
-                );
+            } else {
+                s
             }
-            // Best-effort PG write (non-fatal on failure).
-            let pg = { state.pg_store.read().clone() };
-            if let Some(pg) = pg {
-                let _guard = state.pg_write_lock.lock().await;
-                if let Err(e) = pg.replace_profile_secrets(profile_id, &updated).await {
-                    tracing::warn!(error = %e, profile_id = %profile_id, "PG persist key enabled failed (non-fatal)");
-                }
+        })
+        .collect();
+    if updated.iter().any(|s| s.id == view.id) {
+        {
+            let mut map = state.upstream_profile_secrets.write();
+            map.insert(profile_id.to_string(), updated.clone());
+        }
+        let pg = { state.pg_store.read().clone() };
+        if let Some(pg) = pg {
+            let _guard = state.pg_write_lock.lock().await;
+            let persisted: Vec<PersistedUpstreamPoolSecret> = updated
+                .into_iter()
+                .map(|s| {
+                    let id = s.id.clone();
+                    PersistedUpstreamPoolSecret {
+                        id: id.clone(),
+                        secret: secret_lookup
+                            .get(&id)
+                            .map(|slot| slot.secret.clone())
+                            .unwrap_or_default(),
+                        enabled: s.enabled,
+                        account_id: s.account_id,
+                        priority: s.priority,
+                    }
+                })
+                .collect();
+            if let Err(e) = pg.replace_profile_secrets(profile_id, &persisted).await {
+                tracing::warn!(error = %e, profile_id = %profile_id, "PG persist key enabled failed (non-fatal)");
             }
         }
     }
@@ -714,4 +769,73 @@ pub async fn put_profile_keys_append(
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_GATEWAY, e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_append_keys_uses_stable_key_ids_and_dedupes_secrets() {
+        let existing = vec![UpstreamPoolSecret {
+            id: "key-1".to_string(),
+            secret: "sk-existing".to_string(),
+            enabled: true,
+            account_id: "acct-1".to_string(),
+            priority: 0,
+        }];
+        let keys = vec![
+            UpstreamKeyInput {
+                id: String::new(),
+                secret: "sk-existing".to_string(),
+                enabled: true,
+                account_id: String::new(),
+                priority: 0,
+            },
+            UpstreamKeyInput {
+                id: String::new(),
+                secret: "sk-new".to_string(),
+                enabled: true,
+                account_id: String::new(),
+                priority: 0,
+            },
+        ];
+
+        let normalized = normalize_profile_key_inputs(&existing, keys, false);
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].id, "key-2");
+        assert_eq!(normalized[0].secret, "sk-new");
+    }
+
+    #[test]
+    fn normalize_replace_keys_assigns_key_ids_without_touching_existing_state() {
+        let existing = vec![UpstreamPoolSecret {
+            id: "uuid-1".to_string(),
+            secret: "sk-existing".to_string(),
+            enabled: true,
+            account_id: "acct-1".to_string(),
+            priority: 0,
+        }];
+        let keys = vec![
+            UpstreamKeyInput {
+                id: String::new(),
+                secret: "sk-one".to_string(),
+                enabled: true,
+                account_id: String::new(),
+                priority: 0,
+            },
+            UpstreamKeyInput {
+                id: String::new(),
+                secret: "sk-two".to_string(),
+                enabled: true,
+                account_id: String::new(),
+                priority: 0,
+            },
+        ];
+
+        let normalized = normalize_profile_key_inputs(&existing, keys, true);
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0].id, "key-3");
+        assert_eq!(normalized[1].id, "key-4");
+    }
 }

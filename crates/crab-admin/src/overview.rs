@@ -521,46 +521,92 @@ pub async fn build_metrics_snapshot_core(
         0.0
     };
 
-    let history = state.metrics_history.read();
-    let window = history.window_rates_5m(now);
-    let d_requests_window = history.window_request_delta(window.window_secs, now);
-    let metrics_sample_insufficient = window.sample_count < 2 || d_requests_window < 5;
-    let tier_deltas_5m = history.window_tier_deltas(WINDOW_5M_SECS, now);
-    let history_meta = MetricsHistoryMeta {
-        sample_count: history.sample_count(),
-        oldest_sample_at_secs: history.oldest_sample_at(),
-        sampling_interval_secs: metrics_history::sample_interval_secs(),
-        gateway_counter_reset: {
-            // Gateway restart detection: if the gateway uptime is shorter than
-            // the oldest persisted sample, the Prometheus counters have been reset.
-            let g_uptime = gateway_status.map(|s| s.uptime_secs).unwrap_or(0);
-            let oldest_ts = history.oldest_sample_at();
-            g_uptime > 0 && oldest_ts > 0 && oldest_ts > now.saturating_sub(g_uptime)
-        },
-    };
+    let (
+        history_meta,
+        metrics_sample_insufficient,
+        tier_deltas_5m,
+        qps_prev_1h,
+        hit_rate_prev_1h,
+        domain_buckets,
+        hit_rate_5m,
+        token_hit_rate_5m,
+        qps_5m,
+        http_4xx_5m,
+        http_5xx_5m,
+        error_rate_5m,
+    ) = {
+        let history = state.metrics_history.read();
+        let window = history.window_rates_5m(now);
+        let d_requests_window = history.window_request_delta(window.window_secs, now);
+        let metrics_sample_insufficient = window.sample_count < 2 || d_requests_window < 5;
+        let tier_deltas_5m = history.window_tier_deltas(WINDOW_5M_SECS, now);
+        let history_meta = MetricsHistoryMeta {
+            sample_count: history.sample_count(),
+            oldest_sample_at_secs: history.oldest_sample_at(),
+            sampling_interval_secs: metrics_history::sample_interval_secs(),
+            gateway_counter_reset: {
+                // Gateway restart detection: if the gateway uptime is shorter than
+                // the oldest persisted sample, the Prometheus counters have been reset.
+                let g_uptime = gateway_status.map(|s| s.uptime_secs).unwrap_or(0);
+                let oldest_ts = history.oldest_sample_at();
+                g_uptime > 0 && oldest_ts > 0 && oldest_ts > now.saturating_sub(g_uptime)
+            },
+        };
 
-    let consumer_buckets = consumer_token_buckets(body, 10);
-    let mut domain_buckets = domain_token_buckets(body, 20);
-    for bucket in &mut domain_buckets {
-        bucket.qps_5m = history.domain_qps_5m(&bucket.domain, now);
-        for policy in state.domain_policies.read().iter() {
-            if policy.domain != bucket.domain || !policy.enabled {
-                continue;
-            }
-            if policy.min_hit_rate > 0.0 && bucket.hit_ratio < policy.min_hit_rate {
-                bucket.alert = Some("hit_rate_low".to_string());
-            }
-            let total_tokens = bucket.hit_tokens + bucket.miss_tokens;
-            if policy.monthly_token_budget > 0 && total_tokens >= policy.monthly_token_budget {
-                bucket.alert = Some("budget_exceeded".to_string());
-            }
-            if policy.monthly_cost_budget_usd > 0.0
-                && bucket.cost_saved_usd >= policy.monthly_cost_budget_usd
-            {
-                bucket.alert = Some("budget_exceeded".to_string());
+        // Trend: compare current 5m window with 1h ago
+        let (qps_prev_1h, hit_rate_prev_1h) = {
+            let one_hour_ago = now.saturating_sub(3600);
+            let prev = history.window_rates_5m(one_hour_ago);
+            (prev.qps, prev.hit_rate)
+        };
+
+        let mut domain_buckets = domain_token_buckets(body, 20);
+        for bucket in &mut domain_buckets {
+            bucket.qps_5m = history.domain_qps_5m(&bucket.domain, now);
+            for policy in state.domain_policies.read().iter() {
+                if policy.domain != bucket.domain || !policy.enabled {
+                    continue;
+                }
+                if policy.min_hit_rate > 0.0 && bucket.hit_ratio < policy.min_hit_rate {
+                    bucket.alert = Some("hit_rate_low".to_string());
+                }
+                let total_tokens = bucket.hit_tokens + bucket.miss_tokens;
+                if policy.monthly_token_budget > 0 && total_tokens >= policy.monthly_token_budget {
+                    bucket.alert = Some("budget_exceeded".to_string());
+                }
+                if policy.monthly_cost_budget_usd > 0.0
+                    && bucket.cost_saved_usd >= policy.monthly_cost_budget_usd
+                {
+                    bucket.alert = Some("budget_exceeded".to_string());
+                }
             }
         }
-    }
+
+        let http_4xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_4xx_total);
+        let http_5xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_5xx_total);
+        let total_http_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_responses_total);
+        let error_rate_5m = if total_http_5m > 0 {
+            (http_4xx_5m + http_5xx_5m) as f64 / total_http_5m as f64
+        } else {
+            0.0
+        };
+
+        (
+            history_meta,
+            metrics_sample_insufficient,
+            tier_deltas_5m,
+            qps_prev_1h,
+            hit_rate_prev_1h,
+            domain_buckets,
+            window.hit_rate,
+            window.token_hit_rate,
+            window.qps,
+            http_4xx_5m,
+            http_5xx_5m,
+            error_rate_5m,
+        )
+    };
+    let consumer_buckets = consumer_token_buckets(body, 10);
 
     // P99 latency from histogram buckets
     let latency_upstream_p99_ms =
@@ -580,30 +626,11 @@ pub async fn build_metrics_snapshot_core(
     let latency_cache_fetch_p99_ms =
         percentile_from_buckets(body, "gateway_cache_fetch_latency_seconds", &[], 0.99);
 
-    // Error rate: 5-minute counter deltas (not cumulative process totals).
-    let http_4xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_4xx_total);
-    let http_5xx_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_5xx_total);
-    let total_http_5m = history.window_u64_delta(WINDOW_5M_SECS, now, |s| s.http_responses_total);
-    let error_rate_5m = if total_http_5m > 0 {
-        (http_4xx_5m + http_5xx_5m) as f64 / total_http_5m as f64
-    } else {
-        0.0
-    };
-
-    // Trend: compare current 5m window with 1h ago
-    let (qps_prev_1h, hit_rate_prev_1h) = {
-        let one_hour_ago = now.saturating_sub(3600);
-        let prev = history.window_rates_5m(one_hour_ago);
-        (prev.qps, prev.hit_rate)
-    };
-
-    drop(history);
-
     // PG cumulative token totals (survives gateway restarts).
     let (pg_in, pg_out, pg_total) = match timeout(
         Duration::from_secs(2),
         async {
-            let pg = state.pg_store.read();
+            let pg = state.pg_store.read().clone();
             let pg = pg.as_ref().ok_or_else(|| anyhow::anyhow!("pg not connected"))?;
             pg.aggregate_all_consumer_usage().await
         },
@@ -658,9 +685,9 @@ pub async fn build_metrics_snapshot_core(
         prefix_cache_miss_tokens,
         prefix_cache_hit_ratio,
         hit_rate_cumulative,
-        hit_rate_5m: window.hit_rate,
-        token_hit_rate_5m: window.token_hit_rate,
-        qps_5m: window.qps,
+        hit_rate_5m,
+        token_hit_rate_5m,
+        qps_5m,
         coalesced_total: counters.coalesced_total,
         consumer_buckets,
         domain_buckets,

@@ -1046,6 +1046,254 @@ async fn upstream_profiles_list_and_upsert() {
 }
 
 #[tokio::test]
+async fn upstream_profile_fallback_validation_rejects_missing_self_and_cycles() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let make_profile = |id: &str, fallback_profile_id: Option<&str>| {
+        let mut body = serde_json::json!({
+            "provider": "mimo",
+            "base_url": "https://api.xiaomimimo.com",
+            "fallback_model": "mimo-v2.5-pro",
+            "endpoints": ["api.xiaomimimo.com:443"],
+            "default_weight": 1
+        });
+        if let Some(fallback_profile_id) = fallback_profile_id {
+            body["fallback_profile_id"] = serde_json::Value::String(fallback_profile_id.to_string());
+        }
+        (id.to_string(), body)
+    };
+
+    let (b_id, b_body) = make_profile("mimo-b", None);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/v1/upstream/profiles/{b_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(b_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let deepseek_body = serde_json::json!({
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com",
+        "fallback_model": "deepseek-chat",
+        "endpoints": ["api.deepseek.com:443"],
+        "default_weight": 1
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/deepseek-fallback")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(deepseek_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let (a_id, missing_body) = make_profile("mimo-a", Some("missing-profile"));
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/v1/upstream/profiles/{a_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(missing_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let (_, cross_provider_body) = make_profile("mimo-a", Some("deepseek-fallback"));
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/v1/upstream/profiles/{a_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(cross_provider_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let (_, a_body) = make_profile("mimo-a", Some("mimo-b"));
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-a")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(a_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let (_, cycle_body) = make_profile("mimo-b", Some("mimo-a"));
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-b")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(cycle_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let (_, self_body) = make_profile("mimo-b", Some("mimo-b"));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-b")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(self_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn upstream_profile_keys_empty_id_roundtrip_uses_same_key_id_for_patch_and_delete() {
+    let Some(state) = require_management_state().await else {
+        skip_or_panic_redis_unavailable();
+        return;
+    };
+    let app = router(state);
+
+    let put_profile = serde_json::json!({
+        "provider": "mimo",
+        "base_url": "https://api.xiaomimimo.com",
+        "fallback_model": "mimo-v2.5-pro",
+        "endpoints": ["api.xiaomimimo.com:443"],
+        "default_weight": 1
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-key-roundtrip")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(put_profile.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let keys_body = serde_json::json!({
+        "keys": [{ "id": "", "secret": "sk-mimo-test-key-12345678", "enabled": true }],
+        "mode": "append"
+    });
+    let keys_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/upstream/profiles/mimo-key-roundtrip/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(keys_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(keys_resp.status(), StatusCode::OK);
+    let keys_bytes = axum::body::to_bytes(keys_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let keys_json: serde_json::Value = serde_json::from_slice(&keys_bytes).unwrap();
+    let key_id = keys_json["keys"][0]["id"].as_str().expect("key id");
+    assert!(!key_id.is_empty());
+
+    let patch_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/v1/upstream/profiles/mimo-key-roundtrip/keys/{key_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":false}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+    let patch_bytes = axum::body::to_bytes(patch_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let patch_json: serde_json::Value = serde_json::from_slice(&patch_bytes).unwrap();
+    assert_eq!(patch_json["id"].as_str(), Some(key_id));
+    assert_eq!(patch_json["enabled"], false);
+
+    let delete_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/upstream/profiles/mimo-key-roundtrip/keys/{key_id}"))
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete_resp.status(), StatusCode::NO_CONTENT);
+
+    let get_keys_resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/upstream/profiles/mimo-key-roundtrip/keys")
+                .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_keys_resp.status(), StatusCode::OK);
+    let get_bytes = axum::body::to_bytes(get_keys_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let get_json: serde_json::Value = serde_json::from_slice(&get_bytes).unwrap();
+    assert!(get_json["keys"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn upstream_profile_put_is_immediately_listed() {
     let Some(state) = require_management_state().await else {
         skip_or_panic_redis_unavailable();

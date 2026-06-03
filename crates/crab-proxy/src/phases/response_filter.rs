@@ -111,6 +111,19 @@ pub(crate) async fn run(
             }
         }
 
+        if matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+            && let Some(retry_err) =
+                proxy.try_profile_fallback_retry(ctx, status, "upstream response error")
+        {
+            warn!(
+                request_id = %ctx.request_id,
+                status,
+                fallback_profile = ctx.upstream_profile_id.as_deref().unwrap_or(""),
+                "Upstream error matched profile fallback; retrying on alternate profile"
+            );
+            return Err(retry_err);
+        }
+
         warn!(
             request_id = %ctx.request_id,
             status,

@@ -383,6 +383,15 @@ pub async fn put_upstream_profile(
         if fb_id == &id {
             return Err(bad_request("fallback_profile_id cannot reference self"));
         }
+        let Some(fallback_profile) = state.runtime.profile(fb_id) else {
+            return Err(bad_request("fallback_profile_id must reference an existing profile"));
+        };
+        let requested_provider = crab_pipeline::UpstreamProvider::from_str(&input.provider);
+        if fallback_profile.provider != requested_provider {
+            return Err(bad_request(
+                "fallback_profile_id must reference a profile with the same provider",
+            ));
+        }
         let mut chain = std::collections::HashMap::new();
         chain.insert(id.clone(), Some(fb_id.clone()));
         // Include existing profiles for cycle detection.

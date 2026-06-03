@@ -366,6 +366,27 @@ impl UpstreamState {
     fn default_retry_budget() -> u8 {
         1
     }
+
+    /// Clear upstream attempt-specific state before a retry or profile fallback.
+    pub fn reset_for_retry(&mut self) {
+        self.host = None;
+        self.backend_name = None;
+        self.backend_overload_state = None;
+        self.start = None;
+        self.headers_at = None;
+        self.latency_ms = None;
+        self.key_guard = None;
+        self.miss = false;
+        self.http_status = None;
+        self.connection_close = false;
+        self.retry_buffer_truncated = false;
+        self.prepared_upstream_body_emitted = false;
+        self.error_body_logged = false;
+        self.error_passthrough = false;
+        self.sse_rate_limited = false;
+        self.first_body_chunk_logged = false;
+        self.response_decompress.reset();
+    }
 }
 
 impl Default for UpstreamState {

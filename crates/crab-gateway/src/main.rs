@@ -24,6 +24,7 @@ use pingora_core::services::listening::Service;
 use pingora_proxy::http_proxy;
 use prometheus::Registry;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Duration;
@@ -32,10 +33,6 @@ use tracing::info;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 // ---------------------------------------------------------------------------
 // PG Trace Writer (gateway-side, independent of Admin Dashboard pool)
@@ -421,8 +418,17 @@ fn main() -> Result<()> {
     std::fs::create_dir_all("./logs").ok();
     crab_proxy::init_debug_log(std::env::var("CRABCACHE_DEBUG_LOG_PATH").ok().as_deref());
 
-    let file_appender = tracing_appender::rolling::daily("./logs", "gateway.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let file_writer = tracing_subscriber::fmt::writer::BoxMakeWriter::new(|| {
+        let writer: Box<dyn Write + Send> = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("./logs/gateway.log")
+        {
+            Ok(file) => Box::new(file),
+            Err(_) => Box::new(std::io::sink()),
+        };
+        writer
+    });
 
     // File layer: JSON format, INFO+ (or RUST_LOG override)
     let file_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -433,9 +439,8 @@ fn main() -> Result<()> {
         std::env::var("RUST_LOG_STDOUT").unwrap_or_else(|_| "warn".to_string()),
     );
 
-    let json_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_writer(non_blocking)
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
         .with_filter(file_filter);
 
     let stdout_layer = tracing_subscriber::fmt::layer()
@@ -443,7 +448,7 @@ fn main() -> Result<()> {
         .with_filter(stdout_filter);
 
     tracing_subscriber::registry()
-        .with(json_layer)
+        .with(file_layer)
         .with(stdout_layer)
         .init();
 

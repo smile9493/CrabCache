@@ -15,6 +15,7 @@ use crab_semantic::{GateDecision, evaluate_semantic_gate};
 use pingora_core::prelude::*;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -127,6 +128,119 @@ impl GatewayProxy {
             .as_deref()
             .and_then(|id| self.state.runtime.profile(id))
             .unwrap_or_else(|| self.state.runtime.default_profile())
+    }
+
+    /// Seed the per-request fallback chain from the active profile config.
+    pub(crate) fn initialize_profile_fallback_state(&self, ctx: &mut GatewayContext) {
+        ctx.profile_fallback_chain.clear();
+        ctx.profile_fallback_attempt = 0;
+
+        let Some(mut current_id) = ctx.upstream_profile_id.clone() else {
+            return;
+        };
+        let mut remaining_hops = self
+            .state
+            .runtime
+            .profile(&current_id)
+            .map(|profile| profile.fallback_max_retries as usize)
+            .unwrap_or(0);
+        let mut visited = HashSet::new();
+        while visited.insert(current_id.clone()) {
+            ctx.profile_fallback_chain.push(current_id.clone());
+            if remaining_hops == 0 {
+                break;
+            }
+            let Some(next_id) = self
+                .state
+                .runtime
+                .profile(&current_id)
+                .and_then(|profile| profile.fallback_profile_id.clone())
+            else {
+                break;
+            };
+            let next_id = next_id.trim().to_string();
+            if next_id.is_empty() {
+                break;
+            }
+            remaining_hops = remaining_hops.saturating_sub(1);
+            current_id = next_id;
+        }
+    }
+
+    fn refresh_retry_budget_for_active_profile(&self, ctx: &mut GatewayContext) {
+        if !ctx
+            .request_pipeline
+            .is_some_and(Self::uses_pool_scaled_retry_budget)
+        {
+            return;
+        }
+        let profile = self.active_upstream_profile(ctx);
+        let pool = profile.resolve_upstream_pool();
+        let max_budget = self.state.features.read().codex_retry_budget_max;
+        ctx.upstream.retry_budget =
+            crate::codex_rate_limit::pool_scaled_retry_budget(pool.len(), max_budget);
+    }
+
+    fn reset_upstream_state_for_retry(&self, ctx: &mut GatewayContext) {
+        ctx.upstream.reset_for_retry();
+        ctx.backend_permit = None;
+        ctx.upstream_outbound_body_len = 0;
+        ctx.upstream_headers_prepared_at = None;
+        ctx.ttft = None;
+        ctx.response_body_preview.clear();
+        ctx.stream.pending_recovery_notice = None;
+        ctx.new_request_body = ctx.upstream.prepared_body_for_retry.clone();
+    }
+
+    /// Switch the current request to the next configured fallback profile, if any.
+    pub(crate) fn try_profile_fallback_retry(
+        &self,
+        ctx: &mut GatewayContext,
+        status: u16,
+        reason: &str,
+    ) -> Option<Box<pingora_core::Error>> {
+        if ctx.upstream.prepared_body_for_retry.is_none() || ctx.upstream.retry_buffer_truncated {
+            return None;
+        }
+        let current_id = ctx.upstream_profile_id.clone()?;
+        let current_profile = self.state.runtime.profile(&current_id)?;
+        let next_index = ctx.profile_fallback_attempt as usize + 1;
+        let next_id = ctx.profile_fallback_chain.get(next_index)?.clone();
+        if next_id == current_id {
+            return None;
+        }
+        let next_profile = self.state.runtime.profile(&next_id)?;
+        if next_profile.provider != current_profile.provider {
+            warn!(
+                request_id = %ctx.request_id,
+                current_profile = %current_id,
+                fallback_profile = %next_id,
+                current_provider = %current_profile.provider.as_str(),
+                fallback_provider = %next_profile.provider.as_str(),
+                "Skipping profile fallback because provider mismatch"
+            );
+            return None;
+        }
+
+        ctx.profile_fallback_attempt = ctx.profile_fallback_attempt.saturating_add(1);
+        ctx.upstream_profile_id = Some(next_id.clone());
+        self.reset_upstream_state_for_retry(ctx);
+        self.refresh_retry_budget_for_active_profile(ctx);
+
+        let mut e = Error::create(
+            ErrorType::HTTPStatus(status),
+            pingora_core::ErrorSource::Upstream,
+            Some(
+                format!(
+                    "profile fallback from '{}' to '{}' after {}",
+                    current_id, next_id, reason
+                )
+                .into(),
+            ),
+            None,
+        );
+        e.set_retry(true);
+        Some(e)
     }
 
     /// Sync MiMo profile pool semaphores with `mimo_key_max_inflight` when configured.
@@ -1155,6 +1269,18 @@ impl ProxyHttp for GatewayProxy {
         ctx: &mut Self::CTX,
         client_reused: bool,
     ) -> Box<pingora_core::Error> {
+        if e.esource == pingora_core::ErrorSource::Upstream
+            && session.response_written().is_none()
+            && let Some(retry_err) =
+                self.try_profile_fallback_retry(ctx, 502, "upstream connection failure")
+        {
+            warn!(
+                request_id = %ctx.request_id,
+                upstream_profile = ctx.upstream_profile_id.as_deref().unwrap_or(""),
+                "Upstream connection failed; retrying via fallback profile"
+            );
+            return retry_err;
+        }
         let should_retry = self.should_retry_mimo_upload_error(session, e.as_ref(), ctx);
         let is_mimo_upload_pipe_closed = Self::is_mimo_upload_pipe_closed(e.as_ref())
             && ctx.request_pipeline.is_some_and(Self::is_mimo_pipeline);
