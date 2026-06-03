@@ -403,7 +403,23 @@ async fn put_admin_key(
         })));
     }
 
-    *state.admin_key.write() = req.new_key;
+    *state.admin_key.write() = req.new_key.clone();
+
+    // Immediately persist to PostgreSQL so a restart before the next periodic
+    // sync does not revert to the old key.
+    let new_key_pg = req.new_key;
+    let pg = state.pg_store.read().clone();
+    if let Some(pg) = pg {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            "admin_key".to_string(),
+            serde_json::Value::String(new_key_pg),
+        );
+        if let Err(e) = pg.upsert_system_configs(&m).await {
+            tracing::warn!(error = %e, "Failed to persist admin_key change to PostgreSQL");
+        }
+    }
+
     tracing::info!("Admin API key changed successfully");
 
     Ok(Json(serde_json::json!({"success": true})))
@@ -2052,6 +2068,7 @@ async fn update_cache_config(
     let config = {
         let mut config = state.cache_config.write();
         config.default_ttl_secs = ttl.default_ttl_secs;
+        state.flush_persist();
         config.clone()
     };
 
@@ -2098,6 +2115,8 @@ async fn update_semantic_config(
     config.min_query_chars = req.min_query_chars;
     config.max_query_chars = req.max_query_chars;
     config.max_concurrent_embeds = req.max_concurrent_embeds;
+
+    state.flush_persist();
 
     Json(SemanticConfig {
         enabled: config.enabled,
@@ -2491,6 +2510,7 @@ async fn put_retention_policy(
         ));
     }
     *state.log_retention.write() = req.clone();
+    state.flush_persist();
     tracing::info!(
         max_age_hours = req.max_age_hours,
         max_disk_mb = req.max_disk_mb,
@@ -2719,6 +2739,8 @@ async fn update_connection_config(
     config.upstream_request_timeout_secs = req.upstream_request_timeout_secs;
     config.upstream_write_timeout_secs = req.upstream_write_timeout_secs;
     config.upstream_connection_timeout_secs = req.upstream_connection_timeout_secs;
+
+    state.flush_persist();
 
     Json(ConnectionConfig {
         tcp_keepalive_idle_secs: config.tcp_keepalive_idle_secs,
