@@ -21,8 +21,8 @@ use crate::locale::{Translations, use_translations};
 use crate::page_visible::page_visible;
 use crate::time_utils::{format_number, now_hms_string};
 use crate::types::{
-    KeyConcurrencyResponse, KeyRoutingResponse, LiveMetricsBucket, LiveMetricsResponse,
-    LiveMetricsSeries, LiveMetricsSummary, ProfileRoutingView, SERIES_COLORS,
+    LiveMetricsBucket, LiveMetricsResponse, LiveMetricsSeries, LiveMetricsSummary,
+    ProfileRoutingView, SERIES_COLORS,
 };
 use crate::view_state;
 
@@ -31,6 +31,7 @@ enum LiveGroupBy {
     None,
     Model,
     CacheHit,
+    ClientKind,
 }
 
 impl LiveGroupBy {
@@ -39,6 +40,7 @@ impl LiveGroupBy {
             LiveGroupBy::None => &[],
             LiveGroupBy::Model => &["model"],
             LiveGroupBy::CacheHit => &["cache_hit"],
+            LiveGroupBy::ClientKind => &["client_kind"],
         }
     }
 }
@@ -403,10 +405,6 @@ pub fn LivePage() -> impl IntoView {
 
     let alive_for_routing = Arc::clone(&alive);
     let routing_profiles_for_routing = routing_profiles;
-    let routing_key_ids_for_routing = routing_key_ids;
-    let selected_routing_key_for_routing = selected_routing_key;
-    let routing_key_data_for_routing = routing_key_data;
-    let routing_key_concurrency_for_routing = routing_key_concurrency;
     let load_routing = move || {
         let alive = Arc::clone(&alive_for_routing);
         leptos::task::spawn_local(async move {
@@ -414,46 +412,6 @@ pub fn LivePage() -> impl IntoView {
                 return;
             }
             routing_profiles_for_routing.try_set(Some(api::fetch_routing_profiles().await));
-            match api::fetch_keys_include_synced().await {
-                Ok(keys) => {
-                    if !alive.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let ids: Vec<String> = keys
-                        .into_iter()
-                        .map(|k| k.name)
-                        .filter(|name| !name.is_empty())
-                        .collect();
-                    if !ids.is_empty() {
-                        let chosen = selected_routing_key_for_routing
-                            .try_get_untracked()
-                            .flatten()
-                            .filter(|id| ids.iter().any(|x| x == id))
-                            .unwrap_or_else(|| ids[0].clone());
-                        selected_routing_key_for_routing.try_set(Some(chosen.clone()));
-                        routing_key_ids_for_routing.try_set(ids);
-                        let w = window_secs.try_get_untracked().unwrap_or(12 * 3600);
-                        let routing = api::fetch_key_routing(&chosen, w).await;
-                        let concurrency = api::fetch_key_concurrency(&chosen, w).await;
-                        routing_key_data_for_routing.try_set(Some(routing));
-                        routing_key_concurrency_for_routing.try_set(Some(concurrency));
-                    } else {
-                        routing_key_ids_for_routing.try_set(Vec::new());
-                        selected_routing_key_for_routing.try_set(None);
-                        routing_key_data_for_routing.try_set(None);
-                        routing_key_concurrency_for_routing.try_set(None);
-                    }
-                }
-                Err(e) => {
-                    if !alive.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    routing_key_ids_for_routing.try_set(Vec::new());
-                    selected_routing_key_for_routing.try_set(None);
-                    routing_key_data_for_routing.try_set(Some(Err(e)));
-                    routing_key_concurrency_for_routing.try_set(None);
-                }
-            }
         });
     };
 
@@ -467,30 +425,6 @@ pub fn LivePage() -> impl IntoView {
             let _ = window_secs.get();
             ll.lock().expect("load_live_fn lock")();
         }
-    });
-
-    let alive_for_key_effect = Arc::clone(&alive);
-    Effect::new(move |_| {
-        if !alive_for_key_effect.load(Ordering::Relaxed) {
-            return;
-        }
-        let Some(key_id) = selected_routing_key.get() else {
-            routing_key_concurrency.set(None);
-            return;
-        };
-        let w = window_secs.get();
-        let alive = Arc::clone(&alive_for_key_effect);
-        leptos::task::spawn_local(async move {
-            let (routing, concurrency) = futures::join!(
-                api::fetch_key_routing(&key_id, w),
-                api::fetch_key_concurrency(&key_id, w),
-            );
-            if !alive.load(Ordering::Relaxed) {
-                return;
-            }
-            routing_key_data.try_set(Some(routing));
-            routing_key_concurrency.try_set(Some(concurrency));
-        });
     });
 
     let alive_poll = Arc::clone(&alive);
@@ -659,14 +593,8 @@ pub fn LivePage() -> impl IntoView {
                                 latency_e2e_open=latency_e2e_open
                                 latency_upstream_open=latency_upstream_open
                                 token_open=token_open
-                                backend_dist_open=backend_dist_open
-                                affinity_dist_open=affinity_dist_open
                                 routing_profiles=routing_profiles
                                 selected_routing_profile=selected_routing_profile
-                                routing_key_ids=routing_key_ids
-                                selected_routing_key=selected_routing_key
-                                routing_key_data=routing_key_data
-                                routing_key_concurrency=routing_key_concurrency
                             />
                         }.into_any()
                     }
@@ -729,10 +657,11 @@ fn LiveTopConfigRow(
                 <label class="live-toolbar-label">{t.live_config_group_by()}</label>
                 <div class="live-toolbar-pills">
                     {move || {
-                        let items: [(LiveGroupBy, &str, &str); 3] = [
+                        let items: [(LiveGroupBy, &str, &str); 4] = [
                             (LiveGroupBy::None, "group_none", t.live_group_by_all()),
                             (LiveGroupBy::Model, "group_model", t.live_group_by_model()),
                             (LiveGroupBy::CacheHit, "group_cache", t.live_group_by_cache()),
+                            (LiveGroupBy::ClientKind, "group_client_kind", t.live_group_by_client_kind()),
                         ];
                         items.into_iter().map(|(val, _id, label)| {
                             let label = label.to_string();
@@ -1072,14 +1001,8 @@ fn LiveBottomRow(
     latency_e2e_open: RwSignal<bool>,
     latency_upstream_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
-    backend_dist_open: RwSignal<bool>,
-    affinity_dist_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
     selected_routing_profile: RwSignal<String>,
-    routing_key_ids: RwSignal<Vec<String>>,
-    selected_routing_key: RwSignal<Option<String>>,
-    routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
-    routing_key_concurrency: RwSignal<Option<Result<KeyConcurrencyResponse, String>>>,
 ) -> impl IntoView {
     view! {
         <div class="space-y-4">
@@ -1087,20 +1010,7 @@ fn LiveBottomRow(
                 <LiveLatencyPanel buckets=buckets.clone() summary=data.summary.clone() e2e_open=latency_e2e_open upstream_open=latency_upstream_open />
                 <LiveTokenPanel buckets=buckets.clone() summary=data.summary.clone() open=token_open />
             </div>
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <LiveRoutingSummaryPanel profiles=routing_profiles selected_profile=selected_routing_profile />
-                <LiveKeyActivityPanel
-                    routing_key_data=routing_key_data
-                    routing_key_concurrency=routing_key_concurrency
-                />
-            </div>
-            <LiveKeyDistributionPanel
-                routing_key_ids=routing_key_ids
-                selected_routing_key=selected_routing_key
-                routing_key_data=routing_key_data
-                backend_open=backend_dist_open
-                affinity_open=affinity_dist_open
-            />
+            <LiveRoutingSummaryPanel profiles=routing_profiles selected_profile=selected_routing_profile />
             <LiveHeatmapTable buckets=heatmap_buckets />
         </div>
     }
@@ -1679,6 +1589,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             <th class="text-left py-1 px-2">{t.live_heatmap_downstream_key()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_client_ip()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_client_location()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_client_kind()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_e2e()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_up_latency()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_down_latency()}</th>
@@ -1715,6 +1626,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             let top_downstream_key = b.top_downstream_key.clone();
                             let top_client_ip = b.top_client_ip.clone();
                             let top_client_ip_location = b.top_client_ip_location.clone();
+                            let top_client_kind = b.top_client_kind.clone();
                             view! {
                                 <tr class="border-b border-theme/30">
                                     <td class="py-1 pr-3 text-theme">
@@ -1737,6 +1649,9 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     </td>
                                     <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[150px]" title=top_client_ip_location.clone()>
                                         {if top_client_ip_location.is_empty() { "—".to_string() } else { top_client_ip_location.clone() }}
+                                    </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[80px]" title=top_client_kind.clone()>
+                                        {if top_client_kind.is_empty() { "—".to_string() } else { top_client_kind.clone() }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
                                         {format!("{:.0}", b.e2e_latency_ms)}
@@ -1773,4 +1688,3 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
         </div>
     }.into_any()
 }
-

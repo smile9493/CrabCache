@@ -775,6 +775,12 @@ impl Translations {
             Locale::EnUS => "By cache",
         }
     }
+    pub fn live_group_by_client_kind(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "按客户端",
+            Locale::EnUS => "By client",
+        }
+    }
     pub fn live_routing_loading(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "正在加载负载均衡状态…",
@@ -1195,28 +1201,10 @@ impl Translations {
             Locale::EnUS => "Group by",
         }
     }
-    pub fn live_key_affinity_title(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "Key / 亲和性",
-            Locale::EnUS => "Key / Affinity",
-        }
-    }
-    pub fn live_key_activity_title(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "Key 活跃度 (5m)",
-            Locale::EnUS => "Key activity (5m)",
-        }
-    }
     pub fn live_heatmap_title(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "桶热力图",
             Locale::EnUS => "Bucket Heatmap",
-        }
-    }
-    pub fn live_select_key(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "选择 key_id",
-            Locale::EnUS => "Select key_id",
         }
     }
     pub fn live_heatmap_time(self) -> &'static str {
@@ -1285,6 +1273,12 @@ impl Translations {
             Locale::EnUS => "IP Location",
         }
     }
+    pub fn live_heatmap_client_kind(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCN => "客户端",
+            Locale::EnUS => "Client",
+        }
+    }
     pub fn live_heatmap_up_latency(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "上游延迟",
@@ -1295,42 +1289,6 @@ impl Translations {
         match self.locale {
             Locale::ZhCN => "下游延迟",
             Locale::EnUS => "Down Latency",
-        }
-    }
-    pub fn live_affinity_migrations(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "亲和性迁移",
-            Locale::EnUS => "Affinity migrations",
-        }
-    }
-    pub fn live_active_now(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "当前活跃",
-            Locale::EnUS => "Active now",
-        }
-    }
-    pub fn live_peak_concurrent(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "峰值并发",
-            Locale::EnUS => "Peak concurrent",
-        }
-    }
-    pub fn live_window_requests(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "窗口请求",
-            Locale::EnUS => "Window requests",
-        }
-    }
-    pub fn live_prefix_breaks(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "前缀断裂",
-            Locale::EnUS => "Prefix breaks",
-        }
-    }
-    pub fn live_migrations_count(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "迁移次数",
-            Locale::EnUS => "Migrations",
         }
     }
     pub fn live_routing_backends(self) -> &'static str {
@@ -1357,28 +1315,10 @@ impl Translations {
             Locale::EnUS => "Node",
         }
     }
-    pub fn live_key_routing_loading(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "加载路由中…",
-            Locale::EnUS => "Loading key routing…",
-        }
-    }
-    pub fn live_no_migrations_hint(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "窗口内无亲和性迁移。",
-            Locale::EnUS => "No affinity migrations in window.",
-        }
-    }
     pub fn live_no_routing_profiles(self) -> &'static str {
         match self.locale {
             Locale::ZhCN => "无路由配置。",
             Locale::EnUS => "No routing profiles.",
-        }
-    }
-    pub fn live_select_key_hint(self) -> &'static str {
-        match self.locale {
-            Locale::ZhCN => "请在负载均衡卡片中选择一个 key。",
-            Locale::EnUS => "Select a key in load balancing card.",
         }
     }
     pub fn live_circuit_closed(self) -> &'static str {
