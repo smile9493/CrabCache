@@ -119,6 +119,9 @@ pub struct TraceLogEntry {
     /// Resolved downstream client IP (X-Forwarded-For / X-Real-IP / peer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_ip: Option<String>,
+    /// Detected client kind (e.g. `cursor`, `codex`, `generic`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<String>,
 }
 
 impl TraceLogEntry {
@@ -642,6 +645,7 @@ mod tests {
                 upstream_result: None,
                 phase_durations_ms: None,
                 client_ip: None,
+                client_kind: None,
             },
             TraceLogEntry {
                 timestamp_ms: 1,
@@ -694,6 +698,7 @@ mod tests {
                 upstream_result: None,
                 phase_durations_ms: None,
                 client_ip: None,
+                client_kind: None,
             },
         ];
         assert_eq!(distinct_consumers(&entries, 10), vec!["b", "a"]);
@@ -752,6 +757,7 @@ mod tests {
             upstream_result: None,
             phase_durations_ms: None,
             client_ip: None,
+            client_kind: None,
         };
         let log = trace_entry_to_request_log(&entry);
         assert_eq!(log.response_preview.chars().count(), 200);
@@ -810,6 +816,7 @@ mod tests {
             upstream_result: None,
             phase_durations_ms: None,
             client_ip: None,
+            client_kind: None,
         };
         let log = trace_entry_to_request_log(&entry);
         assert_eq!(log.id, "abc123-1700000000000");

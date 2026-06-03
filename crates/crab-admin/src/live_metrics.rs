@@ -43,6 +43,10 @@ fn group_key_for_entry(entry: &TraceLogEntry, group_by: &[String]) -> Option<Str
                 let bn = entry.backend_name.as_deref().unwrap_or("unknown");
                 parts.push(format!("backend={bn}"));
             }
+            "client_kind" => {
+                let ck = entry.client_kind.as_deref().unwrap_or("generic");
+                parts.push(format!("client_kind={ck}"));
+            }
             _ => {}
         }
     }
@@ -219,6 +223,12 @@ fn accumulate_entry(slot: &mut BucketAcc, entry: &TraceLogEntry) {
                 .or_insert(0) += 1;
         }
     }
+    if let Some(ck) = entry.client_kind.as_deref().filter(|v| !v.is_empty()) {
+        *slot
+            .client_kind_counts
+            .entry(ck.to_string())
+            .or_insert(0) += 1;
+    }
     if let Some(ip) = entry
         .client_ip
         .as_deref()
@@ -320,6 +330,7 @@ struct BucketAcc {
     client_ip_counts: HashMap<String, u32>,
     /// Map from client IP to its geolocation string.
     client_ip_locations: HashMap<String, String>,
+    client_kind_counts: HashMap<String, u32>,
 }
 
 impl BucketAcc {
@@ -371,6 +382,7 @@ impl BucketAcc {
             top_downstream_key: top_value(&self.downstream_key_counts),
             top_client_ip,
             top_client_ip_location,
+            top_client_kind: top_value(&self.client_kind_counts),
         }
     }
 }
@@ -423,6 +435,7 @@ fn empty_bucket(timestamp_ms: u64) -> LiveMetricsBucket {
         top_downstream_key: String::new(),
         top_client_ip: String::new(),
         top_client_ip_location: String::new(),
+        top_client_kind: String::new(),
     }
 }
 
@@ -727,6 +740,7 @@ mod tests {
                 top_downstream_key: String::new(),
                 top_client_ip: String::new(),
                 top_client_ip_location: String::new(),
+                top_client_kind: String::new(),
             },
             LiveMetricsBucket {
                 timestamp_ms: 2000,
@@ -749,6 +763,7 @@ mod tests {
                 top_downstream_key: String::new(),
                 top_client_ip: String::new(),
                 top_client_ip_location: String::new(),
+                top_client_kind: String::new(),
             },
         ];
         let s = summarize_window(&buckets);
