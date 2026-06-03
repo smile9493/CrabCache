@@ -56,7 +56,10 @@ pub fn ScatterChart(
             let Some(canvas_el) = canvas_ref.get() else {
                 return;
             };
-            let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+            let canvas_dom: web_sys::HtmlCanvasElement = match canvas_el.dyn_into() {
+                Ok(c) => c,
+                Err(_) => return,
+            };
             let _ = theme.get();
             let pts = points.get();
             let x_l = x_label.as_ref();
@@ -76,7 +79,10 @@ pub fn ScatterChart(
             hover_index.set(None);
             return;
         };
-        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+        let canvas_dom: web_sys::HtmlCanvasElement = match canvas_el.dyn_into() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         let c_rect = canvas_dom.get_bounding_client_rect();
         let width = c_rect.width();
         let height = c_rect.height();

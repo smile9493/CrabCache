@@ -37,7 +37,10 @@ pub fn CanvasBarChart(
         let Some(canvas_el) = canvas_ref.get() else {
             return;
         };
-        let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+        let canvas_dom: web_sys::HtmlCanvasElement = match canvas_el.dyn_into() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         let _ = theme.get();
         let labels = x_labels.get();
         let raw_series = series.get();

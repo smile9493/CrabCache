@@ -1,9 +1,8 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
@@ -201,6 +200,9 @@ pub fn LivePage() -> impl IntoView {
         RwSignal::new(vs.live_consumer.clone().or_else(|| Some("*".to_string())));
     let window_secs: RwSignal<u32> = RwSignal::new(vs.live_window_secs.unwrap_or(12 * 3600));
     let live_data: RwSignal<Option<Result<LiveMetricsResponse, String>>> = RwSignal::new(None);
+    // Transient fetch error — preserved across polls so the last successful
+    // data is not overwritten by intermittent failures.
+    let live_error: RwSignal<Option<String>> = RwSignal::new(None);
     let consumers_loaded = RwSignal::new(false);
     let consumers_error = RwSignal::new(None::<String>);
     let auto_refresh = RwSignal::new(true);
@@ -292,13 +294,13 @@ pub fn LivePage() -> impl IntoView {
     // rAF buffer for live_data: decouples polling frequency from signal propagation.
     // With 2-60s polling this is primarily for future-proofing; the pattern ensures
     // that increasing poll frequency won't cause cascading signal writes.
-    let live_buffer: Arc<Mutex<Option<Result<LiveMetricsResponse, String>>>> =
-        Arc::new(Mutex::new(None));
-    let live_dirty: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let live_buffer: Rc<RefCell<Option<Result<LiveMetricsResponse, String>>>> =
+        Rc::new(RefCell::new(None));
+    let live_dirty: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let live_active: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
     {
-        let live_buffer = Arc::clone(&live_buffer);
-        let live_dirty = Arc::clone(&live_dirty);
+        let live_buffer = Rc::clone(&live_buffer);
+        let live_dirty = Rc::clone(&live_dirty);
         let live_active = Arc::clone(&live_active);
         let alive_for_raf = Arc::clone(&alive);
         let live_raf_state: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
@@ -309,16 +311,12 @@ pub fn LivePage() -> impl IntoView {
                 live_active.store(false, Ordering::Relaxed);
                 return;
             }
-            if *live_dirty.lock().expect("live_dirty lock poisoned") {
-                if let Some(data) = live_buffer
-                    .lock()
-                    .expect("live_buffer lock poisoned")
-                    .take()
-                {
+            if live_dirty.get() {
+                if let Some(data) = live_buffer.borrow_mut().take() {
                     live_data.try_set(Some(data));
                     last_update.try_set(now_hms_string());
                 }
-                *live_dirty.lock().expect("live_dirty lock poisoned") = false;
+                live_dirty.set(false);
             }
             if live_active.load(Ordering::Relaxed) {
                 // Self-reschedule: re-register the same persistent closure
@@ -342,12 +340,12 @@ pub fn LivePage() -> impl IntoView {
         }
     }
 
-    let live_buffer_for_loader = Arc::clone(&live_buffer);
-    let live_dirty_for_loader = Arc::clone(&live_dirty);
+    let live_buffer_for_loader = Rc::clone(&live_buffer);
+    let live_dirty_for_loader = Rc::clone(&live_dirty);
     let alive_for_loader = Arc::clone(&alive);
-    let load_live_fn: Arc<Mutex<dyn FnMut() + Send>> = {
+    let load_live_fn: Rc<RefCell<dyn FnMut()>> = {
         let consumers = consumers;
-        Arc::new(Mutex::new(move || {
+        Rc::new(RefCell::new(move || {
             let alive = Arc::clone(&alive_for_loader);
             if !alive.load(Ordering::Relaxed) {
                 return;
@@ -364,8 +362,8 @@ pub fn LivePage() -> impl IntoView {
                 .unwrap_or(LiveGroupBy::None)
                 .as_slice()
                 .to_vec();
-            let buf = Arc::clone(&live_buffer_for_loader);
-            let dirty = Arc::clone(&live_dirty_for_loader);
+            let buf = Rc::clone(&live_buffer_for_loader);
+            let dirty = Rc::clone(&live_dirty_for_loader);
             let alive = Arc::clone(&alive);
             leptos::task::spawn_local(async move {
                 let gb_refs: Vec<&str> = gb.iter().map(|s| *s).collect();
@@ -385,17 +383,19 @@ pub fn LivePage() -> impl IntoView {
                                 selected_consumer.try_set(Some(first.clone()));
                             }
                         }
-                        buf.lock()
-                            .expect("live_buffer lock poisoned")
-                            .replace(Ok(data));
-                        *dirty.lock().expect("live_dirty lock poisoned") = true;
+                        live_error.try_set(None);
+                        buf.borrow_mut().replace(Ok(data));
+                        dirty.set(true);
                     }
                     Err(e) => {
                         if !alive.load(Ordering::Relaxed) {
                             return;
                         }
                         if load_generation.try_get() == Some(request_id) {
-                            live_data.try_set(Some(Err(e)));
+                            // Show the error as a transient banner without
+                            // overwriting the last successful data so charts
+                            // remain visible during intermittent failures.
+                            live_error.try_set(Some(e));
                         }
                     }
                 }
@@ -419,17 +419,17 @@ pub fn LivePage() -> impl IntoView {
     load_routing();
 
     Effect::new({
-        let ll = load_live_fn.clone();
+        let ll = Rc::clone(&load_live_fn);
         move |_| {
             let _ = selected_consumer.get();
             let _ = window_secs.get();
-            ll.lock().expect("load_live_fn lock")();
+            ll.borrow_mut()();
         }
     });
 
     let alive_poll = Arc::clone(&alive);
     leptos::task::spawn_local({
-        let ll = load_live_fn.clone();
+        let ll = Rc::clone(&load_live_fn);
         async move {
             let mut routing_tick: u8 = 0;
             loop {
@@ -443,7 +443,7 @@ pub fn LivePage() -> impl IntoView {
                     && selected_consumer.try_get_untracked().flatten().is_some()
                     && page_visible()
                 {
-                    ll.lock().expect("load_live_fn lock")();
+                    ll.borrow_mut()();
                     // Routing data (backends, key pool, circuit breakers) changes
                     // far less frequently than live metrics. Only refresh every
                     // 5th poll cycle to reduce backend load.
@@ -466,7 +466,7 @@ pub fn LivePage() -> impl IntoView {
         unsafe impl Send for SendSyncFn {}
         unsafe impl Sync for SendSyncFn {}
 
-        let ll = load_live_fn.clone();
+        let ll = Rc::clone(&load_live_fn);
         let alive_vis = Arc::clone(&alive);
         let vis_cb = Closure::wrap(Box::new(move || {
             if !alive_vis.load(Ordering::Relaxed) {
@@ -481,7 +481,7 @@ pub fn LivePage() -> impl IntoView {
                 && auto_refresh.try_get_untracked() == Some(true)
                 && selected_consumer.try_get_untracked().flatten().is_some()
             {
-                ll.lock().expect("load_live_fn lock")();
+                ll.borrow_mut()();
             }
         }) as Box<dyn FnMut()>);
         let vis_cb_fn: js_sys::Function = vis_cb.into_js_value().unchecked_into();
@@ -507,7 +507,7 @@ pub fn LivePage() -> impl IntoView {
         live_active.store(false, Ordering::Relaxed);
     });
 
-    let refresh_fn = load_live_fn.clone();
+    let refresh_fn = Rc::clone(&load_live_fn);
 
     view! {
         <div class="page-content space-y-5">
@@ -526,7 +526,7 @@ pub fn LivePage() -> impl IntoView {
                     </span>
                 </button>
                 <button on:click=move |_| {
-                    refresh_fn.lock().expect("load_live_fn lock")();
+                    refresh_fn.borrow_mut()();
                 } class="btn btn-secondary text-xs">
                     {move || t.overview_refresh()}
                 </button>

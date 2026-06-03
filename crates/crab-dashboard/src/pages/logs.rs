@@ -79,13 +79,14 @@ impl LogsFilterForm {
             };
             chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%dT%H:%M:%S")
                 .ok()
-                .map(|ndt| {
+                .and_then(|ndt| {
                     use chrono::TimeZone;
-                    let beijing = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
-                    beijing
-                        .from_local_datetime(&ndt)
-                        .unwrap()
-                        .timestamp_millis() as u64
+                    let beijing = chrono::FixedOffset::east_opt(8 * 3600)?;
+                    // Pattern-match on LocalResult to stay version-agnostic across chrono 0.4.x.
+                    match beijing.from_local_datetime(&ndt) {
+                        chrono::LocalResult::Single(dt) => Some(dt.timestamp_millis() as u64),
+                        _ => None,
+                    }
                 })
         }
         LogsFilterQuery {
@@ -1211,18 +1212,20 @@ fn ExportButton(
             let blob = web_sys::Blob::new_with_str_sequence(&JsValue::from_str(&json_str));
             if let Ok(blob) = blob {
                 let url = web_sys::Url::create_object_url_with_blob(&blob).unwrap_or_default();
-                let window = web_sys::window().expect("window");
-                let doc = window.document().expect("document");
-                let a = doc.create_element("a").expect("a");
+                let Some(window) = web_sys::window() else { return };
+                let Some(doc) = window.document() else { return };
+                let Ok(a) = doc.create_element("a") else { return };
                 let html_a: web_sys::HtmlElement = a.unchecked_into();
                 html_a.set_attribute("href", &url).ok();
                 html_a
                     .set_attribute("download", &format!("request-{}.json", summary.id))
                     .ok();
                 html_a.set_attribute("style", "display:none").ok();
-                doc.body().unwrap().append_child(&html_a).ok();
-                html_a.click();
-                doc.body().unwrap().remove_child(&html_a).ok();
+                if let Some(body) = doc.body() {
+                    body.append_child(&html_a).ok();
+                    html_a.click();
+                    body.remove_child(&html_a).ok();
+                }
                 web_sys::Url::revoke_object_url(&url).ok();
             }
         }

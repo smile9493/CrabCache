@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[component]
 pub fn ConfirmDialog(
@@ -12,33 +14,34 @@ pub fn ConfirmDialog(
     let dialog_ref: NodeRef<leptos::html::Div> = NodeRef::new();
     let aria_label = title.clone();
 
-    // Store callbacks behind Arc<Mutex<>> so they can be shared across multiple event handlers.
-    let confirm_cb = std::sync::Arc::new(std::sync::Mutex::new(Some(on_confirm)));
-    let cancel_cb = std::sync::Arc::new(std::sync::Mutex::new(Some(on_cancel)));
+    // Store callbacks behind Rc<RefCell<>> so they can be shared across multiple event handlers.
+    // Safe in WASM because it is single-threaded.
+    let confirm_cb = Rc::new(RefCell::new(Some(on_confirm)));
+    let cancel_cb = Rc::new(RefCell::new(Some(on_cancel)));
 
     let do_confirm = {
-        let confirm_cb = std::sync::Arc::clone(&confirm_cb);
+        let confirm_cb = Rc::clone(&confirm_cb);
         move |_| {
-            if let Some(f) = confirm_cb.lock().ok().and_then(|mut g| g.take()) {
+            if let Some(f) = confirm_cb.borrow_mut().take() {
                 f();
             }
         }
     };
 
     let do_cancel = {
-        let cancel_cb = std::sync::Arc::clone(&cancel_cb);
+        let cancel_cb = Rc::clone(&cancel_cb);
         move |_| {
-            if let Some(f) = cancel_cb.lock().ok().and_then(|mut g| g.take()) {
+            if let Some(f) = cancel_cb.borrow_mut().take() {
                 f();
             }
         }
     };
 
     let do_cancel_key = {
-        let cancel_cb = std::sync::Arc::clone(&cancel_cb);
+        let cancel_cb = Rc::clone(&cancel_cb);
         move |ev: web_sys::KeyboardEvent| {
             if ev.key() == "Escape" {
-                if let Some(f) = cancel_cb.lock().ok().and_then(|mut g| g.take()) {
+                if let Some(f) = cancel_cb.borrow_mut().take() {
                     f();
                 }
             }

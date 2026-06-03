@@ -35,7 +35,10 @@ pub fn WaterfallChart(stages: Vec<WaterfallStage>) -> impl IntoView {
             let Some(canvas_el) = canvas_ref.get() else {
                 return;
             };
-            let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
+            let canvas_dom: web_sys::HtmlCanvasElement = match canvas_el.dyn_into() {
+                Ok(c) => c,
+                Err(_) => return,
+            };
             let _ = theme.get();
             canvas_render::render_waterfall(&canvas_dom, stages.as_ref(), theme.get());
         }

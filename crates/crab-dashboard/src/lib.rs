@@ -51,6 +51,7 @@ fn remove_boot_shell_when_ready(attempt: u32) {
 #[wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
+    console_log::init_with_level(log::Level::Warn).ok();
     let mounted = web_sys::window()
         .and_then(|w| w.document())
         .and_then(|d| d.get_element_by_id("app"))

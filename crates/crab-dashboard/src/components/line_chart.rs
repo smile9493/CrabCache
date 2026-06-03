@@ -140,7 +140,10 @@ pub fn LineChart(
         let Some(svg_el) = svg_ref.get() else {
             return;
         };
-        let svg_dom: web_sys::SvgsvgElement = svg_el.dyn_into().unwrap();
+        let svg_dom: web_sys::SvgsvgElement = match svg_el.dyn_into() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
         let Some(svg_x) = mouse_to_svg_x(&ev, &svg_dom) else {
             queue_hover(None);
             return;
