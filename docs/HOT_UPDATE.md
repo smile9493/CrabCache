@@ -91,6 +91,9 @@ python3 scripts/hot_update.py --target wuming
 ```bash
 ssh <host> 'docker exec crabcache-gateway-1 tail -10000 /app/logs/raw_capture/index.jsonl' \
   | python3 scripts/analyze_downstream_latency.py -
+# 或用 crab-cli（推荐）：
+crab-cli trace analyze --target wuming --tail 10000
+crab-cli report --target wuming --compare-tail 200
 ```
 
 | 阶段 | 配置 / 代码 | 成功标准（MiMo stream miss 样本） |

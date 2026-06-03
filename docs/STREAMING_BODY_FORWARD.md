@@ -24,7 +24,7 @@ Mount point: **do not** read the full body in `request_filter` when deferring; f
 | `prepare_mimo_request` | Runs at EOS (needs full JSON) |
 | Default | `[features] streaming_body_forward = false` |
 | Retry buffer | Partial reads in `request_filter` must **not** use `enable_retry_buffering()` (would send incomplete JSON upstream); body ships at EOS only |
-| Pipelines | `MimoRelay`, `MimoTokenPlanRelay`, `MimoPaygRelay` only |
+| Pipelines | `MimoTokenPlanRelay`（含 `MimoRelay` / `MimoPaygRelay` 别名） only |
 | Cache hit at EOS | `send_cached_response`; upstream may have connected idle (acceptable waste) |
 | Defer finalize early exact | At EOS, exact L0/L1 lookup on full body **before** full JSON parse / prepare (Phase 3.1) |
 | Trailing empty upstream EOS | Skipped when `prepared_upstream_body_emitted` or `suppress_upstream` (Pingora PATCH) |
@@ -47,6 +47,8 @@ Mount point: **do not** read the full body in `request_filter` when deferring; f
 # After hot-update:
 ssh wuming 'docker exec crabcache-gateway-1 tail -10000 /app/logs/raw_capture/index.jsonl' \
   | python3 scripts/analyze_downstream_latency.py -
+# 或用 crab-cli（推荐）：
+crab-cli trace analyze --target wuming --tail 10000
 
 # Logs must have zero:
 #   "client JSON parse failed" with streaming_defer=true

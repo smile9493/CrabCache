@@ -1,0 +1,20 @@
+[package]
+name = "crab-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CrabCache ops CLI: trace analysis, health checks, density reports"
+
+[[bin]]
+name = "crab-cli"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

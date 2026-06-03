@@ -35,7 +35,7 @@
 
 ## 概述
 
-**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为网络与代理核心**：在 Pingora 的 `ProxyHttp` 生命周期（`request_filter` → `upstream_peer` → 流式 `body_filter` → `logging`）上实现 OpenAI 兼容的多供应商 LLM API 网关。以 DeepSeek V4 为重点参考实现（当前唯一支持 Reasoning/thinking 的供应商），同时兼容其他主流供应商。
+**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为网络与代理核心**：在 Pingora 的 `ProxyHttp` 生命周期（`request_filter` → `upstream_peer` → 流式 `body_filter` → `logging`）上实现 OpenAI 兼容的多供应商 LLM API 网关。内置 **120+ 个 LLM 供应商**（OpenAI、Anthropic、DeepSeek、Groq、xAI、Mistral、Gemini、阿里通义、百度千帆、智谱 GLM 等），以 DeepSeek V4 为重点参考实现（当前唯一支持 Reasoning/thinking 的供应商）。
 
 Pingora 提供的能力是本项目的基础：
 
@@ -54,7 +54,7 @@ Pingora 提供的能力是本项目的基础：
 | **Pingora 核心** | `crab-proxy` 实现 `ProxyHttp`；连接复用、SSE 流式 flush、上游 TLS/SNI |
 | **路由** | `crab-route` Ketama 环；会话亲和，支撑上游多节点前缀缓存 |
 | **缓存** | L0 Moka + L1 Redis + L2 Qdrant 三级缓存；Coalescing 防击穿 |
-| **多供应商** | 多 Profile 上游路由、Key 池轮换、429 退避、模型别名 |
+| **多供应商** | 120+ 内置供应商、多 Profile 上游路由、Key 池轮换、429 退避、模型别名 |
 | **控制面** | `crab-gateway` Management API；`crab-admin` + Leptos Dashboard |
 
 ---
@@ -204,8 +204,9 @@ crab-gateway（入口 + Pingora Server + 管理 API）
  ├── crab-translator     请求/响应格式翻译（供应商协议适配）
  ├── crab-composition    请求组合体分析与指纹（JSONL Trace 捕获）
  ├── crab-capture        请求捕获、会话亲和、结构差分分析
- ├── crab-client-endpoint 客户端入口地址发现（LAN/FRP/OpenResty）
- └── crab-state          控制面持久化（Redis / 内存）
+├── crab-client-endpoint 客户端入口地址发现（LAN/FRP/OpenResty）
+├── crab-cli           运维 CLI（trace/日志/metrics 分析）
+└── crab-state          控制面持久化（Redis / 内存）
 
 crab-admin（管理面板后端 - Axum HTTP 服务器）
  ├── crab-control        Gateway 管理 API 客户端
@@ -440,6 +441,7 @@ CrabCache/
 │   ├── crab-client-endpoint/ # 客户端入口地址发现（LAN/FRP/OpenResty）
 │   ├── crab-composition/     # 请求组合体分析与指纹（JSONL Trace 捕获）
 │   ├── crab-capture/         # 请求捕获、会话亲和、结构差分分析
+│   ├── crab-cli/             # 运维 CLI（trace/日志/metrics 分析，无 pingora 依赖）
 │   ├── crab-admin/           # Admin Dashboard 后端（Axum）
 │   ├── crab-admin-types/     # Admin/Dashboard 共享 serde 类型（wasm-safe）
 │   └── crab-dashboard/       # Leptos WASM 前端

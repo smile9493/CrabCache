@@ -2,7 +2,7 @@
 
 本文档将 **Trace / 网关日志 / Prometheus** 中常见现象，映射到 **数据面（proxy 热路径）**、**控制面 / Admin**、**运维配置** 三条责任轨。避免把「内测低命中率」或「MiMo 429」误判为「数据面 P2 未做完」。
 
-**相关文档**：[运行时日志结论（压缩版）](RUNTIME_LOG_FINDINGS.md) · [数据面实现状态](DATA_PLANE.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md)
+**相关文档**：[运行时日志结论（压缩版）](RUNTIME_LOG_FINDINGS.md) · [数据面实现状态](DATA_PLANE.md) · [P2 验收手册](DATA_PLANE_ACCEPTANCE.md) · [可观测性](OBSERVABILITY.md) · [Cursor 接入](CURSOR_SETUP.md) · [持久化](PERSISTENCE.md) · [CrabCache CLI](CRAB_CLI.md)
 
 ---
 
@@ -71,7 +71,7 @@
 **处置（优先运维，再开网关特性）**：
 
 1. Cursor：限制对话历史、避免整文件进 `messages`、长会话开新 thread（目标 body **&lt;200KB**）。
-2. 分析：`python3 scripts/analyze_downstream_latency.py` + `raw_capture/index.jsonl`（看 `prefill_ms` 与 body 分桶）。
+2. 分析：`crab-cli trace analyze --target wuming --tail 500`（或 `python3 scripts/analyze_downstream_latency.py`；看 `prefill_ms` 与 body 分桶）。详见 [CRAB_CLI.md](CRAB_CLI.md)。
 3. 可选网关：`[features] mimo_retire_prefix_messages = true`、`mimo_keep_recent_turns = 6`（**只缩小上游 body，不改 L0/L1 缓存键**）。
 4. **不要**在未通过门禁前开启 `streaming_body_forward = true`（见 [STREAMING_BODY_FORWARD.md](STREAMING_BODY_FORWARD.md)）。
 

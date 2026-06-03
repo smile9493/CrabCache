@@ -66,7 +66,7 @@ CrabCache 是一个基于 Cloudflare Pingora 框架构建的高性能 Rust API �
 
 ```
 CrabCache/
-├── Cargo.toml                       # Workspace 配置（12 个 crates）
+├── Cargo.toml                       # Workspace 配置（13 个 crates）
 ├── config/
 │   └── gateway.example.toml         # 运行时配置模板
 ├── docker-compose.yml               # Docker 编排（gateway + redis + qdrant）
@@ -137,9 +137,12 @@ CrabCache/
 │   │   ├── src/domain_usage_sync.rs # domain_usage PG 同步任务
 │   │   ├── src/types.rs             # API 请求/响应类型
 │   │   └── src/network.rs           # 网络信息
-│   └── crab-dashboard/              # Leptos WASM 前端
-│       ├── Cargo.toml               # Leptos 0.7 CSR 配置
-│       └── src/                     # WASM 前端源码
+│   ├── crab-dashboard/              # Leptos WASM 前端
+│   │   ├── Cargo.toml               # Leptos 0.7 CSR 配置
+│   │   └── src/                     # WASM 前端源码
+│   └── crab-cli/                    # 运维 CLI（trace/日志/metrics 分析）
+│       ├── Cargo.toml               # clap 4 + serde + regex
+│       └── src/                     # CLI 入口 + 子命令模块
 └── .cursor/skills/                  # Rust 编码规范 Skills
     ├── rust-architecture-guide/
     ├── rust-systems-cloud-infra-guide/
@@ -183,6 +186,9 @@ cargo build
 
 # 生产构建
 cargo build --release
+
+# 仅构建运维 CLI（不依赖 pingora，编译快）
+cargo build --release -p crab-cli
 
 # 运行测试
 cargo test --workspace

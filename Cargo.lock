@@ -1319,6 +1319,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crab-client-endpoint"
 version = "0.1.0"
 dependencies = [

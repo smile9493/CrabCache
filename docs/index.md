@@ -1,6 +1,6 @@
 # CrabCache 文档
 
-欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现多供应商 LLM API 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。以 DeepSeek V4 为重点参考实现，专注缓存优化与可观测透明分析。详见 [上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md) 与 [数据面实现状态](DATA_PLANE.md)。
+欢迎查阅 CrabCache 项目文档。**CrabCache 以 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 为代理核心**，在 `ProxyHttp` 过滤器链上实现多供应商 LLM API 网关能力（SSE 流式、粘滞路由、Reasoning、控制面）。内置 **120+ 个 LLM 供应商**，以 DeepSeek V4 为重点参考实现，专注缓存优化与可观测透明分析。详见 [上游前缀缓存（L3）](DEEPSEEK_PREFIX_CACHE.md) 与 [数据面实现状态](DATA_PLANE.md)。
 
 ## 快速导航
 
@@ -34,6 +34,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [CrabCache CLI](CRAB_CLI.md) | Rust 运维 CLI：trace 分析、日志健康、Prometheus 摘要、远程抓取 |
 | [运维与事故处置](OPS_RUNBOOK.md) | Trace/日志对照、MiMo 429 P0、数据面 vs 运维责任轨 |
 | [运行时日志结论（压缩）](RUNTIME_LOG_FINDINGS.md) | 一页纸：7 条结论 + P0/P1 改进 + Trace 字段口径 |
 | [多租户隔离](MULTI_TENANT.md) | project_id / DeepSeek user_id 租户隔离机制 |
