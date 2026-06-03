@@ -3,6 +3,7 @@
 pub use crab_metrics::GLOBAL_RATE_KEY;
 
 pub mod config;
+pub mod live_logs;
 pub mod management;
 pub mod pg_control_store;
 pub mod webhook;

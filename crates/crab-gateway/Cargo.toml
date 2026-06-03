@@ -80,6 +80,7 @@ subtle.workspace = true
 indexmap.workspace = true
 chrono.workspace = true
 getrandom = "0.3"
+async-stream = "0.3"
 # Optional: OpenTelemetry tracing (feature = "otel")
 opentelemetry = { version = "0.32", optional = true }
 opentelemetry_sdk = { version = "0.32", optional = true, features = ["rt-tokio"] }

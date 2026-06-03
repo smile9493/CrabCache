@@ -177,6 +177,10 @@ pub struct ManagementState {
     pub test_http_client: reqwest::Client,
     /// Fault injection for integration testing.
     pub fault_injection: Arc<crab_proxy::fault_injection::FaultInjection>,
+    /// Live log broadcast sender for SSE streaming.
+    pub log_broadcast: Option<tokio::sync::broadcast::Sender<crate::live_logs::LogLine>>,
+    /// Path to the gateway log file for historical reads.
+    pub log_file_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -361,6 +365,8 @@ pub fn router(state: ManagementState) -> Router {
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
         .route("/v1/state/snapshot", get(get_state_snapshot))
+        .route("/v1/logs", get(crate::live_logs::get_logs))
+        .route("/v1/logs/stream", get(crate::live_logs::stream_logs))
         .merge(crate::webhook_admin::build_webhook_routes())
         // Debug-only: fault injection control (returns 403 in release builds)
         .route(

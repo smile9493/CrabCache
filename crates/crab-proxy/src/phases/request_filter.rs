@@ -174,10 +174,11 @@ async fn run_post_body_phases(
     let profile = proxy.state.runtime.default_profile();
     let fallback_model = profile.fallback_model.clone();
     ctx.model = crab_pipeline::canonicalize_client_model(
-        &quick
+        quick
             .model
+            .as_deref()
             .filter(|m| !m.is_empty())
-            .unwrap_or(fallback_model),
+            .unwrap_or(&fallback_model),
     );
     ctx.is_streaming = quick.stream.unwrap_or(false);
 
@@ -244,6 +245,8 @@ async fn run_post_body_phases(
         x_client_kind,
         originator,
         detection_payload.as_ref(),
+        full_body.len(),
+        quick.model.as_deref(),
     );
 
     let mut selection = if !skip_early_pipeline_select {

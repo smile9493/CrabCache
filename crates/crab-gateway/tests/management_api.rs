@@ -88,6 +88,8 @@ async fn test_management_state() -> Option<ManagementState> {
             .build()
             .expect("test http client"),
         fault_injection: Arc::new(crab_proxy::fault_injection::FaultInjection::default()),
+        log_broadcast: None,
+        log_file_path: None,
     })
 }
 

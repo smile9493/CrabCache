@@ -771,6 +771,9 @@ fn main() -> Result<()> {
     std::fs::create_dir_all("./logs").ok();
     crab_proxy::init_debug_log(std::env::var("CRABCACHE_DEBUG_LOG_PATH").ok().as_deref());
 
+    // Live log broadcast for SSE streaming (created before tracing so the layer can use it).
+    let log_broadcast = crab_gateway::live_logs::create_log_broadcast(4096);
+
     let file_writer = tracing_subscriber::fmt::writer::BoxMakeWriter::new(|| {
         let writer: Box<dyn Write + Send> = match std::fs::OpenOptions::new()
             .create(true)
@@ -815,9 +818,12 @@ fn main() -> Result<()> {
         crab_gateway::otel::build_otel_layer(&otel_config)
     };
 
+    let live_layer = crab_gateway::live_logs::LiveLogLayer::new(log_broadcast.clone());
+
     let registry = tracing_subscriber::registry()
         .with(file_layer)
-        .with(stdout_layer);
+        .with(stdout_layer)
+        .with(live_layer);
 
     #[cfg(feature = "otel")]
     let registry = registry.with(otel_layer);
@@ -1542,6 +1548,8 @@ fn main() -> Result<()> {
         codex_quota_cache: Some(codex_quota_cache.clone()),
         test_http_client,
         fault_injection: fault_injection.clone(),
+        log_broadcast: Some(log_broadcast.clone()),
+        log_file_path: Some(std::path::PathBuf::from("./logs/gateway.log")),
     };
 
     let mgmt_listen_bg = mgmt_listen.clone();
