@@ -418,11 +418,17 @@ pub fn LivePage() -> impl IntoView {
     load_consumers();
     load_routing();
 
+    // Signal-based refresh trigger: the button click increments this counter,
+    // and the Effect watches it alongside other reactive deps. This avoids
+    // capturing `Rc<RefCell<dyn FnMut()>>` (not `Send`) inside `view!`.
+    let refresh_trigger = RwSignal::new(0u32);
+
     Effect::new({
         let ll = Rc::clone(&load_live_fn);
         move |_| {
             let _ = selected_consumer.get();
             let _ = window_secs.get();
+            let _ = refresh_trigger.get();
             ll.borrow_mut()();
         }
     });
@@ -507,8 +513,6 @@ pub fn LivePage() -> impl IntoView {
         live_active.store(false, Ordering::Relaxed);
     });
 
-    let refresh_fn = Rc::clone(&load_live_fn);
-
     view! {
         <div class="page-content space-y-5">
             <PageHeader
@@ -526,7 +530,7 @@ pub fn LivePage() -> impl IntoView {
                     </span>
                 </button>
                 <button on:click=move |_| {
-                    refresh_fn.borrow_mut()();
+                    refresh_trigger.update(|n| *n += 1);
                 } class="btn btn-secondary text-xs">
                     {move || t.overview_refresh()}
                 </button>

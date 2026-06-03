@@ -174,9 +174,11 @@ pub fn provide_theme() -> RwSignal<Theme> {
         }
     });
 
-    if initial_theme == Theme::System {
-        spawn_system_listener(theme);
-    }
+    // Always install the OS media-query listener. The listener body guards
+    // itself with `theme.get() == Theme::System`, so it's harmless when System
+    // is not active but enables dynamic response when the user switches to
+    // System later.
+    spawn_system_listener(theme);
 
     provide_context(theme);
     theme
