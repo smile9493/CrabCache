@@ -214,6 +214,24 @@ Cursor 常把该文案显示为 **「用户提供的 API Key 限流」**，多�
 
 日志表现为 `upstream rate limited, attempting key rotation`、HTTP **429**；仅 **1 把** 上游 Key 时 Prometheus 可见 `gateway_upstream_key_retries_total{outcome="cooldown_only"}`，并可能出现 `gateway_rejected_requests_total{reason="upstream_key_exhausted"}`（503，未打到厂商）。
 
+**多 Key 会话绑定**（`mimo_key_binding = true`）：
+
+| Binding key 来源 | 优先级 | 说明 |
+|------------------|--------|------|
+| `conv:{conversation_id}` | 1 | Cursor 下发 conversation id 时优先 |
+| `pck:{prompt_cache_key}` | 2 | 厂商 prompt cache key |
+| `sfp:{session_fingerprint}` | 3 | 首条 `user` 消息内容 SHA256 前 16 位（不同对话通常不同） |
+| 无上述字段 | — | 不做 sticky，走 Key 池轮询（**不会**再用 `sk-cc-*` 哈希绑定） |
+
+并发与溢出：`mimo_key_max_inflight` 限制单 Key 并发；超出时在 `mimo_key_overflow_wait_ms` 内等待绑定 Key 的 semaphore，超时则 **spill** 到其他 Key（绑定关系不变，保前缀缓存亲和）。绑定 Key 冷却或 429 时解绑并轮换。
+
+**Prometheus 验收**（多 Cursor 对话并行压测 5 分钟）：
+
+- `gateway_key_binding_total{event="miss"}` 随对话数增长（>1）
+- `gateway_key_binding_total{event="spill"}` 偶发（inflight/cooldown），请求仍应 200
+- `gateway_upstream_key_inflight` 出现多个不同 `key_id`
+- 不应再出现 `refusing random key switch` 洪流
+
 1. `GET /v1/upstream/profiles/mimo/keys` — 至少 **2 把** 启用 Key；429 轮换仅在 **`account_id` 不同** 的 Key 间进行。
 2. 高峰 **降低 Cursor 并行**（多 Agent/Task）；大 body（数百 KB）会放大 QPS 压力。
 3. 勿与「网关 sk-cc 限流」混淆：日志中不应出现 `Rate limit exceeded for this API key`（除非 Management 显式设置了 `rpm_limit`）。

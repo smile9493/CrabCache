@@ -19,6 +19,17 @@ api_key = "sk-bootstrap-not-used-00000000"
 [gateway]
 default_upstream_profile = "deepseek"
 
+# Explicit MiMo provider routing (belt-and-suspenders with crab-pipeline provider match).
+[gateway.pipeline]
+default = "generic_relay"
+
+[[gateway.pipeline.rules]]
+name = "mimo_relay"
+priority = 40
+pipeline = "mimo_token_plan_relay"
+[gateway.pipeline.rules.match]
+provider = ["mimo"]
+
 [management]
 listen_addr = "0.0.0.0:9080"
 admin_key = "CrabCache-Admin-Secret-2026"
@@ -144,3 +155,4 @@ mimo_key_binding = true
 mimo_key_binding_ttl_secs = 300  # 5 minutes idle TTL
 mimo_key_max_inflight = 3        # max concurrent requests per bound key
 mimo_key_max_sessions_per_key = 2  # max sessions bound to a single MiMo key
+mimo_key_overflow_wait_ms = 500    # wait on bound key before spill (ms)

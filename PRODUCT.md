@@ -13,7 +13,7 @@ product
 
 ## Product Purpose
 
-CrabCache 是一个高性能的多供应商 LLM API 网关，专注于缓存优化与可观测透明分析。Admin Dashboard 的主要目的是：
+CrabCache 是一个高性能的多供应商 LLM API 网关，专注于缓存优化与可观测透明分析。内置 **120+ 个 LLM 供应商**（OpenAI、Anthropic、DeepSeek、Groq、xAI、Mistral、Gemini、阿里通义、百度千帆、智谱 GLM 等），Admin Dashboard 的主要目的是：
 
 1. **实时监控**：提供网关性能、缓存命中率、请求量、错误率等关键指标的实时可视化
 2. **配置管理**：允许用户动态配置 API 密钥、上游提供商、缓存策略等

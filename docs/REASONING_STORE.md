@@ -1,6 +1,6 @@
 # ReasoningStore 与稳定会话 scope
 
-本文说明 CrabCache 如何用 **Redis ReasoningStore** 缓存 DeepSeek `reasoning_content`，以及 **稳定会话 scope**（`x-conversation-id` / `prompt_cache_key` / `req:hash`）如何减少 `recover` 与 Cursor 子代理重复 notice。
+本文说明 CrabCache 如何用 **ReasoningStore**（Redis 或 SQLite 双后端）缓存 DeepSeek `reasoning_content`，以及 **稳定会话 scope**（`x-conversation-id` / `prompt_cache_key` / `req:hash`）如何减少 `recover` 与 Cursor 子代理重复 notice。
 
 相关文档：[PERSISTENCE.md](./PERSISTENCE.md)、[CURSOR_SETUP.md](./CURSOR_SETUP.md)、[deploy-1panel-openresty.md](./deploy-1panel-openresty.md)。
 

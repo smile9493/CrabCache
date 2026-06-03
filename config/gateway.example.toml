@@ -869,6 +869,7 @@ max_files = 5
 # mimo_key_binding_ttl_secs = 300       # Idle TTL (seconds) for key bindings; 5 minutes default
 # mimo_key_max_inflight = 3             # Max concurrent requests per bound key (0 = unlimited)
 # mimo_key_max_sessions_per_key = 2    # Max sessions bound to a single MiMo key (1 = strict 1:1 binding)
+# mimo_key_overflow_wait_ms = 500      # Wait on bound key semaphore before spill (ms)
 # codex_key_binding = false             # Session → Codex OAuth account binding (overflow spill on saturation)
 # codex_key_binding_ttl_secs = 300
 # codex_key_max_inflight = 3

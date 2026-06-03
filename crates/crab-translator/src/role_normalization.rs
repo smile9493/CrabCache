@@ -48,7 +48,7 @@ fn normalize_role_name(role: &str) -> Option<&'static str> {
 }
 
 /// Pass 1: Normalize role names (e.g., "human" -> "user", "bot" -> "assistant").
-fn normalize_role_names(messages: &mut Vec<Value>) -> usize {
+fn normalize_role_names(messages: &mut [Value]) -> usize {
     let mut renames = 0;
     for msg in messages.iter_mut() {
         if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {

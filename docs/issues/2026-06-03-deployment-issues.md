@@ -11,9 +11,19 @@ Codex 客户端请求 MiMo 模型时返回 `503 Service Unavailable`。
 - MiMo pool 被误设 `codex_quota_cache`
 - `looks_like_codex_oauth_key()` 拒绝所有 `auto-*` 格式的 MiMo key
 
-### 修复
+### 修复（临时）
 1. `request_filter.rs`: CodexMimo 跳过 codex preflight，走普通 `try_acquire_upstream_key`
 2. `management_profiles.rs`: quota cache 仅分配给 `Codex` provider 的 pool
+
+### 结构性修复（三条独立路径）
+- `is_codex_upstream_pipeline()` 仅匹配 `CodexRelay` / `CodexDeepSeek`，不再包含 `CodexMimo`
+- `CodexMimo` 仅通过 `is_mimo_pipeline()` 归类，使用 MiMo key pool 与 MiMo key binding
+- `upstream_key_acquire_strategy()`：`CodexMimo` 固定走 `StandardUpstreamPool`（非 WHAM preflight）
+- `uses_pool_scaled_retry_budget()`：`CodexMimo` / `MimoTokenPlanRelay` 与 Codex 桥接管线共享按 pool 缩放的 retry budget
+- `response_filter.rs`: 成功时仅对 `is_codex_upstream_pipeline` 重置 Codex session binding，避免与 MiMo binding key 混用
+- `rate_limit_retry.rs`: `codex_only = codex && !mimo` 限定 quota cache 与 OAuth key 轮换
+- 单元测试：`upstream_key_acquire_strategy`、`uses_pool_scaled_retry_budget`、`codex_upstream_pipeline_excludes_codex_mimo`
+- 路由不变：Codex 客户端 + `gpt-*` → `CodexRelay`；+ `deepseek-*` → `CodexDeepSeek`；+ `mimo-*` / `/v1/responses` 升级 → `CodexMimo`
 
 ### 状态: 已修复
 

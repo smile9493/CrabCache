@@ -27,6 +27,21 @@
 
 > CrabCache 仅计划支持 **API Key + OAuth** 类别的 LLM Chat 供应商。
 
+### ID 映射说明
+
+OmniRoute 供应商 ID 与 CrabCache `UpstreamProvider` 枚举名存在差异，主要映射规则：
+
+| OmniRoute ID | CrabCache 枚举 | 说明 |
+|--------------|----------------|------|
+| `xiaomi-mimo` | `Mimo` | CrabCache 统一为 `mimo` |
+| `pplx` | `Perplexity` | OmniRoute 用缩写，CrabCache 用全称 |
+| `hyp` | `Hyperbolic` | 同上 |
+| `ali` / `dashscope` | `Alibaba` | CrabCache 支持多别名 |
+| `zhipu` / `bigmodel` | `Glm` | CrabCache 支持多别名 |
+| `volc` | `Volcengine` | OmniRoute 用缩写 |
+
+完整别名映射见 `crates/crab-pipeline/src/types.rs` 的 `UpstreamProvider::from_str()`。
+
 ---
 
 ## 一、API Key 供应商（LLM Chat，~120 个）

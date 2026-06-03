@@ -13,7 +13,7 @@ L3 由 DeepSeek API 在服务端维护 KV/前缀缓存；CrabCache 通过稳定 
 
 ## L0 prefix-aware（网关侧）
 
-在 `[features].prefix_aware_cache = true` 或 **MiMo 中继管道**（`mimo_relay` / `mimo_token_plan_relay` / `mimo_payg_relay`）下，网关对「共享消息前缀、仅最后一条 user 不同」的请求维护 **prefix → full cache key** 索引（[`tiered.rs`](../crates/crab-cache/src/tiered.rs) `prefix_index`）。
+在 `[features].prefix_aware_cache = true` 或 **MiMo 中继管道**（`mimo_token_plan_relay`，含 `mimo_relay` / `mimo_payg_relay` 别名）下，网关对「共享消息前缀、仅最后一条 user 不同」的请求维护 **prefix → full cache key** 索引（[`tiered.rs`](../crates/crab-cache/src/tiered.rs) `prefix_index`）。
 
 **当前行为（与早期设计稿不同）**：
 
