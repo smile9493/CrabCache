@@ -275,6 +275,12 @@ pub fn trace_log_path() -> String {
 /// Default TTL for the live trace parse cache.
 pub const LIVE_TRACE_CACHE_TTL: Duration = Duration::from_secs(3);
 
+/// Maximum time to wait for a PG query before falling back to stale data.
+const LIVE_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default max entries loaded from PG per live query.
+const DEFAULT_LIVE_MAX_ENTRIES: usize = 10_000;
+
 /// Configurable TTL via environment variable `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS`.
 pub fn live_trace_cache_ttl() -> Duration {
     std::env::var("CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS")
@@ -283,6 +289,15 @@ pub fn live_trace_cache_ttl() -> Duration {
         .filter(|&s| s > 0)
         .map(Duration::from_secs)
         .unwrap_or(LIVE_TRACE_CACHE_TTL)
+}
+
+/// Configurable via `CRABCACHE_LIVE_TRACE_MAX_ENTRIES` environment variable.
+pub fn live_trace_max_entries() -> usize {
+    std::env::var("CRABCACHE_LIVE_TRACE_MAX_ENTRIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_LIVE_MAX_ENTRIES)
 }
 
 /// Live trace cache backed by PG queries.
@@ -303,6 +318,9 @@ pub struct LiveTraceCache {
     pub session_fingerprints: HashSet<String>,
     /// Immutable Arc snapshot returned on cache hit.
     pub cached_arc: Arc<Vec<TraceLogEntry>>,
+    /// Last successful query result — used as fallback when PG query times out.
+    /// Never evicted; only replaced on successful PG fetch.
+    pub stale_arc: Arc<Vec<TraceLogEntry>>,
 }
 
 impl Default for LiveTraceCache {
@@ -315,6 +333,7 @@ impl Default for LiveTraceCache {
             key_ids: HashSet::new(),
             session_fingerprints: HashSet::new(),
             cached_arc: Arc::new(Vec::new()),
+            stale_arc: Arc::new(Vec::new()),
         }
     }
 }
@@ -328,6 +347,7 @@ impl std::fmt::Debug for LiveTraceCache {
             .field("consumers", &self.consumers.len())
             .field("key_ids", &self.key_ids.len())
             .field("session_fingerprints", &self.session_fingerprints.len())
+            .field("stale_len", &self.stale_arc.len())
             .finish()
     }
 }
@@ -379,15 +399,21 @@ fn rebuild_live_cache(
         })
         .collect();
     let arc = Arc::new(filtered);
-    *cache.write() = LiveTraceCache {
-        parsed_at: Some(Instant::now()),
-        window_secs,
-        entries: arc.as_ref().clone(),
-        consumers,
-        key_ids,
-        session_fingerprints,
-        cached_arc: Arc::clone(&arc),
-    };
+    let mut guard = cache.write();
+    guard.parsed_at = Some(Instant::now());
+    guard.window_secs = window_secs;
+    guard.entries = arc.as_ref().clone();
+    guard.consumers = consumers;
+    guard.key_ids = key_ids;
+    guard.session_fingerprints = session_fingerprints;
+    guard.cached_arc = Arc::clone(&arc);
+    // Only overwrite stale_arc when new data is non-empty, or when stale is
+    // also empty (first query). This preserves the last successful result
+    // when PG returns an error that gets unwrapped to an empty Vec.
+    if !arc.is_empty() || guard.stale_arc.is_empty() {
+        guard.stale_arc = Arc::clone(&arc);
+    }
+    drop(guard);
     arc
 }
 
@@ -411,11 +437,26 @@ async fn load_live_trace_entries_from_pg(
         .unwrap_or_default()
         .as_millis() as u64;
     let from_ms = now_ms.saturating_sub(u64::from(window_secs) * 1000);
-    let entries = pg
-        .load_trace_logs(Some(from_ms), None, None, None, None, None, 50_000)
-        .await
-        .unwrap_or_default();
-    rebuild_live_cache(cache, window_secs, entries)
+    let max_entries = live_trace_max_entries();
+    let query = async {
+        pg.load_trace_logs(Some(from_ms), None, None, None, None, None, max_entries)
+            .await
+            .unwrap_or_default()
+    };
+    match tokio::time::timeout(LIVE_QUERY_TIMEOUT, query).await {
+        Ok(entries) => rebuild_live_cache(cache, window_secs, entries),
+        Err(_elapsed) => {
+            tracing::warn!(
+                window_secs,
+                timeout_secs = LIVE_QUERY_TIMEOUT.as_secs(),
+                "Live trace PG query timed out, returning stale data"
+            );
+            // Reset TTL so stale data is served with the normal cooldown
+            // window, preventing cascading PG queries on every 2s poll.
+            cache.write().parsed_at = Some(Instant::now());
+            cache.read().stale_arc.clone()
+        }
+    }
 }
 
 /// Live trace entries from PG. Falls back to empty if PG is unavailable.

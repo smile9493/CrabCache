@@ -92,6 +92,16 @@ Dashboard **实时监控 / Live** 页面每 **2 秒**轮询 **`GET /api/admin/li
 
 **性能：** `LiveTraceCache` 在 `crab-admin` 中缓存 **3 秒**（可通过 `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` 配置，默认 3），文件追加时仅读取新字节（增量 tail）。文件轮转时自动全量重建。Dashboard 每 **2 秒**（5m 窗口）或 **3 秒**（15m 窗口）轮询，浏览器标签页隐藏时暂停。
 
+**502 防护：** `load_live_trace_entries_from_pg` 对 PG 查询施加 **10 秒超时**（`LIVE_QUERY_TIMEOUT`）；超时时返回上一次成功的 stale 数据（`LiveTraceCache.stale_arc`），而非返回空结果。`get_live_metrics` handler 外层另有 **15 秒请求级超时**作为兜底。Dashboard 前端 fetch 失败时保留上一次成功数据并显示非阻塞错误横幅，图表不消失。
+
+#### 调优建议
+
+| 变量 | 默认值 | 建议值 | 说明 |
+|------|--------|--------|------|
+| `CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS` | 3 | 5 | 高流量下增大缓存 TTL 减少 PG 查询频率 |
+| `CRABCACHE_LIVE_TRACE_MAX_ENTRIES` | 10000 | — | 每次 PG 查询最大返回条数（覆盖默认 10K） |
+| `CRADMIN_PG_MAX_POOL_SIZE` | 24 | 32 | Admin PG 连接池大小；并发页面轮询多时增大 |
+
 **响应字段：** `available_consumers`（最多 50 个来自 trace 的名称，Dashboard 优先从此端点获取以移除 keys 硬依赖）、`buckets[].upstream_latency_ms` / `ttft_ms` 在桶中没有上游/TTFT 样本时（缓存命中）为 `null`，桶中还包含 `upstream_sample_count` / `ttft_sample_count` 以支持加权聚合。
 
 ### 客户端 Key 并发（in-flight）

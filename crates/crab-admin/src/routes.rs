@@ -3687,10 +3687,24 @@ async fn get_live_metrics(
     let key_id = query.key_id.clone();
     let session_fingerprint = query.session_fingerprint.clone();
     let group_by = query.group_by.clone();
+
+    // Request-level timeout: if the entire handler takes >15s (e.g. PG pool
+    // exhaustion + slow query), return stale data from the cache rather than
+    // letting OpenResty return a 502.
     let entries = {
         let pg = state.pg_store.read().clone();
         if let Some(ref pg) = pg {
-            crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs).await
+            let query_fut =
+                crate::trace_log::load_live_trace_entries(&state.live_trace_cache, pg, window_secs);
+            match tokio::time::timeout(std::time::Duration::from_secs(15), query_fut).await {
+                Ok(entries) => entries,
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        "get_live_metrics: request-level timeout (15s), returning stale cache"
+                    );
+                    state.live_trace_cache.read().stale_arc.clone()
+                }
+            }
         } else {
             Arc::new(Vec::new())
         }

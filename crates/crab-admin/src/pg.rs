@@ -46,7 +46,7 @@ const PG_POOL_SIZE_ENV: &str = "CRADMIN_PG_MAX_POOL_SIZE";
 /// Whether to auto-import JSON state on first PG start.
 const PG_MIGRATE_ENV: &str = "CRADMIN_PG_MIGRATE_FROM_JSON";
 
-const DEFAULT_POOL_SIZE: usize = 16;
+const DEFAULT_POOL_SIZE: usize = 24;
 
 /// Parsed PG configuration.  `None` URL means PG is disabled.
 pub struct PgConfig {
@@ -230,7 +230,7 @@ impl PgStore {
         cfg.pool = Some(deadpool_postgres::PoolConfig {
             max_size: max_pool_size,
             timeouts: deadpool_postgres::Timeouts {
-                wait: Some(Duration::from_secs(10)),
+                wait: Some(Duration::from_secs(5)),
                 create: Some(Duration::from_secs(5)),
                 recycle: Some(Duration::from_secs(5)),
             },
