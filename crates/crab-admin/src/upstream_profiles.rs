@@ -1,10 +1,10 @@
 //! Admin API proxy for gateway upstream profiles.
 //!
-//! **Cold storage policy**: every profile key pool mutation (Replace / Append / Patch / Delete)
-//! must persist to PostgreSQL (`upstream_profile_secrets`) before pushing to Gateway.
-//! Gateway Redis holds runtime hot state only; PG is the long-term source of truth.
+//! **Cold storage policy**: profile metadata → `upstream_profile_configs` (PG);
+//! key pool mutations → `upstream_profile_secrets` (PG). Both must persist before
+//! pushing to Gateway. Gateway Redis holds runtime hot state only.
 
-use crate::persist::PersistedUpstreamPoolSecret;
+use crate::persist::{PersistedUpstreamPoolSecret, PersistedUpstreamProfileConfig};
 use crate::state::{AppState, UpstreamPoolSecret};
 use crate::types::upstream_test_from_control;
 use crate::types::{
@@ -18,6 +18,62 @@ use crab_admin_types::upstream::UpstreamKeyView;
 use crab_control::{PutUpstreamProfileRequest, UpstreamProfileView, UpstreamProfilesResponse};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+fn profile_config_from_put(id: &str, req: &PutUpstreamProfileAdminRequest) -> PersistedUpstreamProfileConfig {
+    PersistedUpstreamProfileConfig {
+        profile_id: id.to_string(),
+        provider: req.provider.clone(),
+        base_url: req.base_url.clone(),
+        fallback_model: req.fallback_model.clone(),
+        endpoints: req.endpoints.clone(),
+        tls_sni: req.tls_sni.clone(),
+        proxy_url: req.proxy_url.clone(),
+        fallback_profile_id: req.fallback_profile_id.clone(),
+        fallback_max_retries: req.fallback_max_retries,
+    }
+}
+
+fn put_request_from_config(cfg: &PersistedUpstreamProfileConfig) -> PutUpstreamProfileRequest {
+    PutUpstreamProfileRequest {
+        provider: cfg.provider.clone(),
+        base_url: cfg.base_url.clone(),
+        fallback_model: cfg.fallback_model.clone(),
+        endpoints: cfg.endpoints.clone(),
+        tls_sni: cfg.tls_sni.clone(),
+        default_weight: 1,
+        proxy_url: cfg.proxy_url.clone(),
+        fallback_profile_id: cfg.fallback_profile_id.clone(),
+        fallback_max_retries: cfg.fallback_max_retries,
+    }
+}
+
+pub async fn push_profile_config_to_gateway(
+    state: &AppState,
+    cfg: &PersistedUpstreamProfileConfig,
+) -> Result<(), String> {
+    let gw_req = put_request_from_config(cfg);
+    state
+        .gateway
+        .put_upstream_profile(&cfg.profile_id, &gw_req)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+async fn persist_profile_config_to_pg(state: &AppState, cfg: &PersistedUpstreamProfileConfig) {
+    let pg = state.pg_store.read().clone();
+    let Some(pg) = pg else {
+        return;
+    };
+    let _guard = state.pg_write_lock.lock().await;
+    if let Err(e) = pg.upsert_profile_config(cfg).await {
+        tracing::warn!(
+            error = %e,
+            profile_id = %cfg.profile_id,
+            "PG persist upstream profile config failed (non-fatal)"
+        );
+    }
+}
 
 fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
     UpstreamProfileAdminView {
@@ -35,16 +91,70 @@ fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
     }
 }
 
+fn profile_view_from_config(cfg: &PersistedUpstreamProfileConfig) -> UpstreamProfileAdminView {
+    UpstreamProfileAdminView {
+        id: cfg.profile_id.clone(),
+        provider: cfg.provider.clone(),
+        base_url: cfg.base_url.clone(),
+        fallback_model: cfg.fallback_model.clone(),
+        endpoints: cfg.endpoints.clone(),
+        tls_sni: cfg.tls_sni.clone().unwrap_or_default(),
+        key_pool_count: 0,
+        keys_available: 0,
+        proxy_url: cfg.proxy_url.clone(),
+        fallback_profile_id: cfg.fallback_profile_id.clone(),
+        fallback_max_retries: cfg.fallback_max_retries.unwrap_or(2),
+    }
+}
+
+fn overlay_config_metadata(view: &mut UpstreamProfileAdminView, cfg: &PersistedUpstreamProfileConfig) {
+    view.provider = cfg.provider.clone();
+    view.base_url = cfg.base_url.clone();
+    view.fallback_model = cfg.fallback_model.clone();
+    view.endpoints = cfg.endpoints.clone();
+    view.tls_sni = cfg.tls_sni.clone().unwrap_or_default();
+    view.proxy_url = cfg.proxy_url.clone();
+    view.fallback_profile_id = cfg.fallback_profile_id.clone();
+    view.fallback_max_retries = cfg.fallback_max_retries.unwrap_or(2);
+}
+
+fn merge_profiles_with_pg_configs(
+    gateway: UpstreamProfilesResponse,
+    configs: &HashMap<String, PersistedUpstreamProfileConfig>,
+) -> Vec<UpstreamProfileAdminView> {
+    let mut by_id: HashMap<String, UpstreamProfileAdminView> = gateway
+        .profiles
+        .into_iter()
+        .map(|p| {
+            let id = p.id.clone();
+            (id, map_profile(p))
+        })
+        .collect();
+
+    for (id, cfg) in configs {
+        let entry = by_id
+            .entry(id.clone())
+            .or_insert_with(|| profile_view_from_config(cfg));
+        overlay_config_metadata(entry, cfg);
+    }
+
+    let mut profiles: Vec<_> = by_id.into_values().collect();
+    profiles.sort_by(|a, b| a.id.cmp(&b.id));
+    profiles
+}
+
 pub async fn list_profiles(state: &Arc<AppState>) -> Result<UpstreamProfilesAdminResponse, String> {
     let resp: UpstreamProfilesResponse = state
         .gateway
         .list_upstream_profiles()
         .await
         .map_err(|e| e.to_string())?;
+    let configs = state.upstream_profile_configs.read().clone();
+    let profiles = merge_profiles_with_pg_configs(resp.clone(), &configs);
     state.refresh_profile_providers().await;
     Ok(UpstreamProfilesAdminResponse {
         default_profile_id: resp.default_profile_id,
-        profiles: resp.profiles.into_iter().map(map_profile).collect(),
+        profiles,
     })
 }
 
@@ -53,27 +163,46 @@ pub async fn put_profile(
     id: &str,
     req: PutUpstreamProfileAdminRequest,
 ) -> Result<UpstreamProfileAdminView, String> {
-    let gw_req = PutUpstreamProfileRequest {
-        provider: req.provider,
-        base_url: req.base_url,
-        fallback_model: req.fallback_model,
-        endpoints: req.endpoints,
-        tls_sni: req.tls_sni,
-        default_weight: 1,
-        proxy_url: req.proxy_url,
-        fallback_profile_id: req.fallback_profile_id,
-        fallback_max_retries: req.fallback_max_retries,
-    };
+    let cfg = profile_config_from_put(id, &req);
+    {
+        let mut map = state.upstream_profile_configs.write();
+        map.insert(id.to_string(), cfg.clone());
+    }
+    persist_profile_config_to_pg(state, &cfg).await;
+    state.flush_persist();
+
     let view = state
         .gateway
-        .put_upstream_profile(id, &gw_req)
+        .put_upstream_profile(id, &put_request_from_config(&cfg))
         .await
         .map_err(|e| e.to_string())?;
     state.refresh_profile_providers().await;
-    Ok(map_profile(view))
+    let mut merged = map_profile(view);
+    overlay_config_metadata(&mut merged, &cfg);
+    Ok(merged)
 }
 
 pub async fn delete_profile(state: &Arc<AppState>, id: &str) -> Result<(), String> {
+    {
+        let mut map = state.upstream_profile_configs.write();
+        map.remove(id);
+    }
+    {
+        let mut map = state.upstream_profile_secrets.write();
+        map.remove(id);
+    }
+    let pg = state.pg_store.read().clone();
+    if let Some(pg) = pg {
+        let _guard = state.pg_write_lock.lock().await;
+        if let Err(e) = pg.delete_profile_config(id).await {
+            tracing::warn!(error = %e, profile_id = %id, "PG delete profile config failed");
+        }
+        if let Err(e) = pg.replace_profile_secrets(id, &[]).await {
+            tracing::warn!(error = %e, profile_id = %id, "PG delete profile secrets failed");
+        }
+    }
+    state.flush_persist();
+
     state
         .gateway
         .delete_upstream_profile(id)
@@ -324,7 +453,7 @@ pub async fn patch_profile_key(
                             secret: p.secret.clone(),
                             enabled: p.enabled,
                             account_id: p.account_id.clone(),
-                            priority: 0,
+                            priority: p.priority,
                         })
                         .collect(),
                 );

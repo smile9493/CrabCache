@@ -65,6 +65,8 @@ pub struct AppState {
     pub upstream_pool_secrets: RwLock<Vec<UpstreamPoolSecret>>,
     /// Per-profile upstream API keys for model sync (admin-side cache).
     pub upstream_profile_secrets: RwLock<HashMap<String, Vec<UpstreamPoolSecret>>>,
+    /// Per-profile upstream metadata (provider, base_url, endpoints) — PG authoritative.
+    pub upstream_profile_configs: RwLock<HashMap<String, persist::PersistedUpstreamProfileConfig>>,
     /// profile_id → provider string (from gateway; used for model metadata).
     pub upstream_profile_providers: RwLock<HashMap<String, String>>,
     pub upstream_notes: RwLock<Option<String>>,
@@ -600,6 +602,7 @@ impl AppState {
             upstream_api_key,
             upstream_pool_secrets: RwLock::new(pool_secrets),
             upstream_profile_secrets: RwLock::new(loaded.upstream_profile_secrets.into()),
+            upstream_profile_configs: RwLock::new(loaded.upstream_profile_configs.into()),
             upstream_profile_providers: RwLock::new(HashMap::new()),
             upstream_notes: RwLock::new(loaded.upstream_notes),
             last_upstream_test: RwLock::new(loaded.last_upstream_test),
@@ -809,6 +812,348 @@ impl AppState {
         }
     }
 
+    /// Persist a single key's metadata (including full token) to PostgreSQL immediately.
+    pub async fn persist_key_meta_to_pg(&self, meta: &KeyMetadata) {
+        let Some(pg) = self.pg_store.read().clone() else {
+            return;
+        };
+        let persisted = persist::PersistedKeyMetadata::from(meta);
+        if let Err(e) = pg.upsert_key(&persisted).await {
+            tracing::warn!(
+                error = %e,
+                key_id = %meta.id,
+                "PG upsert_key failed (non-fatal)"
+            );
+        }
+    }
+
+    /// Restore client key metadata (budgets, quotas) from PostgreSQL.
+    pub async fn hydrate_client_keys_from_pg(&self) -> bool {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return false;
+        };
+        match pg.load_all_keys().await {
+            Ok(keys) if !keys.is_empty() => {
+                self.keys_meta.clear();
+                for key in keys {
+                    let meta: KeyMetadata = key.into();
+                    self.keys_meta.insert(meta.id.clone(), meta);
+                }
+                self.flush_persist();
+                tracing::info!(
+                    count = self.keys_meta.len(),
+                    "Client key metadata restored from PostgreSQL"
+                );
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load client keys from PostgreSQL");
+                false
+            }
+        }
+    }
+
+    /// Restore domain policies (budgets) from PostgreSQL.
+    pub async fn hydrate_domain_policies_from_pg(&self) -> bool {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return false;
+        };
+        match pg.load_policies().await {
+            Ok(policies) if !policies.is_empty() => {
+                let mapped: Vec<DomainPolicy> = policies
+                    .into_iter()
+                    .map(|p| DomainPolicy {
+                        domain: p.domain,
+                        monthly_token_budget: p.monthly_token_budget,
+                        monthly_cost_budget_usd: p.monthly_cost_budget_usd,
+                        min_hit_rate: p.min_hit_rate,
+                        enabled: p.enabled,
+                        pipeline: p.pipeline,
+                        upstream_profile: p.upstream_profile,
+                    })
+                    .collect();
+                *self.domain_policies.write() = mapped;
+                self.flush_persist();
+                tracing::info!(
+                    count = self.domain_policies.read().len(),
+                    "Domain policies restored from PostgreSQL"
+                );
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load domain policies from PostgreSQL");
+                false
+            }
+        }
+    }
+
+    /// Merge gateway key list into Admin metadata without wiping PG budgets.
+    pub async fn sync_keys_meta_from_gateway(&self) {
+        match self.gateway.list_keys().await {
+            Ok(specs) => {
+                use dashmap::mapref::entry::Entry;
+                for spec in specs {
+                    match self.keys_meta.entry(spec.id.clone()) {
+                        Entry::Vacant(v) => {
+                            v.insert(KeyMetadata {
+                                id: spec.id.clone(),
+                                name: spec.name.clone(),
+                                token: spec.key_full.clone().unwrap_or_default(),
+                                rpm_limit: spec.rpm_limit as u64,
+                                monthly_token_limit: 0,
+                                current_rpm: 0,
+                                tokens_this_month: 0,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                expired_at: None,
+                                model_limits: Vec::new(),
+                                remain_quota: -1,
+                                unlimited_quota: true,
+                                max_concurrent: spec.max_concurrent,
+                                usage_month: String::new(),
+                            });
+                        }
+                        Entry::Occupied(mut o) => {
+                            let m = o.get_mut();
+                            m.name = spec.name.clone();
+                            m.max_concurrent = spec.max_concurrent;
+                            m.rpm_limit = spec.rpm_limit as u64;
+                            if let Some(full) = spec.key_full.filter(|t| !t.is_empty()) {
+                                m.token = full;
+                            }
+                        }
+                    }
+                }
+                tracing::info!(
+                    count = self.keys_meta.len(),
+                    "Synced API keys from gateway (preserved Admin budgets)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Gateway management API unreachable; key sync skipped"
+                );
+            }
+        }
+    }
+
+    /// Push client keys missing on Gateway (e.g. after hot reload wiped Redis).
+    pub async fn reconcile_client_keys_to_gateway(&self) -> usize {
+        let gateway_specs = match self.gateway.list_keys().await {
+            Ok(specs) => specs,
+            Err(e) => {
+                tracing::warn!(error = %e, "Cannot reconcile client keys: gateway list failed");
+                return 0;
+            }
+        };
+        // Gateway list_keys never returns key_full; match by stable key id instead.
+        let gateway_ids: std::collections::HashSet<String> = gateway_specs
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        let mut restored = 0usize;
+        for entry in self.keys_meta.iter() {
+            let meta = entry.value();
+            if meta.token.is_empty() || gateway_ids.contains(&meta.id) {
+                continue;
+            }
+            match self
+                .gateway
+                .create_key(&crab_control::CreateGatewayKeyRequest {
+                    name: meta.name.clone(),
+                    enabled: true,
+                    token: Some(meta.token.clone()),
+                    domain: None,
+                    project_id: None,
+                    pipeline: None,
+                    upstream_profile: None,
+                    max_concurrent: Some(meta.max_concurrent),
+                    rpm_limit: Some(meta.rpm_limit as u32),
+                })
+                .await
+            {
+                Ok(created) => {
+                    restored += 1;
+                    tracing::info!(
+                        key_id = %created.id,
+                        name = %meta.name,
+                        "Restored client key on gateway from Admin PG metadata"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        key_id = %meta.id,
+                        "Failed to restore client key on gateway"
+                    );
+                }
+            }
+        }
+        restored
+    }
+
+    /// Restore upstream profile metadata from PostgreSQL into memory.
+    pub async fn hydrate_profile_configs_from_pg(&self) -> bool {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return false;
+        };
+        match pg.load_profile_configs().await {
+            Ok(map) if !map.is_empty() => {
+                let count = map.len();
+                *self.upstream_profile_configs.write() = map;
+                self.flush_persist();
+                tracing::info!(
+                    profiles = count,
+                    "Upstream profile configs restored from PostgreSQL"
+                );
+                true
+            }
+            Ok(_) => {
+                self.sync_profile_configs_memory_to_pg().await;
+                false
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load profile configs from PostgreSQL");
+                false
+            }
+        }
+    }
+
+    /// Backfill PG when in-memory/json mirror has configs but cold store is empty.
+    pub async fn sync_profile_configs_memory_to_pg(&self) {
+        let pg = self.pg_store.read().clone();
+        let Some(pg) = pg else {
+            return;
+        };
+        let configs: Vec<persist::PersistedUpstreamProfileConfig> = self
+            .upstream_profile_configs
+            .read()
+            .values()
+            .cloned()
+            .collect();
+        if configs.is_empty() {
+            return;
+        }
+        let _guard = self.pg_write_lock.lock().await;
+        let mut written = 0usize;
+        for cfg in &configs {
+            if pg.upsert_profile_config(cfg).await.is_ok() {
+                written += 1;
+            }
+        }
+        if written > 0 {
+            tracing::info!(
+                profiles = written,
+                "Synced upstream profile configs from memory to PostgreSQL"
+            );
+        }
+    }
+
+    /// One-time bootstrap: capture gateway profile metadata into PG when cold store is empty.
+    pub async fn bootstrap_profile_configs_from_gateway_if_empty(&self) {
+        if !self.upstream_profile_configs.read().is_empty() {
+            return;
+        }
+        let Ok(resp) = self.gateway.list_upstream_profiles().await else {
+            return;
+        };
+        if resp.profiles.is_empty() {
+            return;
+        }
+        let mut configs = HashMap::new();
+        for p in resp.profiles {
+            configs.insert(
+                p.id.clone(),
+                persist::PersistedUpstreamProfileConfig {
+                    profile_id: p.id.clone(),
+                    provider: p.provider.clone(),
+                    base_url: p.base_url.clone(),
+                    fallback_model: p.fallback_model.clone(),
+                    endpoints: p.endpoints.clone(),
+                    tls_sni: if p.tls_sni.is_empty() {
+                        None
+                    } else {
+                        Some(p.tls_sni.clone())
+                    },
+                    proxy_url: p.proxy_url.clone(),
+                    fallback_profile_id: p.fallback_profile_id.clone(),
+                    fallback_max_retries: Some(p.fallback_max_retries),
+                },
+            );
+        }
+        *self.upstream_profile_configs.write() = configs.clone();
+        self.flush_persist();
+        let pg = self.pg_store.read().clone();
+        if let Some(pg) = pg {
+            let _guard = self.pg_write_lock.lock().await;
+            for cfg in configs.values() {
+                if let Err(e) = pg.upsert_profile_config(cfg).await {
+                    tracing::warn!(
+                        error = %e,
+                        profile_id = %cfg.profile_id,
+                        "Bootstrap profile config PG write failed"
+                    );
+                }
+            }
+        }
+        tracing::info!(
+            profiles = configs.len(),
+            "Bootstrapped upstream profile configs from gateway"
+        );
+    }
+
+    /// Push profile metadata then key pools to Gateway (PG → hot pipe order).
+    pub async fn push_all_upstream_to_gateway(&self) {
+        let configs: Vec<persist::PersistedUpstreamProfileConfig> = self
+            .upstream_profile_configs
+            .read()
+            .values()
+            .cloned()
+            .collect();
+        for cfg in &configs {
+            if let Err(e) = crate::upstream_profiles::push_profile_config_to_gateway(self, cfg).await
+            {
+                tracing::warn!(
+                    profile_id = %cfg.profile_id,
+                    error = %e,
+                    "Failed to push profile metadata to gateway"
+                );
+            }
+        }
+        self.push_all_profile_pools_to_gateway().await;
+    }
+
+    /// Push all cached profile key pools to Gateway (after PG hydration or recovery).
+    pub async fn push_all_profile_pools_to_gateway(&self) {
+        let profile_ids: Vec<String> = self
+            .upstream_profile_secrets
+            .read()
+            .keys()
+            .cloned()
+            .collect();
+        for profile_id in profile_ids {
+            if let Err(e) = crate::upstream_profiles::sync_profile_pool_to_gateway(
+                self,
+                &profile_id,
+                crate::types::UpstreamKeysPutMode::Replace,
+            )
+            .await
+            {
+                tracing::warn!(
+                    profile_id = %profile_id,
+                    error = %e,
+                    "Failed to push profile pool to gateway after PG hydrate"
+                );
+            }
+        }
+    }
+
     /// Restore system configs from PostgreSQL into memory (PG is authoritative when enabled).
     /// Returns the number of configs restored.
     pub async fn hydrate_system_configs_from_pg(&self) -> usize {
@@ -884,31 +1229,6 @@ impl AppState {
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to load system configs from PostgreSQL");
                 0
-            }
-        }
-    }
-
-    /// Push all cached profile key pools to Gateway (after PG hydration or recovery).
-    pub async fn push_all_profile_pools_to_gateway(&self) {
-        let profile_ids: Vec<String> = self
-            .upstream_profile_secrets
-            .read()
-            .keys()
-            .cloned()
-            .collect();
-        for profile_id in profile_ids {
-            if let Err(e) = crate::upstream_profiles::sync_profile_pool_to_gateway(
-                self,
-                &profile_id,
-                crate::types::UpstreamKeysPutMode::Replace,
-            )
-            .await
-            {
-                tracing::warn!(
-                    profile_id = %profile_id,
-                    error = %e,
-                    "Failed to push profile pool to gateway after PG hydrate"
-                );
             }
         }
     }
@@ -1013,6 +1333,8 @@ impl AppState {
             .collect();
         let profile_secrets: persist::PersistedProfileSecrets =
             (&*self.upstream_profile_secrets.read()).into();
+        let profile_configs: persist::PersistedProfileConfigs =
+            (&*self.upstream_profile_configs.read()).into();
         let pool_secrets: Vec<persist::PersistedUpstreamPoolSecret> = self
             .upstream_pool_secrets
             .read()
@@ -1033,6 +1355,7 @@ impl AppState {
             &keys_meta,
             &domain_policies,
             &profile_secrets,
+            &profile_configs,
             &pool_secrets,
         );
 

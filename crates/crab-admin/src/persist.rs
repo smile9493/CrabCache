@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const STATE_VERSION: u32 = 4;
+const STATE_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminStateFile {
@@ -28,9 +28,37 @@ pub struct AdminStateFile {
     /// Per-profile upstream API keys for model sync (v3).
     #[serde(default)]
     pub upstream_profile_secrets: PersistedProfileSecrets,
+    /// Per-profile upstream metadata (provider, base_url, endpoints) — PG mirror (v5).
+    #[serde(default)]
+    pub upstream_profile_configs: PersistedProfileConfigs,
     /// Default (deepseek) upstream key pool secrets (v4).
     #[serde(default)]
     pub upstream_pool_secrets: Vec<PersistedUpstreamPoolSecret>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PersistedProfileConfigs {
+    #[serde(default)]
+    pub by_profile: std::collections::HashMap<String, PersistedUpstreamProfileConfig>,
+}
+
+/// Cold-store mirror of upstream profile metadata (authoritative in PostgreSQL).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedUpstreamProfileConfig {
+    pub profile_id: String,
+    pub provider: String,
+    pub base_url: String,
+    pub fallback_model: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    #[serde(default)]
+    pub tls_sni: Option<String>,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub fallback_profile_id: Option<String>,
+    #[serde(default)]
+    pub fallback_max_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -156,7 +184,7 @@ impl PersistHandle {
         match std::fs::read_to_string(&self.path) {
             Ok(content) => {
                 let mut file: AdminStateFile = serde_json::from_str(&content).unwrap_or_default();
-                file.migrate_v4();
+                file.migrate_v5();
                 file
             }
             Err(_) => AdminStateFile::default(),
@@ -241,6 +269,15 @@ impl AdminStateFile {
         // v4 adds upstream_pool_secrets; serde(default) handles existing files.
         self.version = 4;
     }
+
+    fn migrate_v5(&mut self) {
+        self.migrate_v4();
+        if self.version >= 5 {
+            return;
+        }
+        // v5 adds upstream_profile_configs; serde(default) handles existing files.
+        self.version = 5;
+    }
 }
 
 impl Default for AdminStateFile {
@@ -254,6 +291,7 @@ impl Default for AdminStateFile {
             keys_meta: Vec::new(),
             domain_policies: Vec::new(),
             upstream_profile_secrets: PersistedProfileSecrets::default(),
+            upstream_profile_configs: PersistedProfileConfigs::default(),
             upstream_pool_secrets: Vec::new(),
         }
     }
@@ -366,6 +404,7 @@ pub fn build_state_file(
     keys_meta: &[PersistedKeyMetadata],
     domain_policies: &[PersistedDomainPolicy],
     profile_secrets: &PersistedProfileSecrets,
+    profile_configs: &PersistedProfileConfigs,
     pool_secrets: &[PersistedUpstreamPoolSecret],
 ) -> AdminStateFile {
     AdminStateFile {
@@ -381,6 +420,7 @@ pub fn build_state_file(
         keys_meta: keys_meta.to_vec(),
         domain_policies: domain_policies.to_vec(),
         upstream_profile_secrets: profile_secrets.clone(),
+        upstream_profile_configs: profile_configs.clone(),
         upstream_pool_secrets: pool_secrets.to_vec(),
     }
 }
@@ -436,6 +476,24 @@ impl From<PersistedProfileSecrets>
                 )
             })
             .collect()
+    }
+}
+
+impl From<&std::collections::HashMap<String, PersistedUpstreamProfileConfig>>
+    for PersistedProfileConfigs
+{
+    fn from(map: &std::collections::HashMap<String, PersistedUpstreamProfileConfig>) -> Self {
+        PersistedProfileConfigs {
+            by_profile: map.clone(),
+        }
+    }
+}
+
+impl From<PersistedProfileConfigs>
+    for std::collections::HashMap<String, PersistedUpstreamProfileConfig>
+{
+    fn from(p: PersistedProfileConfigs) -> Self {
+        p.by_profile
     }
 }
 

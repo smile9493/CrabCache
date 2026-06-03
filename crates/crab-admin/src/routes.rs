@@ -81,7 +81,8 @@ fn gateway_status_code(err: &crab_control::ControlError) -> StatusCode {
         crab_control::ControlError::Http { status, .. } if (400..500).contains(status) => {
             StatusCode::BAD_GATEWAY
         }
-        _ => StatusCode::BAD_GATEWAY,
+        crab_control::ControlError::Request(_) => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -1631,7 +1632,8 @@ async fn create_key(
         max_concurrent,
         usage_month: String::new(),
     };
-    state.keys_meta.insert(created.id.clone(), meta);
+    state.keys_meta.insert(created.id.clone(), meta.clone());
+    state.persist_key_meta_to_pg(&meta).await;
     state.flush_persist();
 
     audit_log(

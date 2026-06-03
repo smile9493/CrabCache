@@ -382,6 +382,23 @@ impl PgStore {
 
         client
             .execute(
+                "CREATE TABLE IF NOT EXISTS upstream_profile_configs (
+                    profile_id            TEXT PRIMARY KEY,
+                    provider              TEXT NOT NULL,
+                    base_url              TEXT NOT NULL,
+                    fallback_model        TEXT NOT NULL,
+                    endpoints             JSONB NOT NULL DEFAULT '[]',
+                    tls_sni               TEXT,
+                    proxy_url             TEXT,
+                    fallback_profile_id   TEXT,
+                    fallback_max_retries  INTEGER
+                )",
+                &[],
+            )
+            .await?;
+
+        client
+            .execute(
                 "CREATE TABLE IF NOT EXISTS oauth_credentials (
                     id          TEXT PRIMARY KEY,
                     provider    TEXT NOT NULL,
@@ -1575,15 +1592,23 @@ impl PgStore {
 
         let stmt = tx
             .prepare_cached(
-                "INSERT INTO upstream_profile_secrets (profile_id, key_id, secret, enabled, account_id)
-                 VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO upstream_profile_secrets (profile_id, key_id, secret, enabled, account_id, priority)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .await?;
 
         for s in secrets {
+            let priority = i32::try_from(s.priority).unwrap_or(0);
             tx.execute(
                 &stmt,
-                &[&profile_id, &s.id, &s.secret, &s.enabled, &s.account_id],
+                &[
+                    &profile_id,
+                    &s.id,
+                    &s.secret,
+                    &s.enabled,
+                    &s.account_id,
+                    &priority,
+                ],
             )
             .await?;
         }
@@ -1598,7 +1623,7 @@ impl PgStore {
         let client = self.pool.get().await?;
         let rows = client
             .query(
-                "SELECT profile_id, key_id, secret, enabled, account_id
+                "SELECT profile_id, key_id, secret, enabled, account_id, priority
                  FROM upstream_profile_secrets ORDER BY profile_id, key_id",
                 &[],
             )
@@ -1607,6 +1632,7 @@ impl PgStore {
         let mut map: HashMap<String, Vec<PersistedUpstreamPoolSecret>> = HashMap::new();
         for row in rows {
             let pid: String = row.get(0);
+            let priority_i32: i32 = row.get(5);
             map.entry(pid)
                 .or_default()
                 .push(PersistedUpstreamPoolSecret {
@@ -1614,8 +1640,99 @@ impl PgStore {
                     secret: row.get(2),
                     enabled: row.get(3),
                     account_id: row.get(4),
-                    priority: 0,
+                    priority: u32::try_from(priority_i32).unwrap_or(0),
                 });
+        }
+        Ok(map)
+    }
+
+    // -----------------------------------------------------------------------
+    // upstream_profile_configs CRUD (profile metadata cold store)
+    // -----------------------------------------------------------------------
+
+    pub async fn upsert_profile_config(
+        &self,
+        cfg: &crate::persist::PersistedUpstreamProfileConfig,
+    ) -> Result<()> {
+        let endpoints = serde_json::to_value(&cfg.endpoints)?;
+        let fallback_max_retries: Option<i32> =
+            cfg.fallback_max_retries.map(|v| i32::try_from(v).unwrap_or(i32::MAX));
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "INSERT INTO upstream_profile_configs
+                    (profile_id, provider, base_url, fallback_model, endpoints,
+                     tls_sni, proxy_url, fallback_profile_id, fallback_max_retries)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (profile_id) DO UPDATE SET
+                    provider = EXCLUDED.provider,
+                    base_url = EXCLUDED.base_url,
+                    fallback_model = EXCLUDED.fallback_model,
+                    endpoints = EXCLUDED.endpoints,
+                    tls_sni = EXCLUDED.tls_sni,
+                    proxy_url = EXCLUDED.proxy_url,
+                    fallback_profile_id = EXCLUDED.fallback_profile_id,
+                    fallback_max_retries = EXCLUDED.fallback_max_retries",
+                &[
+                    &cfg.profile_id,
+                    &cfg.provider,
+                    &cfg.base_url,
+                    &cfg.fallback_model,
+                    &endpoints,
+                    &cfg.tls_sni,
+                    &cfg.proxy_url,
+                    &cfg.fallback_profile_id,
+                    &fallback_max_retries,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_profile_config(&self, profile_id: &str) -> Result<()> {
+        let client = self.pool.get().await?;
+        client
+            .execute(
+                "DELETE FROM upstream_profile_configs WHERE profile_id = $1",
+                &[&profile_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn load_profile_configs(
+        &self,
+    ) -> Result<HashMap<String, crate::persist::PersistedUpstreamProfileConfig>> {
+        let client = self.pool.get().await?;
+        let rows = client
+            .query(
+                "SELECT profile_id, provider, base_url, fallback_model, endpoints,
+                        tls_sni, proxy_url, fallback_profile_id, fallback_max_retries
+                 FROM upstream_profile_configs ORDER BY profile_id",
+                &[],
+            )
+            .await?;
+
+        let mut map = HashMap::new();
+        for row in rows {
+            let profile_id: String = row.get(0);
+            let endpoints: serde_json::Value = row.get(4);
+            let endpoints: Vec<String> = serde_json::from_value(endpoints).unwrap_or_default();
+            let fallback_max_retries: Option<i32> = row.get(8);
+            map.insert(
+                profile_id.clone(),
+                crate::persist::PersistedUpstreamProfileConfig {
+                    profile_id,
+                    provider: row.get(1),
+                    base_url: row.get(2),
+                    fallback_model: row.get(3),
+                    endpoints,
+                    tls_sni: row.get(5),
+                    proxy_url: row.get(6),
+                    fallback_profile_id: row.get(7),
+                    fallback_max_retries: fallback_max_retries.map(|v| v as u32),
+                },
+            );
         }
         Ok(map)
     }
@@ -1790,13 +1907,17 @@ impl PgStore {
         let (upstream_cfg, notes, last_test) = self.load_upstream().await.ok()?;
         let pool_secrets = self.load_pool_secrets().await.ok()?;
         let profile_secrets_map = self.load_profile_secrets().await.ok()?;
+        let profile_configs_map = self.load_profile_configs().await.ok()?;
 
         let profile_secrets = crate::persist::PersistedProfileSecrets {
             by_profile: profile_secrets_map,
         };
+        let profile_configs = crate::persist::PersistedProfileConfigs {
+            by_profile: profile_configs_map,
+        };
 
         Some(AdminStateFile {
-            version: 4,
+            version: 5,
             models: PersistedModels {
                 models,
                 synced_at_by_profile,
@@ -1812,6 +1933,7 @@ impl PgStore {
             keys_meta,
             domain_policies,
             upstream_profile_secrets: profile_secrets,
+            upstream_profile_configs: profile_configs,
             upstream_pool_secrets: pool_secrets,
         })
     }
@@ -1905,6 +2027,18 @@ impl PgStore {
                     error = %e,
                     profile_id = %profile_id,
                     "Failed to import profile secrets to PG"
+                );
+                failures += 1;
+            }
+        }
+
+        // Import profile metadata configs
+        for cfg in json.upstream_profile_configs.by_profile.values() {
+            if let Err(e) = self.upsert_profile_config(cfg).await {
+                tracing::error!(
+                    error = %e,
+                    profile_id = %cfg.profile_id,
+                    "Failed to import profile config to PG"
                 );
                 failures += 1;
             }
@@ -3650,6 +3784,12 @@ impl PgStore {
                 &[],
             )
             .await?;
+        client
+            .execute(
+                "ALTER TABLE upstream_profile_secrets ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0",
+                &[],
+            )
+            .await?;
 
         // domain_usage: input_cost_usd, output_cost_usd
         client
@@ -4050,6 +4190,7 @@ mod tests {
             "upstream_config",
             "upstream_pool_secrets",
             "upstream_profile_secrets",
+            "upstream_profile_configs",
         ] {
             let _ = client
                 .execute(format!("DELETE FROM {}", table).as_str(), &[])
@@ -4129,6 +4270,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             },
+            upstream_profile_configs: crate::persist::PersistedProfileConfigs::default(),
         };
 
         // Import.
