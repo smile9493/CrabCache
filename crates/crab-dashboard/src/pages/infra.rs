@@ -1,5 +1,7 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api;
 use crate::components::canvas_line_chart::CanvasLineChart;
@@ -416,13 +418,21 @@ pub fn InfraPage() -> impl IntoView {
     };
 
     do_fetch();
+    
+    let alive = Arc::new(AtomicBool::new(true));
+    let alive_clone = alive.clone();
+    
     leptos::task::spawn_local(async move {
-        loop {
+        while alive_clone.load(Ordering::Relaxed) {
             TimeoutFuture::new(10_000).await;
-            if page_visible() {
+            if alive_clone.load(Ordering::Relaxed) && page_visible() {
                 do_fetch();
             }
         }
+    });
+    
+    on_cleanup(move || {
+        alive.store(false, Ordering::Relaxed);
     });
 
     view! {

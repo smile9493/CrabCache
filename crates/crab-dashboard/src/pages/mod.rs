@@ -2,6 +2,7 @@ pub mod audit;
 pub mod cache;
 pub mod capture;
 pub mod composition;
+pub mod design_system;
 pub mod domains;
 pub mod features;
 pub mod infra;

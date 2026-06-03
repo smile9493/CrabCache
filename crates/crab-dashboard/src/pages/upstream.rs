@@ -692,6 +692,51 @@ fn effective_model_list(synced: &[String], provider: &str) -> Vec<String> {
 
 const CUSTOM_MODEL_SENTINEL: &str = "__custom_model__";
 
+/// Drawer title is authoritative while editing; `active_profile` can lag after list refresh.
+fn effective_editing_profile_id(
+    drawer_profile: Option<String>,
+    active_profile: &str,
+) -> String {
+    drawer_profile
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| active_profile.to_string())
+}
+
+fn apply_profile_to_form(
+    p: &UpstreamProfileAdminView,
+    provider: &RwSignal<String>,
+    base_url: &RwSignal<String>,
+    model: &RwSignal<String>,
+    endpoints_text: &RwSignal<String>,
+    tls_sni: &RwSignal<String>,
+    proxy_url: &RwSignal<String>,
+    fallback_profile_id: &RwSignal<String>,
+    fallback_max_retries: &RwSignal<u64>,
+) {
+    provider.set(p.provider.clone());
+    base_url.set(p.base_url.clone());
+    model.set(p.fallback_model.clone());
+    endpoints_text.set(p.endpoints.join("\n"));
+    tls_sni.set(p.tls_sni.clone());
+    proxy_url.set(p.proxy_url.clone().unwrap_or_default());
+    fallback_profile_id.set(p.fallback_profile_id.clone().unwrap_or_default());
+    fallback_max_retries.set(p.fallback_max_retries as u64);
+}
+
+fn upsert_profile_in_list(
+    profiles: &RwSignal<Vec<UpstreamProfileAdminView>>,
+    updated: UpstreamProfileAdminView,
+) {
+    profiles.update(|list| {
+        if let Some(entry) = list.iter_mut().find(|p| p.id == updated.id) {
+            *entry = updated;
+        } else {
+            list.push(updated);
+        }
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+    });
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CreationStep {
     PickTemplate,
@@ -702,9 +747,9 @@ enum CreationStep {
 pub fn UpstreamPage() -> impl IntoView {
     let t = use_translations();
 
-    // Page state
+    // Page state — filled from GET /api/admin/upstream/profiles (no hardcoded vendor defaults)
     let profiles: RwSignal<Vec<UpstreamProfileAdminView>> = RwSignal::new(Vec::new());
-    let active_profile = RwSignal::new("deepseek".to_string());
+    let active_profile = RwSignal::new(String::new());
     let gateway_reachable = RwSignal::new(true);
 
     // Drawer-based navigation: Some(profile_id) opens drawer, None = list view
@@ -713,16 +758,17 @@ pub fn UpstreamPage() -> impl IntoView {
     // Internal drawer tabs: 0 = Config, 1 = Keys, 2 = Routing
     let drawer_tab: RwSignal<usize> = RwSignal::new(0);
 
-    // Form inputs
-    let provider = RwSignal::new("deepseek".to_string());
-    let base_url = RwSignal::new("https://api.deepseek.com".to_string());
-    let model = RwSignal::new("deepseek-v4-pro".to_string());
+    // Form inputs — populated when a profile is selected or a preset is picked
+    let provider = RwSignal::new(String::new());
+    let base_url = RwSignal::new(String::new());
+    let model = RwSignal::new(String::new());
     let endpoints_text = RwSignal::new(String::new());
     let tls_sni = RwSignal::new(String::new());
     let proxy_url = RwSignal::new(String::new());
     let show_advanced = RwSignal::new(false);
     let fallback_profile_id = RwSignal::new(String::new());
     let fallback_max_retries = RwSignal::new(2u64);
+    let form_load_generation = RwSignal::new(0u32);
 
     // Inline creation state
     let new_profile_id = RwSignal::new(String::new());
@@ -892,7 +938,7 @@ pub fn UpstreamPage() -> impl IntoView {
     }
 
     let model_req_id = Arc::new(AtomicU64::new(0));
-    let load_profile_models = {
+    let load_profile_models = std::sync::Arc::new({
         let model_req_id = model_req_id.clone();
         move |pid: String| {
             profile_model_options.set(Vec::new());
@@ -906,10 +952,11 @@ pub fn UpstreamPage() -> impl IntoView {
                 }
             });
         }
-    };
+    });
 
     let load_profile_data = {
         let load_key_pool = load_key_pool.clone();
+        let load_profile_models = load_profile_models.clone();
         std::sync::Arc::new(move |pid: String| {
             // Reset states
             test_result.set(None);
@@ -925,19 +972,39 @@ pub fn UpstreamPage() -> impl IntoView {
             testing_all.set(false);
             quota_auto_refreshing.set(false);
 
-            let p_list = profiles.get();
-            if let Some(p) = p_list.iter().find(|p| p.id == pid) {
-                provider.set(p.provider.clone());
-                base_url.set(p.base_url.clone());
-                model.set(p.fallback_model.clone());
-                endpoints_text.set(p.endpoints.join("\n"));
-                tls_sni.set(p.tls_sni.clone());
-                proxy_url.set(p.proxy_url.clone().unwrap_or_default());
-                fallback_profile_id.set(p.fallback_profile_id.clone().unwrap_or_default());
-                fallback_max_retries.set(p.fallback_max_retries as u64);
-            }
-            load_profile_models(pid.clone());
-            load_key_pool.clone()(pid);
+            let load_key_pool = load_key_pool.clone();
+            let pid_for_models = pid.clone();
+            load_profile_models.clone()(pid_for_models);
+            leptos::task::spawn_local(async move {
+                let loaded = if let Ok(resp) = api::fetch_upstream_profiles().await {
+                    gateway_reachable.try_set(true);
+                    default_profile_id.try_set(resp.default_profile_id.clone());
+                    profiles.try_set(resp.profiles.clone());
+                    resp.profiles.into_iter().find(|p| p.id == pid)
+                } else {
+                    gateway_reachable.try_set(false);
+                    profiles
+                        .get_untracked()
+                        .into_iter()
+                        .find(|p| p.id == pid)
+                };
+
+                if let Some(p) = loaded {
+                    apply_profile_to_form(
+                        &p,
+                        &provider,
+                        &base_url,
+                        &model,
+                        &endpoints_text,
+                        &tls_sni,
+                        &proxy_url,
+                        &fallback_profile_id,
+                        &fallback_max_retries,
+                    );
+                    form_load_generation.update(|g| *g += 1);
+                }
+                load_key_pool(pid);
+            });
         })
     };
 
@@ -1058,7 +1125,6 @@ pub fn UpstreamPage() -> impl IntoView {
     });
 
     let on_save = Callback::new({
-        let refresh = refresh_profiles.clone();
         move |_| {
         saving.set(true);
         saved.set(false);
@@ -1093,8 +1159,19 @@ pub fn UpstreamPage() -> impl IntoView {
             .map(str::to_string)
             .collect();
 
-        let pid = active_profile.get();
-        let prov = provider.get();
+        let pid = effective_editing_profile_id(drawer_profile.get(), &active_profile.get());
+        if pid.is_empty() {
+            save_error.set("No profile selected".into());
+            saving.set(false);
+            return;
+        }
+        active_profile.set(pid.clone());
+        let prov = provider.get().trim().to_string();
+        if prov.is_empty() {
+            save_error.set("Provider is required".into());
+            saving.set(false);
+            return;
+        }
         let sni_val = tls_sni.get().trim().to_string();
         let sni = if sni_val.is_empty() {
             None
@@ -1108,7 +1185,6 @@ pub fn UpstreamPage() -> impl IntoView {
             Some(proxy)
         };
         let keys_to_append_clone = keys_to_append.clone();
-        let r = refresh.clone();
         let default_id = default_profile_id.get_untracked();
         let fpid = fallback_profile_id.get().trim().to_string();
         let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
@@ -1125,10 +1201,24 @@ pub fn UpstreamPage() -> impl IntoView {
                 fallback_profile_id: fpid_opt,
                 fallback_max_retries: Some(fmr),
             };
-            let result = api::put_upstream_profile(&pid, &req).await.map(|_| ());
+            match api::put_upstream_profile(&pid, &req).await {
+                Ok(updated) => {
+                    upsert_profile_in_list(&profiles, updated.clone());
+                    apply_profile_to_form(
+                        &updated,
+                        &provider,
+                        &base_url,
+                        &model,
+                        &endpoints_text,
+                        &tls_sni,
+                        &proxy_url,
+                        &fallback_profile_id,
+                        &fallback_max_retries,
+                    );
+                    form_load_generation.update(|g| *g += 1);
+                    active_profile.try_set(pid.clone());
+                    drawer_profile.try_set(Some(pid.clone()));
 
-            match result {
-                Ok(_) => {
                     let mut keys_ok = true;
                     if !keys_to_append_clone.is_empty() {
                         let keys = pool_lines_to_key_inputs(keys_to_append_clone);
@@ -1153,7 +1243,23 @@ pub fn UpstreamPage() -> impl IntoView {
                     if keys_ok {
                         saved.try_set(true);
                     }
-                    r.clone()(Some(pid));
+                    if let Ok(resp) = api::fetch_upstream_profiles().await {
+                        default_profile_id.try_set(resp.default_profile_id.clone());
+                        profiles.try_set(resp.profiles);
+                        if let Some(p) = profiles.get().iter().find(|p| p.id == pid) {
+                            apply_profile_to_form(
+                                p,
+                                &provider,
+                                &base_url,
+                                &model,
+                                &endpoints_text,
+                                &tls_sni,
+                                &proxy_url,
+                                &fallback_profile_id,
+                                &fallback_max_retries,
+                            );
+                        }
+                    }
                 }
                 Err(e) => { save_error.try_set(e); },
             }
@@ -1216,7 +1322,10 @@ pub fn UpstreamPage() -> impl IntoView {
     let on_delete_profile = Callback::new({
         let refresh = refresh_profiles.clone();
         move |_| {
-        let pid = active_profile.get();
+        let pid = effective_editing_profile_id(drawer_profile.get(), &active_profile.get());
+        if pid.is_empty() {
+            return;
+        }
         if pid == default_profile_id.get_untracked() {
             return;
         }
@@ -1241,7 +1350,6 @@ pub fn UpstreamPage() -> impl IntoView {
     });
 
     let on_create_profile = Callback::new({
-        let refresh = refresh_profiles.clone();
         move |_| {
         saved.set(false);
         save_error.set(String::new());
@@ -1251,6 +1359,10 @@ pub fn UpstreamPage() -> impl IntoView {
             return;
         }
         let prov = provider.get().trim().to_string();
+        if prov.is_empty() {
+            save_error.set("Provider is required".to_string());
+            return;
+        }
         let url = base_url.get().trim().to_string();
         if let Some(err) = validate_base_url(&url) {
             save_error.set(err);
@@ -1275,7 +1387,6 @@ pub fn UpstreamPage() -> impl IntoView {
         };
 
         saving.set(true);
-        let r = refresh.clone();
         let fpid = fallback_profile_id.get().trim().to_string();
         let fpid_opt = if fpid.is_empty() { None } else { Some(fpid) };
         let fmr = fallback_max_retries.get() as u32;
@@ -1291,13 +1402,29 @@ pub fn UpstreamPage() -> impl IntoView {
                 fallback_max_retries: Some(fmr),
             };
             match api::put_upstream_profile(&id, &req).await {
-                Ok(_) => {
+                Ok(updated) => {
+                    upsert_profile_in_list(&profiles, updated.clone());
+                    apply_profile_to_form(
+                        &updated,
+                        &provider,
+                        &base_url,
+                        &model,
+                        &endpoints_text,
+                        &tls_sni,
+                        &proxy_url,
+                        &fallback_profile_id,
+                        &fallback_max_retries,
+                    );
+                    form_load_generation.update(|g| *g += 1);
                     saved.try_set(true);
                     drawer_creating.try_set(false);
                     new_profile_id.try_set(String::new());
                     active_profile.try_set(id.clone());
                     drawer_profile.try_set(Some(id.clone()));
-                    r.clone()(Some(id));
+                    if let Ok(resp) = api::fetch_upstream_profiles().await {
+                        default_profile_id.try_set(resp.default_profile_id.clone());
+                        profiles.try_set(resp.profiles);
+                    }
                 }
                 Err(e) => {
                     save_error.try_set(e);
@@ -1306,6 +1433,41 @@ pub fn UpstreamPage() -> impl IntoView {
             saving.try_set(false);
         });
         }
+    });
+
+    let on_set_default_profile = Callback::new(move |_| {
+        let pid = effective_editing_profile_id(drawer_profile.get(), &active_profile.get());
+        if pid.is_empty() {
+            save_error.set("No profile selected".into());
+            return;
+        }
+        if pid == default_profile_id.get_untracked() {
+            return;
+        }
+        save_error.set(String::new());
+        leptos::task::spawn_local(async move {
+            match api::fetch_pipeline_runtime().await {
+                Ok(cfg) => {
+                    let req = crate::types::PipelineRuntimeConfig {
+                        pipeline_mode: cfg.pipeline_mode,
+                        default_upstream_profile: pid.clone(),
+                        profiles: cfg.profiles,
+                    };
+                    match api::update_pipeline_runtime(&req).await {
+                        Ok(updated) => {
+                            default_profile_id.try_set(updated.default_upstream_profile);
+                            saved.try_set(true);
+                        }
+                        Err(e) => {
+                            save_error.try_set(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    save_error.try_set(e);
+                }
+            }
+        });
     });
 
     view! {
@@ -1511,13 +1673,42 @@ pub fn UpstreamPage() -> impl IntoView {
                     }>
                         <div class="upstream-drawer" on:click=|ev| ev.stop_propagation()>
                             <div class="upstream-drawer-header">
-                                <h3 class="text-base font-semibold text-theme">
-                                    {move || if drawer_creating.get() {
-                                        t.upstream_tab_new_profile().to_string()
-                                    } else {
-                                        drawer_profile.get().unwrap_or_default()
+                                <div class="min-w-0">
+                                    <h3 class="text-base font-semibold text-theme truncate">
+                                        {move || if drawer_creating.get() {
+                                            t.upstream_tab_new_profile().to_string()
+                                        } else {
+                                            drawer_profile.get().unwrap_or_default()
+                                        }}
+                                    </h3>
+                                    {move || {
+                                        if drawer_creating.get() {
+                                            ().into_any()
+                                        } else {
+                                            let pid = drawer_profile.get().unwrap_or_default();
+                                            let prov = provider.get();
+                                            let is_def = pid == default_profile_id.get();
+                                            view! {
+                                                <div class="flex flex-wrap items-center gap-2 mt-1">
+                                                    <span class="badge text-[10px] font-mono">{prov}</span>
+                                                    {is_def.then(|| view! {
+                                                        <span class="badge badge-accent text-[10px]">{t.upstream_default_badge()}</span>
+                                                    })}
+                                                    {(!is_def && !pid.is_empty()).then(|| {
+                                                        let set_default = on_set_default_profile.clone();
+                                                        view! {
+                                                            <button type="button" class="btn btn-secondary text-[10px] px-2 py-0.5"
+                                                                on:click=move |_| set_default.run(())
+                                                            >
+                                                                {t.pipeline_default_profile()}
+                                                            </button>
+                                                        }
+                                                    })}
+                                                </div>
+                                            }.into_any()
+                                        }
                                     }}
-                                </h3>
+                                </div>
                                 <button
                                     type="button"
                                     class="text-theme-muted hover:text-theme text-lg"
@@ -1632,10 +1823,14 @@ pub fn UpstreamPage() -> impl IntoView {
                                                     </div>
                                                     <div>
                                                         <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_provider_label()}</label>
-                                                        <select class="input text-sm"
-                                                            prop:value=move || provider.get()
-                                                            on:change=move |ev| provider.set(event_target_value(&ev))
-                                                        >
+                                                        {move || {
+                                                            form_load_generation.get();
+                                                            let current = provider.get();
+                                                            view! {
+                                                                <select class="input text-sm"
+                                                                    prop:value=current.clone()
+                                                                    on:change=move |ev| provider.set(event_target_value(&ev))
+                                                                >
                                                             <option value="deepseek">DeepSeek</option>
                                                             <option value="mimo">MiMo</option>
                                                             <option value="openai">OpenAI</option>
@@ -1698,7 +1893,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 <option value="phind">Phind</option>
                                                             </optgroup>
                                                             <option value="custom">Custom</option>
-                                                        </select>
+                                                                </select>
+                                                            }
+                                                        }}
                                                     </div>
                                                     <div class="md:col-span-2">
                                                         <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_base_url_label()}</label>
@@ -1810,11 +2007,15 @@ pub fn UpstreamPage() -> impl IntoView {
                                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                         <div>
                                                             <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_provider_label()}</label>
-                                                            <select
-                                                                prop:value=move || provider.get()
-                                                                on:change=move |ev| provider.set(event_target_value(&ev))
-                                                                class="input text-sm"
-                                                            >
+                                                            {move || {
+                                                                form_load_generation.get();
+                                                                let current = provider.get();
+                                                                view! {
+                                                                    <select
+                                                                        prop:value=current.clone()
+                                                                        on:change=move |ev| provider.set(event_target_value(&ev))
+                                                                        class="input text-sm"
+                                                                    >
                                                                 <option value="deepseek">DeepSeek</option>
                                                                 <option value="mimo">MiMo</option>
                                                                 <option value="openai">OpenAI</option>
@@ -1966,7 +2167,9 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                     <option value="hackclub">Hackclub</option>
                                                                 </optgroup>
                                                                 <option value="custom">Custom</option>
-                                                            </select>
+                                                                    </select>
+                                                                }
+                                                            }}
                                                         </div>
                                                         <div>
                                                             <label class="block text-xs font-semibold text-theme-muted mb-1">{t.upstream_base_url_label()}</label>
