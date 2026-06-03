@@ -97,6 +97,10 @@ async fn prefix_l0_lookup_after_index_update() {
     // Here we just use the same key as both full_key and prefix_hash stand-in,
     // since we only test that prefix_index → L0 entry linkage works.
     let prefix_hash = format!("prefix:{}", &key[..32]);
+    assert!(
+        cache.prefix_l0_lookup(&prefix_hash).await.is_none(),
+        "prefix should miss before it is registered"
+    );
     cache.update_prefix_index(&prefix_hash, &key);
 
     // prefix_l0_lookup should resolve prefix → full_key → L0 entry.
@@ -106,6 +110,9 @@ async fn prefix_l0_lookup_after_index_update() {
         .expect("prefix L0 hit");
     assert_eq!(found.response_body, entry.response_body);
     assert_eq!(found.model, entry.model);
+    assert_eq!(found.usage.prompt_tokens, entry.usage.prompt_tokens);
+    assert_eq!(found.usage.completion_tokens, entry.usage.completion_tokens);
+    assert!(!found.is_stream);
 }
 
 #[tokio::test]
@@ -179,6 +186,14 @@ async fn exact_key_roundtrip_l0_hit() {
         .expect("exact cache hit");
     assert_eq!(got.response_body, entry.response_body);
     assert_eq!(got.model, entry.model);
+    assert_eq!(got.usage.prompt_tokens, entry.usage.prompt_tokens);
+    assert_eq!(got.usage.completion_tokens, entry.usage.completion_tokens);
+    assert_eq!(got.usage.prompt_cache_hit_tokens, entry.usage.prompt_cache_hit_tokens);
+    assert_eq!(
+        got.usage.prompt_cache_miss_tokens,
+        entry.usage.prompt_cache_miss_tokens
+    );
+    assert_eq!(got.is_stream, entry.is_stream);
     assert!(
         matches!(tier, CacheTier::L0Moka),
         "expected L0 exact hit, got {tier:?}"
@@ -288,6 +303,9 @@ async fn coalesce_exact_cache_probed_idempotent_get() {
     let (got2, tier2) = cache.get(&key, None, None).await.expect("follower hit");
     assert!(matches!(tier2, CacheTier::L0Moka));
     assert_eq!(got1.response_body, got2.response_body);
+    assert_eq!(got1.model, got2.model);
+    assert_eq!(got1.usage.prompt_tokens, got2.usage.prompt_tokens);
+    assert_eq!(got1.is_stream, got2.is_stream);
 }
 
 // ---------------------------------------------------------------------------

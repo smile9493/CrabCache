@@ -364,6 +364,10 @@ pub async fn put_domain_policies(policies: Vec<DomainPolicy>) -> Result<Vec<Doma
     put_json(&format!("{}/domains/policies", API_BASE), &policies).await
 }
 
+/// Upsert a single domain policy via read-modify-write.
+///
+/// **Note**: This is not atomic — concurrent calls may lose updates.
+/// The UI disables the save button while a request is in-flight to mitigate this.
 pub async fn upsert_domain_policy(policy: DomainPolicy) -> Result<Vec<DomainPolicy>, String> {
     let mut policies = fetch_domain_policies().await?;
     if let Some(existing) = policies.iter_mut().find(|p| p.domain == policy.domain) {
@@ -374,6 +378,9 @@ pub async fn upsert_domain_policy(policy: DomainPolicy) -> Result<Vec<DomainPoli
     put_domain_policies(policies).await
 }
 
+/// Delete a single domain policy via read-modify-write.
+///
+/// **Note**: Same concurrency caveat as `upsert_domain_policy`.
 pub async fn delete_domain_policy(domain: &str) -> Result<Vec<DomainPolicy>, String> {
     let policies = fetch_domain_policies()
         .await?

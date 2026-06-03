@@ -114,6 +114,21 @@ pub fn PeakHoursHeatmap(
             .sum::<u64>()
     });
 
+    // Pre-compute the entire color matrix at component level (7x24) instead of
+    // creating 504 individual Memo instances inside the view iteration.
+    let color_matrix = Memo::new(move |_| {
+        let m = matrix.get();
+        let max = max_val.get();
+        let mut colors = [[""; HOUR_COUNT]; 7];
+        for day in 0..7 {
+            for hour in 0..HOUR_COUNT {
+                let ratio = m[day][hour] as f64 / max as f64;
+                colors[day][hour] = intensity_color(ratio);
+            }
+        }
+        colors
+    });
+
     view! {
         <div class="peak-hours-container">
             <div class="peak-hours-header">
@@ -192,41 +207,24 @@ pub fn PeakHoursHeatmap(
                         view! {
                             <div class="peak-hours-row">
                                 {(0..7usize).map(|day| {
+                                    let cm = color_matrix;
                                     let m = matrix;
-                                    let mx = max_val;
                                     let hc = hovered_cell.clone();
                                     let del = on_delete.clone();
-                                    let cm = current_model;
-                                    let bg_color = Memo::new(move |_| {
-                                        let val = m.get()[day][hour];
-                                        let max = mx.get();
-                                        let ratio = val as f64 / max as f64;
-                                        intensity_color(ratio)
-                                    });
-                                    let val_text = Memo::new(move |_| {
-                                        m.get()[day][hour]
-                                    });
-                                    let is_hovered = Memo::new(move |_| {
-                                        hc.get() == Some((day, hour))
-                                    });
+                                    let cmodel = current_model;
 
                                     view! {
                                         <div
-                                            class=move || {
-                                                if is_hovered.get() {
-                                                    "peak-hours-cell hovered"
-                                                } else {
-                                                    "peak-hours-cell"
-                                                }
-                                            }
-                                            style:background-color=move || bg_color.get()
+                                            class="peak-hours-cell"
+                                            class:hovered=move || hc.get() == Some((day, hour))
+                                            style:background-color=move || cm.get()[day][hour].to_string()
                                             on:mouseenter=move |_| hc.set(Some((day, hour)))
                                             on:mouseleave=move |_| hc.set(None)
                                             on:click={
                                                 let del = del.clone();
                                                 move |_| {
-                                                    let model = cm.get_untracked();
-                                                    let val = val_text.get_untracked();
+                                                    let model = cmodel.get_untracked();
+                                                    let val = m.get()[day][hour];
                                                     if !model.is_empty() && val > 0 {
                                                         // Find actual bucket from data for this cell
                                                         let buckets = find_bucket_for_cell(
@@ -239,7 +237,7 @@ pub fn PeakHoursHeatmap(
                                                 }
                                             }
                                             title=move || {
-                                                let val = val_text.get();
+                                                let val = m.get()[day][hour];
                                                 t.overview_peak_hours_cell_title(day_labels[day], hour, val)
                                             }
                                         />

@@ -18,7 +18,7 @@ pub fn test_runtime() -> Arc<RuntimeConfig> {
     let router = crab_route::LbRouter::new(&backends).unwrap();
     let ttl = Arc::new(RwLock::new(TtlConfig::new(3600)));
     let upstream_pool =
-        UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60);
+        UpstreamKeyPool::from_secrets(vec!["sk-upstream-test-key-12345678".into()], 60, 1);
     let pool_handle = Arc::new(RwLock::new(upstream_pool));
     let mut profiles = IndexMap::new();
     profiles.insert(
@@ -32,6 +32,8 @@ pub fn test_runtime() -> Arc<RuntimeConfig> {
             router: crab_route::LbRouter::new(&backends).unwrap(),
             upstream_pool: pool_handle.clone(),
             proxy_url: None,
+            fallback_profile_id: None,
+            fallback_max_retries: 2,
         }),
     );
     RuntimeConfig::new(

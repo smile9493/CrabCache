@@ -60,6 +60,10 @@ pub fn ThemeSwitcher() -> impl IntoView {
 
     // Register event listeners once at component level (not inside Effect)
     // to avoid accumulating listeners on Effect re-runs.
+    // Save js_sys::Function references so we can remove them in on_cleanup.
+    let mut click_fn: Option<js_sys::Function> = None;
+    let mut key_fn: Option<js_sys::Function> = None;
+
     if let Some(window) = web_sys::window() {
         if let Some(document) = window.document() {
             let click_outside = Arc::clone(&click_outside);
@@ -70,7 +74,8 @@ pub fn ThemeSwitcher() -> impl IntoView {
                     as Box<dyn Fn(web_sys::MouseEvent)>);
             let _ = document
                 .add_event_listener_with_callback("mousedown", click_closure.as_ref().unchecked_ref());
-            click_closure.forget();
+            click_fn = Some(click_closure.into_js_value().unchecked_into());
+            // Closure is NOT forgotten — we clean it up below.
 
             let keydown_handler = Arc::clone(&keydown_handler);
             let key_closure =
@@ -80,12 +85,23 @@ pub fn ThemeSwitcher() -> impl IntoView {
                     as Box<dyn Fn(web_sys::KeyboardEvent)>);
             let _ = document
                 .add_event_listener_with_callback("keydown", key_closure.as_ref().unchecked_ref());
-            key_closure.forget();
+            key_fn = Some(key_closure.into_js_value().unchecked_into());
         }
     }
 
     on_cleanup(move || {
         alive.store(false, Ordering::Relaxed);
+        // Remove event listeners to prevent memory leaks.
+        if let Some(window) = web_sys::window() {
+            if let Some(document) = window.document() {
+                if let Some(f) = &click_fn {
+                    let _ = document.remove_event_listener_with_callback("mousedown", f);
+                }
+                if let Some(f) = &key_fn {
+                    let _ = document.remove_event_listener_with_callback("keydown", f);
+                }
+            }
+        }
     });
 
     view! {

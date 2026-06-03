@@ -144,23 +144,20 @@ fn passthrough_defers_upstream_body_while_buffering() {
 
 #[test]
 fn passthrough_mimo_pipelines_are_distinct_from_defer_eligible_generic() {
-    let mimo = [
-        RequestPipeline::MimoTokenPlanRelay,
-        RequestPipeline::MimoTokenPlanRelay,
-        RequestPipeline::MimoPaygRelay,
-    ];
-    for pipeline in mimo {
-        assert!(matches!(
-            pipeline,
-            RequestPipeline::MimoTokenPlanRelay
-                | RequestPipeline::MimoTokenPlanRelay
-                | RequestPipeline::MimoPaygRelay
-        ));
-    }
+    assert_eq!(
+        RequestPipeline::from_str("mimo_token_plan_relay"),
+        RequestPipeline::MimoTokenPlanRelay
+    );
+    assert_eq!(
+        RequestPipeline::from_str("mimo_payg_relay"),
+        RequestPipeline::MimoTokenPlanRelay
+    );
+    assert_eq!(
+        RequestPipeline::MimoTokenPlanRelay.as_str(),
+        "mimo_token_plan_relay"
+    );
     assert!(!matches!(
         RequestPipeline::GenericRelay,
         RequestPipeline::MimoTokenPlanRelay
-            | RequestPipeline::MimoTokenPlanRelay
-            | RequestPipeline::MimoPaygRelay
     ));
 }

@@ -99,7 +99,7 @@ pub fn DashPillBar(
     active: RwSignal<usize>,
     #[prop(optional)] small: bool,
 ) -> impl IntoView {
-    let base = if small { "dash-pill" } else { "dash-pill" };
+    let base = if small { "dash-pill dash-pill-sm" } else { "dash-pill" };
     view! {
         <div class="dash-pill-bar" role="tablist">
             {pills.into_iter().enumerate().map(|(i, label)| {

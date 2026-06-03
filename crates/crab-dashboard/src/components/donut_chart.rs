@@ -3,12 +3,8 @@
 use leptos::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[derive(Clone)]
-pub struct DonutSegment {
-    pub label: String,
-    pub value: f64,
-    pub color: &'static str,
-}
+// Re-export so existing `crate::components::donut_chart::DonutSegment` paths still work.
+pub use crate::components::chart::core::DonutSegment;
 
 static DONUT_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 

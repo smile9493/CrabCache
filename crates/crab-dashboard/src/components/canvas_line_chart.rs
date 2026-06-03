@@ -21,7 +21,7 @@ static CANVAS_LINE_CHART_ID: AtomicUsize = AtomicUsize::new(0);
 /// Maximum data points before downsampling kicks in.
 const MAX_CHART_POINTS: usize = 200;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ChartGeom {
     labels: Vec<String>,
     all_series: Vec<ChartSeries>,
@@ -110,6 +110,12 @@ pub fn CanvasLineChart(
     let thresholds = std::sync::Arc::new(thresholds);
     let series_price_per_million = std::sync::Arc::new(series_price_per_million);
 
+    // Cache the geometry computation (downsampling + Y range) as a Memo so it
+    // is only recalculated when the data source changes, not on every mousemove.
+    let cached_geom = Memo::new(move |_| {
+        prepare_geom(x_labels.get(), series.get(), y_min, y_max, allow_zero_values)
+    });
+
     // Draw canvas whenever data or theme changes.
     Effect::new({
         let thresholds = std::sync::Arc::clone(&thresholds);
@@ -119,11 +125,7 @@ pub fn CanvasLineChart(
             };
             let canvas_dom: web_sys::HtmlCanvasElement = canvas_el.dyn_into().unwrap();
             let _ = theme.get();
-            let labels = x_labels.get();
-            let raw_series = series.get();
-            let Some(geom) =
-                prepare_geom(labels.clone(), raw_series, y_min, y_max, allow_zero_values)
-            else {
+            let Some(geom) = cached_geom.get() else {
                 return;
             };
             let req = LineDrawRequest {
@@ -162,9 +164,7 @@ pub fn CanvasLineChart(
         }
         let rel_x = ((ev.client_x() as f64 - rect.left()) / container_w).clamp(0.0, 1.0);
 
-        let labels = x_labels.get_untracked();
-        let raw_series = series.get_untracked();
-        let Some(geom) = prepare_geom(labels, raw_series, y_min, y_max, allow_zero_values) else {
+        let Some(geom) = cached_geom.get() else {
             hover_index.set(None);
             return;
         };
@@ -214,9 +214,7 @@ pub fn CanvasLineChart(
         <div class="line-chart-wrap" style=format!("min-height: {}px", height_px)>
             {move || {
                 let pricing = std::sync::Arc::clone(&series_price_per_million);
-                let labels = x_labels.get();
-                let raw_series = series.get();
-                let geom = prepare_geom(labels, raw_series, y_min, y_max, allow_zero_values);
+                let geom = cached_geom.get();
 
                 let data_summary = match &geom {
                     None => "Empty line chart.".to_string(),
@@ -260,13 +258,7 @@ pub fn CanvasLineChart(
                                 if !interactive {
                                     return ().into_any();
                                 }
-                                let Some(g) = prepare_geom(
-                                    x_labels.get(),
-                                    series.get(),
-                                    y_min,
-                                    y_max,
-                                    allow_zero_values,
-                                ) else {
+                                let Some(g) = cached_geom.get() else {
                                     return ().into_any();
                                 };
                                 let Some(idx) = hover_index.get() else {

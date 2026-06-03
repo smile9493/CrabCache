@@ -246,6 +246,12 @@ async fn runtime_config_constructs_with_backends() {
     let runtime = common::test_runtime();
     let profile_id = runtime.default_upstream_profile_id();
     assert_eq!(profile_id, "deepseek");
+    let profile = runtime.default_profile();
+    assert_eq!(profile.provider, crab_pipeline::UpstreamProvider::Deepseek);
+    assert_eq!(profile.base_url, "https://api.deepseek.com");
+    assert_eq!(profile.fallback_model, "deepseek-v4-pro");
+    assert_eq!(profile.fallback_max_retries, 2);
+    assert!(runtime.profile("deepseek").is_some());
 }
 
 #[tokio::test]
@@ -279,4 +285,9 @@ async fn stored_key_defaults_rpm_limit_zero() {
     };
     assert_eq!(key.rpm_limit, 0);
     assert!(key.enabled);
+    assert_eq!(key.max_concurrent, 0);
+    assert!(key.pipeline.is_none());
+    assert!(key.upstream_profile.is_none());
+    assert!(key.domain.is_none());
+    assert!(key.project_id.is_none());
 }

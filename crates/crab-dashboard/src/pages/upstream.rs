@@ -774,6 +774,22 @@ pub fn UpstreamPage() -> impl IntoView {
     let new_profile_id = RwSignal::new(String::new());
     let creation_step = RwSignal::new(CreationStep::PickTemplate);
 
+    // Auto-initialize model to first predefined model on mount / provider change.
+    // This ensures the <select> DOM value and the model signal stay in sync.
+    // Only depends on `provider` — does NOT re-run when model changes (so user
+    // selections like "Custom Model" are not overridden).
+    {
+        let model = model.clone();
+        let provider = provider.clone();
+        Effect::new(move |_| {
+            let prov = provider.get();
+            let models = models_for_provider(&prov);
+            if !models.is_empty() && model.get().is_empty() {
+                model.set(models[0].to_string());
+            }
+        });
+    }
+
     // Connection testing state
     let testing = RwSignal::new(false);
     let test_result: RwSignal<Option<UpstreamTestResult>> = RwSignal::new(None);
@@ -1829,7 +1845,17 @@ pub fn UpstreamPage() -> impl IntoView {
                                                             view! {
                                                                 <select class="input text-sm"
                                                                     prop:value=current.clone()
-                                                                    on:change=move |ev| provider.set(event_target_value(&ev))
+                                                                    on:change=move |ev| {
+                                                                        let new_prov = event_target_value(&ev);
+                                                                        provider.set(new_prov.clone());
+                                                                        // Reset model when provider changes so the select auto-initializes.
+                                                                        let new_models = models_for_provider(&new_prov);
+                                                                        if new_models.is_empty() {
+                                                                            model.set(String::new());
+                                                                        } else {
+                                                                            model.set(new_models[0].to_string());
+                                                                        }
+                                                                    }
                                                                 >
                                                             <option value="deepseek">DeepSeek</option>
                                                             <option value="mimo">MiMo</option>
@@ -2013,7 +2039,17 @@ pub fn UpstreamPage() -> impl IntoView {
                                                                 view! {
                                                                     <select
                                                                         prop:value=current.clone()
-                                                                        on:change=move |ev| provider.set(event_target_value(&ev))
+                                                                        on:change=move |ev| {
+                                                                            let new_prov = event_target_value(&ev);
+                                                                            provider.set(new_prov.clone());
+                                                                            // Reset model when provider changes so the select auto-initializes.
+                                                                            let new_models = models_for_provider(&new_prov);
+                                                                            if new_models.is_empty() {
+                                                                                model.set(String::new());
+                                                                            } else {
+                                                                                model.set(new_models[0].to_string());
+                                                                            }
+                                                                        }
                                                                         class="input text-sm"
                                                                     >
                                                                 <option value="deepseek">DeepSeek</option>

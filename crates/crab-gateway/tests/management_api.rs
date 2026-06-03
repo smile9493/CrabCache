@@ -17,7 +17,7 @@ use crab_state::{RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime};
 use parking_lot::RwLock as ParkingRwLock;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
@@ -68,11 +68,49 @@ async fn test_management_state() -> Option<ManagementState> {
         client_endpoint: Arc::new(RwLock::new(crab_client_endpoint::discover(
             &crab_client_endpoint::DiscoveryConfig::default(),
         ))),
+        cors_enabled: Arc::new(AtomicBool::new(false)),
+        max_request_body_bytes: Arc::new(AtomicUsize::new(8 * 1024 * 1024)),
+        max_concurrent_requests: 64,
+        pricing: Arc::new(ParkingRwLock::new(crab_proxy::PricingConfig::default())),
+        features: Arc::new(ParkingRwLock::new(crab_proxy::FeaturesConfig::default())),
+        client_lockouts: Arc::new(crab_proxy::client_lockout::ClientLockoutRegistry::default()),
+        model_lockouts: Arc::new(crab_proxy::model_lockout::ModelLockoutRegistry::new()),
+        webhook_store: crab_gateway::webhook::WebhookStore::new(),
+        webhook_client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("webhook client"),
+        codex_quota_cache: Some(Arc::new(
+            crab_proxy::codex_quota_cache::CodexQuotaCache::new(),
+        )),
+        test_http_client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("test http client"),
+        fault_injection: Arc::new(crab_proxy::fault_injection::FaultInjection::default()),
     })
 }
 
 fn redis_required_in_ci() -> bool {
     std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok()
+}
+
+async fn bad_request_error(resp: axum::response::Response) -> String {
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    json["error"].as_str().unwrap().to_string()
+}
+
+async fn error_response(resp: axum::response::Response, expected_status: StatusCode) -> String {
+    assert_eq!(resp.status(), expected_status);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    json["error"].as_str().unwrap().to_string()
 }
 
 async fn require_management_state() -> Option<ManagementState> {
@@ -160,6 +198,13 @@ async fn create_and_list_keys() {
         .await
         .unwrap();
     assert_eq!(create.status(), StatusCode::OK);
+    let create_bytes = axum::body::to_bytes(create.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&create_bytes).unwrap();
+    assert_eq!(created["name"].as_str(), Some("ci-key"));
+    assert_eq!(created["enabled"], true);
+    let key_full = created["key_full"].as_str().expect("key_full");
 
     let list = app
         .oneshot(
@@ -172,6 +217,16 @@ async fn create_and_list_keys() {
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let keys: Vec<serde_json::Value> = serde_json::from_slice(&list_bytes).unwrap();
+    let listed = keys
+        .iter()
+        .find(|k| k["key_full"].as_str() == Some(key_full))
+        .expect("created key should be listed");
+    assert_eq!(listed["name"].as_str(), Some("ci-key"));
+    assert_eq!(listed["enabled"], true);
 }
 
 #[tokio::test]
@@ -445,7 +500,10 @@ async fn rejects_missing_admin_key() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        error_response(resp, StatusCode::UNAUTHORIZED).await,
+        "invalid or missing admin key"
+    );
 }
 
 #[tokio::test]
@@ -468,7 +526,10 @@ async fn invalidate_all_requires_confirm_header() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_request_error(resp).await,
+        "scope=all requires x-cache-invalidate-confirm: all"
+    );
 }
 
 #[tokio::test]
@@ -495,7 +556,12 @@ async fn invalidate_all_accepts_with_confirm_header() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["scope"].as_str(), Some("all"));
+    assert_eq!(json["status"].as_str(), Some("accepted"));
 }
 
 #[tokio::test]
@@ -545,6 +611,12 @@ async fn get_fingerprint_returns_runtime_config() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["version"].as_u64(), Some(1));
+    assert_eq!(json["normalize_content"], true);
 }
 
 #[tokio::test]
@@ -567,6 +639,14 @@ async fn upstream_keys_list_and_replace() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let initial_keys: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(
+        !initial_keys.is_empty(),
+        "key list should expose the seeded runtime key"
+    );
 
     let resp = app
         .oneshot(
@@ -587,7 +667,20 @@ async fn upstream_keys_list_and_replace() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["keys"].as_array().map(|a| a.len()), Some(2));
+    let keys = json["keys"].as_array().expect("keys array");
+    assert_eq!(keys.len(), 2);
+    assert!(
+        keys.iter().any(|k| k["id"].as_str() == Some("k-a")),
+        "replaced key set should contain k-a"
+    );
+    assert!(
+        keys.iter().any(|k| k["id"].as_str() == Some("k-b")),
+        "replaced key set should contain k-b"
+    );
+    assert!(
+        keys.iter().all(|k| k["enabled"] == true),
+        "all replaced keys should remain enabled"
+    );
 }
 
 #[tokio::test]
@@ -685,7 +778,7 @@ async fn put_upstream_keys_append_mode() {
 
 #[tokio::test]
 async fn upstream_pool_all_cooled_returns_unavailable() {
-    let pool = UpstreamKeyPool::from_secrets(vec!["sk-test-key-1234567890".into()], 1);
+    let pool = UpstreamKeyPool::from_secrets(vec!["sk-test-key-1234567890".into()], 1, 1);
     pool.report_rate_limited("key-1");
     assert!(pool.acquire().is_none());
     assert_eq!(pool.available_count(), 0);
@@ -865,6 +958,7 @@ async fn pipeline_runtime_http_roundtrip() {
         .unwrap();
     let view: crab_control::PipelineRuntimeConfigView = serde_json::from_slice(&body).unwrap();
     assert_eq!(view.pipeline_mode, "auto");
+    assert_eq!(view.default_upstream_profile, "deepseek");
     assert!(!view.profiles.is_empty());
 
     let put_body = serde_json::json!({
@@ -890,6 +984,8 @@ async fn pipeline_runtime_http_roundtrip() {
         .unwrap();
     let updated: crab_control::PipelineRuntimeConfigView = serde_json::from_slice(&body).unwrap();
     assert_eq!(updated.pipeline_mode, "force_cursor_v4");
+    assert_eq!(updated.default_upstream_profile, "deepseek");
+    assert_eq!(updated.profiles.len(), view.profiles.len());
 }
 
 #[tokio::test]
@@ -924,6 +1020,18 @@ async fn cursor_models_http_roundtrip() {
         .await
         .unwrap();
     assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_bytes = axum::body::to_bytes(put_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let put_view: crab_control::CursorModelsConfigView = serde_json::from_slice(&put_bytes).unwrap();
+    assert!(put_view.force_deepseek_profile_for_aliases);
+    assert!(!put_view.synthetic_models_enabled);
+    assert!(put_view.aliases.contains_key("gpt-4o"));
+    assert_eq!(put_view.aliases["gpt-4o"].upstream, "deepseek-v4-pro");
+    assert_eq!(
+        put_view.aliases["gpt-4o"].pipeline,
+        "cursor_deepseek_v4"
+    );
 
     let get_resp = app
         .oneshot(
@@ -940,8 +1048,11 @@ async fn cursor_models_http_roundtrip() {
         .await
         .unwrap();
     let view: crab_control::CursorModelsConfigView = serde_json::from_slice(&body).unwrap();
+    assert!(view.force_deepseek_profile_for_aliases);
+    assert!(!view.synthetic_models_enabled);
     assert!(view.aliases.contains_key("gpt-4o"));
     assert_eq!(view.aliases["gpt-4o"].upstream, "deepseek-v4-pro");
+    assert_eq!(view.aliases["gpt-4o"].pipeline, "cursor_deepseek_v4");
 }
 
 #[tokio::test]
@@ -964,6 +1075,15 @@ async fn upstream_profiles_list_and_upsert() {
         .await
         .unwrap();
     assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(list_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_view: crab_control::UpstreamProfilesResponse =
+        serde_json::from_slice(&list_bytes).unwrap();
+    assert!(
+        list_view.profiles.iter().any(|p| p.id == "deepseek"),
+        "seeded runtime profile should be visible in upstream profile list"
+    );
 
     let put_body = serde_json::json!({
         "provider": "mimo",
@@ -1119,7 +1239,10 @@ async fn upstream_profile_fallback_validation_rejects_missing_self_and_cycles() 
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_request_error(resp).await,
+        "fallback_profile_id must reference an existing profile"
+    );
 
     let (_, cross_provider_body) = make_profile("mimo-a", Some("deepseek-fallback"));
     let resp = app
@@ -1135,7 +1258,10 @@ async fn upstream_profile_fallback_validation_rejects_missing_self_and_cycles() 
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_request_error(resp).await,
+        "fallback_profile_id must reference a profile with the same provider"
+    );
 
     let (_, a_body) = make_profile("mimo-a", Some("mimo-b"));
     let resp = app
@@ -1167,7 +1293,12 @@ async fn upstream_profile_fallback_validation_rejects_missing_self_and_cycles() 
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        bad_request_error(resp)
+            .await
+            .contains("fallback chain cycle detected"),
+        "cycle should be rejected with a fallback chain error"
+    );
 
     let (_, self_body) = make_profile("mimo-b", Some("mimo-b"));
     let resp = app
@@ -1182,7 +1313,10 @@ async fn upstream_profile_fallback_validation_rejects_missing_self_and_cycles() 
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_request_error(resp).await,
+        "fallback_profile_id cannot reference self"
+    );
 }
 
 #[tokio::test]
@@ -1354,30 +1488,39 @@ async fn upstream_profile_put_invalid_payload_rejected_and_not_persisted() {
     let app = router(state);
 
     let invalid_cases = [
-        serde_json::json!({
-            "provider": "",
-            "base_url": "https://api.example.com",
-            "fallback_model": "m1",
-            "endpoints": ["api.example.com:443"],
-            "default_weight": 1
-        }),
-        serde_json::json!({
-            "provider": "mimo",
-            "base_url": "https://api.example.com",
-            "fallback_model": "",
-            "endpoints": ["api.example.com:443"],
-            "default_weight": 1
-        }),
-        serde_json::json!({
-            "provider": "mimo",
-            "base_url": "not-a-url",
-            "fallback_model": "m1",
-            "endpoints": ["api.example.com:443"],
-            "default_weight": 1
-        }),
+        (
+            serde_json::json!({
+                "provider": "",
+                "base_url": "https://api.example.com",
+                "fallback_model": "m1",
+                "endpoints": ["api.example.com:443"],
+                "default_weight": 1
+            }),
+            "provider must not be empty",
+        ),
+        (
+            serde_json::json!({
+                "provider": "mimo",
+                "base_url": "https://api.example.com",
+                "fallback_model": "",
+                "endpoints": ["api.example.com:443"],
+                "default_weight": 1
+            }),
+            "fallback_model must not be empty",
+        ),
+        (
+            serde_json::json!({
+                "provider": "mimo",
+                "base_url": "not-a-url",
+                "fallback_model": "m1",
+                "endpoints": ["api.example.com:443"],
+                "default_weight": 1
+            }),
+            "base_url must start with http:// or https://",
+        ),
     ];
 
-    for body in invalid_cases {
+    for (body, expected_error) in invalid_cases {
         let resp = app
             .clone()
             .oneshot(
@@ -1391,7 +1534,7 @@ async fn upstream_profile_put_invalid_payload_rejected_and_not_persisted() {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(bad_request_error(resp).await, expected_error);
     }
 
     let list_resp = app
@@ -1681,6 +1824,16 @@ async fn runtime_reasoning_roundtrip() {
     .unwrap();
     assert_eq!(put_view.thinking_mode, "enabled");
     assert!(!put_view.display_reasoning);
+    assert_eq!(put_view.reasoning_effort, get_body.reasoning_effort);
+    assert_eq!(
+        put_view.missing_reasoning_strategy,
+        get_body.missing_reasoning_strategy
+    );
+    assert_eq!(put_view.collapsible_reasoning, get_body.collapsible_reasoning);
+    assert_eq!(put_view.cache_invalidate_recommended, true);
+    assert_eq!(put_view.storage_backend.as_deref(), Some("sqlite"));
+    assert_eq!(put_view.cache_db_path.as_deref(), Some(":memory:"));
+    assert!(put_view.redis_url_masked.is_none());
 }
 
 #[tokio::test]
@@ -1737,7 +1890,11 @@ async fn runtime_semantic_threshold_roundtrip() {
             .unwrap(),
     )
     .unwrap();
+    assert_eq!(after.enabled, before.enabled);
     assert!((after.similarity_threshold - 0.88).abs() < f64::EPSILON);
+    assert_eq!(after.min_query_chars, before.min_query_chars);
+    assert_eq!(after.max_query_chars, before.max_query_chars);
+    assert_eq!(after.embed_only_on_exact_miss, before.embed_only_on_exact_miss);
 }
 
 #[tokio::test]
@@ -1767,7 +1924,10 @@ async fn runtime_semantic_enable_without_cache_returns_409() {
         )
         .await
         .unwrap();
-    assert_eq!(put_resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        error_response(put_resp, StatusCode::CONFLICT).await,
+        "semantic cache is not enabled at gateway startup ([semantic].enabled); restart gateway to enable L2"
+    );
 }
 
 #[tokio::test]
@@ -1857,6 +2017,7 @@ async fn pipeline_rules_get_empty() {
         json["rules"].as_array().is_some(),
         "response should contain a rules array"
     );
+    assert_eq!(json["rules"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -1920,6 +2081,14 @@ async fn pipeline_rules_put_and_read_back() {
         rules[0]["match"]["client"][0].as_str(),
         Some("cursor")
     );
+    assert_eq!(
+        rules[0]["match"]["provider"][0].as_str(),
+        Some("deepseek")
+    );
+    assert_eq!(
+        rules[0]["match"]["model_pattern"][0].as_str(),
+        Some("deepseek-v4-*")
+    );
 }
 
 #[tokio::test]
@@ -1953,7 +2122,8 @@ async fn pipeline_test_simulate() {
                 .uri("/v1/pipeline/rules")
                 .header(GATEWAY_ADMIN_KEY_HEADER, "test-admin")
                 .header("content-type", "application/json")
-                .body(Body::from(put_body.to_string())),
+                .body(Body::from(put_body.to_string()))
+                .unwrap(),
         )
         .await
         .unwrap();
@@ -2011,4 +2181,6 @@ async fn pipeline_test_simulate() {
         .unwrap();
     let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
     assert_eq!(json2["matched"], false);
+    assert!(json2["rule_name"].is_null());
+    assert!(json2["pipeline"].is_null());
 }

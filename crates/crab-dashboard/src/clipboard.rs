@@ -59,6 +59,11 @@ fn copy_via_navigator(text: &str) -> bool {
         None => return false,
     };
     let clipboard = window.navigator().clipboard();
-    let _ = clipboard.write_text(text);
+    let result = clipboard.write_text(text);
+    // write_text() returns a Promise; we cannot await it in a sync function.
+    // Log a warning if the call itself throws (e.g. clipboard API unavailable).
+    if result.is_undefined() || result.is_null() {
+        web_sys::console::warn_1(&"clipboard.write_text() returned undefined/null".into());
+    }
     true
 }
