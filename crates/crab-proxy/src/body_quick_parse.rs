@@ -45,6 +45,32 @@ fn extract_json_string_value(haystack: &str, key_literal: &str) -> Option<String
     Some(raw.to_string())
 }
 
+/// Fingerprint the first `user` message content without a full JSON parse.
+///
+/// Matches [`crab_capture::session_fingerprint_from_payload`] for string
+/// content; falls back to a lightweight full parse for array/object content.
+pub fn quick_parse_first_user_fingerprint(body: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(body).ok()?;
+
+    for role_pat in [r#""role":"user""#, r#""role": "user""#] {
+        let Some(role_pos) = memmem::find(s.as_bytes(), role_pat.as_bytes()) else {
+            continue;
+        };
+        let after_role = &s[role_pos..];
+        if let Some(content) = extract_json_string_value(after_role, "\"content\"") {
+            return Some(crab_capture::fingerprint_bytes(content.as_bytes()));
+        }
+    }
+
+    if body.len() <= 512_000 {
+        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body) {
+            return crab_capture::session_fingerprint_from_payload(&payload);
+        }
+    }
+
+    None
+}
+
 fn extract_json_bool_value(haystack: &str, key_literal: &str) -> Option<bool> {
     let start = memmem::find(haystack.as_bytes(), key_literal.as_bytes())?;
     let after_key = &haystack[start + key_literal.len()..];
@@ -127,6 +153,27 @@ mod tests {
         let q = quick_parse_request_fields(body);
         assert_eq!(q.model.as_deref(), Some("mimo-v2"));
         assert_eq!(q.stream, Some(true));
+    }
+
+    #[test]
+    fn quick_parse_first_user_fingerprint_string_content() {
+        let body = br#"{"model":"mimo","messages":[{"role":"user","content":"thread-a"}]}"#;
+        let fp = quick_parse_first_user_fingerprint(body).expect("fingerprint");
+        let payload = serde_json::json!({"messages":[{"role":"user","content":"thread-a"}]});
+        assert_eq!(
+            fp,
+            crab_capture::session_fingerprint_from_payload(&payload).expect("fp")
+        );
+    }
+
+    #[test]
+    fn quick_parse_first_user_fingerprint_differs_by_thread() {
+        let a = br#"{"messages":[{"role":"user","content":"thread-a"}]}"#;
+        let b = br#"{"messages":[{"role":"user","content":"thread-b"}]}"#;
+        assert_ne!(
+            quick_parse_first_user_fingerprint(a),
+            quick_parse_first_user_fingerprint(b)
+        );
     }
 
     #[test]

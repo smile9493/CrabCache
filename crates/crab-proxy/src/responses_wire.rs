@@ -47,9 +47,7 @@ pub fn responses_wire_profile(ctx: &GatewayContext) -> Option<ResponsesWireProfi
             | RequestPipeline::DeepSeekLight,
         ) => Some(ResponsesWireProfile::DeepSeek),
         Some(
-            RequestPipeline::CodexMimo
-            | RequestPipeline::MimoTokenPlanRelay
-            | RequestPipeline::MimoPaygRelay,
+            RequestPipeline::CodexMimo | RequestPipeline::MimoTokenPlanRelay,
         ) => Some(ResponsesWireProfile::Mimo),
         _ => None,
     }

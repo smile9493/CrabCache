@@ -165,6 +165,7 @@ pub(crate) fn run(
             request_id = %ctx.request_id,
             status,
             body_len = chunk.len(),
+            has_reasoning_err,
             preview = %preview,
             "Upstream error response body"
         );

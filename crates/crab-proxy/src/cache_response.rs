@@ -135,11 +135,6 @@ pub async fn send_cached_response(
         } else {
             json_to_sse_stream(response_body, model, display_reasoning)
         };
-        let json_choices = serde_json::from_slice::<serde_json::Value>(response_body)
-            .ok()
-            .and_then(|v| v.get("choices").and_then(|c| c.as_array()).map(|a| a.len()))
-            .unwrap_or(0);
-        let has_done = sse_body.windows(6).any(|w| w == b"[DONE]");
         let has_nonempty = cached_sse_has_nonempty_content(&sse_body);
         let json_visible =
             completion_json_has_visible_client_content(response_body, display_reasoning);

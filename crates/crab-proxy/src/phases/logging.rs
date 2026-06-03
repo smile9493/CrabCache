@@ -201,7 +201,7 @@ pub(crate) async fn run(
             // #endregion
         }
 
-        if let Some(pipeline) = ctx.request_pipeline
+        if let Some(_pipeline) = ctx.request_pipeline
             && proxy.state.features.read().mimo_session_store
             && GatewayProxy::mimo_session_store_applies(ctx)
             && ctx.cache_tier.is_none()
@@ -233,6 +233,12 @@ pub(crate) async fn run(
             let passthrough_trace = ctx.request_passthrough.armed_prefix_len > 0;
             if ctx.original_request_body.is_some() || passthrough_trace {
                 let body_bytes = ctx.original_request_body.as_deref().unwrap_or(&[]);
+                // Use upstream usage when available, else fall back to request-level total
+                let prompt_tokens = if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
+                    ctx.tokens.last_input as usize
+                } else {
+                    ctx.tokens.total as usize
+                };
                 let mut entry = SanitizedLogEntry::from_request(
                     body_bytes,
                     ctx.conversation_id.clone(),
@@ -240,8 +246,7 @@ pub(crate) async fn run(
                     ctx.domain.clone(),
                     ctx.project_id.clone(),
                     &ctx.model,
-                    // prompt_tokens = last upstream input_tokens when usage available, else request total
-                    ctx.tokens.total as usize,
+                    prompt_tokens,
                     duration.as_secs_f64() * 1000.0,
                     ctx.cache_tier.is_some(),
                     ctx.cache_tier.map(|t| t.as_str().to_string()),
@@ -288,7 +293,6 @@ pub(crate) async fn run(
                 if ctx.tokens.last_input > 0 || ctx.tokens.last_output > 0 {
                     entry.input_tokens = Some(ctx.tokens.last_input);
                     entry.output_tokens = Some(ctx.tokens.last_output);
-                    entry.prompt_tokens = ctx.tokens.last_input as usize;
                 }
                 // Populate response_preview from best available source
                 if max_resp > 0 {

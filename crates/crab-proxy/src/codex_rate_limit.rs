@@ -203,13 +203,21 @@ pub fn codex_retry_budget(pool_len: usize, max_budget: u8) -> u8 {
     }
 }
 
+/// Same as [`codex_retry_budget`] — shared by Codex bridge and MiMo relay pipelines.
+pub fn pool_scaled_retry_budget(pool_len: usize, max_budget: u8) -> u8 {
+    codex_retry_budget(pool_len, max_budget)
+}
+
+/// True for Codex OAuth / DeepSeek bridge pipelines only.
+///
+/// [`RequestPipeline::CodexMimo`] is excluded: it uses the MiMo API key pool and
+/// [`GatewayProxy::is_mimo_pipeline`], not Codex quota preflight or OAuth binding.
 pub fn is_codex_upstream_pipeline(pipeline: Option<crab_pipeline::RequestPipeline>) -> bool {
     matches!(
         pipeline,
         Some(
             crab_pipeline::RequestPipeline::CodexRelay
                 | crab_pipeline::RequestPipeline::CodexDeepSeek
-                | crab_pipeline::RequestPipeline::CodexMimo
         )
     )
 }
@@ -290,5 +298,19 @@ mod tests {
     fn spark_scope() {
         assert_eq!(codex_model_scope("gpt-5.3-codex-spark"), "spark");
         assert_eq!(codex_model_scope("gpt-5-codex"), "codex");
+    }
+
+    #[test]
+    fn pool_scaled_retry_budget_matches_codex_retry_budget() {
+        assert_eq!(pool_scaled_retry_budget(4, 3), codex_retry_budget(4, 3));
+    }
+
+    #[test]
+    fn codex_upstream_pipeline_excludes_codex_mimo() {
+        use crab_pipeline::RequestPipeline;
+        assert!(is_codex_upstream_pipeline(Some(RequestPipeline::CodexRelay)));
+        assert!(is_codex_upstream_pipeline(Some(RequestPipeline::CodexDeepSeek)));
+        assert!(!is_codex_upstream_pipeline(Some(RequestPipeline::CodexMimo)));
+        assert!(!is_codex_upstream_pipeline(Some(RequestPipeline::MimoTokenPlanRelay)));
     }
 }

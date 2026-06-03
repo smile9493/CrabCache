@@ -6,9 +6,56 @@
 //!
 //! Uses manual idle TTL checks in `get()` (moka `time_to_idle` requires a Tokio runtime at build).
 
+use crate::context::GatewayContext;
 use dashmap::DashMap;
 use moka::sync::Cache;
 use std::sync::Arc;
+
+/// Determine the stable session id for MiMo key binding.
+///
+/// Priority: `conversation_id` > `prompt_cache_key` > `session_fingerprint`.
+/// Returns `None` when none are available, causing the caller to skip sticky
+/// binding and use pool-wide round-robin instead.
+///
+/// **Does NOT use `client_key_fingerprint`** — that would collapse all
+/// conversations sharing the same `sk-cc-*` into a single upstream key.
+pub fn resolve_mimo_binding_key(ctx: &GatewayContext) -> Option<String> {
+    if let Some(s) = ctx
+        .conversation_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Some(format!("conv:{s}"));
+    }
+    if let Some(s) = ctx
+        .prompt_cache_key
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Some(format!("pck:{s}"));
+    }
+    if let Some(s) = ctx
+        .session_fingerprint
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Some(format!("sfp:{s}"));
+    }
+    None
+}
+
+/// Binding key prefix for structured logs / metrics.
+pub fn mimo_binding_key_kind(bind_key: &str) -> &'static str {
+    if bind_key.starts_with("conv:") {
+        "conv"
+    } else if bind_key.starts_with("pck:") {
+        "pck"
+    } else if bind_key.starts_with("sfp:") {
+        "sfp"
+    } else {
+        "unknown"
+    }
+}
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -194,6 +241,36 @@ impl KeyBindingStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::GatewayContext;
+
+    #[test]
+    fn resolve_mimo_binding_key_prefers_conversation_id() {
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.conversation_id = Some("c1".into());
+        ctx.prompt_cache_key = Some("pck".into());
+        ctx.session_fingerprint = Some("sfp".into());
+        assert_eq!(
+            resolve_mimo_binding_key(&ctx).as_deref(),
+            Some("conv:c1")
+        );
+    }
+
+    #[test]
+    fn resolve_mimo_binding_key_uses_session_fingerprint() {
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.session_fingerprint = Some("abc123".into());
+        assert_eq!(
+            resolve_mimo_binding_key(&ctx).as_deref(),
+            Some("sfp:abc123")
+        );
+    }
+
+    #[test]
+    fn resolve_mimo_binding_key_none_without_conversation_signals() {
+        let mut ctx = GatewayContext::new("req".into());
+        ctx.client_key_fingerprint = Some("fe1fc33d2272a93f".into());
+        assert!(resolve_mimo_binding_key(&ctx).is_none());
+    }
 
     #[test]
     fn put_and_get() {

@@ -8,6 +8,7 @@ use crate::connection_helpers::apply_connection_options;
 use crate::context::{GatewayContext, GatewayState, ReasoningConfig};
 use crate::metrics_helpers::timeline_stamp;
 use crate::runtime::RuntimeConfig;
+use crate::upstream_pool::UpstreamKeyPool;
 use crab_metrics::{CacheTier, global_metrics};
 use crab_pipeline::RequestPipeline;
 use crab_semantic::{GateDecision, evaluate_semantic_gate};
@@ -26,9 +27,7 @@ impl GatewayProxy {
     pub(crate) fn is_mimo_pipeline(p: RequestPipeline) -> bool {
         matches!(
             p,
-            RequestPipeline::MimoTokenPlanRelay
-                | RequestPipeline::MimoPaygRelay
-                | RequestPipeline::CodexMimo
+            RequestPipeline::MimoTokenPlanRelay | RequestPipeline::CodexMimo
         )
     }
 
@@ -48,6 +47,11 @@ impl GatewayProxy {
 
     pub(crate) fn is_codex_upstream_pipeline(p: RequestPipeline) -> bool {
         crate::codex_rate_limit::is_codex_upstream_pipeline(Some(p))
+    }
+
+    /// Pool-sized same-request retry budget (Codex OAuth/DeepSeek bridge + MiMo relays).
+    pub(crate) fn uses_pool_scaled_retry_budget(p: RequestPipeline) -> bool {
+        Self::is_codex_upstream_pipeline(p) || Self::is_mimo_pipeline(p)
     }
 
     pub(crate) fn is_deepseek_upstream_pipeline(p: RequestPipeline) -> bool {
@@ -123,6 +127,26 @@ impl GatewayProxy {
             .as_deref()
             .and_then(|id| self.state.runtime.profile(id))
             .unwrap_or_else(|| self.state.runtime.default_profile())
+    }
+
+    /// Sync MiMo profile pool semaphores with `mimo_key_max_inflight` when configured.
+    pub(crate) fn ensure_mimo_pool_inflight_cap(
+        &self,
+        profile: &crate::upstream_profile::UpstreamProfileRuntime,
+        max_inflight: usize,
+    ) {
+        if max_inflight == 0 {
+            return;
+        }
+        let current = profile.resolve_upstream_pool();
+        if current.max_inflight() == max_inflight {
+            return;
+        }
+        let updated = UpstreamKeyPool::rebuild_with_max_inflight(&current, max_inflight);
+        *profile.upstream_pool.write() = updated;
+        if profile.id == self.state.runtime.default_upstream_profile_id() {
+            self.state.runtime.replace_upstream_pool(profile.resolve_upstream_pool());
+        }
     }
 
     pub(crate) fn create_upstream_peer(
@@ -238,19 +262,6 @@ impl GatewayProxy {
         }
         let profile = self.active_upstream_profile(ctx);
         let pool = profile.resolve_upstream_pool();
-        let available_before = pool.available_count();
-        let total = pool.len();
-        // #region agent log - debug key acquire entry
-        tracing::warn!(
-            request_id = %ctx.request_id,
-            pipeline = ?ctx.request_pipeline,
-            profile = %profile.id,
-            available_keys = available_before,
-            total_keys = total,
-            upstream_model = ?ctx.upstream_model,
-            "DEBUG: entering try_acquire_upstream_key"
-        );
-        // #endregion
         let canonical_model = ctx
             .upstream_model
             .as_deref()
@@ -265,69 +276,69 @@ impl GatewayProxy {
         // MiMo conversation-level key binding: try bound key first.
         let features = self.state.features.read();
         if ctx.request_pipeline.map_or(false, Self::is_mimo_pipeline) && features.mimo_key_binding {
+            if features.mimo_key_max_inflight > 0 {
+                self.ensure_mimo_pool_inflight_cap(&profile, features.mimo_key_max_inflight);
+            }
+            let pool = profile.resolve_upstream_pool();
             if let Some(ref binding_store) = self.state.key_binding_store {
-                let stable_session = ctx
-                    .conversation_id
-                    .as_deref()
-                    .or(ctx.prompt_cache_key.as_deref())
-                    .or(ctx.session_fingerprint.as_deref())
-                    .or(ctx.client_key_fingerprint.as_deref());
-
-                if let Some(sid) = stable_session {
-                    if let Some(binding) = binding_store.get(sid) {
+                if let Some(bind_key) = crate::key_binding::resolve_mimo_binding_key(ctx) {
+                    if let Some(binding) = binding_store.get(&bind_key) {
+                        let bound_id = binding.key_id;
                         let max_inflight = features.mimo_key_max_inflight;
-                        let current_inflight = pool.inflight_of(&binding.key_id);
-                        // #region agent log - debug MiMo binding check
-                        tracing::warn!(
-                            request_id = %ctx.request_id,
-                            session_id = %sid,
-                            bound_key_id = %binding.key_id,
-                            current_inflight = current_inflight,
-                            max_inflight = max_inflight,
-                            "DEBUG: MiMo key binding found, checking inflight"
-                        );
-                        // #endregion
-                        // Bound key available and under concurrency limit?
+                        let current_inflight = pool.inflight_of(&bound_id);
                         if max_inflight == 0 || current_inflight < max_inflight {
-                            if let Some(guard) = pool.acquire_specific(&binding.key_id) {
-                                binding_store.touch(sid);
+                            if let Some(guard) = pool.acquire_specific(&bound_id) {
+                                binding_store.touch(&bind_key);
                                 ctx.upstream.miss = true;
                                 ctx.upstream.key_guard = Some(guard);
                                 global_metrics().record_key_binding_event("hit");
                                 tracing::debug!(
                                     request_id = %ctx.request_id,
-                                    session_id = %sid,
-                                    key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                                    "MiMo key binding hit: reusing bound key"
+                                    bind_key = %bind_key,
+                                    key_id = bound_id.as_str(),
+                                    binding_key_kind = crate::key_binding::mimo_binding_key_kind(&bind_key),
+                                    "MiMo key binding hit"
                                 );
                                 return true;
                             }
                         }
-                        tracing::warn!(
-                            request_id = %ctx.request_id,
-                            session_id = %sid,
-                            bound_key_id = %binding.key_id,
-                            "MiMo key binding: bound key unavailable; refusing random key switch"
-                        );
+
+                        let spill_reason = if max_inflight > 0
+                            && current_inflight >= max_inflight
+                        {
+                            "inflight"
+                        } else {
+                            "cooldown"
+                        };
+                        if let Some(guard) = pool
+                            .acquire_excluding_key(&bound_id)
+                            .or_else(|| pool.acquire_for_upstream_model(&upstream_model, false))
+                            .or_else(|| pool.acquire())
+                        {
+                            ctx.upstream.miss = true;
+                            ctx.upstream.key_guard = Some(guard);
+                            global_metrics().record_key_binding_event("spill");
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                bind_key = %bind_key,
+                                bound_key_id = %bound_id,
+                                spill_reason,
+                                binding_key_kind = crate::key_binding::mimo_binding_key_kind(&bind_key),
+                                "MiMo key binding spill to alternate upstream key"
+                            );
+                            return true;
+                        }
                         global_metrics().record_rejected("upstream_key_exhausted");
                         global_metrics().record_rejection_by_source("upstream");
                         return false;
                     }
-                    // No binding for this session: create one.
-                    // Prefer a key that is under the max_sessions-per-key cap.
-                    // #region agent log - debug new binding creation
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        session_id = %sid,
-                        available_keys = pool.available_count(),
-                        max_sessions_per_key = features.mimo_key_max_sessions_per_key,
-                        "DEBUG: no existing binding for session, creating new one"
-                    );
-                    // #endregion
+
                     let max_sessions = features.mimo_key_max_sessions_per_key;
                     let available_ids = pool.available_key_ids();
-                    let available_refs: Vec<&str> = available_ids.iter().map(|s| s.as_str()).collect();
-                    let preferred = binding_store.least_loaded_key(&available_refs, max_sessions);
+                    let available_refs: Vec<&str> =
+                        available_ids.iter().map(|s| s.as_str()).collect();
+                    let preferred =
+                        binding_store.least_loaded_key(&available_refs, max_sessions);
                     let guard = preferred
                         .as_deref()
                         .and_then(|kid| pool.acquire_specific(kid))
@@ -335,29 +346,29 @@ impl GatewayProxy {
                         .or_else(|| pool.acquire());
                     if let Some(guard) = guard {
                         let kid = guard.key_id().to_string();
-                        binding_store.put(sid.to_string(), kid);
+                        binding_store.put(bind_key.clone(), kid);
                         ctx.upstream.miss = true;
                         ctx.upstream.key_guard = Some(guard);
                         global_metrics().record_key_binding_event("miss");
                         tracing::debug!(
                             request_id = %ctx.request_id,
-                            session_id = %sid,
+                            bind_key = %bind_key,
+                            binding_key_kind = crate::key_binding::mimo_binding_key_kind(&bind_key),
                             key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                            "MiMo key binding: new binding created"
+                            "MiMo key binding created"
                         );
                         return true;
                     }
-                    // No keys available at all.
                     tracing::warn!(
                         request_id = %ctx.request_id,
-                        session_id = %sid,
+                        bind_key = %bind_key,
                         "MiMo key binding: no upstream keys available for new binding"
                     );
                     global_metrics().record_rejected("upstream_key_exhausted");
                     global_metrics().record_rejection_by_source("upstream");
                     return false;
                 }
-                // No stable session id available: fall through to default logic.
+                // No resolvable binding key: fall through to default pool acquire.
             }
         }
 
@@ -822,7 +833,7 @@ impl GatewayProxy {
             .key_guard
             .as_ref()
             .map(|g| (g.key_id().to_string(), g.account_id().to_string()));
-        let stable_session = Self::stable_mimo_session_id(ctx).map(str::to_string);
+        let bind_key = crate::key_binding::resolve_mimo_binding_key(ctx);
         let transient_failures = old_key
             .as_ref()
             .map(|(old_id, _)| {
@@ -877,9 +888,18 @@ impl GatewayProxy {
         ctx.backend_permit = None;
 
         if let Some(ref binding_store) = self.state.key_binding_store {
-            if let Some(sid) = stable_session.as_deref() {
+            if let Some(ref key) = bind_key {
                 if disable_current || transient_failures >= 3 {
-                    binding_store.remove(sid);
+                    binding_store.remove(key);
+                }
+            }
+            if let Some(sid) = ctx
+                .conversation_id
+                .as_deref()
+                .or(ctx.prompt_cache_key.as_deref())
+                .or(ctx.session_fingerprint.as_deref())
+            {
+                if disable_current || transient_failures >= 3 {
                     binding_store
                         .remove(&crate::key_binding::KeyBindingStore::codex_session_key(sid));
                 }
@@ -888,14 +908,6 @@ impl GatewayProxy {
 
         global_metrics().record_upstream_key_retry(reason);
         Some(new_key_id)
-    }
-
-    fn stable_mimo_session_id(ctx: &GatewayContext) -> Option<&str> {
-        ctx.conversation_id
-            .as_deref()
-            .or(ctx.prompt_cache_key.as_deref())
-            .or(ctx.session_fingerprint.as_deref())
-            .or(ctx.client_key_fingerprint.as_deref())
     }
 
     fn is_mimo_upload_pipe_closed(e: &pingora_core::Error) -> bool {
@@ -919,29 +931,25 @@ impl GatewayProxy {
         }
 
         let mut transient_failures = 0u32;
-        if let (Some(binding_store), Some(sid)) = (
+        if let (Some(binding_store), Some(bind_key)) = (
             self.state.key_binding_store.as_ref(),
-            Self::stable_mimo_session_id(ctx),
+            crate::key_binding::resolve_mimo_binding_key(ctx),
         ) {
-            transient_failures = binding_store.record_failure(sid, key_id).unwrap_or(0);
-            let codex_sid = crate::key_binding::KeyBindingStore::codex_session_key(sid);
-            transient_failures = transient_failures.max(
-                binding_store
-                    .record_failure(&codex_sid, key_id)
-                    .unwrap_or(0),
-            );
+            transient_failures = binding_store
+                .record_failure(&bind_key, key_id)
+                .unwrap_or(0);
         }
 
         if transient_failures >= 3 {
             let pool = self.active_upstream_profile(ctx).resolve_upstream_pool();
             pool.report_rate_limited_for(key_id, 30, None);
 
-            if let (Some(binding_store), Some(sid)) = (
+            if let (Some(binding_store), Some(bind_key)) = (
                 self.state.key_binding_store.as_ref(),
-                Self::stable_mimo_session_id(ctx),
+                crate::key_binding::resolve_mimo_binding_key(ctx),
             ) {
-                binding_store.remove(sid);
-                binding_store.remove(&crate::key_binding::KeyBindingStore::codex_session_key(sid));
+                binding_store.remove(&bind_key);
+                global_metrics().record_key_binding_event("unbind_429");
             }
 
             if let (Some(model), Some(backend_name)) = (
@@ -1093,7 +1101,7 @@ impl ProxyHttp for GatewayProxy {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> Result<Option<bytes::Bytes>> {
-        if !session.response_written().is_some() {
+        if session.response_written().is_none() {
             return Ok(None);
         }
         let tail = crate::responses_wire::build_graceful_responses_stream_tail(
@@ -1230,10 +1238,11 @@ pub(crate) fn build_response_preview(ctx: &GatewayContext, max_bytes: usize) -> 
 
     let raw = String::from_utf8_lossy(source);
     let truncated = if raw.len() > max_bytes {
+        let safe_end = raw.floor_char_boundary(max_bytes);
         format!(
             "{}...<truncated {}>",
-            &raw[..max_bytes],
-            raw.len() - max_bytes
+            &raw[..safe_end],
+            raw.len() - safe_end
         )
     } else {
         raw.to_string()

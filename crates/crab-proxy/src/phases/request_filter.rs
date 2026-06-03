@@ -2,7 +2,7 @@
 //!
 //! Extracted from `proxy.rs` `ProxyHttp::request_filter` to keep the trait impl manageable.
 
-use crate::body_quick_parse::quick_parse_request_fields;
+use crate::body_quick_parse::{quick_parse_first_user_fingerprint, quick_parse_request_fields};
 use crate::client_key_limiter::ClientKeyLimitError;
 use crate::context::GatewayContext;
 use crate::error_jsons::{
@@ -94,6 +94,28 @@ fn upgrade_pipeline_for_responses_client(
     upgraded
         .map(|(pipeline, reason)| (pipeline, Some(reason)))
         .unwrap_or((pipeline, None))
+}
+
+/// How the gateway acquires an upstream API key after cache/coalesce phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpstreamKeyAcquireStrategy {
+    /// WHAM quota preflight + OAuth pool (`CodexRelay` / `CodexDeepSeek` only).
+    CodexQuotaPreflight,
+    /// Standard profile key pool (MiMo relays, generic, and CodexMimo).
+    StandardUpstreamPool,
+}
+
+/// Resolves key acquisition path from pipeline + feature flags.
+pub(crate) fn upstream_key_acquire_strategy(
+    pipeline: Option<RequestPipeline>,
+    codex_quota_preflight: bool,
+) -> UpstreamKeyAcquireStrategy {
+    let codex = pipeline.map_or(false, GatewayProxy::is_codex_upstream_pipeline);
+    if codex && codex_quota_preflight {
+        UpstreamKeyAcquireStrategy::CodexQuotaPreflight
+    } else {
+        UpstreamKeyAcquireStrategy::StandardUpstreamPool
+    }
 }
 
 fn apply_mimo_tool_audit(
@@ -199,6 +221,11 @@ async fn run_post_body_phases(
         .headers
         .get("x-client-kind")
         .and_then(|v| v.to_str().ok());
+    let originator = session
+        .req_header()
+        .headers
+        .get("originator")
+        .and_then(|v| v.to_str().ok());
     // Parse body for payload-based signal detection (lightweight, reuses existing bytes).
     let detection_payload: Option<serde_json::Value> =
         serde_json::from_slice(full_body.as_ref()).ok();
@@ -206,6 +233,7 @@ async fn run_post_body_phases(
         detection_path,
         user_agent.as_deref(),
         x_client_kind,
+        originator,
         detection_payload.as_ref(),
     );
 
@@ -265,12 +293,15 @@ async fn run_post_body_phases(
             &reason_str,
         );
         timeline_stamp(&mut ctx.timeline.pipeline_select_done);
-        if crate::codex_rate_limit::is_codex_upstream_pipeline(ctx.request_pipeline) {
+        if ctx
+            .request_pipeline
+            .is_some_and(GatewayProxy::uses_pool_scaled_retry_budget)
+        {
             let profile = proxy.active_upstream_profile(ctx);
             let pool = profile.resolve_upstream_pool();
             let max_budget = proxy.state.features.read().codex_retry_budget_max;
             ctx.upstream.retry_budget =
-                crate::codex_rate_limit::codex_retry_budget(pool.len(), max_budget);
+                crate::codex_rate_limit::pool_scaled_retry_budget(pool.len(), max_budget);
         }
         if proxy
             .state
@@ -462,7 +493,6 @@ async fn run_post_body_phases(
 
     let direct_mimo = mimo_uses_direct_body_relay(ctx, selection.pipeline);
     let guardrail_payload = serde_json::from_slice::<serde_json::Value>(full_body.as_ref()).ok();
-    let mut parse_elapsed = std::time::Duration::default();
     let mut reject_missing = false;
     let mut patched = 0usize;
     let mut missing = 0usize;
@@ -480,7 +510,15 @@ async fn run_post_body_phases(
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
-            if !guardrail.labels.is_empty() {}
+            if !guardrail.labels.is_empty() {
+                warn!(
+                    request_id = %ctx.request_id,
+                    model = %ctx.model,
+                    labels = ?guardrail.labels,
+                    blocked = guardrail.blocked,
+                    "Guardrail labels triggered (not blocked)"
+                );
+            }
             if guardrail.blocked {
                 let body = serde_json::json!({
                     "error": {
@@ -534,6 +572,14 @@ async fn run_post_body_phases(
         ctx.upstream.prepared_body_for_retry = Some(body.clone());
         ctx.new_request_body = Some(body);
         ctx.upstream_body_for_capture = Some(full_body.clone());
+        if ctx.session_fingerprint.is_none() {
+            ctx.session_fingerprint =
+                quick_parse_first_user_fingerprint(full_body.as_ref());
+        }
+        if stable_session_buf.is_none() {
+            stable_session_buf = crate::key_binding::resolve_mimo_binding_key(ctx);
+        }
+        stable_session = stable_session_buf.as_deref();
     } else {
         let mut parsed_payload =
             match proxy.ensure_client_payload(ctx, &full_body, Some(selection.pipeline.as_str())) {
@@ -568,21 +614,13 @@ async fn run_post_body_phases(
                     return Ok(true);
                 }
             };
-        parse_elapsed = ctx
-            .timeline
-            .json_parse_done
-            .map(|t| t.duration_since(ctx.request_start))
-            .unwrap_or_default();
         if ctx.session_fingerprint.is_none() {
             ctx.session_fingerprint =
                 crab_capture::session_fingerprint_from_payload(parsed_payload.as_ref());
         }
         // Refresh stable_session now that session_fingerprint is available.
-        // Priority: conv_id > pck > session_fingerprint > client_key > req_hash.
         if stable_session_buf.is_none() {
-            if let Some(sfp) = ctx.session_fingerprint.as_deref() {
-                stable_session_buf = Some(format!("sfp:{}", sfp));
-            }
+            stable_session_buf = crate::key_binding::resolve_mimo_binding_key(ctx);
         }
         stable_session = stable_session_buf.as_deref();
         refresh_affinity_key(
@@ -598,7 +636,15 @@ async fn run_post_body_phases(
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
             ctx.guardrail_hits = guardrail.labels.clone();
             ctx.guardrail_blocked = guardrail.blocked;
-            if !guardrail.labels.is_empty() {}
+            if !guardrail.labels.is_empty() {
+                warn!(
+                    request_id = %ctx.request_id,
+                    model = %ctx.model,
+                    labels = ?guardrail.labels,
+                    blocked = guardrail.blocked,
+                    "Guardrail labels triggered (not blocked)"
+                );
+            }
             if guardrail.blocked {
                 let body = serde_json::json!({
                     "error": {
@@ -901,7 +947,13 @@ async fn run_post_body_phases(
     ctx.new_request_body = Some(new_body.clone());
     ctx.upstream_body_for_capture = Some(new_body);
     ctx.upstream.retry_buffer_truncated = session.retry_buffer_truncated();
-    if ctx.upstream.retry_buffer_truncated {}
+    if ctx.upstream.retry_buffer_truncated {
+        warn!(
+            request_id = %ctx.request_id,
+            model = %ctx.model,
+            "Upstream retry buffer truncated — request body may be incomplete for retry"
+        );
+    }
 
     // ─── Phase 4.5: Quota Preflight ──────────────────────────────────────
     // Quick profile-level health gate: if every backend in the active profile
@@ -979,25 +1031,32 @@ async fn run_post_body_phases(
             .request_pipeline
             .map_or(false, |p| GatewayProxy::is_mimo_pipeline(p))
     {
-        // Extract binding info while holding the features read lock, then drop it
-        // before the async await (parking_lot RwLockReadGuard is !Send).
         let binding_info: Option<(
             Arc<crate::key_binding::KeyBindingStore>,
             String,
             String,
             u64,
+            String,
         )> = {
             let features = proxy.state.features.read();
             if features.mimo_key_binding {
-                proxy.state.key_binding_store.as_ref().and_then(|store| {
-                    stable_session.and_then(|sid| {
-                        store.get(sid).map(|binding| {
+                crate::key_binding::resolve_mimo_binding_key(ctx).and_then(|bind_key| {
+                    proxy.state.key_binding_store.as_ref().and_then(|store| {
+                        store.get(&bind_key).map(|binding| {
                             let timeout_ms = features.mimo_key_overflow_wait_ms;
+                            let upstream_model = ctx
+                                .upstream_model
+                                .as_deref()
+                                .map(crab_pipeline::canonicalize_client_model)
+                                .unwrap_or_else(|| {
+                                    crab_pipeline::canonicalize_client_model(&ctx.model)
+                                });
                             (
                                 Arc::clone(store),
-                                sid.to_string(),
+                                bind_key,
                                 binding.key_id,
                                 timeout_ms,
+                                upstream_model,
                             )
                         })
                     })
@@ -1007,53 +1066,39 @@ async fn run_post_body_phases(
             }
         };
 
-        if let Some((binding_store, sid, bound_key_id, timeout_ms)) = binding_info {
+        if let Some((binding_store, bind_key, bound_key_id, timeout_ms, upstream_model)) =
+            binding_info
+        {
             let profile = proxy.active_upstream_profile(ctx);
+            let max_inflight = proxy.state.features.read().mimo_key_max_inflight;
+            if max_inflight > 0 {
+                proxy.ensure_mimo_pool_inflight_cap(&profile, max_inflight);
+            }
             let pool = profile.resolve_upstream_pool();
             let timeout = std::time::Duration::from_millis(timeout_ms);
-            // #region agent log - debug key binding attempt
-            tracing::warn!(
-                request_id = %ctx.request_id,
-                session_id = %sid,
-                bound_key_id = %bound_key_id,
-                timeout_ms = timeout_ms,
-                "DEBUG: attempting key binding pre-acquire"
-            );
-            // #endregion
             if let Some(guard) = pool
                 .acquire_with_binding_async(&bound_key_id, timeout)
                 .await
             {
-                binding_store.touch(&sid);
+                binding_store.touch(&bind_key);
                 ctx.upstream.key_guard = Some(guard);
                 global_metrics().record_key_binding_event("pre_acquire");
-                // #region agent log - debug key binding success
-                tracing::warn!(
+            } else if let Some(guard) = pool
+                .acquire_excluding_key(&bound_key_id)
+                .or_else(|| pool.acquire_for_upstream_model(&upstream_model, false))
+                .or_else(|| pool.acquire())
+            {
+                ctx.upstream.key_guard = Some(guard);
+                global_metrics().record_key_binding_event("spill");
+                tracing::info!(
                     request_id = %ctx.request_id,
-                    session_id = %sid,
-                    key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-                    "DEBUG: key binding pre-acquired successfully"
-                );
-                // #endregion
-            } else {
-                // #region agent log - debug key binding failed
-                tracing::warn!(
-                    request_id = %ctx.request_id,
-                    session_id = %sid,
+                    bind_key = %bind_key,
                     bound_key_id = %bound_key_id,
-                    "DEBUG: key binding pre-acquire FAILED (timeout or unavailable)"
+                    spill_reason = "inflight",
+                    binding_key_kind = crate::key_binding::mimo_binding_key_kind(&bind_key),
+                    "MiMo key binding pre-acquire spill after overflow wait"
                 );
-                // #endregion
             }
-        } else {
-            // #region agent log - debug no binding info
-            tracing::warn!(
-                request_id = %ctx.request_id,
-                stable_session = ?stable_session,
-                is_mimo = ctx.request_pipeline.map_or(false, |p| GatewayProxy::is_mimo_pipeline(p)),
-                "DEBUG: no key binding info found (binding disabled or no session binding)"
-            );
-            // #endregion
         }
     }
 
@@ -1165,18 +1210,6 @@ async fn run_post_body_phases(
     }
 
     // ─── Phase 5: Cache & Coalesce (key generation, L0/L1/L2 lookup, coalescing) ───
-    // #region agent log - debug pre-cache phase
-    tracing::warn!(
-        request_id = %ctx.request_id,
-        conversation_id = ?ctx.conversation_id,
-        session_fingerprint = ?ctx.session_fingerprint,
-        prompt_cache_key = ?ctx.prompt_cache_key,
-        client_key_fingerprint = ?ctx.client_key_fingerprint,
-        pipeline = ?ctx.request_pipeline,
-        model = %ctx.model,
-        "DEBUG: entering Phase 5 cache & coalesce"
-    );
-    // #endregion
     match crate::phases::cache_coalesce::run(proxy, session, ctx).await? {
         crate::phases::cache_coalesce::CachePhaseOutcome::Return(done) => {
             return Ok(done);
@@ -1184,36 +1217,25 @@ async fn run_post_body_phases(
         crate::phases::cache_coalesce::CachePhaseOutcome::Continue => {}
     }
 
-    // Codex quota-aware key selection with WHAM preflight (async)
-    // Exclude CodexMimo — it uses MiMo key pool (not OAuth), preflight would reject all keys.
-    let is_codex = ctx.request_pipeline.map_or(false, |p| {
-        GatewayProxy::is_codex_upstream_pipeline(p) && !GatewayProxy::is_mimo_pipeline(p)
-    });
-    let preflight_enabled = if is_codex {
-        let features = proxy.state.features.read();
-        features.codex_quota_preflight
-    } else {
-        false
+    let codex_quota_preflight = proxy.state.features.read().codex_quota_preflight;
+    let key_strategy =
+        upstream_key_acquire_strategy(ctx.request_pipeline, codex_quota_preflight);
+    let key_acquired = match key_strategy {
+        UpstreamKeyAcquireStrategy::CodexQuotaPreflight => {
+            proxy.try_acquire_codex_with_preflight(ctx).await
+        }
+        UpstreamKeyAcquireStrategy::StandardUpstreamPool => proxy.try_acquire_upstream_key(ctx),
     };
-    let key_acquired = if is_codex && preflight_enabled {
-        proxy.try_acquire_codex_with_preflight(ctx).await
-    } else {
-        proxy.try_acquire_upstream_key(ctx)
-    };
-    // #region agent log - debug key acquisition result
-    tracing::warn!(
-        request_id = %ctx.request_id,
-        key_acquired = key_acquired,
-        key_id = ctx.upstream.key_guard.as_ref().map(|g| g.key_id()),
-        pipeline = ?ctx.request_pipeline,
-        "DEBUG: key acquisition result in run_post_body_phases"
-    );
-    // #endregion
 
     if !key_acquired {
         let pool = proxy.active_upstream_profile(ctx).resolve_upstream_pool();
         let failure = pool.diagnose_acquire_failure();
         let (body, error_code, retry_after) = upstream_pool_exhausted_error_details(failure);
+        warn!(
+            request_id = %ctx.request_id,
+            error_code,
+            "Upstream key pool exhausted, returning 503"
+        );
         if !send_json_error_with_retry_after(
             session,
             http::StatusCode::SERVICE_UNAVAILABLE,
@@ -1237,10 +1259,54 @@ async fn run_post_body_phases(
 #[cfg(test)]
 mod tests {
     use super::{
-        can_arm_mimo_request_passthrough, mimo_direct_passthrough,
-        request_passthrough_allowed_pipeline, upgrade_pipeline_for_responses_client,
+        UpstreamKeyAcquireStrategy, can_arm_mimo_request_passthrough, mimo_direct_passthrough,
+        request_passthrough_allowed_pipeline, upstream_key_acquire_strategy,
+        upgrade_pipeline_for_responses_client,
     };
+    use crate::proxy::GatewayProxy;
     use crab_pipeline::{ClientKind, PipelineSelectionReason, RequestPipeline, UpstreamProvider};
+
+    #[test]
+    fn codex_mimo_uses_standard_pool_not_codex_preflight() {
+        assert_eq!(
+            upstream_key_acquire_strategy(Some(RequestPipeline::CodexMimo), true),
+            UpstreamKeyAcquireStrategy::StandardUpstreamPool
+        );
+        assert_eq!(
+            upstream_key_acquire_strategy(Some(RequestPipeline::MimoTokenPlanRelay), true),
+            UpstreamKeyAcquireStrategy::StandardUpstreamPool
+        );
+    }
+
+    #[test]
+    fn codex_relay_uses_preflight_when_enabled() {
+        assert_eq!(
+            upstream_key_acquire_strategy(Some(RequestPipeline::CodexRelay), true),
+            UpstreamKeyAcquireStrategy::CodexQuotaPreflight
+        );
+        assert_eq!(
+            upstream_key_acquire_strategy(Some(RequestPipeline::CodexRelay), false),
+            UpstreamKeyAcquireStrategy::StandardUpstreamPool
+        );
+    }
+
+    #[test]
+    fn codex_deepseek_uses_preflight_when_enabled() {
+        assert_eq!(
+            upstream_key_acquire_strategy(Some(RequestPipeline::CodexDeepSeek), true),
+            UpstreamKeyAcquireStrategy::CodexQuotaPreflight
+        );
+    }
+
+    #[test]
+    fn mimo_and_codex_mimo_use_pool_scaled_retry_budget() {
+        assert!(GatewayProxy::uses_pool_scaled_retry_budget(
+            RequestPipeline::MimoTokenPlanRelay
+        ));
+        assert!(GatewayProxy::uses_pool_scaled_retry_budget(RequestPipeline::CodexMimo));
+        assert!(!GatewayProxy::uses_pool_scaled_retry_budget(RequestPipeline::GenericRelay));
+        assert!(GatewayProxy::uses_pool_scaled_retry_budget(RequestPipeline::CodexRelay));
+    }
 
     #[test]
     fn mimo_pipelines_use_direct_passthrough() {
@@ -1299,8 +1365,9 @@ mod tests {
         ctx.client_wire_api = ClientWireApi::Responses;
         ctx.request_pipeline = Some(RequestPipeline::MimoTokenPlanRelay);
 
-        // Cursor+MiMo+Responses → should NOT translate (direct passthrough)
-        assert!(!needs_responses_wire_translate(&ctx));
+        // Cursor+MiMo+Responses is rejected in request_filter before wire translate runs.
+        // MiMo profile still marks Responses wire as translatable for CodexMimo clients.
+        assert!(needs_responses_wire_translate(&ctx));
     }
 
     #[test]
@@ -1992,15 +2059,6 @@ pub(crate) async fn run(
         let _ = session.respond_error(400).await;
         return Ok(true);
     }
-
-    // #region agent log - debug body read completion
-    tracing::warn!(
-        request_id = %ctx.request_id,
-        body_bytes = full_body.len(),
-        pipeline = ?ctx.request_pipeline,
-        "DEBUG: body read complete, entering post-body phases"
-    );
-    // #endregion
 
     let full_body = Bytes::from(full_body);
     return run_post_body_phases(

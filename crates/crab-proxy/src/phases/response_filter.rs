@@ -180,18 +180,28 @@ pub(crate) async fn run(
         global_metrics().record_upstream_key_request(id, "ok");
         pool.record_key_success(id);
         if let Some(ref binding_store) = proxy.state.key_binding_store {
-            let stable_session = ctx
-                .conversation_id
-                .as_deref()
-                .or(ctx.prompt_cache_key.as_deref())
-                .or(ctx.session_fingerprint.as_deref())
-                .or(ctx.client_key_fingerprint.as_deref());
-            if let Some(sid) = stable_session {
-                binding_store.reset_failures(sid, id);
-                binding_store.reset_failures(
-                    &crate::key_binding::KeyBindingStore::codex_session_key(sid),
-                    id,
-                );
+            let mimo = ctx
+                .request_pipeline
+                .is_some_and(GatewayProxy::is_mimo_pipeline);
+            let codex = ctx
+                .request_pipeline
+                .map_or(false, GatewayProxy::is_codex_upstream_pipeline);
+            if mimo {
+                if let Some(bind_key) = crate::key_binding::resolve_mimo_binding_key(ctx) {
+                    binding_store.reset_failures(&bind_key, id);
+                }
+            } else if codex {
+                if let Some(sid) = ctx
+                    .conversation_id
+                    .as_deref()
+                    .or(ctx.prompt_cache_key.as_deref())
+                    .or(ctx.session_fingerprint.as_deref())
+                {
+                    binding_store.reset_failures(
+                        &crate::key_binding::KeyBindingStore::codex_session_key(sid),
+                        id,
+                    );
+                }
             }
         }
         let _ = upstream_response.insert_header("x-upstream-key-id", id.clone());

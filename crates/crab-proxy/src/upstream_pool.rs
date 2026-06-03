@@ -1096,6 +1096,74 @@ impl UpstreamKeyPool {
             .map(|s| s.secret.to_string())
     }
 
+    /// Return configured per-key concurrency cap (0 = unlimited).
+    pub fn max_inflight(&self) -> usize {
+        self.max_inflight
+    }
+
+    /// Rebuild pool with a new per-key semaphore cap while preserving slot state.
+    pub fn rebuild_with_max_inflight(pool: &Arc<Self>, max_inflight: usize) -> Arc<Self> {
+        if pool.max_inflight == max_inflight {
+            return Arc::clone(pool);
+        }
+        let mut specs = pool.to_specs();
+        auto_assign_account_ids(&mut specs);
+        ensure_unique_ids(&mut specs);
+        let new_slots: Vec<UpstreamKeySlot> = specs
+            .into_iter()
+            .enumerate()
+            .map(|(i, spec)| {
+                let id = if spec.id.is_empty() {
+                    format!("key-{}", i + 1)
+                } else {
+                    spec.id
+                };
+                let mut inflight = 0usize;
+                let mut cooldown_until_ms = 0u64;
+                let mut rate_limit_strikes = 0u32;
+                let mut scope_cooldowns = HashMap::new();
+                let mut supported_models: Arc<[String]> = Arc::from(spec.supported_models.clone());
+                let mut priority = spec.priority;
+                if let Some(prev) = pool.slots.iter().find(|s| s.id == id) {
+                    inflight = prev.inflight.load(Ordering::Relaxed);
+                    cooldown_until_ms = prev.cooldown_until_ms.load(Ordering::Relaxed);
+                    rate_limit_strikes = prev.rate_limit_strikes.load(Ordering::Relaxed);
+                    scope_cooldowns = prev.scope_cooldowns.read().clone();
+                    if supported_models.is_empty() {
+                        supported_models = prev.supported_models.read().clone();
+                    }
+                    if spec.priority == 0 && prev.priority.load(Ordering::Relaxed) != 0 {
+                        priority = prev.priority.load(Ordering::Relaxed);
+                    }
+                }
+                UpstreamKeySlot {
+                    id,
+                    secret: Arc::from(spec.secret.as_str()),
+                    account_id: normalize_account_id(&spec.account_id),
+                    enabled: AtomicBool::new(spec.enabled),
+                    inflight: AtomicUsize::new(inflight),
+                    cooldown_until_ms: AtomicU64::new(cooldown_until_ms),
+                    rate_limit_strikes: AtomicU32::new(rate_limit_strikes),
+                    scope_cooldowns: RwLock::new(scope_cooldowns),
+                    supported_models: RwLock::new(supported_models),
+                    semaphore: Arc::new(tokio::sync::Semaphore::new(semaphore_permits(
+                        max_inflight,
+                    ))),
+                    priority: AtomicU32::new(priority),
+                }
+            })
+            .collect();
+
+        Arc::new(Self {
+            slots: new_slots,
+            rr: AtomicUsize::new(pool.rr.load(Ordering::Relaxed)),
+            cooldown_secs: pool.cooldown_secs,
+            max_inflight,
+            codex_quota_cache: pool.codex_quota_cache.clone(),
+            state_dirty: AtomicBool::new(pool.state_dirty.load(Ordering::Relaxed)),
+        })
+    }
+
     /// Remove a key slot by id; returns a new pool or `None` if id not found.
     pub fn remove_key(pool: &Arc<Self>, key_id: &str) -> Option<Arc<Self>> {
         let specs: Vec<UpstreamKeySpec> = pool
@@ -1706,5 +1774,36 @@ mod tests {
         );
         let specs = pool.to_specs();
         assert_eq!(specs[0].priority, 3);
+    }
+
+    #[test]
+    fn acquire_excluding_key_skips_cooled_bound_key() {
+        let pool = UpstreamKeyPool::new(
+            vec![
+                UpstreamKeySpec {
+                    id: "bound".into(),
+                    secret: "sk-bound".into(),
+                    enabled: true,
+                    account_id: "acct-a".into(),
+                    supported_models: Vec::new(),
+                    priority: 0,
+                },
+                UpstreamKeySpec {
+                    id: "spare".into(),
+                    secret: "sk-spare".into(),
+                    enabled: true,
+                    account_id: "acct-b".into(),
+                    supported_models: Vec::new(),
+                    priority: 0,
+                },
+            ],
+            60,
+            3,
+        );
+        pool.report_rate_limited_for("bound", 300, None);
+        let guard = pool
+            .acquire_excluding_key("bound")
+            .expect("spill to spare key");
+        assert_eq!(guard.key_id(), "spare");
     }
 }

@@ -70,8 +70,31 @@ pub(crate) fn try_upstream_rate_limit_rotation(
     pool.report_rate_limited_for(&id, cooldown, scope);
     global_metrics().record_upstream_key_request(&id, "rate_limited");
 
-    // Codex quota feedback: mark key exhausted in quota cache on 429 usage limit
-    if codex && status == 429 && crate::codex_rate_limit::body_indicates_codex_rate_limit(body.unwrap_or("")) {
+    if mimo && status == 429 {
+        if let Some(ref binding_store) = proxy.state.key_binding_store {
+            let features = proxy.state.features.read();
+            if features.mimo_key_binding {
+                if let Some(bind_key) = crate::key_binding::resolve_mimo_binding_key(ctx) {
+                    binding_store.remove(&bind_key);
+                    global_metrics().record_key_binding_event("unbind_429");
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        key_id = %id,
+                        bind_key = %bind_key,
+                        binding_key_kind = crate::key_binding::mimo_binding_key_kind(&bind_key),
+                        "MiMo: cleared session binding after 429"
+                    );
+                }
+            }
+        }
+    }
+
+    let codex_only = codex && !mimo;
+    // Codex quota feedback (CodexRelay / CodexDeepSeek only; not CodexMimo MiMo pool).
+    if codex_only
+        && status == 429
+        && crate::codex_rate_limit::body_indicates_codex_rate_limit(body.unwrap_or(""))
+    {
         if let Some(cache) = pool.quota_cache() {
             cache.mark_exhausted_from_429(&id, "codex");
         }
@@ -117,7 +140,7 @@ pub(crate) fn try_upstream_rate_limit_rotation(
             .into_iter()
             .find(|s| s.id == id)
             .map(|s| s.account_id);
-        let new_guard = if codex {
+        let new_guard = if codex_only {
             pool.acquire_codex_for_model(
                 ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
                 excluded.as_deref(),

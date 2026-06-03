@@ -30,7 +30,6 @@ pub(crate) async fn run(
         ctx.upstream.backend_name = Some(selected.name.to_string());
         ctx.upstream.host = Some(selected.tls_sni.to_string());
         let peer = proxy.create_upstream_peer(selected.addr, selected.tls_sni, ctx);
-        let conn_config = proxy.state.runtime.conn_config.read().clone();
         return Ok(Box::new(peer));
     }
 
@@ -122,6 +121,9 @@ pub(crate) async fn run(
     let mut backend_permit = None;
     let mut overload_state = "ready";
     let mut selected_found = false;
+    let mut saw_model_lockout = false;
+    let mut saw_overload = false;
+    let mut saw_concurrency_limit = false;
     for candidate in ranked_backends {
         // Skip backends whose circuit breaker is OPEN (not allowing requests).
         if !proxy
@@ -145,6 +147,7 @@ pub(crate) async fn run(
                 .model_lockouts
                 .is_locked(&profile.id, &candidate.name, model)
             {
+                saw_model_lockout = true;
                 debug!(
                     request_id = %ctx.request_id,
                     backend = %candidate.name,
@@ -161,6 +164,7 @@ pub(crate) async fn run(
             prefill_threshold_ms,
         );
         if features.backend_load_aware_routing_enabled && candidate_state != "ready" {
+            saw_overload = true;
             continue;
         }
         if features.backend_concurrency_limit_enabled {
@@ -170,6 +174,7 @@ pub(crate) async fn run(
                     .backend_load
                     .try_acquire(&profile.id, &candidate.name, max_inflight)
             else {
+                saw_concurrency_limit = true;
                 continue;
             };
             backend_permit = Some(permit);
@@ -187,10 +192,21 @@ pub(crate) async fn run(
             global_metrics().record_rejected("backend_concurrency_exceeded");
             global_metrics().record_rejection_by_source("backend");
         }
+        let rejection_reason = if saw_model_lockout {
+            "all upstream backends locked (model cooldown or unauthorized upstream key)"
+        } else if saw_overload {
+            "all upstream backends overloaded (load-aware routing)"
+        } else if saw_concurrency_limit {
+            "all upstream backends at concurrency limit"
+        } else {
+            "no upstream backend available"
+        };
         warn!(
             request_id = %ctx.request_id,
             profile = %profile.id,
-            "All ready upstream backends are at concurrency limit"
+            model = ?ctx.upstream_model,
+            reason = rejection_reason,
+            "Upstream peer selection failed"
         );
         return Err(Error::new(ErrorType::ConnectProxyFailure));
     }
@@ -225,8 +241,6 @@ pub(crate) async fn run(
             );
         }
     }
-
-    let conn_config = proxy.state.runtime.conn_config.read().clone();
 
     if !ctx
         .request_pipeline
