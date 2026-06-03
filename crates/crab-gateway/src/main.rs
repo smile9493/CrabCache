@@ -354,13 +354,6 @@ fn wire_codex_quota_caches(
     let map = runtime.upstream_profiles.read();
     for profile in map.values() {
         if profile.provider == crab_pipeline::UpstreamProvider::Codex {
-            debug_assert_eq!(
-                profile.provider,
-                crab_pipeline::UpstreamProvider::Codex,
-                "quota cache must only be wired to Codex pools (got provider={:?}, id={})",
-                profile.provider,
-                profile.id
-            );
             let pool_arc = profile.upstream_pool.read().clone();
             pool_arc.set_quota_cache(cache.clone());
         }

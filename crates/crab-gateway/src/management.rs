@@ -995,6 +995,15 @@ async fn put_upstream_keys(
                 .into_response()
         })?;
 
+    if let Some(qc) = &state.codex_quota_cache {
+        if let Some(default_profile) = state.runtime.profile(&default_id) {
+            if default_profile.provider == crab_pipeline::UpstreamProvider::Codex {
+                let pool_arc = default_profile.upstream_pool.read().clone();
+                pool_arc.set_quota_cache(qc.clone());
+            }
+        }
+    }
+
     tracing::info!(
         profile_id = %default_id,
         mode = ?req.mode,

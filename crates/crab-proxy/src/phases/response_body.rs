@@ -265,13 +265,11 @@ pub(crate) fn run(
                         let mimo = ctx
                             .request_pipeline
                             .is_some_and(GatewayProxy::is_mimo_pipeline);
-                        let scope = if codex || mimo {
-                            Some(crate::codex_rate_limit::codex_model_scope(
-                                ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
-                            ))
-                        } else {
-                            None
-                        };
+                        let scope = crate::codex_rate_limit::upstream_rate_limit_scope(
+                            codex,
+                            mimo,
+                            ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
+                        );
                         let body_text = String::from_utf8_lossy(&data);
                         let cooldown_secs = crate::codex_rate_limit::resolve_codex_cooldown_secs(
                             &body_text,

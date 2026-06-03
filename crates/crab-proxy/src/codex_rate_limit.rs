@@ -222,6 +222,21 @@ pub fn is_codex_upstream_pipeline(pipeline: Option<crab_pipeline::RequestPipelin
     )
 }
 
+/// Rate-limit cooldown scope for Codex bridge and MiMo relay pipelines.
+///
+/// Returns [`Some`](codex_model_scope) when `codex || mimo`, else global (no scope).
+pub fn upstream_rate_limit_scope(
+    codex: bool,
+    mimo: bool,
+    upstream_model: &str,
+) -> Option<&'static str> {
+    if codex || mimo {
+        Some(codex_model_scope(upstream_model))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1309,7 +1309,7 @@ mod tests {
     }
 
     #[test]
-    fn mimo_pipelines_use_direct_passthrough() {
+    fn mimo_eligible_pipeline_allows_passthrough() {
         assert!(mimo_eligible_pipeline(RequestPipeline::MimoTokenPlanRelay));
         assert!(!mimo_eligible_pipeline(RequestPipeline::GenericRelay));
         assert!(!mimo_eligible_pipeline(RequestPipeline::CursorDeepSeekV4));

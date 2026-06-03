@@ -848,7 +848,17 @@ impl GatewayProxy {
             } else if transient_failures >= 3
                 && let Some(cooldown) = cooldown_current_secs
             {
-                pool.report_rate_limited_for(old_id, cooldown.max(1), None);
+                let codex =
+                    crate::codex_rate_limit::is_codex_upstream_pipeline(ctx.request_pipeline);
+                let mimo = ctx
+                    .request_pipeline
+                    .is_some_and(Self::is_mimo_pipeline);
+                let retry_scope = crate::codex_rate_limit::upstream_rate_limit_scope(
+                    codex,
+                    mimo,
+                    ctx.upstream_model.as_deref().unwrap_or(&ctx.model),
+                );
+                pool.report_rate_limited_for(old_id, cooldown.max(1), retry_scope);
             }
         }
 

@@ -431,6 +431,15 @@ pub async fn put_upstream_profile(
         bad_request(&e)
     })?;
 
+    if let Some(qc) = &state.codex_quota_cache {
+        if let Some(profile) = state.runtime.profile(&id) {
+            if profile.provider == crab_pipeline::UpstreamProvider::Codex {
+                let pool_arc = profile.upstream_pool.read().clone();
+                pool_arc.set_quota_cache(qc.clone());
+            }
+        }
+    }
+
     tracing::info!(
         profile_id = %id,
         provider = %req.provider.trim().to_lowercase(),

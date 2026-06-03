@@ -10,11 +10,6 @@ use pingora_core::ErrorType;
 use pingora_http::ResponseHeader;
 use std::sync::Arc;
 
-fn model_scope(ctx: &GatewayContext) -> &'static str {
-    let model = ctx.upstream_model.as_deref().unwrap_or(ctx.model.as_str());
-    codex_rate_limit::codex_model_scope(model)
-}
-
 fn cooldown_secs(classification: &RateLimitClassification, pool: &UpstreamKeyPool) -> u64 {
     classification
         .cooldown
@@ -60,11 +55,11 @@ pub(crate) fn try_upstream_rate_limit_rotation(
         return Ok(());
     };
 
-    let scope = if codex || mimo {
-        Some(model_scope(ctx))
-    } else {
-        None
-    };
+    let scope = codex_rate_limit::upstream_rate_limit_scope(
+        codex,
+        mimo,
+        ctx.upstream_model.as_deref().unwrap_or(ctx.model.as_str()),
+    );
     let fill_first = proxy.state.features.read().codex_acquire_fill_first;
     let cooldown = cooldown_secs(&classification, pool);
     pool.report_rate_limited_for(&id, cooldown, scope);
