@@ -613,12 +613,16 @@ impl TraceLogger {
                     if let Some(ref mut w) = jsonl_writer {
                         if let Err(e) = w.write_entry(&entry) {
                             warn!("Shadow log write failed: {}", e);
+                            crab_metrics::global_metrics().record_trace_write("jsonl", "failure");
+                        } else {
+                            crab_metrics::global_metrics().record_trace_write("jsonl", "success");
                         }
                     }
                     if let Some(ref pg_tx) = pg_sink {
                         match pg_tx.try_send(entry) {
                             Ok(()) => {}
                             Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                crab_metrics::global_metrics().record_trace_pg_dropped("queue_full");
                                 static PG_DROP_COUNT: std::sync::atomic::AtomicU64 =
                                     std::sync::atomic::AtomicU64::new(0);
                                 let count = PG_DROP_COUNT
@@ -631,6 +635,7 @@ impl TraceLogger {
                                 }
                             }
                             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                                crab_metrics::global_metrics().record_trace_pg_dropped("shutdown");
                                 static PG_DISCONNECTED: std::sync::atomic::AtomicBool =
                                     std::sync::atomic::AtomicBool::new(false);
                                 if !PG_DISCONNECTED.swap(true, std::sync::atomic::Ordering::Relaxed)

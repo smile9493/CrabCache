@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crab_cache::{FingerprintConfig, RequestCoalescer, TieredCache, TtlConfig};
 use crab_client_endpoint::{DiscoveryConfig, discover};
 use crab_gateway::config::GatewayConfig;
-use crab_gateway::management::{InvalidateRateState, ManagementState, serve as serve_management};
+use crab_gateway::management::{InvalidateRateState, ManagementState, serve_with_shutdown as serve_management};
 use crab_metrics::global_metrics;
 use crab_proxy::{
     ClientKeyLimiter, ClientKeyRateLimiter, DeepSeekUserConcurrencyConfig, GatewayProxy,
@@ -19,6 +19,7 @@ use crab_state::{
 };
 use parking_lot::RwLock;
 use pingora_core::server::Server;
+use pingora_core::server::ShutdownWatch;
 use pingora_core::services::background::background_service;
 use pingora_core::services::listening::Service;
 use pingora_proxy::http_proxy;
@@ -92,11 +93,12 @@ impl PgTraceStore {
                      affinity_key, affinity_kind, backend_name,
                      session_fingerprint, is_coalesced, client_key_id,
                      request_passthrough, request_passthrough_prefix_len,
-                     client_ip)
+                     status_code, error_code, limit_source, cache_decision,
+                     upstream_result, phase_durations_ms, client_ip, client_kind)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                          $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
                          $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43,$44)
+                         $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb,$50,$51)
                  ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
             )
             .await
@@ -112,6 +114,10 @@ impl PgTraceStore {
             let composition_pg = composition_json
                 .as_ref()
                 .map(tokio_postgres::types::Json);
+            let phase_durations_pg: Option<tokio_postgres::types::Json<serde_json::Value>> = match &e.phase_durations_ms {
+                Some(v) => Some(tokio_postgres::types::Json(v.clone())),
+                None => None,
+            };
             tx.execute(
                 &stmt,
                 &[
@@ -158,7 +164,14 @@ impl PgTraceStore {
                     &e.client_key_id,
                     &e.request_passthrough,
                     &e.request_passthrough_prefix_len.map(|v| v.try_into().unwrap_or(i32::MAX)),
+                    &e.status_code.map(|v| v as i32),
+                    &e.error_code,
+                    &e.limit_source,
+                    &e.cache_decision,
+                    &e.upstream_result,
+                    &phase_durations_pg,
                     &e.client_ip,
+                    &e.client_kind,
                 ],
             )
             .await
@@ -343,6 +356,108 @@ impl pingora_core::services::background::BackgroundService for MetricsServer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Management API BackgroundService
+// ---------------------------------------------------------------------------
+
+struct ManagementService {
+    listen_addr: String,
+    state: ManagementState,
+}
+
+#[async_trait]
+impl pingora_core::services::background::BackgroundService for ManagementService {
+    async fn start(&self, shutdown: ShutdownWatch) {
+        global_metrics().set_background_task_healthy("management_api", true);
+        global_metrics().set_background_task_last_success_now("management_api");
+        if let Err(e) = serve_management(&self.listen_addr, self.state.clone(), shutdown).await {
+            tracing::error!(error = %e, "Management API server failed");
+            global_metrics().set_background_task_healthy("management_api", false);
+        }
+        global_metrics().record_background_task_shutdown_drained("management_api");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Webhook Delivery BackgroundService
+// ---------------------------------------------------------------------------
+
+struct WebhookService {
+    delivery: crab_gateway::webhook::WebhookDelivery,
+    event_bus: Arc<crab_proxy::EventBus>,
+}
+
+#[async_trait]
+impl pingora_core::services::background::BackgroundService for WebhookService {
+    async fn start(&self, shutdown: ShutdownWatch) {
+        let rx = self.event_bus.subscribe();
+        self.delivery.start_with_shutdown(rx, shutdown).await;
+        global_metrics().record_background_task_shutdown_drained("webhook_delivery");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Codex Quota Refresh BackgroundService
+// ---------------------------------------------------------------------------
+
+struct CodexQuotaRefreshService {
+    runtime: Arc<RuntimeConfig>,
+    cache: Arc<crab_proxy::codex_quota_cache::CodexQuotaCache>,
+}
+
+#[async_trait]
+impl pingora_core::services::background::BackgroundService for CodexQuotaRefreshService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        global_metrics().set_background_task_healthy("codex_quota_refresh", true);
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    refresh_codex_quotas(&self.runtime, &self.cache).await;
+                    global_metrics().set_background_task_last_success_now("codex_quota_refresh");
+                }
+                _ = shutdown.changed() => {
+                    tracing::info!("Codex quota refresh shutting down");
+                    break;
+                }
+            }
+        }
+        global_metrics().record_background_task_shutdown_drained("codex_quota_refresh");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prune Service (rate limiter + idempotency cleanup) BackgroundService
+// ---------------------------------------------------------------------------
+
+struct PruneService {
+    rate_limiter: Arc<crab_proxy::ClientKeyRateLimiter>,
+    idempotency: Arc<crab_cache::IdempotencyStore>,
+}
+
+#[async_trait]
+impl pingora_core::services::background::BackgroundService for PruneService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        let mut prune_interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            tokio::select! {
+                _ = prune_interval.tick() => {
+                    self.rate_limiter.prune_stale(std::time::Duration::from_secs(600));
+                }
+                _ = cleanup_interval.tick() => {
+                    self.idempotency.cleanup_expired();
+                }
+                _ = shutdown.changed() => {
+                    tracing::info!("Prune service shutting down");
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Wire `CodexQuotaCache` to all Codex profile key pools.
 fn wire_codex_quota_caches(
     runtime: &Arc<RuntimeConfig>,
@@ -386,6 +501,231 @@ async fn refresh_codex_quotas(
             cache
                 .refresh_key(&spec.id, &base_url, &spec.secret, &spec.account_id)
                 .await;
+        }
+    }
+}
+
+/// Detect whether a PG error is retryable (connection/infra issue vs data issue).
+fn is_retryable_pg_error(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}").to_lowercase();
+    // Connection-level or transient infra errors
+    if msg.contains("connection")
+        || msg.contains("closed")
+        || msg.contains("timeout")
+        || msg.contains("refused")
+        || msg.contains("broken pipe")
+        || msg.contains("network")
+    {
+        return true;
+    }
+    // Undefined table — Admin migration hasn't run yet; worth waiting for.
+    if msg.contains("42p01") || msg.contains("does not exist") {
+        return true;
+    }
+    false
+}
+
+/// Quick connectivity check: execute `SELECT 1`.
+async fn is_store_alive(store: &PgTraceStore) -> bool {
+    let client = store.client.lock().await;
+    match tokio::time::timeout(std::time::Duration::from_secs(3), client.simple_query("SELECT 1")).await {
+        Ok(Ok(_)) => true,
+        _ => false,
+    }
+}
+
+/// Reconnect to PG with exponential backoff up to `max_backoff`.
+async fn reconnect_with_backoff(
+    pg_url: &str,
+    max_backoff: std::time::Duration,
+) -> anyhow::Result<PgTraceStore> {
+    let mut backoff = std::time::Duration::from_secs(1);
+    for attempt in 0..5 {
+        match PgTraceStore::connect(pg_url).await {
+            Ok(s) => {
+                global_metrics().record_trace_pg_reconnect("success");
+                global_metrics().set_background_task_healthy("pg_trace_writer", true);
+                return Ok(s);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    attempt,
+                    backoff_secs = backoff.as_secs(),
+                    "PG trace reconnect attempt failed: {:#}",
+                    e
+                );
+                global_metrics().record_trace_pg_reconnect("failure");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
+        }
+    }
+    anyhow::bail!("PG trace reconnect exhausted (5 attempts)")
+}
+
+/// Final flush of remaining `buf` entries, with retries (called on channel close).
+async fn drain_with_retry(
+    store: &PgTraceStore,
+    buf: &mut Vec<crab_proxy::SanitizedLogEntry>,
+    max_backoff: std::time::Duration,
+) {
+    if buf.is_empty() {
+        return;
+    }
+    let mut backoff = std::time::Duration::from_secs(1);
+    for attempt in 0..5 {
+        let start = std::time::Instant::now();
+        match store.insert_batch(buf).await {
+            Ok(()) => {
+                global_metrics().record_trace_write("pg", "success");
+                global_metrics().record_trace_pg_flush_latency(start.elapsed());
+                buf.clear();
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    attempt,
+                    entries = buf.len(),
+                    "PG trace final flush failed: {:#}",
+                    e
+                );
+                global_metrics().inc_admin_log_pg_write_error();
+                global_metrics().record_trace_write("pg", "failure");
+                global_metrics().record_trace_pg_flush_latency(start.elapsed());
+                if !is_retryable_pg_error(&e) {
+                    buf.clear();
+                    return;
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
+        }
+    }
+    tracing::warn!(
+        entries = buf.len(),
+        "PG trace final flush exhausted retries, dropping remaining entries"
+    );
+    buf.clear();
+}
+
+/// Main loop for the PG trace writer thread with connection retry and
+/// failure-resilient batch handling.
+async fn pg_trace_writer_loop(
+    pg_url: String,
+    pg_rx: std::sync::mpsc::Receiver<crab_proxy::SanitizedLogEntry>,
+) {
+    const INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
+    const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+    const MAX_PENDING_DRAIN: usize = 50_000;
+
+    let mut backoff = INITIAL_BACKOFF;
+    let mut buf = Vec::with_capacity(100);
+
+    // Phase 1: initial connection with retry (blocks until connected).
+    let mut store: PgTraceStore = loop {
+        match PgTraceStore::connect(&pg_url).await {
+            Ok(s) => {
+                info!("PG trace store connected (initial)");
+                global_metrics().set_background_task_healthy("pg_trace_writer", true);
+                global_metrics().set_background_task_last_success_now("pg_trace_writer");
+                break s;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    backoff_secs = backoff.as_secs(),
+                    "PG trace connect failed, retrying: {:#}",
+                    e
+                );
+                global_metrics().set_background_task_healthy("pg_trace_writer", false);
+                global_metrics().inc_admin_log_pg_write_error();
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+        }
+    };
+
+    // Phase 2: drain + flush loop.
+    loop {
+        // Block on first entry (or detect channel close).
+        let first = match pg_rx.recv() {
+            Ok(e) => e,
+            Err(_) => {
+                // Channel closed — final flush with retries.
+                drain_with_retry(&store, &mut buf, MAX_BACKOFF).await;
+                global_metrics().record_background_task_shutdown_drained("pg_trace_writer");
+                info!("PG trace writer exiting (channel closed)");
+                return;
+            }
+        };
+        buf.push(first);
+
+        // Drain more entries up to batch size.
+        while buf.len() < 100 {
+            match pg_rx.try_recv() {
+                Ok(e) => buf.push(e),
+                Err(_) => break,
+            }
+        }
+
+        global_metrics().set_trace_pg_queue_depth(buf.len() as f64);
+        let start = std::time::Instant::now();
+
+        // Try to insert; on failure keep buf for retry.
+        match store.insert_batch(&buf).await {
+            Ok(()) => {
+                global_metrics().record_trace_write("pg", "success");
+                global_metrics().set_background_task_last_success_now("pg_trace_writer");
+                global_metrics().set_background_task_healthy("pg_trace_writer", true);
+                global_metrics().record_trace_pg_flush_latency(start.elapsed());
+                buf.clear();
+                backoff = INITIAL_BACKOFF; // reset on success
+            }
+            Err(e) => {
+                global_metrics().inc_admin_log_pg_write_error();
+                global_metrics().record_trace_write("pg", "failure");
+                global_metrics().record_trace_pg_flush_latency(start.elapsed());
+
+                if is_retryable_pg_error(&e) {
+                    tracing::warn!(
+                        entries = buf.len(),
+                        "PG trace insert failed (retryable), backing off: {:#}",
+                        e
+                    );
+                    global_metrics().set_background_task_healthy("pg_trace_writer", false);
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+
+                    // Reconnect if connection likely dropped.
+                    if !is_store_alive(&store).await {
+                        tracing::warn!("PG trace connection lost, reconnecting...");
+                        match reconnect_with_backoff(&pg_url, MAX_BACKOFF).await {
+                            Ok(new_store) => {
+                                store = new_store;
+                                // Retry the preserved buf immediately next iteration.
+                            }
+                            Err(e) => {
+                                tracing::warn!("PG trace reconnect failed: {:#}", e);
+                            }
+                        }
+                    }
+                    // Backpressure: if too many entries queued, drop oldest batch.
+                    if buf.len() > MAX_PENDING_DRAIN {
+                        tracing::warn!(
+                            pending = buf.len(),
+                            "PG trace writer backpressure: dropping oldest batch"
+                        );
+                        buf.clear();
+                    }
+                } else {
+                    // Non-retryable (data/schema mismatch) — log and drop.
+                    tracing::warn!(
+                        entries = buf.len(),
+                        "PG trace insert failed (non-retryable), dropping batch: {:#}",
+                        e
+                    );
+                    buf.clear();
+                }
+            }
         }
     }
 }
@@ -767,44 +1107,7 @@ fn main() -> Result<()> {
                                 return;
                             }
                         };
-                        rt.block_on(async {
-                            let store = match PgTraceStore::connect(&pg_url).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tracing::warn!("Failed to connect PG trace store: {}", e);
-                                    return;
-                                }
-                            };
-                            let mut buf = Vec::with_capacity(100);
-                            loop {
-                                match pg_rx.recv() {
-                                    Ok(entry) => buf.push(entry),
-                                    Err(_) => {
-                                        if !buf.is_empty() {
-                                            if let Err(e) = store.insert_batch(&buf).await {
-                                                tracing::warn!(
-                                                    "PG trace final flush failed: {}",
-                                                    e
-                                                );
-                                                global_metrics().inc_admin_log_pg_write_error();
-                                            }
-                                        }
-                                        return;
-                                    }
-                                }
-                                while buf.len() < 100 {
-                                    match pg_rx.try_recv() {
-                                        Ok(entry) => buf.push(entry),
-                                        Err(_) => break,
-                                    }
-                                }
-                                if let Err(e) = store.insert_batch(&buf).await {
-                                    tracing::warn!("PG trace batch insert failed: {:#}", e);
-                                    global_metrics().inc_admin_log_pg_write_error();
-                                }
-                                buf.clear();
-                            }
-                        });
+                        rt.block_on(pg_trace_writer_loop(pg_url, pg_rx));
                     }) {
                     Ok(_) => {
                         info!(pg_url = %redact_pg_url(pg_url_str), "PG trace writer started");
@@ -1208,15 +1511,14 @@ fn main() -> Result<()> {
         fault_injection: fault_injection.clone(),
     };
 
-    let mgmt_listen_thread = mgmt_listen.clone();
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("management runtime");
-        rt.block_on(async {
-            if let Err(e) = serve_management(&mgmt_listen_thread, mgmt_state).await {
-                tracing::error!(error = %e, "Management API server failed");
-            }
-        });
-    });
+    let mgmt_listen_bg = mgmt_listen.clone();
+    server.add_service(background_service(
+        "management-api",
+        ManagementService {
+            listen_addr: mgmt_listen_bg,
+            state: mgmt_state,
+        },
+    ));
 
     let request_semaphore = Arc::new(tokio::sync::Semaphore::new(
         config.limits.max_concurrent_requests,
@@ -1242,21 +1544,18 @@ fn main() -> Result<()> {
         std::time::Duration::from_secs(1),
     ));
 
-    // Spawn webhook delivery background task
-    {
-        let webhook_rx = event_bus.subscribe();
-        let webhook_delivery = crab_gateway::webhook::WebhookDelivery::new(
-            webhook_store.clone(),
-            3,    // max_retries
-            1000, // retry_base_delay_ms
-        );
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("webhook delivery runtime");
-            rt.block_on(async move {
-                webhook_delivery.start(webhook_rx).await;
-            });
-        });
-    }
+    // Register webhook delivery as a BackgroundService
+    server.add_service(background_service(
+        "webhook-delivery",
+        WebhookService {
+            delivery: crab_gateway::webhook::WebhookDelivery::new(
+                webhook_store.clone(),
+                3,    // max_retries
+                1000, // retry_base_delay_ms
+            ),
+            event_bus: event_bus.clone(),
+        },
+    ));
 
     let state = Arc::new(GatewayState {
         runtime,
@@ -1306,48 +1605,28 @@ fn main() -> Result<()> {
         fault_injection: fault_injection.clone(),
     });
 
-    // Spawn rate limiter bucket pruner (clears stale token buckets every 5 min)
-    {
-        let rl = state.client_key_rate_limiter.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(300));
-                rl.prune_stale(std::time::Duration::from_secs(600));
-            }
-        });
-    }
+    // Register prune service (rate limiter + idempotency cleanup) as a BackgroundService
+    server.add_service(background_service(
+        "prune",
+        PruneService {
+            rate_limiter: state.client_key_rate_limiter.clone(),
+            idempotency: state.idempotency.clone(),
+        },
+    ));
 
-    // Spawn idempotency store cleanup (evicts expired entries every 10 s)
-    {
-        let idem = state.idempotency.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(10));
-                idem.cleanup_expired();
-            }
-        });
-    }
-
-    // Codex quota: wire cache to all Codex profile key pools + spawn background refresh
+    // Codex quota: wire cache to all Codex profile key pools + register background refresh
     {
         let quota_cache = state.codex_quota_cache.clone();
         wire_codex_quota_caches(&state.runtime, &quota_cache);
 
-        // Background refresh: every 60s, refresh all enabled Codex key quotas
-        // Uses a dedicated thread with its own tokio runtime (same pattern as management server)
-        let runtime_bg = state.runtime.clone();
-        let cache_bg = quota_cache.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("codex quota refresh runtime");
-            rt.block_on(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                loop {
-                    interval.tick().await;
-                    refresh_codex_quotas(&runtime_bg, &cache_bg).await;
-                }
-            });
-        });
+        // Register Codex quota refresh as a BackgroundService
+        server.add_service(background_service(
+            "codex-quota-refresh",
+            CodexQuotaRefreshService {
+                runtime: state.runtime.clone(),
+                cache: quota_cache,
+            },
+        ));
     }
 
     let proxy = GatewayProxy::new(state.clone());

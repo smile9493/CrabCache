@@ -151,6 +151,22 @@ pub struct GatewayMetrics {
     pub content_density_ratio: HistogramVec,
     /// SSE chunk rewrite counts by pipeline and action.
     pub sse_chunk_rewrite: IntCounterVec,
+
+    // ── PG trace writer resilience ─────────────────────────────────
+    /// PG trace queue drops (queue_full / drain_overflow / shutdown).
+    pub trace_pg_dropped_total: IntCounterVec,
+    /// PG trace reconnect outcomes.
+    pub trace_pg_reconnect_total: IntCounterVec,
+    /// Approximate PG trace queue depth (pending batch len).
+    pub trace_pg_queue_depth: Gauge,
+    /// PG trace flush latency (insert_batch duration).
+    pub trace_pg_flush_latency: HistogramVec,
+    /// Background task health (1 = healthy, 0 = unhealthy).
+    pub background_task_healthy: IntGaugeVec,
+    /// Background task last success Unix timestamp.
+    pub background_task_last_success_timestamp: IntGaugeVec,
+    /// Background task shutdown drain counters.
+    pub background_task_shutdown_drained_total: IntCounterVec,
 }
 
 impl GatewayMetrics {
@@ -732,6 +748,60 @@ impl GatewayMetrics {
             &["pipeline", "action"],
         )?;
 
+        // ── PG trace writer resilience ─────────────────────────────────
+        let trace_pg_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_trace_pg_dropped_total",
+                "PG trace queue drops by reason",
+            ),
+            &["reason"],
+        )?;
+
+        let trace_pg_reconnect_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_trace_pg_reconnect_total",
+                "PG trace reconnect outcomes",
+            ),
+            &["result"],
+        )?;
+
+        let trace_pg_queue_depth = Gauge::with_opts(Opts::new(
+            "gateway_trace_pg_queue_depth",
+            "Approximate PG trace writer queue depth",
+        ))?;
+
+        let trace_pg_flush_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_trace_pg_flush_latency_seconds",
+                "PG trace insert_batch duration",
+            ),
+            &[],
+        )?;
+
+        let background_task_healthy = IntGaugeVec::new(
+            Opts::new(
+                "gateway_background_task_healthy",
+                "Background task health (1=healthy, 0=unhealthy)",
+            ),
+            &["task"],
+        )?;
+
+        let background_task_last_success_timestamp = IntGaugeVec::new(
+            Opts::new(
+                "gateway_background_task_last_success_timestamp",
+                "Background task last success Unix timestamp",
+            ),
+            &["task"],
+        )?;
+
+        let background_task_shutdown_drained_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_background_task_shutdown_drained_total",
+                "Background task shutdown drain counters",
+            ),
+            &["task"],
+        )?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -812,6 +882,13 @@ impl GatewayMetrics {
             content_density_bytes,
             content_density_ratio,
             sse_chunk_rewrite,
+            trace_pg_dropped_total,
+            trace_pg_reconnect_total,
+            trace_pg_queue_depth,
+            trace_pg_flush_latency,
+            background_task_healthy,
+            background_task_last_success_timestamp,
+            background_task_shutdown_drained_total,
         })
     }
 
@@ -895,6 +972,13 @@ impl GatewayMetrics {
         registry.register(Box::new(self.content_density_bytes.clone()))?;
         registry.register(Box::new(self.content_density_ratio.clone()))?;
         registry.register(Box::new(self.sse_chunk_rewrite.clone()))?;
+        registry.register(Box::new(self.trace_pg_dropped_total.clone()))?;
+        registry.register(Box::new(self.trace_pg_reconnect_total.clone()))?;
+        registry.register(Box::new(self.trace_pg_queue_depth.clone()))?;
+        registry.register(Box::new(self.trace_pg_flush_latency.clone()))?;
+        registry.register(Box::new(self.background_task_healthy.clone()))?;
+        registry.register(Box::new(self.background_task_last_success_timestamp.clone()))?;
+        registry.register(Box::new(self.background_task_shutdown_drained_total.clone()))?;
         Ok(())
     }
 
@@ -1525,6 +1609,52 @@ impl GatewayMetrics {
     pub fn record_sse_chunk_rewrite(&self, pipeline: &str, action: &str) {
         self.sse_chunk_rewrite
             .with_label_values(&[pipeline, action])
+            .inc();
+    }
+
+    // ── PG trace writer resilience helpers ──────────────────────────
+
+    pub fn record_trace_pg_dropped(&self, reason: &str) {
+        self.trace_pg_dropped_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    pub fn record_trace_pg_reconnect(&self, result: &str) {
+        self.trace_pg_reconnect_total
+            .with_label_values(&[result])
+            .inc();
+    }
+
+    pub fn set_trace_pg_queue_depth(&self, depth: f64) {
+        self.trace_pg_queue_depth.set(depth);
+    }
+
+    pub fn record_trace_pg_flush_latency(&self, duration: std::time::Duration) {
+        self.trace_pg_flush_latency
+            .with_label_values(&[])
+            .observe(duration.as_secs_f64());
+    }
+
+    pub fn set_background_task_healthy(&self, task: &str, healthy: bool) {
+        self.background_task_healthy
+            .with_label_values(&[task])
+            .set(if healthy { 1 } else { 0 });
+    }
+
+    pub fn set_background_task_last_success_now(&self, task: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.background_task_last_success_timestamp
+            .with_label_values(&[task])
+            .set(now);
+    }
+
+    pub fn record_background_task_shutdown_drained(&self, task: &str) {
+        self.background_task_shutdown_drained_total
+            .with_label_values(&[task])
             .inc();
     }
 }
