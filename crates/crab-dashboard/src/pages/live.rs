@@ -242,6 +242,8 @@ pub fn LivePage() -> impl IntoView {
     let latency_e2e_open = RwSignal::new(false);
     let latency_upstream_open = RwSignal::new(false);
     let token_open = RwSignal::new(false);
+    let backend_dist_open = RwSignal::new(false);
+    let affinity_dist_open = RwSignal::new(false);
     let last_update = RwSignal::new(String::new());
     let load_generation = RwSignal::new(0u64);
     let routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>> =
@@ -361,7 +363,9 @@ pub fn LivePage() -> impl IntoView {
                 // Self-reschedule: re-register the same persistent closure
                 // instead of allocating a new Closure::once every frame.
                 if let Some(func) = live_raf_state_inner.borrow().as_ref() {
-                    let _ = web_sys::window().unwrap().request_animation_frame(func);
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.request_animation_frame(func);
+                    }
                 }
             }
         };
@@ -371,7 +375,9 @@ pub fn LivePage() -> impl IntoView {
 
         // Kick off the rAF loop.
         if let Some(func) = live_raf_state.borrow().as_ref() {
-            let _ = web_sys::window().unwrap().request_animation_frame(func);
+            if let Some(window) = web_sys::window() {
+                let _ = window.request_animation_frame(func);
+            }
         }
     }
 
@@ -573,7 +579,12 @@ pub fn LivePage() -> impl IntoView {
             if !alive_vis.load(Ordering::Relaxed) {
                 return;
             }
-            if !web_sys::window().unwrap().document().unwrap().hidden()
+            // Use safe chain to avoid unwrap() panic
+            let is_hidden = web_sys::window()
+                .and_then(|w| w.document())
+                .map(|d| d.hidden())
+                .unwrap_or(false);
+            if !is_hidden
                 && auto_refresh.try_get_untracked() == Some(true)
                 && selected_consumer.try_get_untracked().flatten().is_some()
             {
@@ -582,10 +593,11 @@ pub fn LivePage() -> impl IntoView {
         }) as Box<dyn FnMut()>);
         let vis_cb_fn: js_sys::Function = vis_cb.into_js_value().unchecked_into();
         let vis_cb_fn_for_cleanup = SendSyncFn(vis_cb_fn.clone());
-        web_sys::window()
-            .unwrap()
-            .add_event_listener_with_callback("visibilitychange", vis_cb_fn.as_ref())
-            .ok();
+        if let Some(window) = web_sys::window() {
+            window
+                .add_event_listener_with_callback("visibilitychange", vis_cb_fn.as_ref())
+                .ok();
+        }
         on_cleanup(move || {
             if let Some(window) = web_sys::window() {
                 let _ = window.remove_event_listener_with_callback(
@@ -688,6 +700,8 @@ pub fn LivePage() -> impl IntoView {
                                 latency_e2e_open=latency_e2e_open
                                 latency_upstream_open=latency_upstream_open
                                 token_open=token_open
+                                backend_dist_open=backend_dist_open
+                                affinity_dist_open=affinity_dist_open
                                 routing_profiles=routing_profiles
                                 selected_routing_profile=selected_routing_profile
                                 routing_key_ids=routing_key_ids
@@ -1099,6 +1113,8 @@ fn LiveBottomRow(
     latency_e2e_open: RwSignal<bool>,
     latency_upstream_open: RwSignal<bool>,
     token_open: RwSignal<bool>,
+    backend_dist_open: RwSignal<bool>,
+    affinity_dist_open: RwSignal<bool>,
     routing_profiles: RwSignal<Option<Result<Vec<ProfileRoutingView>, String>>>,
     selected_routing_profile: RwSignal<String>,
     routing_key_ids: RwSignal<Vec<String>>,
@@ -1123,6 +1139,8 @@ fn LiveBottomRow(
                 routing_key_ids=routing_key_ids
                 selected_routing_key=selected_routing_key
                 routing_key_data=routing_key_data
+                backend_open=backend_dist_open
+                affinity_open=affinity_dist_open
             />
             <LiveHeatmapTable buckets=heatmap_buckets />
         </div>
@@ -1266,8 +1284,12 @@ fn LiveKeyDistributionPanel(
     routing_key_ids: RwSignal<Vec<String>>,
     selected_routing_key: RwSignal<Option<String>>,
     routing_key_data: RwSignal<Option<Result<KeyRoutingResponse, String>>>,
+    backend_open: RwSignal<bool>,
+    affinity_open: RwSignal<bool>,
 ) -> impl IntoView {
     let t = use_translations();
+    let backend_title = t.live_backend_label().to_string();
+    let affinity_title = t.live_key_affinity_title().to_string();
     view! {
         <div class="glass-card p-4 live-detail-card flex flex-col space-y-2">
             <h3 class="text-sm font-semibold text-theme">{t.live_key_affinity_title()}</h3>
@@ -1309,20 +1331,20 @@ fn LiveKeyDistributionPanel(
                         std::sync::Arc::new(aff_values.into_iter().flatten().collect());
 
                     let backend_labels_sig = {
-                        let backend_labels_arc = std::sync::Arc::clone(&backend_labels_arc);
-                        Signal::derive(move || backend_labels_arc.as_ref().clone())
+                        let arc = std::sync::Arc::clone(&backend_labels_arc);
+                        Signal::derive(move || arc.as_ref().clone())
                     };
                     let backend_values_sig = {
-                        let backend_values_arc = std::sync::Arc::clone(&backend_values_arc);
-                        Signal::derive(move || backend_values_arc.as_ref().clone())
+                        let arc = std::sync::Arc::clone(&backend_values_arc);
+                        Signal::derive(move || arc.as_ref().clone())
                     };
                     let aff_labels_sig = {
-                        let aff_labels_arc = std::sync::Arc::clone(&aff_labels_arc);
-                        Signal::derive(move || aff_labels_arc.as_ref().clone())
+                        let arc = std::sync::Arc::clone(&aff_labels_arc);
+                        Signal::derive(move || arc.as_ref().clone())
                     };
                     let aff_values_sig = {
-                        let aff_values_arc = std::sync::Arc::clone(&aff_values_arc);
-                        Signal::derive(move || aff_values_arc.as_ref().clone())
+                        let arc = std::sync::Arc::clone(&aff_values_arc);
+                        Signal::derive(move || arc.as_ref().clone())
                     };
                     view! {
                         <div class="space-y-2 flex-1 flex flex-col">
@@ -1330,46 +1352,84 @@ fn LiveKeyDistributionPanel(
                                 {format!("prefix_breaks={}", resp.prefix_break_count)}
                             </div>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1">
-                                <div class="border border-theme rounded-md p-2 flex flex-col">
-                                    <div class="text-[11px] text-theme-muted mb-1">{t.live_backend_label()}</div>
-                                    {if backend_has {
-                                        view! {
-                                            <HorizontalBarChart
-                                                labels=backend_labels_sig
-                                                values=backend_values_sig
-                                                width=280
-                                                height_px=72
-                                                empty_message=t.live_no_data()
-                                            />
-                                        }.into_any()
-                                    } else {
-                                        view! {
+                                {if backend_has {
+                                    view! {
+                                        <ChartPreviewCard
+                                            title=backend_title.clone()
+                                            open=backend_open
+                                            preview=move || {
+                                                view! {
+                                                    <HorizontalBarChart
+                                                        labels=backend_labels_sig
+                                                        values=backend_values_sig
+                                                        width=280
+                                                        height_px=120
+                                                        empty_message=t.live_no_data()
+                                                    />
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! {
+                                                    <HorizontalBarChart
+                                                        labels=backend_labels_sig
+                                                        values=backend_values_sig
+                                                        width=520
+                                                        height_px=280
+                                                        empty_message=t.live_no_data()
+                                                    />
+                                                }.into_any()
+                                            }
+                                        />
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <div class="border border-theme rounded-md p-2 flex flex-col">
+                                            <div class="text-[11px] text-theme-muted mb-1">{t.live_backend_label()}</div>
                                             <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
                                                 {t.live_no_data()}
                                             </p>
-                                        }.into_any()
-                                    }}
-                                </div>
-                                <div class="border border-theme rounded-md p-2 flex flex-col">
-                                    <div class="text-[11px] text-theme-muted mb-1">{t.live_key_affinity_title()}</div>
-                                    {if aff_has {
-                                        view! {
-                                            <HorizontalBarChart
-                                                labels=aff_labels_sig
-                                                values=aff_values_sig
-                                                width=280
-                                                height_px=72
-                                                empty_message=t.live_no_data()
-                                            />
-                                        }.into_any()
-                                    } else {
-                                        view! {
+                                        </div>
+                                    }.into_any()
+                                }}
+                                {if aff_has {
+                                    view! {
+                                        <ChartPreviewCard
+                                            title=affinity_title.clone()
+                                            open=affinity_open
+                                            preview=move || {
+                                                view! {
+                                                    <HorizontalBarChart
+                                                        labels=aff_labels_sig
+                                                        values=aff_values_sig
+                                                        width=280
+                                                        height_px=120
+                                                        empty_message=t.live_no_data()
+                                                    />
+                                                }.into_any()
+                                            }
+                                            detail=move || {
+                                                view! {
+                                                    <HorizontalBarChart
+                                                        labels=aff_labels_sig
+                                                        values=aff_values_sig
+                                                        width=520
+                                                        height_px=280
+                                                        empty_message=t.live_no_data()
+                                                    />
+                                                }.into_any()
+                                            }
+                                        />
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <div class="border border-theme rounded-md p-2 flex flex-col">
+                                            <div class="text-[11px] text-theme-muted mb-1">{t.live_key_affinity_title()}</div>
                                             <p class="text-[11px] text-theme-muted live-chart-compact flex-1 flex items-center">
                                                 {t.live_no_data()}
                                             </p>
-                                        }.into_any()
-                                    }}
-                                </div>
+                                        </div>
+                                    }.into_any()
+                                }}
                             </div>
                         </div>
                     }.into_any()
@@ -1819,6 +1879,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             <th class="text-left py-1 px-2">{t.live_heatmap_upstream_key()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_downstream_key()}</th>
                             <th class="text-left py-1 px-2">{t.live_heatmap_client_ip()}</th>
+                            <th class="text-left py-1 px-2">{t.live_heatmap_client_location()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_e2e()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_up_latency()}</th>
                             <th class="text-right py-1 px-2">{t.live_heatmap_down_latency()}</th>
@@ -1854,6 +1915,7 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                             let top_upstream_key = b.top_upstream_key.clone();
                             let top_downstream_key = b.top_downstream_key.clone();
                             let top_client_ip = b.top_client_ip.clone();
+                            let top_client_ip_location = b.top_client_ip_location.clone();
                             view! {
                                 <tr class="border-b border-theme/30">
                                     <td class="py-1 pr-3 text-theme">
@@ -1873,6 +1935,9 @@ fn LiveHeatmapTable(buckets: Vec<LiveMetricsBucket>) -> impl IntoView {
                                     </td>
                                     <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[120px]" title=top_client_ip.clone()>
                                         {if top_client_ip.is_empty() { "—".to_string() } else { top_client_ip.clone() }}
+                                    </td>
+                                    <td class="text-left py-1 px-2 text-theme-muted truncate max-w-[150px]" title=top_client_ip_location.clone()>
+                                        {if top_client_ip_location.is_empty() { "—".to_string() } else { top_client_ip_location.clone() }}
                                     </td>
                                     <td class="text-right py-1 px-2" style=format!("background:{e2e_bg}")>
                                         {format!("{:.0}", b.e2e_latency_ms)}

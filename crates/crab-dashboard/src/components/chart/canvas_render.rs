@@ -223,10 +223,13 @@ pub fn render_horizontal_bar_chart(
     let root = backend.into_drawing_area();
     root.fill(&palette.bg).ok()?;
 
+    let max_label_len = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let label_area = ((max_label_len as u32) * 6).clamp(52, 140);
+
     let y_end = n as f64;
     let mut chart = ChartBuilder::on(&root)
         .margin(8)
-        .set_left_and_bottom_label_area_size(52)
+        .set_left_and_bottom_label_area_size(label_area)
         .build_cartesian_2d(0.0..x_max, 0.0..y_end)
         .ok()?;
 
@@ -236,7 +239,16 @@ pub fn render_horizontal_bar_chart(
         .max_light_lines(3)
         .axis_style(ShapeStyle::from(&palette.muted).stroke_width(1))
         .label_style(mesh_label(&palette))
-        .y_label_formatter(&|y| labels.get(*y as usize).cloned().unwrap_or_default())
+        .y_label_formatter(&|y| {
+            let raw = labels.get(*y as usize).cloned().unwrap_or_default();
+            let char_count = raw.chars().count();
+            if char_count > 25 {
+                let truncated: String = raw.chars().take(22).collect();
+                format!("{truncated}…")
+            } else {
+                raw
+            }
+        })
         .y_labels(n)
         .draw()
         .ok()?;
