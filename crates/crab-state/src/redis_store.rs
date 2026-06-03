@@ -175,10 +175,19 @@ impl RedisStateStore {
         Ok(version)
     }
 
+    /// True when the keys hash is missing or serialized as an empty object (`{}`).
+    /// An empty object is treated as uninitialized so Gateway can recover from PG
+    /// instead of accepting a hot-reload with zero client keys.
     pub async fn is_empty(&self) -> Result<bool> {
         let mut conn = self.conn.clone();
-        let exists: bool = conn.exists(self.key("keys")).await?;
-        Ok(!exists)
+        let json: Option<String> = conn.get(self.key("keys")).await?;
+        Ok(match json {
+            None => true,
+            Some(s) => {
+                let trimmed = s.trim();
+                trimmed.is_empty() || trimmed == "{}"
+            }
+        })
     }
 
     pub fn rev_channel(&self) -> &str {

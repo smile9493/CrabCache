@@ -893,30 +893,43 @@ fn main() -> Result<()> {
             .await
         })?;
         let store = Arc::new(store);
-        let empty = rt.block_on(store.is_empty())?;
-        if empty {
-            // Try to recover from PG snapshot before falling back to bootstrap keys.
+        let pg_url = config
+            .trace_logging
+            .as_ref()
+            .and_then(|t| t.pg_url.as_deref())
+            .map(str::to_string);
+
+        let redis_missing = rt.block_on(store.is_empty())?;
+        let (version, snap) = if redis_missing {
+            (0, crab_state::ControlPlaneSnapshot::default())
+        } else {
+            rt.block_on(store.load_all())?
+        };
+
+        let keys_empty = snap.keys.is_empty();
+        if redis_missing || keys_empty {
             let mut recovered_from_pg = false;
-            if let Some(ref trace_cfg) = config.trace_logging {
-                if let Some(ref pg_url) = trace_cfg.pg_url {
-                    match rt.block_on(async {
-                        recover_from_pg_snapshot(pg_url, &runtime, &store, config.upstream.key_cooldown_secs).await
-                    }) {
-                        Ok(true) => {
-                            info!("Recovered control-plane state from PG snapshot");
-                            recovered_from_pg = true;
-                        }
-                        Ok(false) => {
-                            info!("No PG snapshot available, falling back to bootstrap");
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "PG snapshot recovery failed, falling back to bootstrap");
-                        }
+            if let Some(ref pg_url) = pg_url {
+                match rt.block_on(recover_from_pg_snapshot(
+                    pg_url,
+                    &runtime,
+                    &store,
+                    config.upstream.key_cooldown_secs,
+                )) {
+                    Ok(true) => {
+                        info!("Recovered control-plane state from PG snapshot");
+                        recovered_from_pg = true;
+                    }
+                    Ok(false) => {
+                        info!("No PG snapshot available for control-plane recovery");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "PG snapshot recovery failed");
                     }
                 }
             }
 
-            if !recovered_from_pg {
+            if !recovered_from_pg && redis_missing {
                 if let Ok(raw) = std::env::var("CRABCACHE_BOOTSTRAP_CLIENT_KEYS") {
                     for token in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                         if runtime.keys.contains_key(token) {
@@ -947,9 +960,14 @@ fn main() -> Result<()> {
                 let snap = build_snapshot_from_runtime(&runtime);
                 rt.block_on(store.save_all(&snap))?;
                 info!("Initialized empty Redis control plane state");
+            } else if !recovered_from_pg && keys_empty {
+                tracing::warn!(
+                    version,
+                    "Redis client keys empty and PG recovery unavailable; \
+                     create keys via Admin or Management API"
+                );
             }
         } else {
-            let (version, snap) = rt.block_on(store.load_all())?;
             apply_snapshot_to_runtime(&runtime, &snap, config.upstream.key_cooldown_secs)?;
             let profile_ids: Vec<String> =
                 runtime.upstream_profiles.read().keys().cloned().collect();

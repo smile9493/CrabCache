@@ -734,6 +734,16 @@ pub(crate) fn schedule_persist_state(state: &ManagementState) {
     });
 }
 
+/// Await Redis persistence for control-plane mutations that must survive hot reload.
+pub(crate) async fn persist_state_sync(state: &ManagementState) {
+    let Some(store) = state.state_store.clone() else {
+        return;
+    };
+    if let Err(e) = persist_runtime_state_with_retry(store.as_ref(), &state.runtime).await {
+        tracing::error!(error = %e, "Failed to sync-persist control plane state to Redis");
+    }
+}
+
 pub(crate) fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
     let provided = headers
         .get(GATEWAY_ADMIN_KEY_HEADER)
@@ -1156,7 +1166,7 @@ async fn list_keys(
         .runtime
         .keys
         .iter()
-        .map(|entry| stored_to_spec(entry.key(), entry.value(), false, &state.client_key_limiter))
+        .map(|entry| stored_to_spec(entry.key(), entry.value(), true, &state.client_key_limiter))
         .collect();
     Ok(Json(keys))
 }
@@ -1243,6 +1253,7 @@ async fn create_key(
     state.runtime.keys.insert(token.clone(), stored.clone());
     state.client_key_limiter.sync_key(&token, &stored);
 
+    // Async persist: sync snapshot can block on runtime locks and stall Management API (502/timeouts).
     schedule_persist_state(&state);
     Ok(Json(CreateGatewayKeyResponse {
         id,
@@ -1362,7 +1373,7 @@ async fn put_domain_policies(
         );
     }
     state.runtime.replace_domain_policies(map);
-    schedule_persist_state(&state);
+    persist_state_sync(&state).await;
     list_domain_policies(State(state), headers).await
 }
 
