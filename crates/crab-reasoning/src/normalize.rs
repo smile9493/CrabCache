@@ -20,9 +20,7 @@ static ANSI_ESCAPE_RE: LazyLock<Regex> =
 const MIMO_CODEX_TOOL_RESULT_MAX_CHARS: usize = 1_200;
 const MIMO_CODEX_TOOL_RESULT_MAX_LINES: usize = 36;
 const MIMO_CODEX_TOOL_RESULT_LINE_MAX_CHARS: usize = 220;
-const MIMO_CODEX_COMPRESSION_TRIGGER_BYTES: usize = 1_000_000;
-const MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD: usize = 160;
-const MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD: usize = 48;
+const MIMO_CODEX_COMPRESSION_TRIGGER_BYTES: usize = 3_000_000; // ~90万token，MiMo-v2.5 1M上下文的90%
 const MIMO_CODEX_STRUCTURAL_KEEP_RECENT_MESSAGES: usize = 24;
 const MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_CHARS: usize = 6_000;
 const MIMO_CODEX_STRUCTURAL_SUMMARY_MAX_LINES: usize = 48;
@@ -1434,13 +1432,6 @@ fn message_role(msg: &Value) -> Option<&str> {
     msg.get("role").and_then(|r| r.as_str())
 }
 
-fn count_mimo_codex_tool_turns(messages: &[Value]) -> usize {
-    messages
-        .iter()
-        .filter(|msg| message_role(msg) == Some("tool") || has_tool_calls(msg))
-        .count()
-}
-
 fn compact_excerpt(content: &str, max_chars: usize) -> String {
     let no_ansi = ANSI_ESCAPE_RE.replace_all(content, "").to_string();
     let mut lines = Vec::new();
@@ -1619,13 +1610,6 @@ fn summarize_mimo_codex_history(messages: &[Value]) -> String {
 }
 
 fn compact_mimo_codex_historical_tool_chain(messages: &mut Vec<Value>) -> usize {
-    let tool_turns = count_mimo_codex_tool_turns(messages);
-    if messages.len() <= MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD
-        && tool_turns <= MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD
-    {
-        return 0;
-    }
-
     let prefix_end = messages
         .iter()
         .take_while(|msg| message_role(msg) == Some("system"))
@@ -1817,15 +1801,7 @@ fn prepare_mimo_request_inner(
     let mut tool_results_compressed = 0usize;
     let mut structural_messages_compacted = 0usize;
     let should_compress_tool_results = compress_codex_tool_results
-        && (estimated_prepared_body_bytes(&prepared) > MIMO_CODEX_COMPRESSION_TRIGGER_BYTES
-            || prepared
-                .get("messages")
-                .and_then(|m| m.as_array())
-                .is_some_and(|messages| {
-                    messages.len() > MIMO_CODEX_STRUCTURAL_MESSAGE_THRESHOLD
-                        || count_mimo_codex_tool_turns(messages)
-                            > MIMO_CODEX_STRUCTURAL_TOOL_TURN_THRESHOLD
-                }));
+        && estimated_prepared_body_bytes(&prepared) > MIMO_CODEX_COMPRESSION_TRIGGER_BYTES;
     if let Some(messages) = prepared.get_mut("messages").and_then(|m| m.as_array_mut()) {
         if should_compress_tool_results {
             tool_results_compressed = compress_mimo_codex_tool_results_in_messages(messages);
@@ -2556,7 +2532,7 @@ mod tests {
             messages.push(serde_json::json!({
                 "role": "tool",
                 "tool_call_id": format!("call_{i}"),
-                "content": format!("status ok\nmodified file-{i}.rs\n{}", "noise\n".repeat(20))
+                "content": format!("status ok\nmodified file-{i}.rs\n{}", "noise output line\n".repeat(6500))
             }));
         }
         messages.push(serde_json::json!({
