@@ -35,6 +35,7 @@ fn prepare_geom(
     raw_series: Vec<ChartSeries>,
     y_min: Option<f64>,
     y_max: Option<f64>,
+    allow_zero_values: bool,
 ) -> Option<ChartGeom> {
     let all_series: Vec<ChartSeries> = if labels.len() > MAX_CHART_POINTS {
         raw_series
@@ -53,11 +54,22 @@ fn prepare_geom(
     if labels.is_empty() || all_series.is_empty() {
         return None;
     }
-    let has_point = all_series
-        .iter()
-        .any(|s| s.values.iter().any(|v| matches!(v, Some(x) if *x > 0.0)));
-    if !has_point {
-        return None;
+    if !allow_zero_values {
+        let has_point = all_series
+            .iter()
+            .any(|s| s.values.iter().any(|v| matches!(v, Some(x) if *x > 0.0)));
+        if !has_point {
+            return None;
+        }
+    } else {
+        let has_finite = all_series.iter().any(|s| {
+            s.values
+                .iter()
+                .any(|v| matches!(v, Some(x) if x.is_finite()))
+        });
+        if !has_finite {
+            return None;
+        }
     }
     let (auto_ymin, auto_ymax) = y_range(&all_series);
     let ymin = y_min.unwrap_or(auto_ymin);
@@ -84,6 +96,9 @@ pub fn CanvasLineChart(
     #[prop(default = None)] y_min: Option<f64>,
     #[prop(default = None)] y_max: Option<f64>,
     #[prop(default = Vec::new())] series_price_per_million: Vec<Option<f64>>,
+    /// When true, render axes and zero baseline even if all values are 0.
+    #[prop(default = false)]
+    allow_zero_values: bool,
 ) -> impl IntoView {
     let chart_id = CANVAS_LINE_CHART_ID.fetch_add(1, Ordering::Relaxed);
     let summary_id = format!("canvas-line-chart-summary-{}", chart_id);
@@ -106,7 +121,9 @@ pub fn CanvasLineChart(
             let _ = theme.get();
             let labels = x_labels.get();
             let raw_series = series.get();
-            let Some(geom) = prepare_geom(labels.clone(), raw_series, y_min, y_max) else {
+            let Some(geom) =
+                prepare_geom(labels.clone(), raw_series, y_min, y_max, allow_zero_values)
+            else {
                 return;
             };
             let req = LineDrawRequest {
@@ -147,7 +164,7 @@ pub fn CanvasLineChart(
 
         let labels = x_labels.get_untracked();
         let raw_series = series.get_untracked();
-        let Some(geom) = prepare_geom(labels, raw_series, y_min, y_max) else {
+        let Some(geom) = prepare_geom(labels, raw_series, y_min, y_max, allow_zero_values) else {
             hover_index.set(None);
             return;
         };
@@ -199,7 +216,7 @@ pub fn CanvasLineChart(
                 let pricing = std::sync::Arc::clone(&series_price_per_million);
                 let labels = x_labels.get();
                 let raw_series = series.get();
-                let geom = prepare_geom(labels, raw_series, y_min, y_max);
+                let geom = prepare_geom(labels, raw_series, y_min, y_max, allow_zero_values);
 
                 let data_summary = match &geom {
                     None => "Empty line chart.".to_string(),
@@ -243,7 +260,13 @@ pub fn CanvasLineChart(
                                 if !interactive {
                                     return ().into_any();
                                 }
-                                let Some(g) = prepare_geom(x_labels.get(), series.get(), y_min, y_max) else {
+                                let Some(g) = prepare_geom(
+                                    x_labels.get(),
+                                    series.get(),
+                                    y_min,
+                                    y_max,
+                                    allow_zero_values,
+                                ) else {
                                     return ().into_any();
                                 };
                                 let Some(idx) = hover_index.get() else {

@@ -1033,11 +1033,9 @@ pub fn TimeSeriesChart(
 
     let chart_points = Memo::new(move |_| compress_timeseries_points(points.get()));
 
-    let has_chart_data = Memo::new(move |_| {
-        chart_points
-            .get()
-            .iter()
-            .any(|p| p.tokens > 0 || p.requests > 0)
+    let all_zero_buckets = Memo::new(move |_| {
+        let pts = chart_points.get();
+        !pts.is_empty() && pts.iter().all(|p| p.tokens == 0 && p.requests == 0)
     });
 
     let x_labels = Signal::derive(move || {
@@ -1116,34 +1114,35 @@ pub fn TimeSeriesChart(
 
             <ChartSuggestions suggestions=suggestions target="timeseries" />
 
-            {move || {
-                if !has_chart_data.get() {
-                    view! {
-                        <div class="overview-ts-empty">
-                            <p class="text-xs text-theme-muted">{t.overview_collecting_timeseries()}</p>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! {
-                        <div class="space-y-1">
-                            <CanvasLineChart
-                                x_labels=x_labels
-                                series=token_series
-                                height_px=if compact { 132 } else { 160 }
-                                y_unit="tokens"
-                                empty_message=t.overview_collecting_timeseries()
-                            />
-                            <CanvasLineChart
-                                x_labels=x_labels
-                                series=request_series
-                                height_px=if compact { 132 } else { 160 }
-                                y_unit="req"
-                                empty_message=t.overview_collecting_timeseries()
-                            />
-                        </div>
-                    }.into_any()
-                }
-            }}
+            <div class="space-y-1">
+                <CanvasLineChart
+                    x_labels=x_labels
+                    series=token_series
+                    height_px=if compact { 132 } else { 160 }
+                    y_unit="tokens"
+                    empty_message=t.overview_collecting_timeseries()
+                    allow_zero_values=true
+                />
+                <CanvasLineChart
+                    x_labels=x_labels
+                    series=request_series
+                    height_px=if compact { 132 } else { 160 }
+                    y_unit="req"
+                    empty_message=t.overview_collecting_timeseries()
+                    allow_zero_values=true
+                />
+                {move || {
+                    if all_zero_buckets.get() {
+                        view! {
+                            <p class="text-[11px] text-theme-muted text-center pt-1">
+                                {t.overview_collecting_timeseries()}
+                            </p>
+                        }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }}
+            </div>
         </div>
     }
 }

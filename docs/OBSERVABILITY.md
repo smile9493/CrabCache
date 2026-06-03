@@ -43,7 +43,7 @@
 | `ops` | 节省成本、合并/拒绝 5m、TTFT、prefix_break、reasoning 存储、SSE 省略 |
 | `suggestions` | 基于规则的运维提示（`severity`、`target`、`message`），供 Overview 卡片使用 |
 
-- 时序桶来自一个 **60 秒的指标采样器**（`CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS`，默认 60）。空图表表示"采集中"——启动后等待 1–2 分钟。时序窗口：**1h** 使用 **5 分钟**桶（最多 12 个，截断到最近 1 小时）；**24h** 使用 **1 小时**桶；**7d** 使用 **1 天**桶。
+- 时序桶来自一个 **60 秒的指标采样器**（`CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS`，默认 60）。概览 **使用趋势** 图表常驻显示；`GET /overview/timeseries` 对窗口内时间轴 **铺轨补零**（无流量桶 `requests/tokens=0`），**1h** 固定 **12** 个 5 分钟桶、**24h** 固定 **24** 个 1 小时桶、**7d** 固定 **7** 个 1 天桶。全 0 折线表示暂无流量或单桶采样不足（需 ≥2 次采样才有增量）；图表下方「采集中」提示在全 0 时出现，有流量后非零桶逐渐抬升。
 - 当 5 分钟窗口内请求数少于 5 时，`metrics_sample_insufficient` 为 true；UI 对窗口速率显示"—"。
 - UI 图例区分 **L0–L2**（网关完整响应）和 **L3**（上游前缀 Token）。
 

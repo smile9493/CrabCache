@@ -317,10 +317,6 @@ impl MetricsHistory {
         kind: BucketKind,
         window_secs: Option<u64>,
     ) -> Vec<TimeSeriesPoint> {
-        if self.samples.len() < 2 {
-            return Vec::new();
-        }
-
         let cutoff = window_secs.map(|w| now.saturating_sub(w));
 
         let mut buckets: HashMap<i64, Vec<&MetricsCounterSnapshot>> = HashMap::new();
@@ -334,6 +330,24 @@ impl MetricsHistory {
             buckets.entry(key).or_default().push(s);
         }
 
+        if window_secs.is_some() {
+            let max_buckets = kind.max_buckets();
+            let keys = kind.padded_bucket_keys(now, max_buckets);
+            return keys
+                .into_iter()
+                .map(|key| {
+                    buckets
+                        .get(&key)
+                        .and_then(|group| kind.delta_point_from_group(key, now, group))
+                        .unwrap_or_else(|| kind.zero_point(key, now))
+                })
+                .collect();
+        }
+
+        if self.samples.len() < 2 {
+            return Vec::new();
+        }
+
         let mut keys: Vec<i64> = buckets.keys().copied().collect();
         keys.sort_unstable();
 
@@ -345,44 +359,7 @@ impl MetricsHistory {
         keys.into_iter()
             .filter_map(|key| {
                 let group = buckets.get(&key)?;
-                if group.len() < 2 {
-                    return None;
-                }
-                let first = group.first()?;
-                let last = group.last()?;
-                let d_requests = last.total_requests().saturating_sub(first.total_requests());
-                let d_tokens = last.total_tokens().saturating_sub(first.total_tokens());
-                let d_hits = last
-                    .gateway_cache_hits()
-                    .saturating_sub(first.gateway_cache_hits());
-                let d_l0 = last.l0_hits.saturating_sub(first.l0_hits);
-                let d_l1 = last.l1_hits.saturating_sub(first.l1_hits);
-                let d_l2 = last.l2_hits.saturating_sub(first.l2_hits);
-                let d_miss = last.cache_misses.saturating_sub(first.cache_misses);
-                let d_total = d_l0 + d_l1 + d_l2 + d_miss;
-                let tier_pct = |hits: u64| {
-                    if d_total > 0 {
-                        hits as f64 / d_total as f64 * 100.0
-                    } else {
-                        0.0
-                    }
-                };
-                let hit_rate = if d_requests > 0 {
-                    d_hits as f64 / d_requests as f64
-                } else {
-                    0.0
-                };
-                Some(TimeSeriesPoint {
-                    timestamp: kind.format_label(key, now),
-                    requests: d_requests,
-                    tokens: d_tokens,
-                    cache_hits: d_hits,
-                    avg_latency_ms: 0.0,
-                    hit_rate,
-                    l0_hit_rate: tier_pct(d_l0),
-                    l1_hit_rate: tier_pct(d_l1),
-                    l2_hit_rate: tier_pct(d_l2),
-                })
+                kind.delta_point_from_group(key, now, group)
             })
             .collect()
     }
@@ -452,6 +429,75 @@ impl BucketKind {
             BucketKind::Week => 4,
             BucketKind::Month => 12,
         }
+    }
+
+    /// Ordered bucket keys ending at `now`, length `max_buckets` (overview windowed charts).
+    fn padded_bucket_keys(self, now: u64, max_buckets: usize) -> Vec<i64> {
+        let end_key = self.bucket_key(now);
+        let n = max_buckets as i64;
+        (0..max_buckets)
+            .map(|i| end_key - (n - 1 - i as i64))
+            .collect()
+    }
+
+    fn zero_point(self, key: i64, now: u64) -> TimeSeriesPoint {
+        TimeSeriesPoint {
+            timestamp: self.format_label(key, now),
+            requests: 0,
+            tokens: 0,
+            cache_hits: 0,
+            avg_latency_ms: 0.0,
+            hit_rate: 0.0,
+            l0_hit_rate: 0.0,
+            l1_hit_rate: 0.0,
+            l2_hit_rate: 0.0,
+        }
+    }
+
+    fn delta_point_from_group(
+        self,
+        key: i64,
+        now: u64,
+        group: &[&MetricsCounterSnapshot],
+    ) -> Option<TimeSeriesPoint> {
+        if group.len() < 2 {
+            return None;
+        }
+        let first = group.first()?;
+        let last = group.last()?;
+        let d_requests = last.total_requests().saturating_sub(first.total_requests());
+        let d_tokens = last.total_tokens().saturating_sub(first.total_tokens());
+        let d_hits = last
+            .gateway_cache_hits()
+            .saturating_sub(first.gateway_cache_hits());
+        let d_l0 = last.l0_hits.saturating_sub(first.l0_hits);
+        let d_l1 = last.l1_hits.saturating_sub(first.l1_hits);
+        let d_l2 = last.l2_hits.saturating_sub(first.l2_hits);
+        let d_miss = last.cache_misses.saturating_sub(first.cache_misses);
+        let d_total = d_l0 + d_l1 + d_l2 + d_miss;
+        let tier_pct = |hits: u64| {
+            if d_total > 0 {
+                hits as f64 / d_total as f64 * 100.0
+            } else {
+                0.0
+            }
+        };
+        let hit_rate = if d_requests > 0 {
+            d_hits as f64 / d_requests as f64
+        } else {
+            0.0
+        };
+        Some(TimeSeriesPoint {
+            timestamp: self.format_label(key, now),
+            requests: d_requests,
+            tokens: d_tokens,
+            cache_hits: d_hits,
+            avg_latency_ms: 0.0,
+            hit_rate,
+            l0_hit_rate: tier_pct(d_l0),
+            l1_hit_rate: tier_pct(d_l1),
+            l2_hit_rate: tier_pct(d_l2),
+        })
     }
 }
 
@@ -1422,36 +1468,45 @@ gateway_deepseek_input_tokens_total{cache_status="hit",model="m",consumer="bob"}
     #[test]
     fn fivemin_window_limits_to_last_hour() {
         let mut h = MetricsHistory::new();
-        // Place 13 samples spaced 5 minutes apart, spanning 60 minutes.
-        // The oldest is at t=0 (which is outside the 1h window relative to
-        // `now = 13*300`), so it should be filtered out by `window_secs`.
         let base = 1_700_000_000u64;
         for i in 0u64..14 {
             h.append(snap(base + i * 300, i * 100, i * 40, i * 1000, i * 500));
         }
-        let now = base + 13 * 300; // last sample timestamp
+        let now = base + 13 * 300;
         let points = h.build_windowed_stats(now, BucketKind::FiveMin, 3600);
-        // 1h window = 3600s, cutoff = now - 3600 = base + 13*300 - 3600 = base + 300.
-        // Samples from i=1..13 fall within the window, giving 13 samples in 12
-        // distinct 5min buckets (i=0 is at `base` which is < cutoff).
-        // Each bucket needs ≥2 samples to produce a point. With one sample per
-        // bucket, we expect 0 points. Let's verify the max_buckets cap works
-        // correctly by testing with enough intra-bucket samples.
-        assert!(points.len() <= 12, "should not exceed 12 buckets");
+        assert_eq!(points.len(), 12, "1h window pads to 12 five-minute buckets");
+        assert!(
+            points.iter().all(|p| !p.timestamp.is_empty()),
+            "every bucket has a label"
+        );
+        assert!(
+            points.iter().all(|p| p.requests == 0 && p.tokens == 0),
+            "one sample per bucket yields zero deltas"
+        );
 
-        // Now test with 2 samples per bucket: 14 buckets, but max 12 kept.
         let mut h2 = MetricsHistory::new();
         for i in 0u64..28 {
             h2.append(snap(base + i * 150, i * 100, i * 40, i * 1000, i * 500));
         }
         let now2 = base + 27 * 150;
         let points2 = h2.build_windowed_stats(now2, BucketKind::FiveMin, 3600);
-        assert!(points2.len() <= 12, "max_buckets=12 cap");
-        // All returned points must be within the 1h window.
+        assert_eq!(points2.len(), 12, "max_buckets=12 padded series");
         for p in &points2 {
-            // Timestamp labels are HH:MM, which is fine — verify no empty.
             assert!(!p.timestamp.is_empty());
         }
+        assert!(
+            points2.iter().any(|p| p.requests > 0 || p.tokens > 0),
+            "intra-bucket samples produce non-zero deltas"
+        );
+    }
+
+    #[test]
+    fn windowed_stats_pads_zeros_with_few_samples() {
+        let h = MetricsHistory::new();
+        let now = 1_700_000_000u64;
+        let points = h.build_windowed_stats(now, BucketKind::FiveMin, 3600);
+        assert_eq!(points.len(), 12);
+        assert!(points.iter().all(|p| p.requests == 0 && p.tokens == 0));
     }
 
     #[test]
@@ -1467,9 +1522,7 @@ gateway_deepseek_input_tokens_total{cache_status="hit",model="m",consumer="bob"}
         h.append(snap(recent + 120, 200, 100, 400, 160));
         let now = recent + 120;
         let points = h.build_windowed_stats(now, BucketKind::Hour, 3600);
-        // Only the two recent samples should contribute; they are in the same
-        // hour bucket if they share the same hour key.
-        // At minimum, the old samples must not appear.
+        assert_eq!(points.len(), 24, "1h hour-window pads to 24 buckets");
         for p in &points {
             // Requests from the old pair maxed at 50; recent pair goes 100→200.
             // If old data leaked, we'd see a request delta of 50 in a separate bucket.
