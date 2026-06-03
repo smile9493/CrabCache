@@ -20,8 +20,8 @@ pub fn build_webhook_routes() -> Router<ManagementState> {
     Router::new()
         .route("/v1/webhooks", post(register_webhook))
         .route("/v1/webhooks", get(list_webhooks))
-        .route("/v1/webhooks/{id}", delete(delete_webhook))
-        .route("/v1/webhooks/{id}/test", post(test_webhook))
+        .route("/v1/webhooks/:id", delete(delete_webhook))
+        .route("/v1/webhooks/:id/test", post(test_webhook))
 }
 
 /// Register a new webhook endpoint.

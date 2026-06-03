@@ -235,16 +235,16 @@ pub fn router(state: ManagementState) -> Router {
             get(get_fingerprint).put(put_fingerprint),
         )
         .route(
-            "/v1/keys/by-id/{id}",
+            "/v1/keys/by-id/:id",
             delete(revoke_key_by_id).patch(patch_key_by_id),
         )
-        .route("/v1/keys/{token}", delete(revoke_key).patch(patch_key))
+        .route("/v1/keys/:token", delete(revoke_key).patch(patch_key))
         .route(
             "/v1/domains/policies",
             get(list_domain_policies).put(put_domain_policies),
         )
         .route(
-            "/v1/domains/policies/{domain}",
+            "/v1/domains/policies/:domain",
             delete(delete_domain_policy),
         )
         .route(
@@ -300,7 +300,7 @@ pub fn router(state: ManagementState) -> Router {
             get(get_upstream_keys).put(put_upstream_keys),
         )
         .route(
-            "/v1/upstream/keys/{id}",
+            "/v1/upstream/keys/:id",
             patch(patch_upstream_key).delete(delete_upstream_key),
         )
         .route(
@@ -312,51 +312,51 @@ pub fn router(state: ManagementState) -> Router {
             get(management_profiles::list_upstream_profiles),
         )
         .route(
-            "/v1/upstream/profiles/{id}",
+            "/v1/upstream/profiles/:id",
             axum::routing::put(management_profiles::put_upstream_profile)
                 .delete(management_profiles::delete_upstream_profile),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys",
+            "/v1/upstream/profiles/:id/keys",
             get(management_profiles::get_profile_keys).put(management_profiles::put_profile_keys),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/export",
+            "/v1/upstream/profiles/:id/keys/export",
             get(management_profiles::export_profile_keys),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/{key_id}",
+            "/v1/upstream/profiles/:id/keys/:key_id",
             patch(management_profiles::patch_profile_key)
                 .delete(management_profiles::delete_profile_key),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/{key_id}/test",
+            "/v1/upstream/profiles/:id/keys/:key_id/test",
             post(management_profiles::test_upstream_profile_key),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/models",
+            "/v1/upstream/profiles/:id/keys/models",
             get(management_profiles::get_profile_keys_models),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/{key_id}/models",
+            "/v1/upstream/profiles/:id/keys/:key_id/models",
             get(management_profiles::get_profile_key_models),
         )
         .route(
-            "/v1/upstream/profiles/{id}/keys/models-catalog",
+            "/v1/upstream/profiles/:id/keys/models-catalog",
             put(management_profiles::put_profile_keys_models_catalog),
         )
         .route(
-            "/v1/upstream/profiles/{id}/test",
+            "/v1/upstream/profiles/:id/test",
             post(management_profiles::test_upstream_profile),
         )
         .route(
-            "/v1/upstream/profiles/{id}/routing",
+            "/v1/upstream/profiles/:id/routing",
             get(management_profiles::get_profile_routing),
         )
         .route("/v1/routing/summary", get(get_routing_summary))
         .route("/v1/resilience/lockouts", get(get_lockouts))
         .route(
-            "/v1/resilience/lockouts/model/{profile}/{backend}/{model}",
+            "/v1/resilience/lockouts/model/:profile/:backend/:model",
             delete(clear_model_lockout),
         )
         .route("/v1/system/restart", post(restart_gateway_handler))
