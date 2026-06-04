@@ -585,6 +585,7 @@ mod tests {
             upstream_result: None,
             phase_durations_ms: None,
             client_ip: None,
+            client_kind: None,
         }
     }
 

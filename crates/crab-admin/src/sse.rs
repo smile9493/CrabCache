@@ -39,13 +39,13 @@ pub async fn sse_token(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // Validate admin key from header.
+    // Validate admin key from header (constant-time to prevent timing side-channel).
     let provided = headers
         .get("x-admin-key")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let admin_key = state.admin_key.read().clone();
-    if provided != admin_key {
+    if !crab_control::constant_time_eq_str(provided, &admin_key) {
         return axum::http::Response::builder()
             .status(401)
             .body(axum::body::Body::from("Unauthorized"))

@@ -313,6 +313,11 @@ impl TieredCache {
     ) -> Result<(), CacheError> {
         let ttl = self.ttl_config.load().resolve(model, consumer);
 
+        // NOTE: L0 and L1 writes are not atomic. If Redis fails after L0 insert,
+        // the entry exists only in L0 (per-instance). This is acceptable because:
+        // 1. Same-instance requests hit L0 (fast path)
+        // 2. Other instances miss L1 and recompute (eventual consistency)
+        // 3. Redis connection failures are transient; next request will retry L1 write
         self.l0.insert(key.to_string(), entry.clone()).await;
 
         let mut conn = match self.l1_pool.get().await {

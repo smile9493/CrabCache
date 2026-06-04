@@ -1957,6 +1957,72 @@ fn load_retention_policy() -> RetentionPolicy {
     }
 }
 
+/// Extract the host portion from a URL string for SSRF checks.
+fn extract_url_host(url: &str) -> Option<String> {
+    let without_scheme = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let host = without_scheme.split('/').next()?;
+    // Strip port
+    let host = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+    // Strip brackets for IPv6
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Some(host.to_string())
+}
+
+/// Check if a URL resolves to a private, loopback, or reserved IP address.
+/// Returns `true` if the URL should be rejected for SSRF protection.
+pub fn is_private_or_reserved_url(url: &str) -> bool {
+    let Some(host) = extract_url_host(url) else {
+        return true; // Malformed URL → reject
+    };
+    let lower = host.to_lowercase();
+
+    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" {
+        return true;
+    }
+
+    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast()
+            }
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
+        };
+    }
+
+    // String-based fallback for hosts that didn't parse as IP
+    if lower.starts_with("10.") {
+        return true;
+    }
+    if lower.starts_with("172.") {
+        let after = &lower[4..];
+        if let Some(dot) = after.find('.') {
+            if let Ok(octet) = after[..dot].parse::<u8>() {
+                if (16..=31).contains(&octet) {
+                    return true;
+                }
+            }
+        }
+    }
+    if lower.starts_with("192.168.") {
+        return true;
+    }
+    if lower.starts_with("169.254.") {
+        return true;
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod keys_meta_tests {
     use super::KeyMetadata;

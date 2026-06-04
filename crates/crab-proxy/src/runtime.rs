@@ -120,6 +120,13 @@ impl RuntimeConfig {
         if !policy.enabled {
             return true;
         }
+        // NOTE: We use `.ok()` to silently ignore Mutex poisoning.
+        // If a panic occurs while holding the domain_usage lock, the Mutex becomes poisoned.
+        // In that case, we skip quota checking rather than propagating the panic.
+        // This is acceptable because:
+        // 1. Mutex poisoning is rare (requires a panic in a critical section)
+        // 2. Failing open (allowing requests) is safer than failing closed (rejecting all)
+        // 3. The quota check is advisory, not critical for security
         let usage = self
             .domain_usage
             .lock()

@@ -649,8 +649,12 @@ impl GatewayContext {
     }
 }
 
-// `Instant` is Send but not Sync; Pingora's `HttpServerApp` requires `CTX: Send + Sync`.
-// Each `GatewayContext` is owned by one worker for the request lifetime.
+// SAFETY: GatewayContext is !Sync because it contains `Instant` (which is Send but not Sync).
+// In Pingora 0.8's execution model, each request's CTX is owned by exactly one worker thread
+// for its entire lifetime. The CTX is never shared across threads — it is created in
+// request_filter, passed through the pipeline phases, and dropped in logging.
+// GatewayState fields (request_permit, coalesce_guard) are also single-use per request.
+// If GatewayContext were ever stored in shared state (e.g., Arc), this would be unsound.
 unsafe impl Sync for GatewayContext {}
 
 /// Experimental feature flags — each gate is independent and default off.

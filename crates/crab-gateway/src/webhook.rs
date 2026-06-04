@@ -447,7 +447,7 @@ mod tests {
     fn test_generate_webhook_secret() {
         let secret = generate_webhook_secret();
         assert!(secret.starts_with("whsec_"));
-        assert_eq!(secret.len(), 40); // "whsec_" (6) + UUID (32) + hyphens removed
+        assert_eq!(secret.len(), 38); // "whsec_" (6) + UUID without hyphens (32)
     }
 
     #[test]

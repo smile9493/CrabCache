@@ -424,6 +424,8 @@ async fn put_admin_key(
 
     tracing::info!("Admin API key changed successfully");
 
+    audit_log(&state, "admin_key_changed", None, None).await;
+
     Ok(Json(serde_json::json!({"success": true})))
 }
 
@@ -2581,7 +2583,7 @@ async fn get_models(
         .and_then(|p| stored.synced_at_by_profile.get(p).cloned())
         .or_else(|| {
             if profile_filter.is_none() {
-                stored.synced_at_by_profile.values().next().cloned()
+                stored.synced_at_by_profile.values().max().cloned()
             } else {
                 None
             }
@@ -2734,11 +2736,18 @@ async fn get_upstream_profile_routing(
 async fn post_upstream_test(
     State(state): State<Arc<AppState>>,
     Json(body): Json<crate::types::UpstreamTestBody>,
-) -> Json<UpstreamTestResult> {
+) -> Result<Json<UpstreamTestResult>, (StatusCode, String)> {
+    // SSRF protection: reject private/reserved network addresses.
+    if crate::state::is_private_or_reserved_url(&body.base_url) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "SSRF protection: cannot test private/reserved URLs".to_string(),
+        ));
+    }
     let result = crate::upstream::test_upstream_connection(&body.base_url, &body.api_key).await;
     *state.last_upstream_test.write() = Some(result.clone());
     state.flush_persist();
-    Json(result)
+    Ok(Json(result))
 }
 
 async fn update_connection_config(

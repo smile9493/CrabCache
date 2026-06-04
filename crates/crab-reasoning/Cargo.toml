@@ -17,8 +17,8 @@ tracing = { workspace = true }
 rusqlite = { workspace = true }
 regex = { workspace = true }
 parking_lot = { workspace = true }
-crab-metrics = { path = "../crab-metrics" }
-crab-composition = { path = "../crab-composition" }
+crab-metrics.workspace = true
+crab-composition.workspace = true
 redis = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tokio-postgres.workspace = true

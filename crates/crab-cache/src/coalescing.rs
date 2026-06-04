@@ -74,6 +74,8 @@ impl RequestCoalescer {
                 // Yield to avoid tight spin when notify fired but completion flag
                 // isn't visible yet (Acquire/Release ordering race).
                 tokio::task::yield_now().await;
+                // Additional sleep to prevent CPU spinning under extreme concurrency.
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 continue;
             }
 

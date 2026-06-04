@@ -45,7 +45,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
@@ -466,10 +466,33 @@ async fn main() -> anyhow::Result<()> {
 
     state.sync_keys_meta_from_gateway().await;
 
+    // CORS: restrict to known origins. Override via CRABCACHE_ADMIN_CORS_ORIGINS (comma-separated).
+    let cors_origins: Vec<axum::http::HeaderValue> =
+        std::env::var("CRABCACHE_ADMIN_CORS_ORIGINS")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                // Default: same-origin only (Admin dashboard serves from the same address).
+                vec![
+                    "http://localhost:3000".parse().unwrap(),
+                    "http://127.0.0.1:3000".parse().unwrap(),
+                    "https://localhost:3000".parse().unwrap(),
+                    "https://127.0.0.1:3000".parse().unwrap(),
+                    "http://localhost:18001".parse().unwrap(),
+                    "http://127.0.0.1:18001".parse().unwrap(),
+                ]
+            });
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(cors_origins)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
 
     let dashboard_static = Router::new()
         .fallback_service(

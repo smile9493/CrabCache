@@ -15,15 +15,15 @@ tracing.workspace = true
 tokio.workspace = true
 redis.workspace = true
 crab-cache.workspace = true
-crab-proxy = { path = "../crab-proxy" }
-crab-route = { path = "../crab-route" }
-crab-control = { path = "../crab-control" }
-crab-metrics = { path = "../crab-metrics" }
-crab-pipeline = { path = "../crab-pipeline" }
+crab-proxy.workspace = true
+crab-route.workspace = true
+crab-control.workspace = true
+crab-metrics.workspace = true
+crab-pipeline.workspace = true
 futures-util = "0.3"
 indexmap = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-crab-pipeline = { path = "../crab-pipeline" }
+crab-pipeline.workspace = true
 parking_lot.workspace = true

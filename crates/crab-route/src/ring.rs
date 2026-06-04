@@ -333,12 +333,24 @@ impl LbRouter {
             });
         }
 
-        // Deterministic P2C using affinity key from the first two backends' names.
-        let hash1 = stable_hash_for_p2c(&ready[0].1.name);
-        let hash2 = stable_hash_for_p2c(&ready[1].1.name);
+        // P2C: randomly pick two distinct candidates from the ready set.
+        // We build two independent hashers from the same RandomState (which seeds
+        // with process-level entropy) and hash distinct scalar inputs to produce
+        // two unrelated indices.  This avoids pulling in the `rand` crate while
+        // still giving well-distributed random picks on every call.
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hash, Hasher};
+        let s = RandomState::new();
+        let mut h1 = s.build_hasher();
+        0usize.hash(&mut h1);
+        let hash1 = h1.finish();
+        let mut h2 = s.build_hasher();
+        1usize.hash(&mut h2);
+        let hash2 = h2.finish();
         let idx1 = hash1 as usize % ready.len();
         let mut idx2 = hash2 as usize % ready.len();
-        if idx2 == idx1 {
+        // Ensure idx2 != idx1
+        if idx2 == idx1 && ready.len() > 1 {
             idx2 = (idx2 + 1) % ready.len();
         }
 
@@ -466,15 +478,6 @@ impl BackgroundService for LbHealthService {
             }
         }
     }
-}
-
-/// Deterministic hash for P2C backend selection (avoids `rand` dependency).
-fn stable_hash_for_p2c(key: &str) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    let digest = hasher.finalize();
-    u64::from_be_bytes(digest[..8].try_into().unwrap_or([0; 8]))
 }
 
 #[cfg(test)]

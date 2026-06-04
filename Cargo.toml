@@ -109,6 +109,9 @@ indexmap = { version = "2", features = ["serde"] }
 base64 = "0.22"
 arc-swap = "1"
 memchr = "2"
+axum = { version = "0.7", features = ["macros"] }
+futures = "0.3"
+rand = "0.8"
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"

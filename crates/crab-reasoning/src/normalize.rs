@@ -2482,7 +2482,7 @@ mod tests {
     #[test]
     fn prepare_mimo_request_retires_old_turns() {
         let mut messages = Vec::new();
-        for i in 0..24 {
+        for i in 0..54 {
             messages.push(serde_json::json!({
                 "role": if i % 2 == 0 { "user" } else { "assistant" },
                 "content": format!("turn-{i} with padding {}", "x".repeat(400)),
@@ -2503,7 +2503,7 @@ mod tests {
             .and_then(|m| m.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        assert!(out_msgs < 24);
+        assert!(out_msgs < 54, "output messages ({out_msgs}) should be less than input (54)");
     }
 
     #[test]

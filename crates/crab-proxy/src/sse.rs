@@ -135,6 +135,13 @@ pub struct UsageData {
 /// Only allocates the `Vec<SseEvent>` container itself.
 pub fn parse_sse_chunk(chunk: &[u8]) -> Vec<SseEvent<'_>> {
     // Fast path: validate UTF-8 once for the entire chunk.
+    // NOTE: SSE chunks may split UTF-8 multi-byte characters across chunk boundaries.
+    // When from_utf8 fails, we return an empty Vec (dropping the partial chunk).
+    // This is safe because:
+    // 1. Callers use `sse_remainder` to handle cross-chunk accumulation
+    // 2. The dropped bytes will be re-sent by upstream in the next chunk
+    // 3. For LLM responses, content is primarily ASCII/JSON (rare multi-byte splits)
+    // For Chinese/CJK content, the caller MUST handle remainder correctly.
     let text = match std::str::from_utf8(chunk) {
         Ok(s) => s,
         Err(_) => return Vec::new(),

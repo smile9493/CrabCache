@@ -530,6 +530,11 @@ mod tests {
             upstream_model: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            status_code: None,
+            error_code: None,
+            cache_decision: None,
+            upstream_result: None,
+            phase_durations_ms: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         // Gateway = 100 - 60 - 30 = 10
@@ -585,6 +590,11 @@ mod tests {
             upstream_model: None,
             request_passthrough: false,
             request_passthrough_prefix_len: None,
+            status_code: None,
+            error_code: None,
+            cache_decision: None,
+            upstream_result: None,
+            phase_durations_ms: None,
         };
         let stages = waterfall_stages_from_log(&summary, &detail);
         assert_eq!(stages.len(), 1);

@@ -17,6 +17,7 @@ pub fn ModelsPage() -> impl IntoView {
     let syncing: RwSignal<bool> = RwSignal::new(false);
     let detecting: RwSignal<bool> = RwSignal::new(false);
     let applying: RwSignal<bool> = RwSignal::new(false);
+    let last_error: RwSignal<Option<String>> = RwSignal::new(None);
 
     let reload_models = move |pid: String| {
         leptos::task::spawn_local(async move {
@@ -47,6 +48,7 @@ pub fn ModelsPage() -> impl IntoView {
     let on_detect = move |_| {
         let pid = profile_id.get();
         detecting.set(true);
+        last_error.set(None);
         detect_result.set(None);
         leptos::task::spawn_local(async move {
             match api::detect_models(&pid).await {
@@ -67,6 +69,7 @@ pub fn ModelsPage() -> impl IntoView {
         };
         let pid = profile_id.get();
         applying.set(true);
+        last_error.set(None);
         let body = ModelApplyBody {
             profile_id: pid.clone(),
             add: diff.to_add.clone(),
@@ -80,7 +83,7 @@ pub fn ModelsPage() -> impl IntoView {
                     reload_models(pid);
                 }
                 Err(e) => {
-                    detect_result.try_set(Some(Err(e)));
+                    last_error.try_set(Some(e));
                 }
             }
             applying.try_set(false);
@@ -90,6 +93,7 @@ pub fn ModelsPage() -> impl IntoView {
     let on_sync = move |_| {
         let pid = profile_id.get();
         syncing.set(true);
+        last_error.set(None);
         sync_result.set(None);
         leptos::task::spawn_local(async move {
             match api::sync_models(&pid).await {
@@ -98,7 +102,7 @@ pub fn ModelsPage() -> impl IntoView {
                     reload_models(pid);
                 }
                 Err(e) => {
-                    models.try_set(Some(Err(e)));
+                    last_error.try_set(Some(e));
                 }
             }
             syncing.try_set(false);
@@ -131,6 +135,8 @@ pub fn ModelsPage() -> impl IntoView {
                                 class=class
                                 on:click=move |_| {
                                     profile_id.set(pid2.clone());
+                                    sync_result.set(None);
+                                    detect_result.set(None);
                                     reload_models(pid2.clone());
                                 }
                             >
@@ -178,6 +184,11 @@ pub fn ModelsPage() -> impl IntoView {
 
             // Sync result
             {move || sync_result.get().map(|r| view! { <SyncResultCard result=r /> })}
+
+            // Error alert
+            {move || last_error.get().map(|e| view! {
+                <div class="glass-card text-error text-sm">{e}</div>
+            })}
 
             // Detect diff preview
             {move || match detect_result.get() {

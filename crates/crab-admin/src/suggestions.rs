@@ -178,6 +178,9 @@ mod tests {
             http_5xx_5m: 0,
             qps_prev_1h: 0.0,
             hit_rate_prev_1h: 0.0,
+            pg_total_input_tokens: 0,
+            pg_total_output_tokens: 0,
+            pg_total_tokens: 0,
         }
     }
 

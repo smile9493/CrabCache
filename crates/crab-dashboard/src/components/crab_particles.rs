@@ -53,7 +53,7 @@ const CRAB_POINTS: &[(f64, f64)] = &[
 ];
 
 /// Skip frames: rAF ~60Hz → draw every Nth frame (~60fps).
-const FRAME_SKIP: i32 = 1;
+const FRAME_SKIP: i32 = 2;
 /// Decorative canvas: never allocate more than 1.25× CSS pixels.
 const MAX_DPR: f64 = 1.25;
 

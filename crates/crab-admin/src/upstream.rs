@@ -341,9 +341,19 @@ async fn fetch_models_for_profile(
     }
 
     if normalize_codex_account_id(account_id).is_some() {
-        if let Ok(dynamic) = fetch_codex_models_dynamic(api_key, account_id).await {
-            return Ok(dynamic);
+        match fetch_codex_models_dynamic(api_key, account_id).await {
+            Ok(dynamic) => return Ok(dynamic),
+            Err(e) => tracing::warn!(
+                profile_id,
+                error = %e,
+                "Codex dynamic model fetch failed, falling back to static catalog"
+            ),
         }
+    } else {
+        tracing::debug!(
+            profile_id,
+            "Codex account_id is empty/default, using static model catalog"
+        );
     }
 
     Ok(codex_static_models_response())
@@ -425,14 +435,24 @@ async fn fetch_profile_model_catalog(
     let base_url = profile_base_url_async(state, profile_id).await?;
     let provider = profile_provider_async(state, profile_id).await;
     if is_codex_upstream(&provider, profile_id, &base_url) {
-        if let Ok(view) = state
+        match state
             .gateway
             .get_upstream_profile_keys_models(profile_id)
             .await
         {
-            if let Ok(merged) = merge_codex_key_catalogs(view, &provider) {
-                return Ok(merged);
-            }
+            Ok(view) => match merge_codex_key_catalogs(view, &provider) {
+                Ok(merged) => return Ok(merged),
+                Err(e) => tracing::warn!(
+                    profile_id,
+                    error = %e,
+                    "Codex key catalog merge failed, falling back to direct fetch"
+                ),
+            },
+            Err(e) => tracing::warn!(
+                profile_id,
+                error = %e,
+                "Codex key models probe failed, falling back to direct fetch"
+            ),
         }
     }
 
@@ -598,6 +618,7 @@ pub async fn sync_models_internal(
     Ok(crate::types::SyncResult {
         added,
         removed,
+        skipped: Vec::new(),
         unchanged,
         total: profile_total,
     })
@@ -609,13 +630,16 @@ pub async fn detect_models_internal(
 ) -> Result<crate::types::ModelDetectResponse, String> {
     let catalog = fetch_profile_model_catalog(state, profile_id).await?;
     let upstream_ids: Vec<String> = catalog.models.iter().map(|m| m.id.clone()).collect();
-    let stored = state.models.read();
-    let existing_ids: Vec<String> = stored
-        .models
-        .iter()
-        .filter(|m| m.profile_id == profile_id)
-        .map(|m| m.id.clone())
-        .collect();
+
+    let existing_ids: Vec<String> = {
+        let stored = state.models.read();
+        stored
+            .models
+            .iter()
+            .filter(|m| m.profile_id == profile_id)
+            .map(|m| m.id.clone())
+            .collect()
+    };
 
     let to_add: Vec<String> = upstream_ids
         .iter()
@@ -663,6 +687,7 @@ pub fn apply_models_internal(
     }
 
     let mut added = Vec::new();
+    let mut skipped = Vec::new();
     for id in add {
         if !existing_ids.contains(&id) {
             stored.models.push(crate::state::StoredModel {
@@ -678,6 +703,9 @@ pub fn apply_models_internal(
             });
             existing_ids.push(id.clone());
             added.push(id);
+        } else {
+            tracing::warn!(profile_id, model = %id, "apply: skipping already-existing model");
+            skipped.push(id);
         }
     }
 
@@ -693,6 +721,7 @@ pub fn apply_models_internal(
     SyncResult {
         added,
         removed: remove,
+        skipped,
         unchanged,
         total,
     }

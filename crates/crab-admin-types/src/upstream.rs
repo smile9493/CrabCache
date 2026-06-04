@@ -290,6 +290,9 @@ pub struct UpstreamModelsResponse {
 pub struct SyncResult {
     pub added: Vec<String>,
     pub removed: Vec<String>,
+    /// Models that were requested to be added but already existed (skipped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
     pub unchanged: usize,
     pub total: usize,
 }
@@ -345,7 +348,7 @@ pub struct ProfileRoutingView {
 pub struct RoutingSummaryView {
     pub backends_healthy: usize,
     pub backends_total: usize,
-    pub circuit_open_count: usize,
+    pub backends_unhealthy: usize,
     pub upstream_keys_available: usize,
     pub upstream_keys_total: usize,
     pub profile_id: String,

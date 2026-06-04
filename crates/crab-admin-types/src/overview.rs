@@ -479,6 +479,9 @@ mod tests {
                 http_5xx_5m: 0,
                 qps_prev_1h: 0.0,
                 hit_rate_prev_1h: 0.0,
+                pg_total_input_tokens: 0,
+                pg_total_output_tokens: 0,
+                pg_total_tokens: 0,
             },
             health: GatewayHealth::default(),
             prefix_cache: PrefixCacheMetricsSnapshot {
@@ -490,6 +493,10 @@ mod tests {
             semantic: SemanticConfig {
                 enabled: true,
                 similarity_threshold: 0.95,
+                ttl_secs: 0,
+                min_query_chars: 0,
+                max_query_chars: 0,
+                max_concurrent_embeds: 0,
             },
             ops: OverviewOpsMetrics::default(),
             suggestions: vec![],

@@ -779,8 +779,7 @@ pub fn UpstreamPage() -> impl IntoView {
     // Only depends on `provider` — does NOT re-run when model changes (so user
     // selections like "Custom Model" are not overridden).
     {
-        let model = model.clone();
-        let provider = provider.clone();
+        // RwSignal implements Copy; no .clone() needed for closure capture.
         Effect::new(move |_| {
             let prov = provider.get();
             let models = models_for_provider(&prov);
@@ -1711,10 +1710,10 @@ pub fn UpstreamPage() -> impl IntoView {
                                                         <span class="badge badge-accent text-[10px]">{t.upstream_default_badge()}</span>
                                                     })}
                                                     {(!is_def && !pid.is_empty()).then(|| {
-                                                        let set_default = on_set_default_profile.clone();
+                                                        // Callback implements Copy; no .clone() needed.
                                                         view! {
                                                             <button type="button" class="btn btn-secondary text-[10px] px-2 py-0.5"
-                                                                on:click=move |_| set_default.run(())
+                                                                on:click=move |_| on_set_default_profile.run(())
                                                             >
                                                                 {t.pipeline_default_profile()}
                                                             </button>
