@@ -128,6 +128,10 @@ pub struct GatewayMetrics {
     pub coalesce_follower: IntCounterVec,
     /// Trace log write status by sink and result.
     pub trace_write_total: IntCounterVec,
+    /// Trace JSONL channel drops (queue_full).
+    pub trace_jsonl_dropped_total: IntCounterVec,
+    /// Raw capture channel drops (queue_full).
+    pub raw_capture_dropped_total: IntCounter,
     /// Rejection count by source classification.
     pub rejection_by_source: IntCounterVec,
     /// Pipeline-level backpressure decisions.
@@ -142,6 +146,10 @@ pub struct GatewayMetrics {
     pub model_lockout_total: IntCounterVec,
     /// Fallback decisions from upstream errors (by failure kind).
     pub fallback_decision_total: IntCounterVec,
+    /// Pool acquire failures by profile and reason.
+    pub pool_acquire_failures_total: IntCounterVec,
+    /// Cross-profile fallback outcomes (from_profile × to_profile × outcome).
+    pub profile_fallback_total: IntCounterVec,
 
     // ── Content density tracking ──────────────────────────────────────
     /// Bytes flowing through each transformation stage (stage × pipeline).
@@ -180,6 +188,37 @@ pub struct GatewayMetrics {
     pub background_task_last_success_timestamp: IntGaugeVec,
     /// Background task shutdown drain counters.
     pub background_task_shutdown_drained_total: IntCounterVec,
+
+    // ── Stream completion observability ──────────────────────────────────
+    /// Synthetic `response.completed` emitted by CrabCache (upstream abort / EOS filter).
+    pub synthetic_response_completed_total: IntCounterVec,
+    /// Upstream aborted after response headers were already sent to downstream.
+    pub upstream_abort_after_headers_total: IntCounter,
+    /// CrabCache forced downstream EOS (Responses wire `[DONE]`).
+    pub force_downstream_eos_total: IntCounter,
+
+    // ── Connection prewarm observability ──────────────────────────────
+    /// Connection prewarm outcomes by result/profile/backend.
+    /// Labels: `result` = succeeded | failed | skipped,
+    ///         `profile` = upstream profile id, `backend` = backend name.
+    pub connection_prewarm_total: IntCounterVec,
+
+    // ── Downstream write latency ──────────────────────────────────────
+    /// Latency of writes to the downstream client by path and result.
+    /// Labels: `path` = error_json | error_sse | cache_hit_json | cache_hit_sse |
+    ///                 responses_bootstrap | proxy_forward_eos,
+    ///         `result` = ok | err.
+    pub downstream_write_latency: HistogramVec,
+
+    // ── Key binding diagnostics ─────────────────────────────────────
+    /// Number of active bindings in the key binding cache.
+    pub key_binding_cache_entries: Gauge,
+    /// Sum of all values in the key_sessions reverse index.
+    pub key_binding_sessions_index_sum: Gauge,
+    /// 1 if key_sessions index is consistent with cache, 0 if drifted.
+    pub key_binding_index_drift: Gauge,
+    /// Effective key binding TTL in seconds (0 = disabled).
+    pub key_binding_ttl_seconds: Gauge,
 }
 
 impl GatewayMetrics {
@@ -690,6 +729,19 @@ impl GatewayMetrics {
             &["source"],
         )?;
 
+        let trace_jsonl_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_trace_jsonl_dropped_total",
+                "Trace JSONL channel entries dropped before writing",
+            ),
+            &["reason"],
+        )?;
+
+        let raw_capture_dropped_total = IntCounter::new(
+            "gateway_raw_capture_dropped_total",
+            "Raw capture channel entries dropped (queue full)",
+        )?;
+
         let pipeline_backpressure = IntCounterVec::new(
             Opts::new(
                 "gateway_pipeline_backpressure_total",
@@ -733,6 +785,22 @@ impl GatewayMetrics {
                 "Total number of fallback decisions from upstream errors",
             ),
             &["failure_kind"],
+        )?;
+
+        let pool_acquire_failures_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_upstream_pool_acquire_failures_total",
+                "Total number of upstream key pool acquire failures by profile and reason",
+            ),
+            &["profile", "reason"],
+        )?;
+
+        let profile_fallback_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_profile_fallback_total",
+                "Cross-profile fallback outcomes",
+            ),
+            &["from_profile", "to_profile", "outcome"],
         )?;
 
         // ── Content density tracking ──────────────────────────────────────
@@ -850,6 +918,60 @@ impl GatewayMetrics {
             &["task"],
         )?;
 
+        let synthetic_response_completed_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_synthetic_response_completed_total",
+                "Synthetic response.completed emitted by CrabCache",
+            ),
+            &["reason"],
+        )?;
+
+        let upstream_abort_after_headers_total = IntCounter::new(
+            "gateway_upstream_abort_after_headers_total",
+            "Upstream aborted after response headers already sent downstream",
+        )?;
+
+        let force_downstream_eos_total = IntCounter::new(
+            "gateway_force_downstream_eos_total",
+            "CrabCache forced downstream EOS",
+        )?;
+
+        let connection_prewarm_total = IntCounterVec::new(
+            Opts::new(
+                "gateway_connection_prewarm_total",
+                "Connection prewarm outcomes by result/profile/backend",
+            ),
+            &["result", "profile", "backend"],
+        )?;
+
+        let downstream_write_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "gateway_downstream_write_latency_seconds",
+                "Latency of writes to the downstream client by path and result",
+            )
+            .buckets(vec![
+                0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0,
+            ]),
+            &["path", "result"],
+        )?;
+
+        let key_binding_cache_entries = Gauge::with_opts(Opts::new(
+            "gateway_key_binding_cache_entries",
+            "Number of active bindings in the key binding cache",
+        ))?;
+        let key_binding_sessions_index_sum = Gauge::with_opts(Opts::new(
+            "gateway_key_binding_sessions_index_sum",
+            "Sum of all values in the key_sessions reverse index",
+        ))?;
+        let key_binding_index_drift = Gauge::with_opts(Opts::new(
+            "gateway_key_binding_index_drift",
+            "1 if key_sessions index is inconsistent with cache, 0 if consistent",
+        ))?;
+        let key_binding_ttl_seconds = Gauge::with_opts(Opts::new(
+            "gateway_key_binding_ttl_seconds",
+            "Effective key binding idle TTL in seconds (0 = disabled)",
+        ))?;
+
         Ok(Self {
             input_tokens,
             output_tokens,
@@ -920,6 +1042,8 @@ impl GatewayMetrics {
             coalesce_leader,
             coalesce_follower,
             trace_write_total,
+            trace_jsonl_dropped_total,
+            raw_capture_dropped_total,
             rejection_by_source,
             pipeline_backpressure,
             key_binding,
@@ -927,6 +1051,8 @@ impl GatewayMetrics {
             client_lockout_total,
             model_lockout_total,
             fallback_decision_total,
+            pool_acquire_failures_total,
+            profile_fallback_total,
             content_density_bytes,
             content_density_ratio,
             sse_chunk_rewrite,
@@ -942,6 +1068,15 @@ impl GatewayMetrics {
             background_task_healthy,
             background_task_last_success_timestamp,
             background_task_shutdown_drained_total,
+            synthetic_response_completed_total,
+            upstream_abort_after_headers_total,
+            force_downstream_eos_total,
+            connection_prewarm_total,
+            downstream_write_latency,
+            key_binding_cache_entries,
+            key_binding_sessions_index_sum,
+            key_binding_index_drift,
+            key_binding_ttl_seconds,
         })
     }
 
@@ -1015,6 +1150,8 @@ impl GatewayMetrics {
         registry.register(Box::new(self.coalesce_leader.clone()))?;
         registry.register(Box::new(self.coalesce_follower.clone()))?;
         registry.register(Box::new(self.trace_write_total.clone()))?;
+        registry.register(Box::new(self.trace_jsonl_dropped_total.clone()))?;
+        registry.register(Box::new(self.raw_capture_dropped_total.clone()))?;
         registry.register(Box::new(self.rejection_by_source.clone()))?;
         registry.register(Box::new(self.pipeline_backpressure.clone()))?;
         registry.register(Box::new(self.key_binding.clone()))?;
@@ -1022,6 +1159,8 @@ impl GatewayMetrics {
         registry.register(Box::new(self.client_lockout_total.clone()))?;
         registry.register(Box::new(self.model_lockout_total.clone()))?;
         registry.register(Box::new(self.fallback_decision_total.clone()))?;
+        registry.register(Box::new(self.pool_acquire_failures_total.clone()))?;
+        registry.register(Box::new(self.profile_fallback_total.clone()))?;
         registry.register(Box::new(self.content_density_bytes.clone()))?;
         registry.register(Box::new(self.content_density_ratio.clone()))?;
         registry.register(Box::new(self.sse_chunk_rewrite.clone()))?;
@@ -1038,6 +1177,15 @@ impl GatewayMetrics {
         registry.register(Box::new(self.background_task_healthy.clone()))?;
         registry.register(Box::new(self.background_task_last_success_timestamp.clone()))?;
         registry.register(Box::new(self.background_task_shutdown_drained_total.clone()))?;
+        registry.register(Box::new(self.synthetic_response_completed_total.clone()))?;
+        registry.register(Box::new(self.upstream_abort_after_headers_total.clone()))?;
+        registry.register(Box::new(self.force_downstream_eos_total.clone()))?;
+        registry.register(Box::new(self.connection_prewarm_total.clone()))?;
+        registry.register(Box::new(self.downstream_write_latency.clone()))?;
+        registry.register(Box::new(self.key_binding_cache_entries.clone()))?;
+        registry.register(Box::new(self.key_binding_sessions_index_sum.clone()))?;
+        registry.register(Box::new(self.key_binding_index_drift.clone()))?;
+        registry.register(Box::new(self.key_binding_ttl_seconds.clone()))?;
         Ok(())
     }
 
@@ -1126,6 +1274,19 @@ impl GatewayMetrics {
             .inc();
     }
 
+    /// Record a trace JSONL channel drop.
+    /// `reason`: "queue_full" | "shutdown".
+    pub fn record_trace_jsonl_dropped(&self, reason: &str) {
+        self.trace_jsonl_dropped_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    /// Record a raw capture channel drop (queue full).
+    pub fn record_raw_capture_dropped(&self) {
+        self.raw_capture_dropped_total.inc();
+    }
+
     // ── Rejection by source ─────────────────────────────────────────────
 
     pub fn record_rejection_by_source(&self, source: &str) {
@@ -1143,6 +1304,22 @@ impl GatewayMetrics {
     ///          "spill" (overflow to another key), "expired" (binding released).
     pub fn record_key_binding_event(&self, event: &str) {
         self.key_binding.with_label_values(&[event]).inc();
+    }
+
+    /// Update key binding diagnostic gauges (called periodically by PruneService).
+    pub fn set_key_binding_diagnostics(
+        &self,
+        cache_entries: u64,
+        sessions_index_sum: u32,
+        is_consistent: bool,
+        ttl_secs: u64,
+    ) {
+        self.key_binding_cache_entries.set(cache_entries as f64);
+        self.key_binding_sessions_index_sum
+            .set(sessions_index_sum as f64);
+        self.key_binding_index_drift
+            .set(if is_consistent { 0.0 } else { 1.0 });
+        self.key_binding_ttl_seconds.set(ttl_secs as f64);
     }
 
     /// Record a Codex quota preflight event.
@@ -1643,6 +1820,14 @@ impl GatewayMetrics {
             .inc();
     }
 
+    /// Record an upstream key pool acquire failure.
+    /// `reason`: "timeout" | "exhausted" | "lockout" | "permits_exceeded".
+    pub fn record_pool_acquire_failure(&self, profile: &str, reason: &str) {
+        self.pool_acquire_failures_total
+            .with_label_values(&[profile, reason])
+            .inc();
+    }
+
     // ── Content density tracking ──────────────────────────────────────
 
     /// Record bytes at a transformation stage.
@@ -1743,6 +1928,44 @@ impl GatewayMetrics {
         self.background_task_shutdown_drained_total
             .with_label_values(&[task])
             .inc();
+    }
+
+    // ── Stream completion observability ──────────────────────────────
+
+    /// Increment synthetic `response.completed` counter by reason.
+    /// Reasons: `"upstream_abort"`, `"eos_filter"`.
+    pub fn record_synthetic_response_completed(&self, reason: &str) {
+        self.synthetic_response_completed_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    /// Increment upstream-abort-after-headers counter.
+    pub fn record_upstream_abort_after_headers(&self) {
+        self.upstream_abort_after_headers_total.inc();
+    }
+
+    /// Increment force-downstream-EOS counter.
+    pub fn record_force_downstream_eos(&self) {
+        self.force_downstream_eos_total.inc();
+    }
+
+    /// Record a connection prewarm outcome.
+    /// `result`: "succeeded" | "failed" | "skipped".
+    pub fn record_connection_prewarm(&self, result: &str, profile: &str, backend: &str) {
+        self.connection_prewarm_total
+            .with_label_values(&[result, profile, backend])
+            .inc();
+    }
+
+    /// Record a downstream client write latency.
+    /// `path`: "error_json" | "error_sse" | "cache_hit_json" | "cache_hit_sse" |
+    ///         "responses_bootstrap" | "proxy_forward_eos".
+    /// `result`: "ok" | "err".
+    pub fn record_downstream_write(&self, path: &str, result: &str, duration: Duration) {
+        self.downstream_write_latency
+            .with_label_values(&[path, result])
+            .observe(duration.as_secs_f64());
     }
 }
 
@@ -1860,6 +2083,10 @@ mod tests {
         metrics.set_background_task_healthy("metrics_server", true);
         metrics.set_background_task_last_success_now("metrics_server");
         metrics.record_background_task_shutdown_drained("pg_trace_writer");
+        metrics.record_synthetic_response_completed("upstream_abort");
+        metrics.record_upstream_abort_after_headers();
+        metrics.record_force_downstream_eos();
+        metrics.record_connection_prewarm("succeeded", "default", "backend1");
 
         let text = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
@@ -1876,6 +2103,10 @@ mod tests {
         assert!(text.contains("gateway_background_task_healthy"));
         assert!(text.contains("gateway_background_task_last_success_timestamp"));
         assert!(text.contains("gateway_background_task_shutdown_drained_total"));
+        assert!(text.contains("gateway_synthetic_response_completed_total"));
+        assert!(text.contains("gateway_upstream_abort_after_headers_total"));
+        assert!(text.contains("gateway_force_downstream_eos_total"));
+        assert!(text.contains("gateway_connection_prewarm_total"));
     }
 
     #[test]
@@ -1895,5 +2126,9 @@ mod tests {
         metrics.set_background_task_healthy("metrics_server", true);
         metrics.set_background_task_last_success_now("metrics_server");
         metrics.record_background_task_shutdown_drained("pg_trace_writer");
+        metrics.record_synthetic_response_completed("eos_filter");
+        metrics.record_upstream_abort_after_headers();
+        metrics.record_force_downstream_eos();
+        metrics.record_connection_prewarm("succeeded", "default", "backend1");
     }
 }

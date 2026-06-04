@@ -447,6 +447,11 @@ impl pingora_core::services::background::BackgroundService for CodexQuotaRefresh
 struct PruneService {
     rate_limiter: Arc<crab_proxy::ClientKeyRateLimiter>,
     idempotency: Arc<crab_cache::IdempotencyStore>,
+    model_lockouts: Arc<crab_proxy::model_lockout::ModelLockoutRegistry>,
+    client_lockouts: Arc<crab_proxy::client_lockout::ClientLockoutRegistry>,
+    backend_load: Arc<crab_proxy::backend_state::BackendLoadRegistry>,
+    key_binding_store: Option<Arc<crab_proxy::key_binding::KeyBindingStore>>,
+    runtime: Arc<crab_proxy::RuntimeConfig>,
 }
 
 #[async_trait]
@@ -457,7 +462,26 @@ impl pingora_core::services::background::BackgroundService for PruneService {
         loop {
             tokio::select! {
                 _ = prune_interval.tick() => {
+                    // Rate limiter stale bucket cleanup.
                     self.rate_limiter.prune_stale(std::time::Duration::from_secs(600));
+                    // Model lockout expired entry cleanup.
+                    self.model_lockouts.cleanup();
+                    // Client lockout expired entry cleanup.
+                    self.client_lockouts.cleanup();
+                    // Backend load registry: remove stale (profile, backend) slots.
+                    let active_keys = self.runtime.active_backend_keys();
+                    self.backend_load.prune_inactive(&active_keys);
+                    // Key binding index reconciliation (fixes drift from Moka capacity eviction).
+                    if let Some(ref store) = self.key_binding_store {
+                        let (entries, sum, consistent) = store.diagnostic_snapshot();
+                        crab_metrics::global_metrics().set_key_binding_diagnostics(
+                            entries,
+                            sum,
+                            consistent,
+                            store.effective_ttl_secs(),
+                        );
+                        store.reconcile_key_sessions();
+                    }
                 }
                 _ = cleanup_interval.tick() => {
                     self.idempotency.cleanup_expired();
@@ -1649,6 +1673,11 @@ fn main() -> Result<()> {
         PruneService {
             rate_limiter: state.client_key_rate_limiter.clone(),
             idempotency: state.idempotency.clone(),
+            model_lockouts: state.model_lockouts.clone(),
+            client_lockouts: state.client_lockouts.clone(),
+            backend_load: state.backend_load.clone(),
+            key_binding_store: state.key_binding_store.clone(),
+            runtime: state.runtime.clone(),
         },
     ));
 

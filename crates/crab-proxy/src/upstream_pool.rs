@@ -23,6 +23,9 @@ pub struct UpstreamKeyStateSnapshot {
     /// Per-model cooldown deadlines (model slug -> until_ms).
     #[serde(default)]
     pub model_cooldowns: HashMap<String, (u64, u32)>,
+    /// Key priority for pool-level degradation on retry.
+    #[serde(default)]
+    pub priority: u32,
 }
 
 /// Per-model cooldown entry with progressive backoff tracking.
@@ -161,8 +164,29 @@ pub enum PoolAcquireFailure {
     AllDisabled,
     /// All keys are in cooldown (rate-limited); includes the minimum seconds until one recovers.
     AllInCooldown { min_retry_secs: u64 },
-    /// Mix of disabled and in-cooldown keys (none available for any other reason).
+    /// All enabled, non-cooldown keys are at max inflight (semaphore exhausted).
+    AllInflightFull,
+    /// No key supports the requested model (model-filtered pool).
+    NoModelSupport,
+    /// All keys belong to excluded accounts.
+    AllAccountsExcluded,
+    /// Mix of disabled, in-cooldown, and inflight-full keys.
     Unavailable,
+}
+
+impl PoolAcquireFailure {
+    /// Return a short string tag for metrics labels.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::AllDisabled => "all_disabled",
+            Self::AllInCooldown { .. } => "all_in_cooldown",
+            Self::AllInflightFull => "all_inflight_full",
+            Self::NoModelSupport => "no_model_support",
+            Self::AllAccountsExcluded => "all_accounts_excluded",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 pub fn normalize_account_id(raw: &str) -> Arc<str> {
@@ -401,6 +425,7 @@ impl UpstreamKeyPool {
         let mut has_enabled = false;
         let mut min_cooldown_remaining = u64::MAX;
         let mut all_enabled_in_cooldown = true;
+        let mut has_available_not_full = false;
 
         for slot in &self.slots {
             let enabled = slot.enabled.load(Ordering::Relaxed);
@@ -418,6 +443,10 @@ impl UpstreamKeyPool {
             }
             if enabled && !in_cooldown {
                 all_enabled_in_cooldown = false;
+                // A slot is available if its semaphore has remaining permits.
+                if slot.semaphore.available_permits() > 0 {
+                    has_available_not_full = true;
+                }
             }
         }
 
@@ -428,6 +457,9 @@ impl UpstreamKeyPool {
             return PoolAcquireFailure::AllInCooldown {
                 min_retry_secs: min_cooldown_remaining.min(3600),
             };
+        }
+        if !has_available_not_full {
+            return PoolAcquireFailure::AllInflightFull;
         }
         PoolAcquireFailure::Unavailable
     }
@@ -521,9 +553,10 @@ impl UpstreamKeyPool {
                     .filter(|(_, entry)| entry.cooldown_until_ms > now)
                     .map(|(k, v)| (k.to_string(), (v.cooldown_until_ms, v.backoff_level)))
                     .collect();
+                let priority = slot.priority.load(Ordering::Relaxed);
 
                 // Only persist if there's meaningful state
-                if cooldown_until <= now && strikes == 0 && enabled && scope_cooldowns.is_empty() && model_cooldowns.is_empty() {
+                if cooldown_until <= now && strikes == 0 && enabled && priority == 0 && scope_cooldowns.is_empty() && model_cooldowns.is_empty() {
                     return None;
                 }
 
@@ -536,6 +569,7 @@ impl UpstreamKeyPool {
                         scope_cooldowns,
                         enabled,
                         model_cooldowns,
+                        priority,
                     },
                 ))
             })
@@ -558,6 +592,10 @@ impl UpstreamKeyPool {
                     .store(state.rate_limit_strikes, Ordering::Relaxed);
                 // Restore enabled state (bidirectional)
                 slot.enabled.store(state.enabled, Ordering::Relaxed);
+                // Restore priority (default 0 for legacy snapshots without priority field)
+                if state.priority > 0 {
+                    slot.priority.store(state.priority, Ordering::Relaxed);
+                }
                 // Restore unexpired scope cooldowns
                 if !state.scope_cooldowns.is_empty() {
                     let mut sc = slot.scope_cooldowns.write();
@@ -1302,6 +1340,7 @@ impl UpstreamKeyPool {
     pub fn set_priority(&self, key_id: &str, priority: u32) -> bool {
         if let Some(slot) = self.slots.iter().find(|s| s.id == key_id) {
             slot.priority.store(priority, Ordering::Relaxed);
+            self.state_dirty.store(true, Ordering::Relaxed);
             true
         } else {
             false
@@ -1859,6 +1898,7 @@ mod tests {
                 scope_cooldowns: std::collections::HashMap::new(),
                 enabled: true,
                 model_cooldowns: std::collections::HashMap::new(),
+                priority: 0,
             },
         );
         pool.apply_key_states(&states);
@@ -1878,6 +1918,7 @@ mod tests {
                 scope_cooldowns: std::collections::HashMap::new(),
                 enabled: false,
                 model_cooldowns: std::collections::HashMap::new(),
+                priority: 0,
             },
         );
         pool.apply_key_states(&states);
