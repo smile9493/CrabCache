@@ -24,6 +24,9 @@ pub struct UpstreamProfileAdminView {
     pub fallback_profile_id: Option<String>,
     #[serde(default = "default_fallback_max_retries")]
     pub fallback_max_retries: u32,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<serde_json::Value>,
 }
 
 fn default_fallback_max_retries() -> u32 {
@@ -51,6 +54,9 @@ pub struct PutUpstreamProfileAdminRequest {
     pub fallback_profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_max_retries: Option<u32>,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<serde_json::Value>,
 }
 
 /// Alias for profile key pool entries (same wire shape as [`UpstreamKeyView`]).
@@ -104,6 +110,9 @@ pub struct UpstreamKeyInput {
     /// Key priority: 0 = highest (default), higher values = lower priority.
     #[serde(default)]
     pub priority: u32,
+    /// Models this key supports. Empty = all models.
+    #[serde(default)]
+    pub supported_models: Vec<String>,
 }
 
 fn default_key_enabled() -> bool {

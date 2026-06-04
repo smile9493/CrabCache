@@ -3104,6 +3104,7 @@ async fn put_upstream_keys_pool(
                 enabled: s.enabled,
                 account_id: String::new(),
                 priority: s.priority,
+                supported_models: Vec::new(),
             })
             .collect();
         let append_ctrl: Vec<crab_control::UpstreamKeyInput> = inputs
@@ -3158,6 +3159,7 @@ async fn delete_upstream_key_pool(
                 enabled: k.enabled,
                 account_id: k.account_id.clone(),
                 priority: k.priority,
+                supported_models: Vec::new(),
             })
             .collect::<Vec<_>>(),
     );
@@ -3263,6 +3265,7 @@ async fn update_upstream_config(
                 enabled: true,
                 account_id: String::new(),
                 priority: 0,
+                supported_models: Vec::new(),
             })
             .collect();
         let put_req = PutUpstreamKeysRequest {
@@ -3297,6 +3300,7 @@ async fn update_upstream_config(
                 enabled: s.enabled,
                 account_id: String::new(),
                 priority: s.priority,
+                supported_models: Vec::new(),
             })
             .collect();
         let merged_ctrl: Vec<crab_control::UpstreamKeyInput> = merged_inputs
