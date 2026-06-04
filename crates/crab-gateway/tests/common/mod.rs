@@ -34,6 +34,8 @@ pub fn test_runtime() -> Arc<RuntimeConfig> {
             proxy_url: None,
             fallback_profile_id: None,
             fallback_max_retries: 2,
+            connection: None,
+            key_source: "test",
         }),
     );
     RuntimeConfig::new(

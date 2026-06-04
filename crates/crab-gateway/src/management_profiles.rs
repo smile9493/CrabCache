@@ -15,7 +15,7 @@ use crab_control::{
     parse_upstream_base_url, validate_upstream_key,
 };
 use crab_proxy::{
-    ProfileBuildInput, UpstreamKeyPool, UpstreamKeySpec, build_profile_runtime,
+    ConnectionConfig, ProfileBuildInput, UpstreamKeyPool, UpstreamKeySpec, build_profile_runtime,
     resolve_profile_key_specs,
 };
 use std::sync::Arc;
@@ -308,6 +308,11 @@ fn profile_view(runtime: &crab_proxy::RuntimeConfig, id: &str) -> Option<Upstrea
         proxy_url: profile.proxy_url.clone(),
         fallback_profile_id: profile.fallback_profile_id.clone(),
         fallback_max_retries: profile.fallback_max_retries,
+        connection: profile
+            .connection
+            .as_ref()
+            .and_then(|c| serde_json::to_value(c).ok()),
+        key_source: profile.key_source.to_string(),
     })
 }
 
@@ -365,6 +370,12 @@ pub async fn put_upstream_profile(
     let existing = state.runtime.profile(&id);
     let existing_pool = existing.as_ref().map(|p| Arc::clone(&p.upstream_pool));
 
+    // Deserialize per-profile connection overrides from JSON if provided.
+    let connection: Option<ConnectionConfig> = req
+        .connection
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
     let input = ProfileBuildInput {
         id: id.clone(),
         provider: req.provider.trim().to_lowercase(),
@@ -376,6 +387,8 @@ pub async fn put_upstream_profile(
         proxy_url: req.proxy_url.clone(),
         fallback_profile_id: req.fallback_profile_id.clone().filter(|s| !s.is_empty()),
         fallback_max_retries: req.fallback_max_retries.unwrap_or(2).min(10),
+        connection,
+        key_source: "management-api",
     };
 
     // Validate fallback chain has no cycles.
@@ -522,6 +535,7 @@ pub async fn get_profile_keys(
     Ok(Json(UpstreamProfileKeysView {
         profile_id: id.to_string(),
         keys,
+        key_source: profile.key_source.to_string(),
     }))
 }
 
@@ -547,6 +561,7 @@ pub async fn export_profile_keys(
             enabled: s.enabled,
             account_id: s.account_id,
             priority: s.priority,
+            supported_models: s.supported_models,
         })
         .collect();
     Ok(Json(UpstreamProfileKeysExport {
@@ -583,7 +598,7 @@ pub async fn put_profile_keys(
             secret: k.secret,
             enabled: k.enabled,
             account_id: k.account_id,
-            supported_models: Vec::new(),
+            supported_models: k.supported_models,
             priority: k.priority,
         })
         .collect();

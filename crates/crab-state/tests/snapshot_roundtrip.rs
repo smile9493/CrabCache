@@ -37,6 +37,8 @@ fn test_runtime() -> Arc<RuntimeConfig> {
             proxy_url: None,
             fallback_profile_id: None,
             fallback_max_retries: 0,
+            connection: None,
+            key_source: "test",
         }),
     );
     RuntimeConfig::new(
@@ -190,6 +192,11 @@ fn upstream_profiles_snapshot_roundtrip() {
             }],
             fallback_profile_id: None,
             fallback_max_retries: 2,
+            proxy_url: None,
+            max_inflight_per_key: 0,
+            key_cooldown_secs: 0,
+            connection: None,
+            key_source: String::new(),
         }]),
         domain_policies: IndexMap::new(),
         key_states: HashMap::new(),
@@ -227,6 +234,11 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
         }],
         fallback_profile_id: None,
         fallback_max_retries: 2,
+        proxy_url: None,
+        max_inflight_per_key: 0,
+        key_cooldown_secs: 0,
+        connection: None,
+        key_source: String::new(),
     };
 
     let with_mimo = ControlPlaneSnapshot {
@@ -266,6 +278,11 @@ fn upstream_profiles_snapshot_removes_stale_profile() {
             }],
             fallback_profile_id: None,
             fallback_max_retries: 2,
+            proxy_url: None,
+            max_inflight_per_key: 0,
+            key_cooldown_secs: 0,
+            connection: None,
+            key_source: String::new(),
         }]),
         domain_policies: IndexMap::new(),
         key_states: HashMap::new(),
@@ -320,6 +337,8 @@ fn upsert_profile_is_immediately_readable() {
         proxy_url: None,
         fallback_profile_id: None,
         fallback_max_retries: 0,
+        connection: None,
+        key_source: "test",
     });
 
     runtime.upsert_profile(mimo_profile).expect("upsert");

@@ -921,6 +921,8 @@ async fn put_upstream_relay(
             proxy_url: None,
             fallback_profile_id: None,
             fallback_max_retries: 2,
+            connection: existing.connection.clone(),
+            key_source: "management-routing",
         };
         if let Ok(profile) = crab_proxy::build_profile_runtime(
             input,

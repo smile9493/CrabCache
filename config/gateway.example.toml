@@ -153,8 +153,37 @@ deepseek_endpoints = ["api.deepseek.com:443"]
 # base_url = "https://api.xiaomimimo.com"
 # endpoints = ["api.xiaomimimo.com:443"]
 # model = "mimo-v2.5-pro"
-# keys = ["your-xiaomi-mimo-api-key"]
+# max_inflight_per_key = 3
 # # OpenAI-compatible path: /v1/chat/completions
+# #
+# # Per-profile connection overrides (optional). When absent, global [connection] applies.
+# # NOTE: pooled connections use TLS params from when they were established;
+# #       new params take effect only for new connections after idle expiry.
+# [upstream.profiles.mimo.connection]
+# tls_curves = "X25519:P-256:P-384"
+# tcp_keepalive_idle_secs = 30
+# upstream_connection_timeout_ms = 5000
+#
+# # Structured keys with secret_env (preferred in production):
+# # Copy these lines below the profile header and uncomment.
+# [[upstream.profiles.keys]]
+# id = "mimo-main-1"
+# secret_env = "CRABCACHE_MIMO_KEY_1"
+# enabled = true
+# account_id = "mimo-account-a"
+# priority = 0
+# supported_models = ["mimo-v2.5-pro"]
+#
+# [[upstream.profiles.keys]]
+# id = "mimo-main-2"
+# secret_env = "CRABCACHE_MIMO_KEY_2"
+# enabled = true
+# account_id = "mimo-account-b"
+# priority = 10
+# supported_models = ["mimo-v2.5-pro"]
+#
+# # Legacy inline key (local dev only — use secret_env or secret in production):
+# # keys = ["your-xiaomi-mimo-api-key"]
 #
 # # ── Anthropic (Claude) ──
 # [[upstream.profiles]]
@@ -867,7 +896,11 @@ max_files = 5
 # passthrough_prefix_bytes = 1024       # Minimum body bytes to trigger MiMo passthrough (overlap connect + upload)
 # mimo_key_binding = false              # Conversation-level upstream key binding for MiMo (lock key per conversation)
 # mimo_key_binding_ttl_secs = 300       # Idle TTL (seconds) for key bindings; 5 minutes default
-# mimo_key_max_inflight = 3             # Max concurrent requests per bound key (0 = unlimited)
+# mimo_key_max_inflight = 3             # Backward-compatible pool default for MiMo profiles
+#                                        # without explicit max_inflight_per_key. When set, this
+#                                        # value is used as the pool semaphore cap. If the profile
+#                                        # sets max_inflight_per_key > 0, that overrides this value.
+#                                        # Also used as session-binding overflow threshold.
 # mimo_key_max_sessions_per_key = 2    # Max sessions bound to a single MiMo key (1 = strict 1:1 binding)
 # mimo_key_overflow_wait_ms = 500      # Wait on bound key semaphore before spill (ms)
 # codex_key_binding = false             # Session → Codex OAuth account binding (overflow spill on saturation)

@@ -1,3 +1,4 @@
+use crate::context::ConnectionConfig;
 use crate::upstream_pool::UpstreamKeyPool;
 use crab_pipeline::UpstreamProvider;
 use crab_route::LbRouter;
@@ -19,6 +20,13 @@ pub struct UpstreamProfileRuntime {
     pub fallback_profile_id: Option<String>,
     /// Maximum number of fallback attempts per request (default 2).
     pub fallback_max_retries: u32,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive, etc.).
+    /// When `None`, falls back to the global `RuntimeConfig.conn_config`.
+    /// NOTE: pooled connections use TLS params from when they were established;
+    ///       new params take effect only for new connections after idle expiry.
+    pub connection: Option<ConnectionConfig>,
+    /// Where this profile's keys were resolved from (display label).
+    pub key_source: &'static str,
 }
 
 /// Validate that a fallback chain has no cycles.

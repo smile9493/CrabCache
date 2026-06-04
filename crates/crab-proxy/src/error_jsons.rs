@@ -240,6 +240,21 @@ pub fn upstream_pool_exhausted_error_details(
             "All upstream API keys are rate-limited and in cooldown. Retry after the cooldown expires.",
             min_retry_secs.max(1),
         ),
+        PoolAcquireFailure::AllInflightFull => (
+            "upstream_keys_busy",
+            "All upstream API keys are at maximum concurrent requests. Retry after in-flight requests complete.",
+            5,
+        ),
+        PoolAcquireFailure::NoModelSupport => (
+            "upstream_no_model_support",
+            "No upstream API key supports the requested model. Check key supported_models configuration.",
+            60,
+        ),
+        PoolAcquireFailure::AllAccountsExcluded => (
+            "upstream_accounts_excluded",
+            "All upstream API keys belong to excluded accounts. Check key account_id configuration.",
+            10,
+        ),
         PoolAcquireFailure::Unavailable => (
             "upstream_key_exhausted",
             "No upstream API keys available. Keys may be disabled, in cooldown, or missing. Check the Management API (GET /v1/upstream/keys).",

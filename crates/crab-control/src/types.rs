@@ -152,6 +152,9 @@ pub struct UpstreamKeyInput {
     /// Key priority: 0 = highest (default), higher values = lower priority.
     #[serde(default)]
     pub priority: u32,
+    /// Models this key supports. Empty = all models.
+    #[serde(default)]
+    pub supported_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -453,6 +456,10 @@ pub struct PipelineTestResponse {
 }
 
 /// Read-only upstream profile summary (Management API).
+fn default_fallback_max_retries() -> u32 {
+    2
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamProfileView {
     pub id: String,
@@ -472,10 +479,13 @@ pub struct UpstreamProfileView {
     /// Maximum number of fallback attempts per request.
     #[serde(default = "default_fallback_max_retries")]
     pub fallback_max_retries: u32,
-}
-
-fn default_fallback_max_retries() -> u32 {
-    2
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    /// When absent, the global `[connection]` config applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<serde_json::Value>,
+    /// Where this profile's keys were resolved from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key_source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,12 +511,19 @@ pub struct PutUpstreamProfileRequest {
     pub fallback_profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_max_retries: Option<u32>,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    /// When absent, the global `[connection]` config applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamProfileKeysView {
     pub profile_id: String,
     pub keys: Vec<UpstreamKeyView>,
+    /// Where this profile's keys were resolved from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key_source: String,
 }
 
 /// Admin-only export of profile key pool secrets (Management API reconciliation).

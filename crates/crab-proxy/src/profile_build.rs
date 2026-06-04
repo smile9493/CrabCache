@@ -1,5 +1,6 @@
 //! Build `UpstreamProfileRuntime` from Management API inputs.
 
+use crate::context::ConnectionConfig;
 use crate::runtime::RuntimeConfig;
 use crate::upstream_pool::{UpstreamKeyPool, UpstreamKeySpec};
 use crate::upstream_profile::UpstreamProfileRuntime;
@@ -25,6 +26,11 @@ pub struct ProfileBuildInput {
     pub fallback_profile_id: Option<String>,
     /// Maximum number of fallback attempts per request (default 2).
     pub fallback_max_retries: u32,
+    /// Per-profile connection overrides (TLS, timeouts, keepalive).
+    /// When `None`, the global `ConnectionConfig` applies.
+    pub connection: Option<ConnectionConfig>,
+    /// Where this profile's keys were resolved from.
+    pub key_source: &'static str,
 }
 
 pub fn parse_profile_backends(input: &ProfileBuildInput) -> Result<Vec<Backend>, String> {
@@ -198,5 +204,7 @@ pub fn build_profile_runtime(
         router,
         upstream_pool: pool_handle,
         proxy_url: input.proxy_url.filter(|s| !s.is_empty()),
+        connection: input.connection,
+        key_source: input.key_source,
     }))
 }

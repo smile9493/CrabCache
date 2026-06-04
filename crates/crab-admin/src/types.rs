@@ -60,6 +60,7 @@ pub fn upstream_key_input_to_control(k: &UpstreamKeyInput) -> crab_control::Upst
         enabled: k.enabled,
         account_id: k.account_id.clone(),
         priority: k.priority,
+        supported_models: Vec::new(),
     }
 }
 

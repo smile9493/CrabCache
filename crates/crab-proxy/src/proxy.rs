@@ -217,6 +217,10 @@ impl GatewayProxy {
                 fallback_provider = %next_profile.provider.as_str(),
                 "Skipping profile fallback because provider mismatch"
             );
+            global_metrics()
+                .profile_fallback_total
+                .with_label_values(&[&current_id, &next_id, "provider_mismatch"])
+                .inc();
             return None;
         }
 
@@ -224,6 +228,11 @@ impl GatewayProxy {
         ctx.upstream_profile_id = Some(next_id.clone());
         self.reset_upstream_state_for_retry(ctx);
         self.refresh_retry_budget_for_active_profile(ctx);
+
+        global_metrics()
+            .profile_fallback_total
+            .with_label_values(&[&current_id, &next_id, "triggered"])
+            .inc();
 
         let mut e = Error::create(
             ErrorType::HTTPStatus(status),
@@ -242,6 +251,8 @@ impl GatewayProxy {
     }
 
     /// Sync MiMo profile pool semaphores with `mimo_key_max_inflight` when configured.
+    /// Skips the rebuild if the pool already has an explicit `max_inflight` from profile config
+    /// (`max_inflight_per_key`), per the compatibility rules in `config.rs`.
     pub(crate) fn ensure_mimo_pool_inflight_cap(
         &self,
         profile: &crate::upstream_profile::UpstreamProfileRuntime,
@@ -252,6 +263,10 @@ impl GatewayProxy {
         }
         let current = profile.resolve_upstream_pool();
         if current.max_inflight() == max_inflight {
+            return;
+        }
+        // Pool already has an explicit cap from profile.max_inflight_per_key — don't downgrade.
+        if current.max_inflight() > 0 {
             return;
         }
         let updated = UpstreamKeyPool::rebuild_with_max_inflight(&current, max_inflight);
@@ -269,8 +284,16 @@ impl GatewayProxy {
     ) -> HttpPeer {
         ctx.upstream.host = Some(tls_sni.to_string());
         let mut peer = HttpPeer::new(addr, true, tls_sni.to_string());
-        let conn_config = self.state.runtime.conn_config.read().clone();
-        apply_connection_options(&conn_config, &mut peer.options);
+        // Per-profile connection overrides take precedence over the global config.
+        // NOTE: pooled connections use TLS params from when they were established;
+        //       new params take effect only for new connections after idle expiry.
+        let profile = self.active_upstream_profile(ctx);
+        if let Some(ref profile_conn) = profile.connection {
+            apply_connection_options(profile_conn, &mut peer.options);
+        } else {
+            let conn_config = self.state.runtime.conn_config.read().clone();
+            apply_connection_options(&conn_config, &mut peer.options);
+        }
         peer
     }
 
@@ -340,6 +363,8 @@ impl GatewayProxy {
 
         ctx.cache_tier = Some(tier);
         ctx.cache_hit = Some(entry.clone());
+        ctx.stream.stream_completion =
+            Some(crate::context::StreamCompletion::CacheHit);
         ctx.tokens.last_input = entry.usage.prompt_tokens;
         ctx.tokens.last_output = entry.usage.completion_tokens;
         if let Some(body) = &ctx.original_request_body {
@@ -881,6 +906,8 @@ impl GatewayProxy {
         {
             ctx.cache_tier = Some(CacheTier::L2Semantic);
             ctx.cache_hit = Some(entry.clone());
+            ctx.stream.stream_completion =
+                Some(crate::context::StreamCompletion::CacheHit);
             ctx.tokens.last_input = entry.usage.prompt_tokens;
             ctx.tokens.last_output = entry.usage.completion_tokens;
             // Spawn stale-while-revalidate if entry is stale.
@@ -1226,10 +1253,16 @@ impl ProxyHttp for GatewayProxy {
         if session.response_written().is_none() {
             return Ok(None);
         }
+        crab_metrics::global_metrics().record_upstream_abort_after_headers();
         let tail = crate::responses_wire::build_graceful_responses_stream_tail(
             ctx,
             self.state.responses_chain_store.as_ref(),
         );
+        if tail.is_some() {
+            crab_metrics::global_metrics().record_synthetic_response_completed("upstream_abort");
+            ctx.stream.stream_completion =
+                Some(crate::context::StreamCompletion::SyntheticAbortTail);
+        }
         Ok(tail.map(bytes::Bytes::from))
     }
 
@@ -1238,6 +1271,7 @@ impl ProxyHttp for GatewayProxy {
             return false;
         }
         ctx.stream.responses_wire_force_downstream_eos = false;
+        crab_metrics::global_metrics().record_force_downstream_eos();
         true
     }
 

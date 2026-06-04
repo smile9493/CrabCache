@@ -97,6 +97,30 @@ pub struct UpstreamProfileSnapshot {
     /// Maximum number of fallback attempts per request (default 2).
     #[serde(default = "default_fallback_max_retries")]
     pub fallback_max_retries: u32,
+    /// Optional proxy for OAuth/outbound HTTP requests (socks5://, http://, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+    /// Per-key semaphore cap. 0 = no profile-level limit.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub max_inflight_per_key: usize,
+    /// Per-profile key cooldown override (seconds). 0 = inherit global.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub key_cooldown_secs: u64,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    /// When absent, the global `[connection]` config applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<ConnectionConfig>,
+    /// Where this profile's keys were resolved from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key_source: String,
+}
+
+fn is_zero(v: &usize) -> bool {
+    *v == 0
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
 }
 
 fn default_fallback_max_retries() -> u32 {
@@ -209,8 +233,8 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                         tls_sni: m.tls_sni.clone(),
                     })
                     .collect();
-                let keys: Vec<UpstreamKeySnapshot> = profile
-                    .resolve_upstream_pool()
+                let pool = profile.resolve_upstream_pool();
+                let keys: Vec<UpstreamKeySnapshot> = pool
                     .to_specs()
                     .into_iter()
                     .map(|s| UpstreamKeySnapshot {
@@ -232,6 +256,11 @@ pub fn build_snapshot_from_runtime(runtime: &RuntimeConfig) -> ControlPlaneSnaps
                     tls_sni: profile.tls_sni.clone(),
                     endpoints,
                     keys,
+                    proxy_url: profile.proxy_url.clone(),
+                    max_inflight_per_key: pool.max_inflight(),
+                    key_cooldown_secs: 0, // pool-level cooldown_secs not exposed; always inherit global
+                    connection: profile.connection.clone(),
+                    key_source: profile.key_source.to_string(),
                 })
             })
             .collect()
@@ -351,15 +380,25 @@ pub fn apply_snapshot_to_runtime(
                 endpoints,
                 tls_sni: Some(p.tls_sni.clone()),
                 default_weight: 1,
-                proxy_url: None,
+                proxy_url: p.proxy_url.clone(),
                 fallback_profile_id: p.fallback_profile_id.clone(),
                 fallback_max_retries: p.fallback_max_retries,
+                connection: p.connection.clone(),
+                key_source: "snapshot",
             };
             // Apply key fallback: explicit -> default profile -> legacy global pool.
             let resolved_specs = resolve_profile_key_specs(specs, runtime, &p.id);
             let profile =
                 build_profile_runtime(input, resolved_specs, upstream_cooldown_secs, None)
                     .map_err(|e| anyhow::anyhow!(e))?;
+            // Apply snapshot's max_inflight_per_key if set.
+            if p.max_inflight_per_key > 0 {
+                let pool = profile.resolve_upstream_pool();
+                if pool.max_inflight() != p.max_inflight_per_key {
+                    let rebuilt = UpstreamKeyPool::rebuild_with_max_inflight(&pool, p.max_inflight_per_key);
+                    *profile.upstream_pool.write() = rebuilt;
+                }
+            }
             runtime
                 .upsert_profile(profile)
                 .map_err(|e| anyhow::anyhow!(e))?;

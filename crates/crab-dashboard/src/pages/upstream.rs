@@ -641,6 +641,7 @@ fn pool_lines_to_key_inputs(lines: Vec<String>) -> Vec<UpstreamKeyInput> {
                 enabled: true,
                 account_id,
                 priority: 0,
+                supported_models: Vec::new(),
             }
         })
         .collect()
@@ -1215,6 +1216,7 @@ pub fn UpstreamPage() -> impl IntoView {
                 proxy_url: proxy_opt,
                 fallback_profile_id: fpid_opt,
                 fallback_max_retries: Some(fmr),
+                connection: None,
             };
             match api::put_upstream_profile(&pid, &req).await {
                 Ok(updated) => {
@@ -1415,6 +1417,7 @@ pub fn UpstreamPage() -> impl IntoView {
                 proxy_url: proxy_opt,
                 fallback_profile_id: fpid_opt,
                 fallback_max_retries: Some(fmr),
+                connection: None,
             };
             match api::put_upstream_profile(&id, &req).await {
                 Ok(updated) => {

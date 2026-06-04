@@ -59,6 +59,10 @@ pub struct PersistedUpstreamProfileConfig {
     pub fallback_profile_id: Option<String>,
     #[serde(default)]
     pub fallback_max_retries: Option<u32>,
+    /// Per-profile connection overrides (TLS curves, timeouts, keepalive).
+    /// Serialized as a generic JSON value to avoid coupling admin to proxy crate types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

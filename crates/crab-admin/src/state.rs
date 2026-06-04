@@ -1298,6 +1298,7 @@ impl AppState {
                     proxy_url: p.proxy_url.clone(),
                     fallback_profile_id: p.fallback_profile_id.clone(),
                     fallback_max_retries: Some(p.fallback_max_retries),
+                    connection: p.connection.clone(),
                 },
             );
         }
@@ -1775,6 +1776,7 @@ impl AppState {
                                 enabled: s.enabled,
                                 account_id: String::new(),
                                 priority: s.priority,
+                                supported_models: Vec::new(),
                             })
                             .collect(),
                         mode: crab_control::UpstreamKeysPutMode::Replace,

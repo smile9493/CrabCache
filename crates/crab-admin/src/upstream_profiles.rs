@@ -30,6 +30,7 @@ fn profile_config_from_put(id: &str, req: &PutUpstreamProfileAdminRequest) -> Pe
         proxy_url: req.proxy_url.clone(),
         fallback_profile_id: req.fallback_profile_id.clone(),
         fallback_max_retries: req.fallback_max_retries,
+        connection: req.connection.clone(),
     }
 }
 
@@ -44,6 +45,7 @@ fn put_request_from_config(cfg: &PersistedUpstreamProfileConfig) -> PutUpstreamP
         proxy_url: cfg.proxy_url.clone(),
         fallback_profile_id: cfg.fallback_profile_id.clone(),
         fallback_max_retries: cfg.fallback_max_retries,
+        connection: cfg.connection.clone(),
     }
 }
 
@@ -88,6 +90,7 @@ fn map_profile(p: UpstreamProfileView) -> UpstreamProfileAdminView {
         proxy_url: p.proxy_url,
         fallback_profile_id: p.fallback_profile_id,
         fallback_max_retries: p.fallback_max_retries,
+        connection: p.connection,
     }
 }
 
@@ -104,6 +107,7 @@ fn profile_view_from_config(cfg: &PersistedUpstreamProfileConfig) -> UpstreamPro
         proxy_url: cfg.proxy_url.clone(),
         fallback_profile_id: cfg.fallback_profile_id.clone(),
         fallback_max_retries: cfg.fallback_max_retries.unwrap_or(2),
+        connection: cfg.connection.clone(),
     }
 }
 
@@ -116,6 +120,9 @@ fn overlay_config_metadata(view: &mut UpstreamProfileAdminView, cfg: &PersistedU
     view.proxy_url = cfg.proxy_url.clone();
     view.fallback_profile_id = cfg.fallback_profile_id.clone();
     view.fallback_max_retries = cfg.fallback_max_retries.unwrap_or(2);
+    if cfg.connection.is_some() {
+        view.connection = cfg.connection.clone();
+    }
 }
 
 fn normalize_profile_key_inputs(
@@ -625,6 +632,7 @@ pub async fn sync_profile_pool_to_gateway(
             enabled: s.enabled,
             account_id: s.account_id.clone(),
             priority: s.priority,
+            supported_models: Vec::new(),
         })
         .collect();
     let req = put_upstream_profile_keys_to_control(&keys, mode);
@@ -718,6 +726,7 @@ pub async fn put_profile_keys_upsert(
                         k.account_id
                     },
                     priority: k.priority,
+                    supported_models: Vec::new(),
                 }
             })
             .collect();
@@ -765,6 +774,7 @@ pub async fn put_profile_keys_append(
         enabled: true,
         account_id: account_id.to_string(),
         priority: 0,
+        supported_models: Vec::new(),
     };
     put_profile_keys(state, profile_id, vec![key_input], false)
         .await
@@ -792,6 +802,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 priority: 0,
+                supported_models: Vec::new(),
             },
             UpstreamKeyInput {
                 id: String::new(),
@@ -799,6 +810,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 priority: 0,
+                supported_models: Vec::new(),
             },
         ];
 
@@ -824,6 +836,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 priority: 0,
+                supported_models: Vec::new(),
             },
             UpstreamKeyInput {
                 id: String::new(),
@@ -831,6 +844,7 @@ mod tests {
                 enabled: true,
                 account_id: String::new(),
                 priority: 0,
+                supported_models: Vec::new(),
             },
         ];
 

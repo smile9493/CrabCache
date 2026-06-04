@@ -30,6 +30,7 @@ mod trace_logger;
 pub mod upstream_body;
 mod upstream_body_compress;
 mod upstream_headers;
+mod key_source;
 mod upstream_pool;
 mod upstream_profile;
 mod upstream_response_decompress;
@@ -68,7 +69,7 @@ pub use client_key_rate_limiter::ClientKeyRateLimiter;
 pub use context::{
     BackendRouteStrategy, ClientWireApi, ConnectionConfig, FeaturesConfig, GatewayContext,
     GatewayState, ModelPricing, PreflightConfig, PricingConfig, ReasoningConfig,
-    ScoreWeightsConfig,
+    ScoreWeightsConfig, StreamCompletion,
 };
 pub use debug_log::{debug_agent_log, init_debug_log, is_debug_agent_log_enabled};
 pub use error::ProxyError;
@@ -89,6 +90,7 @@ pub use proxy::{
 pub use responses_wire::build_graceful_responses_stream_tail;
 pub use raw_capture::{RawCaptureConfig, RawCaptureLogger};
 pub use responses_chain_store::ResponsesChainStore;
+pub use sse::{SseEvent, parse_sse_chunk, sse_bytes_contains_event};
 pub use runtime::{DomainPolicy, DomainUsage, RuntimeConfig};
 pub use semantic_runtime::{SemanticRuntimeState, SharedSemanticRuntime};
 pub use session_store::SessionStore;
@@ -102,6 +104,7 @@ pub use trace_logger::{
     CompositionDebugConfig, SanitizedLogEntry, TraceConfig, TraceLogger, composition_debug_tx,
     set_composition_debug_tx,
 };
+pub use key_source::KeySource;
 pub use upstream_pool::{
     DEFAULT_UPSTREAM_ACCOUNT_ID, REASONING_NAMESPACE_AUTH, UpstreamKeyGuard, UpstreamKeyPool,
     UpstreamKeySpec, UpstreamKeyStateSnapshot, UpstreamKeyStatus, key_preview,

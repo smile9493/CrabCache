@@ -393,7 +393,8 @@ impl PgStore {
                     tls_sni               TEXT,
                     proxy_url             TEXT,
                     fallback_profile_id   TEXT,
-                    fallback_max_retries  INTEGER
+                    fallback_max_retries  INTEGER,
+                    connection            JSONB
                 )",
                 &[],
             )
@@ -1710,8 +1711,8 @@ impl PgStore {
             .execute(
                 "INSERT INTO upstream_profile_configs
                     (profile_id, provider, base_url, fallback_model, endpoints,
-                     tls_sni, proxy_url, fallback_profile_id, fallback_max_retries)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     tls_sni, proxy_url, fallback_profile_id, fallback_max_retries, connection)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  ON CONFLICT (profile_id) DO UPDATE SET
                     provider = EXCLUDED.provider,
                     base_url = EXCLUDED.base_url,
@@ -1720,7 +1721,8 @@ impl PgStore {
                     tls_sni = EXCLUDED.tls_sni,
                     proxy_url = EXCLUDED.proxy_url,
                     fallback_profile_id = EXCLUDED.fallback_profile_id,
-                    fallback_max_retries = EXCLUDED.fallback_max_retries",
+                    fallback_max_retries = EXCLUDED.fallback_max_retries,
+                    connection = EXCLUDED.connection",
                 &[
                     &cfg.profile_id,
                     &cfg.provider,
@@ -1731,6 +1733,7 @@ impl PgStore {
                     &cfg.proxy_url,
                     &cfg.fallback_profile_id,
                     &fallback_max_retries,
+                    &cfg.connection,
                 ],
             )
             .await?;
@@ -1755,7 +1758,7 @@ impl PgStore {
         let rows = client
             .query(
                 "SELECT profile_id, provider, base_url, fallback_model, endpoints,
-                        tls_sni, proxy_url, fallback_profile_id, fallback_max_retries
+                        tls_sni, proxy_url, fallback_profile_id, fallback_max_retries, connection
                  FROM upstream_profile_configs ORDER BY profile_id",
                 &[],
             )
@@ -1779,6 +1782,7 @@ impl PgStore {
                     proxy_url: row.get(6),
                     fallback_profile_id: row.get(7),
                     fallback_max_retries: fallback_max_retries.map(|v| v as u32),
+                    connection: row.get(9),
                 },
             );
         }
@@ -3865,6 +3869,14 @@ impl PgStore {
         client
             .execute(
                 "ALTER TABLE upstream_profile_secrets ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0",
+                &[],
+            )
+            .await?;
+
+        // upstream_profile_configs: connection (per-profile TLS/timeout overrides)
+        client
+            .execute(
+                "ALTER TABLE upstream_profile_configs ADD COLUMN IF NOT EXISTS connection JSONB",
                 &[],
             )
             .await?;

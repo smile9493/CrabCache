@@ -4,11 +4,12 @@ use crab_pipeline::{
     PipelineMode, PipelineOverride, PipelineRule, PipelineRuleEngine, RequestPipeline,
     UpstreamProvider, validate_cursor_models,
 };
-use crab_proxy::{FeaturesConfig, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
+use crab_proxy::{FeaturesConfig, KeySource, RawCaptureConfig, UpstreamKeyPool, UpstreamProfileRuntime};
 use crab_route::LbRouter;
 use crab_translator::WireFormat;
 use parking_lot::RwLock;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -292,6 +293,68 @@ impl Default for ManagementConfig {
     }
 }
 
+/// Structured key definition under `[[upstream.profiles.keys]]`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct UpstreamProfileKeyConfig {
+    #[serde(default)]
+    pub id: String,
+    /// Environment variable containing the API secret. Preferred in production.
+    pub secret_env: Option<String>,
+    /// Inline API secret (local dev only). Mutually exclusive with `secret_env`.
+    pub secret: Option<SecretString>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub priority: u32,
+    #[serde(default)]
+    pub supported_models: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl UpstreamProfileKeyConfig {
+    /// Resolve the API key from `secret_env` (preferred) or inline `secret`.
+    /// Returns `Err` if neither is set or the env var is missing/empty.
+    pub fn resolve_secret(&self, profile_id: &str) -> Result<String, String> {
+        if let Some(env_name) = &self.secret_env {
+            match std::env::var(env_name) {
+                Ok(val) if !val.trim().is_empty() => return Ok(val),
+                Ok(_) => {
+                    return Err(format!(
+                        "profile '{}' key '{}' env var '{}' is empty",
+                        profile_id,
+                        self.id,
+                        env_name
+                    ));
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "profile '{}' key '{}' env var '{}' is not set",
+                        profile_id,
+                        self.id,
+                        env_name
+                    ));
+                }
+            }
+        }
+        if let Some(ref s) = self.secret {
+            let v = s.inner();
+            if !v.is_empty() {
+                return Ok(v.to_string());
+            }
+        }
+        Err(format!(
+            "profile '{}' key '{}' has no secret or secret_env",
+            profile_id,
+            self.id
+        ))
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct UpstreamProfileConfig {
     pub id: String,
@@ -300,10 +363,88 @@ pub struct UpstreamProfileConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub endpoints: Vec<String>,
-    pub model: Option<String>,
+    /// Model hint (aliased from `model` in older configs).
+    #[serde(alias = "model")]
+    pub fallback_model: Option<String>,
     pub tls_sni: Option<String>,
+    /// Per-key semaphore cap: limits concurrent requests per key in this pool.
+    /// 0 or omitted = no profile-level limit (default).
     #[serde(default)]
-    pub keys: Vec<SecretString>,
+    pub max_inflight_per_key: usize,
+    /// Per-profile key cooldown override (seconds). Inherits global when 0.
+    #[serde(default)]
+    pub key_cooldown_secs: u64,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub fallback_profile_id: Option<String>,
+    #[serde(default = "default_fallback_max_retries")]
+    pub fallback_max_retries: u32,
+    /// Upstream API keys. Accepts both formats:
+    /// - Legacy: `keys = ["sk-ds-1", "sk-ds-2"]` (string array)
+    /// - Structured: `[[upstream.profiles.keys]]` with id/secret_env/secret/enabled/account_id/priority/supported_models
+    /// The two formats are mutually exclusive per profile.
+    #[serde(default, deserialize_with = "deserialize_keys")]
+    pub keys: ProfileKeys,
+    /// Per-profile connection overrides (TLS, timeouts, keepalive).
+    /// When absent, the global `[connection]` config applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<ConnectionConfig>,
+}
+
+/// Unified key storage supporting both legacy string arrays and structured key configs.
+#[derive(Debug, Clone, Default)]
+pub struct ProfileKeys {
+    /// Structured keys from `[[upstream.profiles.keys]]` table array.
+    pub structured: Vec<UpstreamProfileKeyConfig>,
+    /// Legacy string secrets from `keys = ["sk-..."]` inline array.
+    pub legacy: Vec<String>,
+}
+
+fn deserialize_keys<'de, D>(deserializer: D) -> Result<ProfileKeys, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct KeysVisitor;
+
+    impl<'de> Visitor<'de> for KeysVisitor {
+        type Value = ProfileKeys;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("array of strings or array of key config tables")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ProfileKeys, A::Error> {
+            let mut structured = Vec::new();
+            let mut legacy = Vec::new();
+
+            while let Some(val) = seq.next_element::<toml::Value>()? {
+                match val {
+                    toml::Value::Table(t) => {
+                        let key: UpstreamProfileKeyConfig =
+                            t.try_into().map_err(de::Error::custom)?;
+                        structured.push(key);
+                    }
+                    toml::Value::String(s) => {
+                        legacy.push(s);
+                    }
+                    other => {
+                        return Err(de::Error::custom(format!(
+                            "expected string or table, got {other:?}"
+                        )));
+                    }
+                }
+            }
+
+            Ok(ProfileKeys { structured, legacy })
+        }
+    }
+
+    deserializer.deserialize_seq(KeysVisitor)
+}
+
+fn default_fallback_max_retries() -> u32 {
+    2
 }
 
 fn default_profile_provider() -> String {
@@ -546,29 +687,85 @@ impl GatewayConfig {
         if !self.upstream.profiles.is_empty() {
             return self.upstream.profiles.clone();
         }
+        // Synthesize default `deepseek` profile from legacy [upstream] fields.
+        // Global keys go into the legacy portion of ProfileKeys.
         vec![UpstreamProfileConfig {
             id: "deepseek".to_string(),
             provider: "deepseek".to_string(),
             base_url: self.upstream.base_url.clone(),
             endpoints: self.upstream.deepseek_endpoints.clone(),
-            model: self.upstream.model.clone(),
+            fallback_model: self.upstream.model.clone(),
             tls_sni: self.upstream.tls_sni.clone(),
-            keys: self.upstream.keys.clone(),
+            max_inflight_per_key: 0,
+            key_cooldown_secs: 0,
+            proxy_url: None,
+            fallback_profile_id: None,
+            fallback_max_retries: 2,
+            connection: None,
+            keys: ProfileKeys {
+                structured: Vec::new(),
+                legacy: self
+                    .upstream
+                    .keys
+                    .iter()
+                    .map(|k| k.inner().to_string())
+                    .filter(|k| !k.is_empty())
+                    .collect(),
+            },
         }]
     }
 
-    fn profile_key_secrets(&self, profile: &UpstreamProfileConfig) -> Vec<String> {
-        let mut keys: Vec<String> = profile
-            .keys
-            .iter()
-            .map(|k| k.inner().to_string())
-            .filter(|k| !k.is_empty())
-            .collect();
-        // Only DeepSeek profiles may fall back to the global `[upstream]` key list.
-        if keys.is_empty() && profile.provider.eq_ignore_ascii_case("deepseek") {
-            keys = self.upstream_key_secrets();
+    /// Resolve structured key specs for a profile.
+    /// Priority: structured `[[upstream.profiles.keys]]` → legacy `keys = [...]` → global fallback.
+    fn profile_key_specs(&self, profile: &UpstreamProfileConfig) -> (Vec<crab_proxy::UpstreamKeySpec>, KeySource) {
+        // 1) Structured `[[upstream.profiles.keys]]`
+        if !profile.keys.structured.is_empty() {
+            let specs = profile.keys.structured.iter().filter_map(|k| {
+                match k.resolve_secret(&profile.id) {
+                    Ok(secret) => Some(crab_proxy::UpstreamKeySpec {
+                        id: k.id.clone(),
+                        secret,
+                        enabled: k.enabled,
+                        account_id: k.account_id.clone(),
+                        supported_models: k.supported_models.clone(),
+                        priority: k.priority,
+                    }),
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        None
+                    }
+                }
+            }).collect();
+            return (specs, KeySource::Structured);
         }
-        keys
+        // 2) Legacy inline keys (`keys = ["sk-..."]`) on the profile
+        if !profile.keys.legacy.is_empty() {
+            let specs = profile.keys.legacy.iter().filter(|s| !s.is_empty()).map(|s| crab_proxy::UpstreamKeySpec {
+                id: String::new(),
+                secret: s.clone(),
+                enabled: true,
+                account_id: String::new(),
+                supported_models: Vec::new(),
+                priority: 0,
+            }).collect();
+            return (specs, KeySource::LegacyInline);
+        }
+        // 3) Global legacy fallback — only DeepSeek profiles may use `[upstream].keys`.
+        if profile.provider.eq_ignore_ascii_case("deepseek") {
+            let global_secrets = self.upstream_key_secrets();
+            if !global_secrets.is_empty() {
+                let specs = global_secrets.into_iter().map(|s| crab_proxy::UpstreamKeySpec {
+                    id: String::new(),
+                    secret: s,
+                    enabled: true,
+                    account_id: String::new(),
+                    supported_models: Vec::new(),
+                    priority: 0,
+                }).collect();
+                return (specs, KeySource::LegacyGlobal);
+            }
+        }
+        (Vec::new(), KeySource::None)
     }
 
     fn parse_profile_endpoints(
@@ -680,7 +877,7 @@ impl GatewayConfig {
         &self,
         rt: &tokio::runtime::Runtime,
     ) -> anyhow::Result<indexmap::IndexMap<String, Arc<UpstreamProfileRuntime>>> {
-        let cooldown = self.upstream_key_cooldown_secs();
+        let global_cooldown = self.upstream_key_cooldown_secs();
         let mut map = indexmap::IndexMap::new();
         for profile in self.resolved_upstream_profiles() {
             let backends = self.parse_profile_endpoints(&profile)?;
@@ -690,31 +887,76 @@ impl GatewayConfig {
                 .clone()
                 .unwrap_or_else(|| self.upstream_base_url().to_string());
             let fallback_model = profile
-                .model
+                .fallback_model
                 .clone()
                 .unwrap_or_else(|| self.fallback_model().to_string());
             let tls_sni = profile
                 .tls_sni
                 .clone()
                 .unwrap_or_else(|| self.resolved_tls_sni());
-            let keys = self.profile_key_secrets(&profile);
-            let pool = UpstreamKeyPool::from_secrets(keys, cooldown, 0);
-            let pool_handle = Arc::new(RwLock::new(pool));
-            map.insert(
-                profile.id.clone(),
-                Arc::new(UpstreamProfileRuntime {
-                    id: profile.id.clone(),
-                    provider: UpstreamProvider::from_str(&profile.provider),
-                    base_url,
-                    fallback_model,
-                    tls_sni,
-                    router,
-                    upstream_pool: pool_handle,
-                    proxy_url: None,
-                    fallback_profile_id: None,
-                    fallback_max_retries: 2,
-                }),
-            );
+            let cooldown = if profile.key_cooldown_secs > 0 {
+                profile.key_cooldown_secs
+            } else {
+                global_cooldown
+            };
+            let (key_specs, key_source) = self.profile_key_specs(&profile);
+            let pool = UpstreamKeyPool::new(key_specs, cooldown, 0);
+            let max_inflight = profile.max_inflight_per_key;
+            if max_inflight > 0 {
+                let current = pool;
+                let rebuilt = UpstreamKeyPool::rebuild_with_max_inflight(&current, max_inflight);
+                let provider = UpstreamProvider::from_str(&profile.provider);
+                // Log override if feature also sets a cap for this provider.
+                let feature_val = match provider {
+                    UpstreamProvider::Mimo => self.features.mimo_key_max_inflight,
+                    _ => 0,
+                };
+                if feature_val > 0 {
+                    tracing::info!(
+                        profile_id = %profile.id,
+                        max_inflight_per_key = max_inflight,
+                        feature_default = feature_val,
+                        "profile max_inflight_per_key overrides features pool default for pool capacity"
+                    );
+                }
+                let pool_handle = Arc::new(RwLock::new(rebuilt));
+                map.insert(
+                    profile.id.clone(),
+                    Arc::new(UpstreamProfileRuntime {
+                        id: profile.id.clone(),
+                        provider,
+                        base_url,
+                        fallback_model,
+                        tls_sni,
+                        router,
+                        upstream_pool: pool_handle,
+                        proxy_url: profile.proxy_url.filter(|s| !s.is_empty()),
+                        fallback_profile_id: profile.fallback_profile_id.filter(|s| !s.is_empty()),
+                        fallback_max_retries: profile.fallback_max_retries.min(10),
+                        connection: profile.connection.clone(),
+                        key_source: key_source.as_str(),
+                    }),
+                );
+            } else {
+                let pool_handle = Arc::new(RwLock::new(pool));
+                map.insert(
+                    profile.id.clone(),
+                    Arc::new(UpstreamProfileRuntime {
+                        id: profile.id.clone(),
+                        provider: UpstreamProvider::from_str(&profile.provider),
+                        base_url,
+                        fallback_model,
+                        tls_sni,
+                        router,
+                        upstream_pool: pool_handle,
+                        proxy_url: profile.proxy_url.filter(|s| !s.is_empty()),
+                        fallback_profile_id: profile.fallback_profile_id.filter(|s| !s.is_empty()),
+                        fallback_max_retries: profile.fallback_max_retries.min(10),
+                        connection: profile.connection.clone(),
+                        key_source: key_source.as_str(),
+                    }),
+                );
+            }
         }
         Ok(map)
     }
@@ -780,7 +1022,7 @@ impl GatewayConfig {
 
         // Validate each profile can resolve at least one key (explicit or fallback to global).
         for profile in self.resolved_upstream_profiles() {
-            let resolved = self.profile_key_secrets(&profile);
+            let (resolved, _source) = self.profile_key_specs(&profile);
             if resolved.is_empty() {
                 errors.push(format!(
                     "upstream profile '{}' has no API keys and global fallback is also empty",
@@ -1343,6 +1585,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
             pg_url: None,
+            queue_capacity: 0,
         });
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("trace_logging.max_lines")));
@@ -1360,6 +1603,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
             pg_url: None,
+            queue_capacity: 0,
         });
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("trace_logging.max_files")));
@@ -1382,6 +1626,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
             pg_url: None,
+            queue_capacity: 0,
         });
         let err = config.validate().unwrap_err();
         assert!(
@@ -1407,6 +1652,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             max_payload_bytes: 0,
             max_response_preview_bytes: 0,
             pg_url: None,
+            queue_capacity: 0,
         });
         let err = config.validate().unwrap_err();
         assert!(
