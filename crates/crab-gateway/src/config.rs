@@ -111,6 +111,9 @@ pub struct GatewayConfig {
     pub state: StateBackendConfig,
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// Pingora worker threads. 0 = auto (CPU cores).
+    #[serde(default = "default_worker_threads")]
+    pub worker_threads: usize,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -239,7 +242,12 @@ fn default_max_request_body_bytes() -> usize {
 }
 
 fn default_max_concurrent_requests() -> usize {
-    512
+    10_000
+}
+
+fn default_worker_threads() -> usize {
+    // 0 = use Pingora default (CPU cores)
+    0
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1299,7 +1307,7 @@ pg_url = "postgres://trace/db"
     fn test_limits_defaults() {
         let limits = LimitsConfig::default();
         assert_eq!(limits.max_request_body_bytes, 4_194_304);
-        assert_eq!(limits.max_concurrent_requests, 512);
+        assert_eq!(limits.max_concurrent_requests, 10_000);
     }
 
     #[test]
@@ -1435,6 +1443,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
             features: FeaturesConfig::default(),
+            worker_threads: 0,
         };
         let err = config.validate().unwrap_err();
         assert!(err.iter().any(|e| e.contains("max_coalesce_inflight")));
@@ -1505,6 +1514,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
             features: FeaturesConfig::default(),
+            worker_threads: 0,
         };
         let warnings = config.security_warnings();
         assert!(warnings.iter().any(|w| w.contains("admin_key")));
@@ -1570,6 +1580,7 @@ semantic = { enabled = false, model_path = "", tokenizer_path = "", qdrant_url =
             limits: LimitsConfig::default(),
             state: StateBackendConfig::default(),
             features: FeaturesConfig::default(),
+            worker_threads: 0,
         }
     }
 

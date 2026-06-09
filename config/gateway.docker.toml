@@ -36,7 +36,7 @@ admin_key = "CrabCache-Admin-Secret-2026"
 
 [limits]
 max_request_body_bytes = 4194304
-max_concurrent_requests = 512
+max_concurrent_requests = 10000
 
 [upstream]
 # Origin only (no /v1). Override with CRABCACHE_UPSTREAM_BASE_URL / CRABCACHE_UPSTREAM_MODEL.
@@ -61,10 +61,11 @@ l0_max_capacity = 10000
 l0_ttl_secs = 3600
 stream_cache_enabled = true
 l1_redis_url = "redis://redis:6379"
-l1_pool_size = 32
+l1_pool_size = 150
 l1_connection_timeout_secs = 10
 fingerprint_version = 1
 fingerprint_normalize_content = true
+max_sse_cache_bytes = 131072
 
 [cache.model_ttl_overrides]
 "deepseek-v4-pro" = 7200

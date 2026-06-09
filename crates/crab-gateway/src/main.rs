@@ -913,6 +913,9 @@ fn main() -> Result<()> {
 
     let mut server = Server::new(None)?;
     server.bootstrap();
+    if config.worker_threads > 0 {
+        server.configuration.threads = config.worker_threads;
+    }
 
     let registry = Registry::new();
     global_metrics().register(&registry)?;

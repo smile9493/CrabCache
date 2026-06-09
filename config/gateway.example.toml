@@ -96,11 +96,13 @@ admin_key = "dev-only-gateway-admin-secret"
 # Max seconds for background Redis SCAN during POST /v1/cache/invalidate (default: 300)
 # invalidate_scan_timeout_secs = 300
 
+# worker_threads = 0  # Pingora worker threads (0 = auto, CPU cores)
+
 [limits]
 # Max inbound chat completion request body (default 4 MiB)
 max_request_body_bytes = 4194304
-# Max concurrent in-flight chat requests (default 512)
-max_concurrent_requests = 512
+# Max concurrent in-flight chat requests (default 10000)
+max_concurrent_requests = 10000
 
 [upstream]
 # Upstream relay origin (OpenAI-compatible). Do not include /v1 — paths are appended by the gateway.
@@ -694,14 +696,14 @@ l0_ttl_secs = 3600
 # Bare-metal / local dev: redis on localhost.
 # Docker Compose: use redis://redis:6379 (see config/gateway.docker.toml) or CRABCACHE_L1_REDIS_URL.
 l1_redis_url = "redis://127.0.0.1:6379"
-l1_pool_size = 16
+l1_pool_size = 150
 # l1_connection_timeout_secs = 10
 
 # When true, streaming responses are cached (stores raw SSE bytes for exact replay).
 # Defaults to false; when disabled avoids synthetic SSE on hit.
 # stream_cache_enabled = true
 # Max raw SSE bytes stored per stream cache entry (default: 4194304 = 4 MiB). 0 = JSON-only + synthetic SSE on hit.
-# max_sse_cache_bytes = 4194304
+max_sse_cache_bytes = 131072
 
 # Fingerprint normalization version for cache keys.
 # Bump this when fingerprint normalization rules change to safely
@@ -869,12 +871,12 @@ max_files = 5
 
 # ── Experimental Feature Flags ────────────────────────────────────
 # Each feature is independent and default off. Enable at your own risk.
-# [features]
+[features]
 # prefix_aware_cache = false         # L0 prefix index only on shared prefixes (no full-response short-circuit)
 # streaming_body_forward = false     # MiMo: partial read + upstream_peer before body EOS; see docs/STREAMING_BODY_FORWARD.md
 # streaming_body_forward_auto_disable_threshold = 3  # consecutive parse/empty-body failures → disable defer for 60s
-# connection_prewarm = false         # Direct pool pre-warm: shared Pingora Connector, TCP+TLS only (no loopback HTTP).
-#                                    # Startup: all backends; runtime: first upstream_peer per new session_fingerprint.
+connection_prewarm = true          # Direct pool pre-warm: shared Pingora Connector, TCP+TLS only (no loopback HTTP).
+                                   # Startup: all backends; runtime: first upstream_peer per new session_fingerprint.
 # affinity_prompt_cache_feedback = false  # Sticky backend hint from upstream prompt_cache_* tokens; invalidate after 3 consecutive pure misses at request end
 # delta_cache = false                # Experimental differential cache (docs/DATA_PLANE_P3.md)
 # io_uring_backend = false           # Reserved: Pingora io_uring backend
