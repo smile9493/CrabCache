@@ -17,6 +17,7 @@ use crab_state::{
     RedisStateConfig, RedisStateStore, apply_snapshot_to_runtime, build_snapshot_from_runtime,
     spawn_key_state_persist_task, spawn_state_refresh_task,
 };
+use deadpool_postgres::{Config as PoolConfig, Pool, Runtime as DeadpoolRuntime};
 use parking_lot::RwLock;
 use pingora_core::server::Server;
 use pingora_core::server::ShutdownWatch;
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio_postgres::NoTls;
 use tracing::info;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -37,28 +39,63 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 // ---------------------------------------------------------------------------
 // PG Trace Writer (gateway-side, independent of Admin Dashboard pool)
-// Uses a single tokio-postgres connection (no pool dependency).
+// Uses a deadpool-postgres connection pool with prepared statement caching.
 // ---------------------------------------------------------------------------
 
+/// INSERT statement for trace_logs, cached at the connection level via `prepare_cached`.
+const TRACE_LOGS_INSERT_SQL: &str = "INSERT INTO trace_logs
+        (request_hash, timestamp_ms, content_length, semantic_cluster,
+         model, prompt_tokens, latency_ms, cache_hit,
+         conversation_id, consumer, domain, project_id,
+         upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
+         cache_tier, composition,
+         request_messages_snapshot, response_preview,
+         retired_prefix_messages, reasoning_strategy,
+         prompt_cache_hit_ratio, upstream_profile_id, pipeline,
+         upstream_model, client_body_user_id, upstream_user_id,
+         user_id_audit, upstream_key_id,
+         session_store, stable_session_kind, upstream_outbound_bytes,
+         prefill_ms, pre_header_ms,
+         affinity_key, affinity_kind, backend_name,
+         session_fingerprint, is_coalesced, client_key_id,
+         request_passthrough, request_passthrough_prefix_len,
+         status_code, error_code, limit_source, cache_decision,
+         upstream_result, phase_durations_ms, client_ip, client_kind)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+             $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
+             $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+             $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb,$50,$51)
+     ON CONFLICT (request_hash, timestamp_ms) DO NOTHING";
+
 struct PgTraceStore {
-    client: tokio::sync::Mutex<tokio_postgres::Client>,
+    pool: Pool,
 }
 
 impl PgTraceStore {
     async fn connect(pg_url: &str) -> anyhow::Result<Self> {
         use anyhow::Context;
 
-        let (client, connection) = tokio_postgres::connect(pg_url, tokio_postgres::NoTls)
-            .await
-            .context("pg trace connect")?;
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                tracing::warn!("PG trace connection error: {}", e);
-            }
+        let mut cfg = PoolConfig::new();
+        cfg.url = Some(pg_url.to_string());
+        cfg.connect_timeout = Some(Duration::from_secs(5));
+        cfg.pool = Some(deadpool_postgres::PoolConfig {
+            max_size: 4,
+            timeouts: deadpool_postgres::Timeouts {
+                wait: Some(Duration::from_secs(10)),
+                create: Some(Duration::from_secs(5)),
+                recycle: Some(Duration::from_secs(5)),
+            },
+            ..Default::default()
         });
-        Ok(Self {
-            client: tokio::sync::Mutex::new(client),
-        })
+
+        let pool = cfg
+            .create_pool(Some(DeadpoolRuntime::Tokio1), NoTls)
+            .context("pg trace create pool")?;
+
+        // Verify connectivity.
+        let _ = pool.get().await.context("pg trace pool: initial connection check")?;
+
+        Ok(Self { pool })
     }
 
     async fn insert_batch(&self, entries: &[crab_proxy::SanitizedLogEntry]) -> anyhow::Result<()> {
@@ -67,42 +104,23 @@ impl PgTraceStore {
         if entries.is_empty() {
             return Ok(());
         }
-        let mut client = self.client.lock().await;
-        let tx = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            client.transaction(),
-        )
-        .await
-        .context("pg trace begin tx timeout (10s)")?
-        .context("pg trace begin tx")?;
-        let stmt = tx
-            .prepare(
-                "INSERT INTO trace_logs
-                    (request_hash, timestamp_ms, content_length, semantic_cluster,
-                     model, prompt_tokens, latency_ms, cache_hit,
-                     conversation_id, consumer, domain, project_id,
-                     upstream_latency_ms, ttft_ms, input_tokens, output_tokens,
-                     cache_tier, composition,
-                     request_messages_snapshot, response_preview,
-                     retired_prefix_messages, reasoning_strategy,
-                     prompt_cache_hit_ratio, upstream_profile_id, pipeline,
-                     upstream_model, client_body_user_id, upstream_user_id,
-                     user_id_audit, upstream_key_id,
-                     session_store, stable_session_kind, upstream_outbound_bytes,
-                     prefill_ms, pre_header_ms,
-                     affinity_key, affinity_kind, backend_name,
-                     session_fingerprint, is_coalesced, client_key_id,
-                     request_passthrough, request_passthrough_prefix_len,
-                     status_code, error_code, limit_source, cache_decision,
-                     upstream_result, phase_durations_ms, client_ip, client_kind)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-                         $15,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,
-                         $26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                         $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49::jsonb,$50,$51)
-                 ON CONFLICT (request_hash, timestamp_ms) DO NOTHING",
-            )
+        let mut client = tokio::time::timeout(Duration::from_secs(10), self.pool.get())
             .await
-            .context("pg prepare insert_trace_logs")?;
+            .context("pg trace pool get timeout (10s)")?
+            .context("pg trace pool get")?;
+
+        // prepare_cached uses the per-connection statement cache — the SQL is
+        // only sent to PG once per connection, then reused for all subsequent
+        // batches on that connection.
+        let stmt = client
+            .prepare_cached(TRACE_LOGS_INSERT_SQL)
+            .await
+            .context("pg prepare_cached insert_trace_logs")?;
+
+        let tx = tokio::time::timeout(Duration::from_secs(10), client.transaction())
+            .await
+            .context("pg trace begin tx timeout (10s)")?
+            .context("pg trace begin tx")?;
 
         for e in entries {
             let composition_json = e
@@ -186,13 +204,10 @@ impl PgTraceStore {
             })?;
         }
 
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            tx.commit(),
-        )
-        .await
-        .context("pg commit insert_trace_logs timeout (30s)")?
-        .context("pg commit insert_trace_logs")?;
+        tokio::time::timeout(Duration::from_secs(30), tx.commit())
+            .await
+            .context("pg commit insert_trace_logs timeout (30s)")?
+            .context("pg commit insert_trace_logs")?;
         global_metrics().inc_admin_log_write("trace");
         Ok(())
     }
@@ -562,11 +577,15 @@ fn is_retryable_pg_error(err: &anyhow::Error) -> bool {
     false
 }
 
-/// Quick connectivity check: execute `SELECT 1`.
+/// Quick connectivity check: get a pooled connection and execute `SELECT 1`.
 async fn is_store_alive(store: &PgTraceStore) -> bool {
-    let client = store.client.lock().await;
-    match tokio::time::timeout(std::time::Duration::from_secs(3), client.simple_query("SELECT 1")).await {
-        Ok(Ok(_)) => true,
+    match tokio::time::timeout(std::time::Duration::from_secs(3), store.pool.get()).await {
+        Ok(Ok(client)) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(3), client.simple_query("SELECT 1")).await {
+                Ok(Ok(_)) => true,
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -645,11 +664,11 @@ async fn drain_with_retry(
     buf.clear();
 }
 
-/// Main loop for the PG trace writer thread with connection retry and
-/// failure-resilient batch handling.
+/// Main loop for the PG trace writer task with connection pool,
+/// prepared-statement caching, and failure-resilient batch handling.
 async fn pg_trace_writer_loop(
     pg_url: String,
-    pg_rx: std::sync::mpsc::Receiver<crab_proxy::SanitizedLogEntry>,
+    mut pg_rx: tokio::sync::mpsc::Receiver<crab_proxy::SanitizedLogEntry>,
 ) {
     const INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
     const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
@@ -662,7 +681,7 @@ async fn pg_trace_writer_loop(
     let mut store: PgTraceStore = loop {
         match PgTraceStore::connect(&pg_url).await {
             Ok(s) => {
-                info!("PG trace store connected (initial)");
+                info!("PG trace store connected (initial pool)");
                 global_metrics().set_background_task_healthy("pg_trace_writer", true);
                 global_metrics().set_background_task_last_success_now("pg_trace_writer");
                 break s;
@@ -683,10 +702,10 @@ async fn pg_trace_writer_loop(
 
     // Phase 2: drain + flush loop.
     loop {
-        // Block on first entry (or detect channel close).
-        let first = match pg_rx.recv() {
-            Ok(e) => e,
-            Err(_) => {
+        // Async recv — yields until an entry arrives or the channel closes.
+        let first = match pg_rx.recv().await {
+            Some(e) => e,
+            None => {
                 // Channel closed — final flush with retries.
                 drain_with_retry(&mut store, &mut buf, MAX_BACKOFF).await;
                 global_metrics().record_background_task_shutdown_drained("pg_trace_writer");
@@ -1158,36 +1177,14 @@ fn main() -> Result<()> {
             // Spawn PG trace writer if configured.
             let pg_sink = trace_config.pg_url.as_ref().and_then(|pg_url_str| {
                 let (pg_tx, pg_rx) =
-                    // Buffer sized to 100_000 to make blocking extremely unlikely.
-                    // SyncSender::send() is blocking; the real fix requires changing
-                    // crab-proxy's TraceLogger API to use tokio::sync::mpsc::Sender.
-                    std::sync::mpsc::sync_channel::<crab_proxy::SanitizedLogEntry>(100_000);
+                    tokio::sync::mpsc::channel::<crab_proxy::SanitizedLogEntry>(100_000);
                 let pg_url_owned = pg_url_str.clone();
-                match std::thread::Builder::new()
-                    .name("crab-pg-trace-writer".into())
-                    .spawn(move || {
-                        let pg_url = pg_url_owned;
-                        let rt = match tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                        {
-                            Ok(rt) => rt,
-                            Err(e) => {
-                                tracing::warn!("Failed to create PG trace writer runtime: {}", e);
-                                return;
-                            }
-                        };
-                        rt.block_on(pg_trace_writer_loop(pg_url, pg_rx));
-                    }) {
-                    Ok(_) => {
-                        info!(pg_url = %redact_pg_url(pg_url_str), "PG trace writer started");
-                        Some(pg_tx)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to spawn PG trace writer thread: {}", e);
-                        None
-                    }
-                }
+                // Spawn on the background tokio runtime (avoids a dedicated std::thread).
+                background_handle.spawn(async move {
+                    pg_trace_writer_loop(pg_url_owned, pg_rx).await;
+                });
+                info!(pg_url = %redact_pg_url(pg_url_str), "PG trace writer started");
+                Some(pg_tx)
             });
 
             let logger = crab_proxy::TraceLogger::init(trace_config.clone(), pg_sink);

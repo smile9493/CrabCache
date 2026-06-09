@@ -1372,6 +1372,7 @@ dependencies = [
  "crab-state",
  "crab-translator",
  "dashmap",
+ "deadpool-postgres",
  "getrandom 0.3.4",
  "hex",
  "hmac 0.12.1",

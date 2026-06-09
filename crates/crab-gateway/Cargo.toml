@@ -76,6 +76,7 @@ hmac.workspace = true
 sha2.workspace = true
 hex.workspace = true
 tokio-postgres.workspace = true
+deadpool-postgres.workspace = true
 subtle.workspace = true
 indexmap.workspace = true
 chrono.workspace = true

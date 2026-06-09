@@ -547,7 +547,7 @@ impl TraceLogger {
     /// `pg_sink`: optional external sender for PG batch insertion.
     /// When provided, entries are forwarded to this sender after JSONL write.
     /// The gateway creates the PG writer task and passes its sender here.
-    pub fn init(config: TraceConfig, pg_sink: Option<mpsc::SyncSender<SanitizedLogEntry>>) -> Self {
+    pub fn init(config: TraceConfig, pg_sink: Option<tokio::sync::mpsc::Sender<SanitizedLogEntry>>) -> Self {
         let max_payload_bytes = config.max_payload_bytes;
         let max_response_preview_bytes = config.max_response_preview_bytes;
         let (tx, rx) = mpsc::channel::<SanitizedLogEntry>();
@@ -621,7 +621,7 @@ impl TraceLogger {
                     if let Some(ref pg_tx) = pg_sink {
                         match pg_tx.try_send(entry) {
                             Ok(()) => {}
-                            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                                 crab_metrics::global_metrics().record_trace_pg_dropped("queue_full");
                                 static PG_DROP_COUNT: std::sync::atomic::AtomicU64 =
                                     std::sync::atomic::AtomicU64::new(0);
@@ -634,7 +634,7 @@ impl TraceLogger {
                                     );
                                 }
                             }
-                            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                                 crab_metrics::global_metrics().record_trace_pg_dropped("shutdown");
                                 static PG_DISCONNECTED: std::sync::atomic::AtomicBool =
                                     std::sync::atomic::AtomicBool::new(false);
