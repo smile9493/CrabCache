@@ -1,7 +1,7 @@
 //! Translate OpenAI Responses API wire (`POST /v1/responses`) to Chat Completions for
 //! DeepSeek and MiMo upstreams. **Codex OAuth (`CodexRelay`) is passthrough — no translation here.**
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use crab_pipeline::RequestPipeline;
 use http::{self, Uri};
 use pingora_http::RequestHeader;
@@ -128,7 +128,8 @@ pub async fn apply_responses_chain(
         .iter()
         .filter_map(responses_output_item_to_input)
         .collect();
-    let mut merged_input = prev_inputs.clone();
+    let prev_count = prev_inputs.len();
+    let mut merged_input = prev_inputs;
     match payload.get("input") {
         Some(Value::String(text)) if !text.is_empty() => {
             merged_input.push(json!({
@@ -141,7 +142,7 @@ pub async fn apply_responses_chain(
         Some(Value::Array(items)) => {
             // Codex normally sends only the delta after `previous_response_id`. If the client
             // resends a full transcript, avoid duplicating the stored chain (OmniRoute #1729).
-            if items.len() > prev_inputs.len().saturating_add(2) {
+            if items.len() > prev_count.saturating_add(2) {
                 merged_input = items.clone();
             } else {
                 merged_input.extend(items.iter().cloned());
@@ -226,7 +227,27 @@ pub fn responses_payload_to_chat_completions_for(
         return payload.clone();
     };
 
-    let mut out: Map<String, Value> = root.clone();
+    // Build output map selectively — skip Responses-only fields instead of cloning then removing.
+    const SKIP_FIELDS: &[&str] = &[
+        "input",
+        "instructions",
+        "previous_response_id",
+        "prompt",
+        "include",
+        "background",
+        "store",
+        "reasoning",
+        "safety_identifier",
+        "max_output_tokens",
+        "max_completion_tokens",
+    ];
+    let mut out: Map<String, Value> = Map::with_capacity(root.len());
+    for (k, v) in root {
+        if !SKIP_FIELDS.contains(&k.as_str()) {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+
     let mut messages: Vec<Value> = Vec::new();
 
     if let Some(instr) = payload
@@ -250,24 +271,12 @@ pub fn responses_payload_to_chat_completions_for(
 
     messages = finalize_responses_messages_for_target(messages, target);
 
-    // Responses API fields that Chat Completions backends reject or ignore.
-    out.remove("input");
-    out.remove("instructions");
-    out.remove("previous_response_id");
-    out.remove("prompt");
-    out.remove("include");
-    out.remove("background");
-    out.remove("store");
-    out.remove("reasoning");
-    out.remove("safety_identifier");
     out.insert("messages".into(), Value::Array(messages));
 
     if let Some(max_out) = payload.get("max_output_tokens") {
         out.insert("max_tokens".into(), max_out.clone());
-        out.remove("max_output_tokens");
     } else if let Some(mct) = payload.get("max_completion_tokens") {
         out.insert("max_tokens".into(), mct.clone());
-        out.remove("max_completion_tokens");
     }
 
     if let Some(tools) = payload.get("tools").and_then(|v| v.as_array()) {
@@ -277,19 +286,23 @@ pub fn responses_payload_to_chat_completions_for(
         );
     }
 
-    if let Some(tc) = out.get("tool_choice").and_then(|v| v.as_object()).cloned() {
-        if tc.get("type").and_then(|t| t.as_str()) == Some("function")
-            && tc.get("name").is_some()
-            && tc.get("function").is_none()
-        {
-            out.insert(
-                "tool_choice".into(),
-                json!({
-                    "type": "function",
-                    "function": { "name": tc.get("name").cloned().unwrap_or(Value::Null) },
-                }),
-            );
-        }
+    // Extract tool_choice rewrite info before mutating `out`.
+    let tc_rewrite: Option<Value> = out
+        .get("tool_choice")
+        .and_then(|v| v.as_object())
+        .filter(|tc| {
+            tc.get("type").and_then(|t| t.as_str()) == Some("function")
+                && tc.get("name").is_some()
+                && tc.get("function").is_none()
+        })
+        .map(|tc| {
+            json!({
+                "type": "function",
+                "function": { "name": tc.get("name").cloned().unwrap_or(Value::Null) },
+            })
+        });
+    if let Some(new_tc) = tc_rewrite {
+        out.insert("tool_choice".into(), new_tc);
     }
 
     crab_reasoning::ensure_codex_file_tools_from_context(&mut out);
@@ -360,29 +373,46 @@ fn sanitize_responses_input_item_ids(item: &Value) -> Value {
         return item.clone();
     };
     let item_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    let mut next = obj.clone();
-    if (item_type == "function_call" || item_type == "function_call_output")
-        && let Some(name) = next.get("name").and_then(|v| v.as_str())
-        && (!name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            || name.len() > 128)
-    {
-        next.insert("name".into(), Value::String(sanitize_function_name(name)));
-    }
-    let Some(id) = next.get("id").and_then(|v| v.as_str()) else {
-        return Value::Object(next);
-    };
+
+    // Check if name sanitization is needed (before cloning).
+    let needs_name_fix = (item_type == "function_call" || item_type == "function_call_output")
+        && obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .is_some_and(|name| {
+                !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    || name.len() > 128
+            });
+
+    // Check if id stripping is needed (before cloning).
     let expected_prefix = match item_type {
         "function_call" => "fc_",
         "message" => "msg_",
         "reasoning" => "rs_",
         _ => "",
     };
-    if expected_prefix.is_empty() || id.starts_with(expected_prefix) {
-        return Value::Object(next);
+    let needs_id_strip = !expected_prefix.is_empty()
+        && obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| !id.starts_with(expected_prefix));
+
+    // Skip clone entirely when no modification is needed.
+    if !needs_name_fix && !needs_id_strip {
+        return item.clone();
     }
-    next.remove("id");
+
+    let mut next = obj.clone();
+    if needs_name_fix {
+        if let Some(name) = next.get("name").and_then(|v| v.as_str()) {
+            next.insert("name".into(), Value::String(sanitize_function_name(name)));
+        }
+    }
+    if needs_id_strip {
+        next.remove("id");
+    }
     Value::Object(next)
 }
 
@@ -732,7 +762,7 @@ pub struct ChatToResponsesSseTranslator {
     model: String,
     last_emit_at: Option<Instant>,
     /// Incomplete upstream SSE line buffered across TCP chunks (MiMo passthrough splits).
-    upstream_sse_remainder: Vec<u8>,
+    upstream_sse_remainder: BytesMut,
     done_marker_sent: bool,
     /// Remap MiMo `apply_patch`/`read_file`/`list_dir` → `exec_command` for Codex exec-only clients.
     exec_only_surface: bool,
@@ -767,7 +797,7 @@ impl ChatToResponsesSseTranslator {
             pending_usage: None,
             model: model.to_string(),
             last_emit_at: None,
-            upstream_sse_remainder: Vec::new(),
+            upstream_sse_remainder: BytesMut::new(),
             done_marker_sent: false,
             exec_only_surface: false,
         }
@@ -882,8 +912,8 @@ impl ChatToResponsesSseTranslator {
         let mut out = Vec::new();
         self.maybe_emit_keepalive(&mut out);
         while let Some(pos) = self.upstream_sse_remainder.iter().position(|b| *b == b'\n') {
-            let line_with_nl: Vec<u8> = self.upstream_sse_remainder.drain(..=pos).collect();
-            let mut line = line_with_nl.as_slice();
+            let line_with_nl = self.upstream_sse_remainder.split_to(pos + 1);
+            let mut line: &[u8] = &line_with_nl;
             if line.ends_with(b"\n") {
                 line = &line[..line.len() - 1];
             }
@@ -1970,9 +2000,15 @@ fn append_responses_event(out: &mut Vec<u8>, data: Value) {
         .get("type")
         .and_then(|t| t.as_str())
         .unwrap_or("message");
-    if let Ok(line) = serde_json::to_string(&data) {
-        out.extend_from_slice(format!("event: {event}\ndata: {line}\n\n").as_bytes());
+    let prefix_len = out.len();
+    out.extend_from_slice(b"event: ");
+    out.extend_from_slice(event.as_bytes());
+    out.extend_from_slice(b"\ndata: ");
+    if serde_json::to_writer(&mut *out, &data).is_err() {
+        out.truncate(prefix_len);
+        return;
     }
+    out.extend_from_slice(b"\n\n");
 }
 
 #[cfg(test)]
