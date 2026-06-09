@@ -1,0 +1,3080 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/OMNIRROUTE_PROVIDERS_REFERENCE/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>OmniRoute 供应商参考文档 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#omniroute" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              OmniRoute 供应商参考文档
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        供应商统计
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="供应商统计">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ID 映射说明
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-key-llm-chat120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        一、API Key 供应商（LLM Chat，~120 个）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="一、API Key 供应商（LLM Chat，~120 个）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 已有供应商（5 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 国际主流供应商（15 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 云平台供应商（7 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 中国供应商（18 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15-60" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.5 推理平台/聚合网关（60+ 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#oauth-16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        二、OAuth 供应商（16 个，不计划支持）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#web-cookie-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        三、Web Cookie 供应商（18 个，不计划支持）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        四、其他类别（不计划支持）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="四、其他类别（不计划支持）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-no-auth-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 No-Auth 供应商（1 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 本地/自托管（12 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 搜索供应商（11 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 音频供应商（7 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 图片/视频供应商（~15 个）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#omniroute_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        五、OmniRoute 架构参考
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="五、OmniRoute 架构参考">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 供应商注册表模式
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-crabcache-omniroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 CrabCache 与 OmniRoute 的映射关系
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 关键差异
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="omniroute">OmniRoute 供应商参考文档<a class="headerlink" href="#omniroute" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>从 <code>_externals/OmniRoute</code> 项目扫描提取的完整供应商清单。
+作为 CrabCache 供应商扩展的权威参考。</p>
+<p><strong>源文件</strong>:
+- <code>_externals/OmniRoute/src/shared/constants/providers.ts</code>（供应商目录/UI 元数据）
+- <code>_externals/OmniRoute/open-sse/config/providerRegistry.ts</code>（API 注册表/端点配置）</p>
+<p><strong>扫描日期</strong>: 2026-06-02</p>
+</blockquote>
+<h2 id="_1">供应商统计<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>数量</th>
+<th>认证方式</th>
+<th>CrabCache 支持</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API Key 供应商</td>
+<td>~122</td>
+<td>Bearer Token</td>
+<td>部分（5→120+）</td>
+</tr>
+<tr>
+<td>OAuth 供应商</td>
+<td>16</td>
+<td>OAuth 2.0 (PKCE)</td>
+<td>仅 Codex</td>
+</tr>
+<tr>
+<td>Web Cookie 供应商</td>
+<td>18</td>
+<td>浏览器 Cookie</td>
+<td>无（不计划支持）</td>
+</tr>
+<tr>
+<td>No-Auth（免费）</td>
+<td>1</td>
+<td>无需认证</td>
+<td>无</td>
+</tr>
+<tr>
+<td>本地/自托管</td>
+<td>12</td>
+<td>可选 API Key</td>
+<td>无（不计划支持）</td>
+</tr>
+<tr>
+<td>搜索</td>
+<td>11</td>
+<td>API Key</td>
+<td>无（不计划支持）</td>
+</tr>
+<tr>
+<td>音频</td>
+<td>7</td>
+<td>API Key</td>
+<td>无（不计划支持）</td>
+</tr>
+<tr>
+<td>图片/视频</td>
+<td>~15</td>
+<td>API Key</td>
+<td>无（不计划支持）</td>
+</tr>
+<tr>
+<td>云代理</td>
+<td>2</td>
+<td>内部</td>
+<td>无</td>
+</tr>
+<tr>
+<td>云 Agent</td>
+<td>3</td>
+<td>API Key</td>
+<td>无</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td><strong>~177</strong></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>CrabCache 仅计划支持 <strong>API Key + OAuth</strong> 类别的 LLM Chat 供应商。</p>
+</blockquote>
+<h3 id="id">ID 映射说明<a class="headerlink" href="#id" title="Permanent link">&para;</a></h3>
+<p>OmniRoute 供应商 ID 与 CrabCache <code>UpstreamProvider</code> 枚举名存在差异，主要映射规则：</p>
+<table>
+<thead>
+<tr>
+<th>OmniRoute ID</th>
+<th>CrabCache 枚举</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>xiaomi-mimo</code></td>
+<td><code>Mimo</code></td>
+<td>CrabCache 统一为 <code>mimo</code></td>
+</tr>
+<tr>
+<td><code>pplx</code></td>
+<td><code>Perplexity</code></td>
+<td>OmniRoute 用缩写，CrabCache 用全称</td>
+</tr>
+<tr>
+<td><code>hyp</code></td>
+<td><code>Hyperbolic</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>ali</code> / <code>dashscope</code></td>
+<td><code>Alibaba</code></td>
+<td>CrabCache 支持多别名</td>
+</tr>
+<tr>
+<td><code>zhipu</code> / <code>bigmodel</code></td>
+<td><code>Glm</code></td>
+<td>CrabCache 支持多别名</td>
+</tr>
+<tr>
+<td><code>volc</code></td>
+<td><code>Volcengine</code></td>
+<td>OmniRoute 用缩写</td>
+</tr>
+</tbody>
+</table>
+<p>完整别名映射见 <code>crates/crab-pipeline/src/types.rs</code> 的 <code>UpstreamProvider::from_str()</code>。</p>
+<hr />
+<h2 id="api-key-llm-chat120">一、API Key 供应商（LLM Chat，~120 个）<a class="headerlink" href="#api-key-llm-chat120" title="Permanent link">&para;</a></h2>
+<h3 id="11-5">1.1 已有供应商（5 个）<a class="headerlink" href="#11-5" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>格式</th>
+<th>base_url</th>
+<th>默认模型</th>
+<th>特殊处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deepseek</code></td>
+<td>DeepSeek</td>
+<td>openai</td>
+<td><code>https://api.deepseek.com</code></td>
+<td><code>deepseek-v4-pro</code></td>
+<td>Reasoning/thinking 完整管线</td>
+</tr>
+<tr>
+<td><code>xiaomi-mimo</code></td>
+<td>Xiaomi MiMo</td>
+<td>openai</td>
+<td><code>https://api.xiaomimimo.com</code></td>
+<td><code>mimo-v2.5-pro</code></td>
+<td>会话级 key 绑定</td>
+</tr>
+<tr>
+<td><code>openai</code></td>
+<td>OpenAI</td>
+<td>openai</td>
+<td><code>https://api.openai.com/v1</code></td>
+<td><code>gpt-4o</code></td>
+<td>纯透传</td>
+</tr>
+<tr>
+<td><code>codex</code></td>
+<td>OpenAI Codex</td>
+<td>openai-responses</td>
+<td><code>https://chatgpt.com/backend-api/codex</code></td>
+<td><code>codex-mini</code></td>
+<td>OAuth + Responses API</td>
+</tr>
+<tr>
+<td><code>anthropic</code></td>
+<td>Anthropic</td>
+<td>claude</td>
+<td><code>https://api.anthropic.com</code></td>
+<td><code>claude-sonnet-4</code></td>
+<td>x-api-key 认证</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-15">1.2 国际主流供应商（15 个）<a class="headerlink" href="#12-15" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>别名</th>
+<th>格式</th>
+<th>base_url</th>
+<th>默认模型</th>
+<th>认证头</th>
+<th>免费额度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>groq</code></td>
+<td>Groq</td>
+<td><code>groq</code></td>
+<td>openai</td>
+<td><code>https://api.groq.com/openai/v1</code></td>
+<td><code>llama-3.3-70b-versatile</code></td>
+<td>Authorization: Bearer</td>
+<td>30 RPM / 14.4K RPD</td>
+</tr>
+<tr>
+<td><code>xai</code></td>
+<td>xAI (Grok)</td>
+<td><code>xai</code></td>
+<td>openai</td>
+<td><code>https://api.x.ai/v1</code></td>
+<td><code>grok-3</code></td>
+<td>Authorization: Bearer</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>mistral</code></td>
+<td>Mistral</td>
+<td><code>mistral</code></td>
+<td>openai</td>
+<td><code>https://api.mistral.ai/v1</code></td>
+<td><code>mistral-large-latest</code></td>
+<td>Authorization: Bearer</td>
+<td>免费 Experiment 层</td>
+</tr>
+<tr>
+<td><code>perplexity</code></td>
+<td>Perplexity</td>
+<td><code>pplx</code></td>
+<td>openai</td>
+<td><code>https://api.perplexity.ai</code></td>
+<td><code>sonar-pro</code></td>
+<td>Authorization: Bearer</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>together</code></td>
+<td>Together AI</td>
+<td><code>together</code></td>
+<td>openai</td>
+<td><code>https://api.together.xyz/v1</code></td>
+<td><code>meta-llama/Llama-3.3-70B-Instruct-Turbo</code></td>
+<td>Authorization: Bearer</td>
+<td>$25 注册额度</td>
+</tr>
+<tr>
+<td><code>fireworks</code></td>
+<td>Fireworks AI</td>
+<td><code>fireworks</code></td>
+<td>openai</td>
+<td><code>https://api.fireworks.ai/inference/v1</code></td>
+<td><code>accounts/fireworks/models/llama-v3p3-70b-instruct</code></td>
+<td>Authorization: Bearer</td>
+<td>$1 免费额度</td>
+</tr>
+<tr>
+<td><code>cerebras</code></td>
+<td>Cerebras</td>
+<td><code>cerebras</code></td>
+<td>openai</td>
+<td><code>https://api.cerebras.ai/v1</code></td>
+<td><code>llama-3.3-70b</code></td>
+<td>Authorization: Bearer</td>
+<td>1M tokens/天</td>
+</tr>
+<tr>
+<td><code>cohere</code></td>
+<td>Cohere</td>
+<td><code>cohere</code></td>
+<td>openai</td>
+<td><code>https://api.cohere.com/v2</code></td>
+<td><code>command-a</code></td>
+<td>Authorization: Bearer</td>
+<td>1000 次/月</td>
+</tr>
+<tr>
+<td><code>nvidia</code></td>
+<td>NVIDIA NIM</td>
+<td><code>nvidia</code></td>
+<td>openai</td>
+<td><code>https://integrate.api.nvidia.com/v1</code></td>
+<td><code>meta/llama-3.3-70b-instruct</code></td>
+<td>Authorization: Bearer</td>
+<td>~40 RPM</td>
+</tr>
+<tr>
+<td><code>nebius</code></td>
+<td>Nebius AI</td>
+<td><code>nebius</code></td>
+<td>openai</td>
+<td><code>https://api.studio.nebius.ai/v1</code></td>
+<td><code>meta-llama/Meta-Llama-3.3-70B-Instruct</code></td>
+<td>Authorization: Bearer</td>
+<td>~$1 试用</td>
+</tr>
+<tr>
+<td><code>siliconflow</code></td>
+<td>SiliconFlow</td>
+<td><code>siliconflow</code></td>
+<td>openai</td>
+<td><code>https://api.siliconflow.cn/v1</code></td>
+<td><code>Qwen/Qwen2.5-72B-Instruct</code></td>
+<td>Authorization: Bearer</td>
+<td>$1 + 永久免费模型</td>
+</tr>
+<tr>
+<td><code>hyperbolic</code></td>
+<td>Hyperbolic</td>
+<td><code>hyp</code></td>
+<td>openai</td>
+<td><code>https://api.hyperbolic.xyz/v1</code></td>
+<td><code>meta-llama/Meta-Llama-3.1-70B-Instruct</code></td>
+<td>Authorization: Bearer</td>
+<td>$1-5 试用</td>
+</tr>
+<tr>
+<td><code>openrouter</code></td>
+<td>OpenRouter</td>
+<td><code>openrouter</code></td>
+<td>openai</td>
+<td><code>https://openrouter.ai/api/v1</code></td>
+<td><code>anthropic/claude-sonnet-4</code></td>
+<td>Authorization: Bearer</td>
+<td>免费模型 :free 后缀</td>
+</tr>
+<tr>
+<td><code>reka</code></td>
+<td>Reka</td>
+<td><code>reka</code></td>
+<td>openai</td>
+<td><code>https://api.reka.ai/v1</code></td>
+<td><code>reka-core</code></td>
+<td>Authorization: Bearer</td>
+<td>$10/月免费</td>
+</tr>
+<tr>
+<td><code>gemini</code></td>
+<td>Google Gemini</td>
+<td><code>gemini</code></td>
+<td>gemini</td>
+<td><code>https://generativelanguage.googleapis.com/v1beta</code></td>
+<td><code>gemini-2.5-pro</code></td>
+<td>x-goog-api-key</td>
+<td>1500 请求/天</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-7">1.3 云平台供应商（7 个）<a class="headerlink" href="#13-7" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>格式</th>
+<th>base_url</th>
+<th>认证方式</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>azure-openai</code></td>
+<td>Azure OpenAI</td>
+<td>openai</td>
+<td><code>https://{resource}.openai.azure.com</code></td>
+<td>api-key 头</td>
+<td>需要 Azure 资源</td>
+</tr>
+<tr>
+<td><code>azure-ai</code></td>
+<td>Azure AI Foundry</td>
+<td>openai</td>
+<td><code>https://{resource}.services.ai.azure.com/openai/v1/</code></td>
+<td>api-key 头</td>
+<td>Foundry 端点</td>
+</tr>
+<tr>
+<td><code>bedrock</code></td>
+<td>Amazon Bedrock</td>
+<td>bedrock</td>
+<td><code>https://bedrock-runtime.{region}.amazonaws.com</code></td>
+<td>AWS 签名</td>
+<td>原生 Converse API</td>
+</tr>
+<tr>
+<td><code>vertex</code></td>
+<td>Vertex AI</td>
+<td>gemini</td>
+<td><code>https://{region}-aiplatform.googleapis.com/v1</code></td>
+<td>OAuth/SA</td>
+<td>Google Cloud</td>
+</tr>
+<tr>
+<td><code>watsonx</code></td>
+<td>IBM watsonx</td>
+<td>openai</td>
+<td><code>https://{region}.ml.cloud.ibm.com/ml/gateway/v1/</code></td>
+<td>Bearer</td>
+<td>IBM Cloud</td>
+</tr>
+<tr>
+<td><code>oci</code></td>
+<td>OCI Generative AI</td>
+<td>openai</td>
+<td><code>https://inference.generativeai.{region}.oci.oraclecloud.com/openai/v1/</code></td>
+<td>IAM Bearer</td>
+<td>Oracle Cloud</td>
+</tr>
+<tr>
+<td><code>sap</code></td>
+<td>SAP AI Hub</td>
+<td>openai</td>
+<td><code>{deploymentUrl}/chat/completions</code></td>
+<td>Bearer</td>
+<td>SAP AI Core</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-18">1.4 中国供应商（18 个）<a class="headerlink" href="#14-18" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>别名</th>
+<th>base_url</th>
+<th>默认模型</th>
+<th>免费额度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alibaba</code></td>
+<td>阿里通义千问</td>
+<td><code>ali</code></td>
+<td><code>https://dashscope-intl.aliyuncs.com</code></td>
+<td><code>qwen-max</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>alibaba-cn</code></td>
+<td>阿里通义（国内）</td>
+<td><code>ali-cn</code></td>
+<td><code>https://dashscope.aliyuncs.com</code></td>
+<td><code>qwen-max</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>qianfan</code></td>
+<td>百度千帆</td>
+<td><code>qianfan</code></td>
+<td><code>https://qianfan.baidubce.com/v2</code></td>
+<td><code>ernie-4.0-8k</code></td>
+<td>免费 Speed/Lite</td>
+</tr>
+<tr>
+<td><code>glm</code></td>
+<td>智谱 GLM Coding</td>
+<td><code>glm</code></td>
+<td><code>https://open.bigmodel.cn/api/paas/v4</code></td>
+<td><code>glm-4-plus</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>glm-cn</code></td>
+<td>智谱 GLM（国内）</td>
+<td><code>glmcn</code></td>
+<td><code>https://open.bigmodel.cn</code></td>
+<td><code>glm-4-plus</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>glmt</code></td>
+<td>智谱 GLM Thinking</td>
+<td><code>glmt</code></td>
+<td><code>https://open.bigmodel.cn</code></td>
+<td><code>glm-4-plus</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>kimi</code></td>
+<td>Kimi</td>
+<td><code>kimi</code></td>
+<td><code>https://api.moonshot.cn/v1</code></td>
+<td><code>kimi-k2.6</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>kimi-coding-apikey</code></td>
+<td>Kimi Coding (API Key)</td>
+<td><code>kmca</code></td>
+<td><code>https://api.kimi.com/coding/v1/messages</code></td>
+<td><code>kimi-k2.6</code></td>
+<td>x-api-key 认证</td>
+</tr>
+<tr>
+<td><code>minimax</code></td>
+<td>Minimax Coding</td>
+<td><code>minimax</code></td>
+<td><code>https://api.minimax.chat/v1</code></td>
+<td><code>MiniMax-M2.5</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>minimax-cn</code></td>
+<td>Minimax（国内）</td>
+<td><code>minimax-cn</code></td>
+<td><code>https://api.minimaxi.com</code></td>
+<td><code>MiniMax-M2.5</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>moonshot</code></td>
+<td>Moonshot AI</td>
+<td><code>moonshot</code></td>
+<td><code>https://api.moonshot.cn/v1</code></td>
+<td><code>kimi-k2.6</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>volcengine</code></td>
+<td>火山引擎</td>
+<td><code>volcengine</code></td>
+<td><code>https://ark.cn-beijing.volces.com/api/v3</code></td>
+<td><code>doubao-seed-2-0-code-preview</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>doubao</code></td>
+<td>豆包</td>
+<td><code>doubao</code></td>
+<td><code>https://doubao.com</code></td>
+<td><code>doubao-1.5-pro</code></td>
+<td>免费 Doubao 模型</td>
+</tr>
+<tr>
+<td><code>tencent</code></td>
+<td>腾讯混元</td>
+<td><code>tencent</code></td>
+<td><code>https://api.hunyuan.cloud.tencent.com/v1</code></td>
+<td><code>hunyuan-turbos-latest</code></td>
+<td>免费 Lite</td>
+</tr>
+<tr>
+<td><code>iflytek</code></td>
+<td>科大讯飞星火</td>
+<td><code>iflytek</code></td>
+<td><code>https://spark-api-open.xf-yun.com/v1</code></td>
+<td><code>generalv3.5</code></td>
+<td>免费 Lite</td>
+</tr>
+<tr>
+<td><code>baichuan</code></td>
+<td>百川</td>
+<td><code>baichuan</code></td>
+<td><code>https://api.baichuan-ai.com/v1</code></td>
+<td><code>Baichuan4</code></td>
+<td>免费模型</td>
+</tr>
+<tr>
+<td><code>yi</code></td>
+<td>零一万物</td>
+<td><code>yi</code></td>
+<td><code>https://api.lingyiwanwu.com/v1</code></td>
+<td><code>yi-large</code></td>
+<td>免费 Yi-Light</td>
+</tr>
+<tr>
+<td><code>stepfun</code></td>
+<td>阶跃星辰</td>
+<td><code>stepfun</code></td>
+<td><code>https://api.stepfun.com/v1</code></td>
+<td><code>step-2-16k</code></td>
+<td>免费 Step-2</td>
+</tr>
+<tr>
+<td><code>baidu</code></td>
+<td>百度 ERNIE</td>
+<td><code>baidu</code></td>
+<td><code>https://yiyan.baidu.com</code></td>
+<td><code>ernie-speed</code></td>
+<td>免费 Speed/Lite</td>
+</tr>
+<tr>
+<td><code>360ai</code></td>
+<td>360 AI</td>
+<td><code>360ai</code></td>
+<td><code>https://ai.360.cn</code></td>
+<td><code>360-gpt2-pro</code></td>
+<td>免费模型</td>
+</tr>
+<tr>
+<td><code>sensenova</code></td>
+<td>商汤 SenseNova</td>
+<td><code>sensenova</code></td>
+<td><code>https://platform.sensenova.cn</code></td>
+<td><code>SenseChat-5</code></td>
+<td>免费模型</td>
+</tr>
+<tr>
+<td><code>sparkdesk</code></td>
+<td>星火 SparkDesk</td>
+<td><code>sparkdesk</code></td>
+<td><code>https://xinghuo.xfyun.cn</code></td>
+<td><code>spark-lite</code></td>
+<td>免费 Lite</td>
+</tr>
+<tr>
+<td><code>coze</code></td>
+<td>Coze (字节)</td>
+<td><code>coze</code></td>
+<td><code>https://api.coze.com/v1</code></td>
+<td><code>coze-bot</code></td>
+<td>免费平台</td>
+</tr>
+<tr>
+<td><code>zai</code></td>
+<td>Z.AI (智谱)</td>
+<td><code>zai</code></td>
+<td><code>https://open.bigmodel.cn</code></td>
+<td><code>glm-4-plus</code></td>
+<td>无</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15-60">1.5 推理平台/聚合网关（60+ 个）<a class="headerlink" href="#15-60" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>别名</th>
+<th>base_url</th>
+<th>免费额度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agentrouter</code></td>
+<td>AgentRouter</td>
+<td><code>agentrouter</code></td>
+<td><code>https://api.agentrouter.org/v1</code></td>
+<td>$200 注册额度</td>
+</tr>
+<tr>
+<td><code>command-code</code></td>
+<td>Command Code</td>
+<td><code>cmd</code></td>
+<td><code>https://api.commandcode.ai/alpha</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>astraflow</code></td>
+<td>Astraflow (UCloud Global)</td>
+<td><code>astraflow</code></td>
+<td><code>https://astraflow.ucloud-global.com</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>astraflow-cn</code></td>
+<td>Astraflow (UCloud China)</td>
+<td><code>astraflow-cn</code></td>
+<td><code>https://astraflow.ucloud.cn</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>api-airforce</code></td>
+<td>Api.airforce</td>
+<td><code>af</code></td>
+<td><code>https://api.airforce/v1</code></td>
+<td>55 免费模型</td>
+</tr>
+<tr>
+<td><code>qoder</code></td>
+<td>Qoder AI</td>
+<td><code>if</code></td>
+<td>公共端点</td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>bailian-coding-plan</code></td>
+<td>Alibaba Coding Plan</td>
+<td><code>bcp</code></td>
+<td>阿里云</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>crof</code></td>
+<td>CrofAI</td>
+<td><code>crof</code></td>
+<td><code>https://api.crof.ai</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>longcat</code></td>
+<td>LongCat AI</td>
+<td><code>lc</code></td>
+<td><code>https://api.longcat.chat</code></td>
+<td>50M tokens/天</td>
+</tr>
+<tr>
+<td><code>pollinations</code></td>
+<td>Pollinations AI</td>
+<td><code>pol</code></td>
+<td><code>https://text.pollinations.ai</code></td>
+<td>免费，无需 key</td>
+</tr>
+<tr>
+<td><code>puter</code></td>
+<td>Puter AI</td>
+<td><code>pu</code></td>
+<td><code>https://api.puter.com</code></td>
+<td>免费（用户付费）</td>
+</tr>
+<tr>
+<td><code>uncloseai</code></td>
+<td>UncloseAI</td>
+<td><code>unc</code></td>
+<td><code>https://api.uncloseai.com/v1</code></td>
+<td>永久免费</td>
+</tr>
+<tr>
+<td><code>replicate</code></td>
+<td>Replicate</td>
+<td><code>rep</code></td>
+<td><code>https://openai-proxy.replicate.com/v1</code></td>
+<td>免费社区模型</td>
+</tr>
+<tr>
+<td><code>hackclub</code></td>
+<td>Hackclub AI</td>
+<td><code>hc</code></td>
+<td><code>https://ai.hackclub.com</code></td>
+<td>免费（会员）</td>
+</tr>
+<tr>
+<td><code>github-models</code></td>
+<td>GitHub Models</td>
+<td><code>ghm</code></td>
+<td><code>https://models.inference.ai.azure.com</code></td>
+<td>免费 GPT-5 等</td>
+</tr>
+<tr>
+<td><code>cloudflare-ai</code></td>
+<td>Cloudflare Workers AI</td>
+<td><code>cf</code></td>
+<td><code>https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1</code></td>
+<td>10K Neurons/天</td>
+</tr>
+<tr>
+<td><code>scaleway</code></td>
+<td>Scaleway AI</td>
+<td><code>scw</code></td>
+<td><code>https://api.scaleway.com/v1</code></td>
+<td>1M 免费 tokens</td>
+</tr>
+<tr>
+<td><code>deepinfra</code></td>
+<td>DeepInfra</td>
+<td><code>deepinfra</code></td>
+<td><code>https://api.deepinfra.com/v1/openai</code></td>
+<td>免费注册额度</td>
+</tr>
+<tr>
+<td><code>vercel-ai-gateway</code></td>
+<td>Vercel AI Gateway</td>
+<td><code>vag</code></td>
+<td>Vercel 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>lambda-ai</code></td>
+<td>Lambda AI</td>
+<td><code>lambda</code></td>
+<td><code>https://api.lambdalabs.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>sambanova</code></td>
+<td>SambaNova</td>
+<td><code>samba</code></td>
+<td><code>https://api.sambanova.ai/v1</code></td>
+<td>$5 免费额度</td>
+</tr>
+<tr>
+<td><code>nscale</code></td>
+<td>nScale</td>
+<td><code>nscale</code></td>
+<td><code>https://inference.api.nscale.com/v1</code></td>
+<td>$5 免费额度</td>
+</tr>
+<tr>
+<td><code>ovhcloud</code></td>
+<td>OVHcloud AI</td>
+<td><code>ovh</code></td>
+<td><code>https://ovhcloud.com/api/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>baseten</code></td>
+<td>Baseten</td>
+<td><code>baseten</code></td>
+<td><code>https://inference.baseten.co/v1</code></td>
+<td>$30 试用</td>
+</tr>
+<tr>
+<td><code>publicai</code></td>
+<td>PublicAI</td>
+<td><code>publicai</code></td>
+<td><code>https://api.publicai.co/v1</code></td>
+<td>免费社区层</td>
+</tr>
+<tr>
+<td><code>meta-llama</code></td>
+<td>Meta Llama API</td>
+<td><code>meta</code></td>
+<td><code>https://api.llama.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>v0-vercel</code></td>
+<td>v0 (Vercel)</td>
+<td><code>v0</code></td>
+<td><code>https://api.v0.dev/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>morph</code></td>
+<td>Morph</td>
+<td><code>morph</code></td>
+<td><code>https://api.morphllm.com/v1</code></td>
+<td>250K 免费/月</td>
+</tr>
+<tr>
+<td><code>featherless-ai</code></td>
+<td>Featherless AI</td>
+<td><code>featherless</code></td>
+<td><code>https://api.featherless.ai/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>llm7</code></td>
+<td>LLM7.io</td>
+<td><code>llm7</code></td>
+<td><code>https://api.llm7.io/v1</code></td>
+<td>免费，无需注册</td>
+</tr>
+<tr>
+<td><code>lepton</code></td>
+<td>Lepton AI</td>
+<td><code>lepton</code></td>
+<td><code>https://api.lepton.ai/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>kluster</code></td>
+<td>Kluster AI</td>
+<td><code>kluster</code></td>
+<td><code>https://api.kluster.ai/v1</code></td>
+<td>$5 免费额度</td>
+</tr>
+<tr>
+<td><code>friendliai</code></td>
+<td>FriendliAI</td>
+<td><code>friendli</code></td>
+<td><code>https://inference.friendli.ai/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>llamagate</code></td>
+<td>LlamaGate</td>
+<td><code>llamagate</code></td>
+<td><code>https://api.llamagate.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>heroku</code></td>
+<td>Heroku AI</td>
+<td><code>heroku</code></td>
+<td>Heroku 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>galadriel</code></td>
+<td>Galadriel</td>
+<td><code>galadriel</code></td>
+<td><code>https://api.galadriel.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>databricks</code></td>
+<td>Databricks</td>
+<td><code>databricks</code></td>
+<td>Databricks 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>clarifai</code></td>
+<td>Clarifai</td>
+<td><code>clarifai</code></td>
+<td><code>https://api.clarifai.com/v2/ext/openai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>snowflake</code></td>
+<td>Snowflake Cortex</td>
+<td><code>snowflake</code></td>
+<td>Snowflake 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>wandb</code></td>
+<td>W&amp;B Inference</td>
+<td><code>wandb</code></td>
+<td>W&amp;B 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>ai21</code></td>
+<td>AI21 Labs</td>
+<td><code>ai21</code></td>
+<td><code>https://api.ai21.com/v1</code></td>
+<td>$10 试用</td>
+</tr>
+<tr>
+<td><code>gigachat</code></td>
+<td>GigaChat (Sber)</td>
+<td><code>gigachat</code></td>
+<td><code>https://gigachat.devices.sberbank.ru/api/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>venice</code></td>
+<td>Venice.ai</td>
+<td><code>venice</code></td>
+<td><code>https://api.venice.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>codestral</code></td>
+<td>Codestral</td>
+<td><code>codestral</code></td>
+<td><code>https://codestral.mistral.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>upstage</code></td>
+<td>Upstage</td>
+<td><code>upstage</code></td>
+<td><code>https://api.upstage.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>maritalk</code></td>
+<td>Maritalk</td>
+<td><code>maritalk</code></td>
+<td><code>https://chat.maritaca.ai/api</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>modal</code></td>
+<td>Modal</td>
+<td><code>mdl</code></td>
+<td>Modal 端点</td>
+<td>$30/月免费</td>
+</tr>
+<tr>
+<td><code>datarobot</code></td>
+<td>DataRobot</td>
+<td><code>datarobot</code></td>
+<td>DataRobot 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>gitlawb</code></td>
+<td>Gitlawb (MiMo)</td>
+<td><code>glb</code></td>
+<td><code>https://opengateway.gitlawb.com/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>gitlawb-gmi</code></td>
+<td>Gitlawb (GMI Cloud)</td>
+<td><code>glb-gmi</code></td>
+<td><code>https://opengateway.gitlawb.com/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>inference-net</code></td>
+<td>Inference.net</td>
+<td><code>inet</code></td>
+<td><code>https://inference.net/v1</code></td>
+<td>$25 免费额度</td>
+</tr>
+<tr>
+<td><code>nanogpt</code></td>
+<td>NanoGPT</td>
+<td><code>nanogpt</code></td>
+<td><code>https://nano-gpt.com/api/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>predibase</code></td>
+<td>Predibase</td>
+<td><code>predibase</code></td>
+<td><code>https://serving.app.predibase.com/v1</code></td>
+<td>$25 试用</td>
+</tr>
+<tr>
+<td><code>bytez</code></td>
+<td>Bytez</td>
+<td><code>bytez</code></td>
+<td><code>https://api.bytez.com/v1</code></td>
+<td>$1 免费/4 周</td>
+</tr>
+<tr>
+<td><code>aimlapi</code></td>
+<td>AI/ML API</td>
+<td><code>aiml</code></td>
+<td><code>https://api.aimlapi.com/v1</code></td>
+<td>$0.025/天</td>
+</tr>
+<tr>
+<td><code>novita</code></td>
+<td>Novita AI</td>
+<td><code>novita</code></td>
+<td><code>https://api.novita.ai/v3/openai</code></td>
+<td>$0.50 试用</td>
+</tr>
+<tr>
+<td><code>piapi</code></td>
+<td>PiAPI</td>
+<td><code>pi</code></td>
+<td><code>https://api.piapi.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>getgoapi</code></td>
+<td>GoAPI</td>
+<td><code>ggo</code></td>
+<td><code>https://api.getgoapi.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>laozhang</code></td>
+<td>LaoZhang AI</td>
+<td><code>lz</code></td>
+<td><code>https://api.laozhang.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>glhf</code></td>
+<td>GLHF Chat</td>
+<td><code>glhf</code></td>
+<td><code>https://glhf.chat/api/v1</code></td>
+<td>免费开源模型</td>
+</tr>
+<tr>
+<td><code>cablyai</code></td>
+<td>CablyAI</td>
+<td><code>cablyai</code></td>
+<td><code>https://api.cablyai.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>thebai</code></td>
+<td>TheB.AI</td>
+<td><code>thebai</code></td>
+<td><code>https://api.theb.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>fenayai</code></td>
+<td>FenayAI</td>
+<td><code>fenayai</code></td>
+<td><code>https://api.fenayai.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>empower</code></td>
+<td>Empower</td>
+<td><code>empower</code></td>
+<td><code>https://app.empower.dev/api/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>nous-research</code></td>
+<td>Nous Research</td>
+<td><code>nous</code></td>
+<td><code>https://inference-api.nousresearch.com/v1</code></td>
+<td>50 RPM 免费</td>
+</tr>
+<tr>
+<td><code>petals</code></td>
+<td>Petals</td>
+<td><code>petals</code></td>
+<td><code>https://chat.petals.dev/api/v1</code></td>
+<td>免费公共端点</td>
+</tr>
+<tr>
+<td><code>poe</code></td>
+<td>Poe</td>
+<td><code>poe</code></td>
+<td><code>https://api.poe.com/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>gitlab</code></td>
+<td>GitLab Duo PAT</td>
+<td><code>gitlab</code></td>
+<td>GitLab 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>chutes</code></td>
+<td>Chutes.ai</td>
+<td><code>chutes</code></td>
+<td><code>https://llm.chutes.ai/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>voyage-ai</code></td>
+<td>Voyage AI</td>
+<td><code>voyage</code></td>
+<td><code>https://api.voyageai.com/v1</code></td>
+<td>200M 免费 tokens</td>
+</tr>
+<tr>
+<td><code>jina-ai</code></td>
+<td>Jina AI</td>
+<td><code>jina</code></td>
+<td><code>https://api.jina.ai/v1</code></td>
+<td>10M 免费 tokens</td>
+</tr>
+<tr>
+<td><code>fal-ai</code></td>
+<td>Fal.ai</td>
+<td><code>fal</code></td>
+<td><code>https://fal.run/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>stability-ai</code></td>
+<td>Stability AI</td>
+<td><code>stability</code></td>
+<td><code>https://api.stability.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>black-forest-labs</code></td>
+<td>Black Forest Labs</td>
+<td><code>bfl</code></td>
+<td><code>https://api.bfl.ml/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>recraft</code></td>
+<td>Recraft</td>
+<td><code>recraft</code></td>
+<td><code>https://api.recraft.ai/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>poolside</code></td>
+<td>Poolside</td>
+<td><code>poolside</code></td>
+<td><code>https://api.poolside.ai/v1</code></td>
+<td>免费 Laguna 模型</td>
+</tr>
+<tr>
+<td><code>arcee-ai</code></td>
+<td>Arcee AI</td>
+<td><code>arcee</code></td>
+<td><code>https://api.arcee.ai/v1</code></td>
+<td>免费 Trinity 模型</td>
+</tr>
+<tr>
+<td><code>inclusionai</code></td>
+<td>InclusionAI</td>
+<td><code>inclusion</code></td>
+<td><code>https://api.inclusionai.com/v1</code></td>
+<td>免费 Ling-2.6-flash</td>
+</tr>
+<tr>
+<td><code>liquid</code></td>
+<td>Liquid AI</td>
+<td><code>liquid</code></td>
+<td><code>https://api.liquid.ai/v1</code></td>
+<td>免费 LFM2.5</td>
+</tr>
+<tr>
+<td><code>nomic</code></td>
+<td>Nomic</td>
+<td><code>nomic</code></td>
+<td><code>https://api.nomic.ai/v1</code></td>
+<td>免费 Embed API</td>
+</tr>
+<tr>
+<td><code>krutrim</code></td>
+<td>Krutrim</td>
+<td><code>krutrim</code></td>
+<td><code>https://api.krutrim.ai/v1</code></td>
+<td>免费层</td>
+</tr>
+<tr>
+<td><code>monsterapi</code></td>
+<td>MonsterAPI</td>
+<td><code>monster</code></td>
+<td><code>https://api.monsterapi.ai/v1</code></td>
+<td>免费 GPU 推理</td>
+</tr>
+<tr>
+<td><code>byteplus</code></td>
+<td>BytePlus ModelArk</td>
+<td><code>bpm</code></td>
+<td>BytePlus 端点</td>
+<td>免费额度</td>
+</tr>
+<tr>
+<td><code>bluesminds</code></td>
+<td>BluesMinds</td>
+<td><code>bm</code></td>
+<td><code>https://api.bluesminds.com/v1</code></td>
+<td>免费每日额度</td>
+</tr>
+<tr>
+<td><code>freemodel-dev</code></td>
+<td>FreeModel.dev</td>
+<td><code>fmd</code></td>
+<td><code>https://api.freemodel.dev/v1</code></td>
+<td>$300 免费额度</td>
+</tr>
+<tr>
+<td><code>freeaiapikey</code></td>
+<td>FreeAIAPIKey</td>
+<td><code>faik</code></td>
+<td><code>https://freeaiapikey.com/v1</code></td>
+<td>折扣代理</td>
+</tr>
+<tr>
+<td><code>blackbox</code></td>
+<td>Blackbox AI</td>
+<td><code>bb</code></td>
+<td><code>https://api.blackbox.ai/v1</code></td>
+<td>免费无限基础聊天</td>
+</tr>
+<tr>
+<td><code>bazaarlink</code></td>
+<td>BazaarLink</td>
+<td><code>bzl</code></td>
+<td><code>https://api.bazaarlink.ai/v1</code></td>
+<td>免费 auto:free</td>
+</tr>
+<tr>
+<td><code>completions</code></td>
+<td>Completions.me</td>
+<td><code>cpl</code></td>
+<td><code>https://api.completions.me/v1</code></td>
+<td>免费无限</td>
+</tr>
+<tr>
+<td><code>enally</code></td>
+<td>Enally AI</td>
+<td><code>enly</code></td>
+<td><code>https://ai.enally.in/api/v1</code></td>
+<td>免费学生/开发者</td>
+</tr>
+<tr>
+<td><code>freetheai</code></td>
+<td>FreeTheAi</td>
+<td><code>fta</code></td>
+<td><code>https://freetheai.xyz/v1</code></td>
+<td>永久免费</td>
+</tr>
+<tr>
+<td><code>opencode-zen</code></td>
+<td>OpenCode Zen</td>
+<td><code>opencode-zen</code></td>
+<td><code>https://opencode.ai/zen/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>opencode-go</code></td>
+<td>OpenCode Go</td>
+<td><code>opencode-go</code></td>
+<td><code>https://opencode.ai/go/v1</code></td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>phind</code></td>
+<td>Phind</td>
+<td><code>phind</code></td>
+<td><code>https://https.api.phind.com/v1</code></td>
+<td>免费代码搜索</td>
+</tr>
+<tr>
+<td><code>huggingchat</code></td>
+<td>HuggingChat</td>
+<td><code>huggingchat</code></td>
+<td><code>https://api-inference.huggingface.co/v1</code></td>
+<td>免费开源模型</td>
+</tr>
+<tr>
+<td><code>dify</code></td>
+<td>Dify</td>
+<td><code>dify</code></td>
+<td>Dify 实例端点</td>
+<td>免费开源平台</td>
+</tr>
+<tr>
+<td><code>sapio</code></td>
+<td>Sapio</td>
+<td><code>sapio</code></td>
+<td>Sapio 端点</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>huggingface</code></td>
+<td>HuggingFace</td>
+<td><code>hf</code></td>
+<td><code>https://api-inference.huggingface.co/v1</code></td>
+<td>免费推理 API</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="oauth-16">二、OAuth 供应商（16 个，不计划支持）<a class="headerlink" href="#oauth-16" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>claude</code></td>
+<td>Claude Code</td>
+<td>Anthropic OAuth</td>
+</tr>
+<tr>
+<td><code>codex</code></td>
+<td>OpenAI Codex</td>
+<td><strong>已支持</strong></td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td>Cursor IDE</td>
+<td>CrabCache 作为客户端检测</td>
+</tr>
+<tr>
+<td><code>github</code></td>
+<td>GitHub Copilot</td>
+<td>GitHub OAuth</td>
+</tr>
+<tr>
+<td><code>gitlab-duo</code></td>
+<td>GitLab Duo</td>
+<td>GitLab OAuth</td>
+</tr>
+<tr>
+<td><code>windsurf</code></td>
+<td>Windsurf (Devin CLI)</td>
+<td>Token 认证</td>
+</tr>
+<tr>
+<td><code>cline</code></td>
+<td>Cline</td>
+<td>OAuth</td>
+</tr>
+<tr>
+<td><code>qoder</code></td>
+<td>Qoder AI</td>
+<td>OAuth</td>
+</tr>
+<tr>
+<td><code>qwen</code></td>
+<td>Qwen Code</td>
+<td>已废弃</td>
+</tr>
+<tr>
+<td><code>gemini-cli</code></td>
+<td>Gemini CLI</td>
+<td>Google OAuth</td>
+</tr>
+<tr>
+<td><code>agy</code></td>
+<td>Antigravity CLI</td>
+<td>Google OAuth</td>
+</tr>
+<tr>
+<td><code>kiro</code></td>
+<td>Kiro AI</td>
+<td>AWS Builder ID</td>
+</tr>
+<tr>
+<td><code>amazon-q</code></td>
+<td>Amazon Q</td>
+<td>AWS Builder ID</td>
+</tr>
+<tr>
+<td><code>zed</code></td>
+<td>Zed IDE</td>
+<td>OS Keychain</td>
+</tr>
+<tr>
+<td><code>trae</code></td>
+<td>Trae</td>
+<td>ByteDance OAuth</td>
+</tr>
+<tr>
+<td><code>kilocode</code></td>
+<td>Kilo Code</td>
+<td>OAuth</td>
+</tr>
+<tr>
+<td><code>kimi-coding</code></td>
+<td>Kimi Coding</td>
+<td>OAuth + x-api-key</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="web-cookie-18">三、Web Cookie 供应商（18 个，不计划支持）<a class="headerlink" href="#web-cookie-18" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chatgpt-web</code></td>
+<td>ChatGPT Web (Plus/Pro)</td>
+</tr>
+<tr>
+<td><code>grok-web</code></td>
+<td>Grok Web (Subscription)</td>
+</tr>
+<tr>
+<td><code>gemini-web</code></td>
+<td>Gemini Web (Free)</td>
+</tr>
+<tr>
+<td><code>perplexity-web</code></td>
+<td>Perplexity Web (Pro/Max)</td>
+</tr>
+<tr>
+<td><code>blackbox-web</code></td>
+<td>Blackbox Web (Subscription)</td>
+</tr>
+<tr>
+<td><code>muse-spark-web</code></td>
+<td>Muse Spark Web (Meta AI)</td>
+</tr>
+<tr>
+<td><code>claude-web</code></td>
+<td>Claude Web</td>
+</tr>
+<tr>
+<td><code>deepseek-web</code></td>
+<td>DeepSeek Web</td>
+</tr>
+<tr>
+<td><code>copilot-web</code></td>
+<td>Microsoft Copilot Web</td>
+</tr>
+<tr>
+<td><code>veoaifree-web</code></td>
+<td>Veo AI Free</td>
+</tr>
+<tr>
+<td><code>t3-web</code></td>
+<td>t3.chat (Pro/Free)</td>
+</tr>
+<tr>
+<td><code>inner-ai</code></td>
+<td>Inner.ai (Subscription)</td>
+</tr>
+<tr>
+<td><code>adapta-web</code></td>
+<td>Adapta.org</td>
+</tr>
+<tr>
+<td><code>duckduckgo-web</code></td>
+<td>DuckDuckGo AI Chat</td>
+</tr>
+<tr>
+<td><code>huggingchat</code></td>
+<td>HuggingChat (Free)</td>
+</tr>
+<tr>
+<td><code>phind</code></td>
+<td>Phind (Free)</td>
+</tr>
+<tr>
+<td><code>poe-web</code></td>
+<td>Poe Web (Subscription)</td>
+</tr>
+<tr>
+<td><code>venice-web</code></td>
+<td>Venice Web (Privacy)</td>
+</tr>
+<tr>
+<td><code>v0-vercel-web</code></td>
+<td>v0 Vercel Web</td>
+</tr>
+<tr>
+<td><code>kimi-web</code></td>
+<td>Kimi Web (Moonshot AI)</td>
+</tr>
+<tr>
+<td><code>doubao-web</code></td>
+<td>Doubao Web (ByteDance)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_2">四、其他类别（不计划支持）<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h3 id="41-no-auth-1">4.1 No-Auth 供应商（1 个）<a class="headerlink" href="#41-no-auth-1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>名称</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>opencode</code></td>
+<td>OpenCode Free</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-12">4.2 本地/自托管（12 个）<a class="headerlink" href="#42-12" title="Permanent link">&para;</a></h3>
+<p>Ollama, LM Studio, vLLM, llama.cpp, Docker Model Runner, Jan, LocalAI, Text Generation WebUI, TabbyML, SGLang, Aphrodite, KoboldCpp</p>
+<h3 id="43-11">4.3 搜索供应商（11 个）<a class="headerlink" href="#43-11" title="Permanent link">&para;</a></h3>
+<p>Brave Search, Exa, Tavily, Perplexity Search, SearXNG, SerpAPI, Serper, SearchAPI, You.com, Bing Search, Google Search</p>
+<h3 id="44-7">4.4 音频供应商（7 个）<a class="headerlink" href="#44-7" title="Permanent link">&para;</a></h3>
+<p>Deepgram, ElevenLabs, Cartesia, PlayHT, OpenAI TTS, Google TTS, Azure Speech</p>
+<h3 id="45-15">4.5 图片/视频供应商（~15 个）<a class="headerlink" href="#45-15" title="Permanent link">&para;</a></h3>
+<p>Stability AI, Fal.ai, Runway, Leonardo AI, Ideogram, Topaz, Black Forest Labs, Recraft, DALL-E, Midjourney, Veo AI, Haiper, Suno, Udio</p>
+<hr />
+<h2 id="omniroute_1">五、OmniRoute 架构参考<a class="headerlink" href="#omniroute_1" title="Permanent link">&para;</a></h2>
+<h3 id="51">5.1 供应商注册表模式<a class="headerlink" href="#51" title="Permanent link">&para;</a></h3>
+<p>OmniRoute 使用 <code>RegistryEntry</code> 接口定义供应商配置：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">interface</span><span class="w"> </span><span class="nx">RegistryEntry</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nx">id</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">                    </span><span class="c1">// 供应商 ID</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nx">alias?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">                </span><span class="c1">// 短别名</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nx">format</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">                </span><span class="c1">// API 格式: &quot;openai&quot; | &quot;claude&quot; | &quot;gemini&quot; | &quot;bedrock&quot;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nx">executor</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">              </span><span class="c1">// 执行器: &quot;default&quot; | &quot;anthropic&quot; | &quot;gemini&quot;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nx">baseUrl?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">              </span><span class="c1">// 默认 API 端点</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nx">authType</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">              </span><span class="c1">// 认证类型: &quot;bearer&quot; | &quot;x-api-key&quot; | &quot;oauth&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nx">authHeader</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">            </span><span class="c1">// 认证头: &quot;Authorization&quot; | &quot;x-api-key&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nx">authPrefix?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">           </span><span class="c1">// 认证前缀: &quot;Bearer &quot; | &quot;Token &quot;</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nx">headers?</span><span class="o">:</span><span class="w"> </span><span class="kt">Record</span><span class="o">&lt;</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">string</span><span class="o">&gt;</span><span class="p">;</span><span class="w">  </span><span class="c1">// 固定请求头</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nx">models</span><span class="o">:</span><span class="w"> </span><span class="kt">RegistryModel</span><span class="p">[];</span><span class="w">       </span><span class="c1">// 支持的模型列表</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nx">chatPath?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">             </span><span class="c1">// 自定义聊天路径</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="nx">timeoutMs?</span><span class="o">:</span><span class="w"> </span><span class="kt">number</span><span class="p">;</span><span class="w">            </span><span class="c1">// 超时时间</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="52-crabcache-omniroute">5.2 CrabCache 与 OmniRoute 的映射关系<a class="headerlink" href="#52-crabcache-omniroute" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>OmniRoute 概念</th>
+<th>CrabCache 对应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RegistryEntry.id</code></td>
+<td><code>UpstreamProvider</code> 枚举变体</td>
+</tr>
+<tr>
+<td><code>RegistryEntry.format</code></td>
+<td><code>RequestPipeline</code>（GenericRelay = openai）</td>
+</tr>
+<tr>
+<td><code>RegistryEntry.baseUrl</code></td>
+<td><code>UpstreamProfileConfig.base_url</code></td>
+</tr>
+<tr>
+<td><code>RegistryEntry.authHeader</code></td>
+<td>固定 <code>Authorization: Bearer</code></td>
+</tr>
+<tr>
+<td><code>RegistryEntry.models</code></td>
+<td>配置文件 <code>model</code> 字段</td>
+</tr>
+<tr>
+<td><code>providerRegistry.ts</code></td>
+<td><code>config/gateway.example.toml</code></td>
+</tr>
+<tr>
+<td><code>providers.ts</code></td>
+<td>Dashboard UI 供应商列表</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53">5.3 关键差异<a class="headerlink" href="#53" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>OmniRoute 是数据驱动</strong>：添加供应商只需在注册表加一个条目</li>
+<li><strong>CrabCache 是枚举驱动</strong>：添加供应商需要修改枚举 + match 分支</li>
+<li><strong>OmniRoute 支持多格式</strong>：OpenAI/Claude/Gemini/Bedrock 通过 translator 层转换</li>
+<li><strong>CrabCache 主要支持 OpenAI 格式</strong>：其他格式走 GenericRelay 透传</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

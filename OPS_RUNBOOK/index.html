@@ -1,0 +1,1999 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/OPS_RUNBOOK/">
+      
+      
+        <link rel="prev" href="../RUNTIME_LOG_FINDINGS/">
+      
+      
+        <link rel="next" href="../MULTI_TENANT/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>运维与事故处置 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              运维与事故处置
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-trace-2026-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 背景：内测 Trace 报告（2026-05 样本）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 责任轨总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-p0-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. P0 / P1 处置清单
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. P0 / P1 处置清单">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p0mimo-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0：MiMo（或任意 Profile）上游配额被打穿
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1bmimo-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1b：MiMo 端到端偏慢（大 context）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1：可观测与启动
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2：数据面继续演进（边际收益）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-vs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 数据面已落地 vs 报告问题（避免重复投入）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 规划项（非 proxy 热路径，单独排期）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 推荐 Prometheus / 日志核对
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 维护约定
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-data-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Data Plane 诊断指南
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Data Plane 诊断指南">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 瓶颈定位流
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 新指标速查
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 Trace 新字段排障
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 新增参考
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-trace-2026-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 背景：内测 Trace 报告（2026-05 样本）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 责任轨总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-p0-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. P0 / P1 处置清单
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. P0 / P1 处置清单">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p0mimo-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0：MiMo（或任意 Profile）上游配额被打穿
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1bmimo-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1b：MiMo 端到端偏慢（大 context）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1：可观测与启动
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2：数据面继续演进（边际收益）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-vs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 数据面已落地 vs 报告问题（避免重复投入）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 规划项（非 proxy 热路径，单独排期）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 推荐 Prometheus / 日志核对
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 维护约定
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-data-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Data Plane 诊断指南
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Data Plane 诊断指南">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 瓶颈定位流
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 新指标速查
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 Trace 新字段排障
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 新增参考
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="_1">运维与事故处置手册（对照运行时分析）<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>本文档将 <strong>Trace / 网关日志 / Prometheus</strong> 中常见现象，映射到 <strong>数据面（proxy 热路径）</strong>、<strong>控制面 / Admin</strong>、<strong>运维配置</strong> 三条责任轨。避免把「内测低命中率」或「MiMo 429」误判为「数据面 P2 未做完」。</p>
+<p><strong>相关文档</strong>：<a href="../RUNTIME_LOG_FINDINGS/">运行时日志结论（压缩版）</a> · <a href="../DATA_PLANE/">数据面实现状态</a> · <a href="../DATA_PLANE_ACCEPTANCE/">P2 验收手册</a> · <a href="../OBSERVABILITY/">可观测性</a> · <a href="../CURSOR_SETUP/">Cursor 接入</a> · <a href="../PERSISTENCE/">持久化</a> · <a href="../CRAB_CLI/">CrabCache CLI</a></p>
+<hr />
+<h2 id="1-trace-2026-05">1. 背景：内测 Trace 报告（2026-05 样本）<a class="headerlink" href="#1-trace-2026-05" title="Permanent link">&para;</a></h2>
+<p>以下结论来自约 <strong>10 天、12k+ 行</strong> <code>trace.jsonl</code> 与容器日志交叉验证（高峰日 2026-05-28 晚间）。用于排障口径，<strong>不是</strong> SLA 承诺。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>观测值</th>
+<th>解读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>综合缓存命中率</td>
+<td>~25%</td>
+<td>Cursor 长线程 + 大 body（约 1/3 请求 &gt;500KB）→ 精确键几乎唯一</td>
+</tr>
+<tr>
+<td>HIT 延迟</td>
+<td>~0ms</td>
+<td>网关 L0/L1 路径正常</td>
+</tr>
+<tr>
+<td>MISS P99</td>
+<td>数秒～数十秒</td>
+<td>以上游推理 + 大 context 为主，非 parse 瓶颈</td>
+</tr>
+<tr>
+<td>Pipeline</td>
+<td>多为 <code>mimo_relay</code></td>
+<td>模型名仍可能显示 <code>deepseek-v4-*</code>（别名/中继），≠ 未走 MiMo</td>
+</tr>
+<tr>
+<td>MiMo 429 / 池耗尽</td>
+<td>单上游 Key + 高峰并行</td>
+<td><code>gateway_upstream_key_retries_total{cooldown_only}</code>、<code>upstream_key_exhausted</code></td>
+</tr>
+<tr>
+<td>Coalescing Follower 失败</td>
+<td>Leader 上游失败后批量 502</td>
+<td>设计如此（避免双倍上游），非 Follower bug</td>
+</tr>
+<tr>
+<td>Trace 截断</td>
+<td>单行 &gt;4MB Admin 读上限</td>
+<td>事后分析困难，与 proxy 性能无关</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>命中率目标</strong>：产品文档中的 <strong>&gt;98%</strong> 适用于 <strong>高重复、非 Cursor 长对话</strong> 流量。内测 Cursor 场景应单独看 <code>hit_rate_5m</code>、consumer、body 分位数，勿与 98% 直接对比。</p>
+</blockquote>
+<hr />
+<h2 id="2">2. 责任轨总览<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>数据面（P0–P3）</th>
+<th>运维 / 配置</th>
+<th>控制面 / Admin / 产品</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MiMo / 上游 <strong>429</strong>、Key 冷却</td>
+<td>△ Preflight 预检 ✅ + Coalescing</td>
+<td><strong>加 Profile 上游 Key</strong>、降 Cursor 并行、启用 <code>preflight_enabled</code></td>
+<td>cooldown API、Dashboard 展示</td>
+</tr>
+<tr>
+<td><strong>upstream_key_exhausted</strong> (503)</td>
+<td>✗</td>
+<td>同上 + 确认仅 1 把 Key 时无轮换</td>
+<td><code>GET /v1/upstream/profiles/{id}/keys</code></td>
+</tr>
+<tr>
+<td>上游 Profile 故障</td>
+<td>✅ Profile 回退</td>
+<td>配置 <code>fallback_profile_id</code> + <code>fallback_max_retries</code>；仅在请求未开始向客户端出流时自动切换</td>
+<td>Dashboard Upstream Advanced 区</td>
+</tr>
+<tr>
+<td>客户端 <code>sk-cc-*</code> 限流</td>
+<td>✗（<code>rpm_limit=0</code> 即不限）</td>
+<td>按需设 <code>rpm_limit</code> / <code>max_concurrent</code></td>
+<td>Management API</td>
+</tr>
+<tr>
+<td>命中率低</td>
+<td>△ L2 语义、差分缓存（P3）</td>
+<td>启用 <code>[semantic]</code>、调 TTL</td>
+<td>Cursor 减 context</td>
+</tr>
+<tr>
+<td>MISS P99 高</td>
+<td>△ 已落地：预热、early parse</td>
+<td>上游节点健康、减 body</td>
+<td>模型/用量</td>
+</tr>
+<tr>
+<td>Follower 雪崩</td>
+<td>○ 策略未文档化</td>
+<td>降并发</td>
+<td>可选：可重试 503 + <code>Retry-After</code></td>
+</tr>
+<tr>
+<td><strong>ConnectionClosed</strong> ~15s</td>
+<td>△ 连接预热 ✅</td>
+<td>上游 WAF/限流、TE/CL</td>
+<td>见 <a href="../CURSOR_SETUP/">CURSOR_SETUP</a></td>
+</tr>
+<tr>
+<td>Trace <strong>截断</strong></td>
+<td>✗</td>
+<td><code>trace_logging.max_lines</code>、轮转</td>
+<td>Admin 读取上限</td>
+</tr>
+<tr>
+<td>Redis <strong>启动 persist 超时</strong></td>
+<td>✗</td>
+<td><code>depends_on</code> + 健康检查</td>
+<td><a href="../PERSISTENCE/">PERSISTENCE</a></td>
+</tr>
+<tr>
+<td>错误文案「盲盒」</td>
+<td>△ 阶段指标 ✅</td>
+<td>—</td>
+<td><code>limit_source</code> 结构化（规划）</td>
+</tr>
+</tbody>
+</table>
+<p>图例：<strong>✗</strong> 无关 · <strong>○</strong> 未覆盖 · <strong>△</strong> 部分缓解 · 粗体为常见主因</p>
+<hr />
+<h2 id="3-p0-p1">3. P0 / P1 处置清单<a class="headerlink" href="#3-p0-p1" title="Permanent link">&para;</a></h2>
+<h3 id="p0mimo-profile">P0：MiMo（或任意 Profile）上游配额被打穿<a class="headerlink" href="#p0mimo-profile" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：日志 <code>upstream rate limited, attempting key rotation</code>、Prometheus <code>gateway_upstream_key_retries_total{outcome="cooldown_only"}</code>、<code>gateway_rejected_requests_total{reason="upstream_key_exhausted"}</code>；Cursor 可能显示 <strong><code>User API Key Rate limit exceeded</code></strong>（指<strong>用户配置的上游 Key</strong>，不一定是 <code>sk-cc-*</code>）。</p>
+<ol>
+<li><code>GET /v1/upstream/profiles/mimo/keys</code>（或对应 <code>profile_id</code>）— 确认 <strong>≥2 把</strong> 启用 Key，且 <code>account_id</code> 分流策略符合预期（429 仅跨账号轮换）。</li>
+<li>高峰临时 <strong>减少 Cursor 并行</strong>（多 Agent / Task 同时跑）。</li>
+<li>核对 Prometheus：<code>gateway_upstream_key_retries_total</code>、<code>gateway_rejected_requests_total</code>。</li>
+<li><strong>不要</strong>指望仅调大 <code>connection_prewarm</code> 或完成 Bytes 优化消除 429。</li>
+</ol>
+<p>详见 <a href="../CURSOR_SETUP/#限流排查user-api-key-rate-limit-exceeded">CURSOR_SETUP — 限流排查</a>。</p>
+<h3 id="p1bmimo-context">P1b：MiMo 端到端偏慢（大 context）<a class="headerlink" href="#p1bmimo-context" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：<code>duration_ms</code> 18–26s（<code>client_body_bytes</code> ~700KB），而 ~137KB 时约 6–11s；<code>gap</code> 与 <code>prefill_ms</code> 均在 <strong>5–8s</strong> 量级。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+<th>典型值（wuming 样本）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prefill_ms</code></td>
+<td>请求进入 → 上游<strong>响应头</strong>（MiMo prefill，主 SLO）</td>
+<td>p50 ~6s</td>
+</tr>
+<tr>
+<td><code>ttft_ms</code></td>
+<td>响应头 → 首个上游 body chunk</td>
+<td>通常 &lt;500ms</td>
+</tr>
+<tr>
+<td><code>upstream_latency_ms</code></td>
+<td>响应头 → SSE 结束（生成）</td>
+<td>随输出 token 增长</td>
+</tr>
+<tr>
+<td><code>gap</code></td>
+<td><code>duration - upstream</code>（含读 body + 上传 + prefill）</td>
+<td>大 body 上传更明显</td>
+</tr>
+</tbody>
+</table>
+<p><strong>处置（优先运维，再开网关特性）</strong>：</p>
+<ol>
+<li>Cursor：限制对话历史、避免整文件进 <code>messages</code>、长会话开新 thread（目标 body <strong>&lt;200KB</strong>）。</li>
+<li>分析：<code>crab-cli trace analyze --target wuming --tail 500</code>（或 <code>python3 scripts/analyze_downstream_latency.py</code>；看 <code>prefill_ms</code> 与 body 分桶）。详见 <a href="../CRAB_CLI/">CRAB_CLI.md</a>。</li>
+<li>可选网关：<code>[features] mimo_retire_prefix_messages = true</code>、<code>mimo_keep_recent_turns = 6</code>（<strong>只缩小上游 body，不改 L0/L1 缓存键</strong>）。</li>
+<li><strong>不要</strong>在未通过门禁前开启 <code>streaming_body_forward = true</code>（见 <a href="../STREAMING_BODY_FORWARD/">STREAMING_BODY_FORWARD.md</a>）。</li>
+</ol>
+<h3 id="p1">P1：可观测与启动<a class="headerlink" href="#p1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Trace 事后分析</td>
+<td>提高 <code>max_lines</code>、控制 <code>raw_capture</code> 体积；Admin 大文件读取见 OBSERVABILITY</td>
+</tr>
+<tr>
+<td>Redis 控制面</td>
+<td>Compose <code>depends_on: service_healthy</code>；persist 失败重试见 PERSISTENCE</td>
+</tr>
+<tr>
+<td>命中率解读</td>
+<td>Overview <code>hit_rate_5m</code> + Trace 24h；区分 L0–L2 与 L3（上游 prompt cache）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="p2">P2：数据面继续演进（边际收益）<a class="headerlink" href="#p2" title="Permanent link">&para;</a></h3>
+<p>在 P0 稳定后，按 ROI 排序见 <a href="../DATA_PLANE/#运行时分析对照2026-05-内测">DATA_PLANE.md — 运行时对照</a>：</p>
+<ol>
+<li>启用 <strong>L2 语义缓存</strong>（<code>[semantic].enabled</code>）— 相似问句，非 429 主药  </li>
+<li><strong>MiMo 近似缓存键</strong> + Coalescing — 高峰减重复上游  </li>
+<li><code>streaming_body_forward</code>（P3）— 大 body 内存与读 body 时间  </li>
+</ol>
+<hr />
+<h2 id="4-vs">4. 数据面已落地 vs 报告问题（避免重复投入）<a class="headerlink" href="#4-vs" title="Permanent link">&para;</a></h2>
+<p>以下 <strong>P0–P2 已交付</strong>（见 <a href="../DATA_PLANE/">DATA_PLANE.md</a>），对报告中的 <strong>网关自身延迟</strong> 已验证有效（HIT ≈0ms、阶段水印可用）：</p>
+<ul>
+<li><code>Bytes</code>、增量 SHA-256、Raw 预解析复用  </li>
+<li>MiMo <code>body_quick_parse</code> + early exact cache  </li>
+<li>Prefix L0 <strong>索引预热</strong>（不短路返回旧响应）  </li>
+<li>连接直预热、SSE pipeline、<code>gateway_request_phase_latency_seconds</code>  </li>
+</ul>
+<p><strong>不能</strong>单靠继续做完上表解决：MiMo 429、25% 综合命中率、Trace 截断、Redis 启动竞态。</p>
+<hr />
+<h2 id="5-proxy">5. 规划项（非 proxy 热路径，单独排期）<a class="headerlink" href="#5-proxy" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>轨道</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每上游 Key 最大 in-flight</td>
+<td>产品/网关</td>
+<td>防止单 Key 被 Cursor 打穿；矩阵见 <a href="../DATA_PLANE/#运行时分析对照2026-05-内测">DATA_PLANE.md §运行时分析对照</a></td>
+</tr>
+<tr>
+<td>429/503 <code>limit_source</code> JSON</td>
+<td>控制面</td>
+<td><code>gateway_client_rpm</code> / <code>mimo_upstream_429</code> / <code>upstream_pool_cooldown</code> / <code>coalesce_leader_failed</code></td>
+</tr>
+<tr>
+<td>Coalescing Leader 失败策略</td>
+<td>产品</td>
+<td>快速 503+Retry-After vs 排队（现：Follower 不重试上游）</td>
+</tr>
+<tr>
+<td>上游连续 429 熔断</td>
+<td>网关</td>
+<td>短时拒新请求，保护 Key 冷却</td>
+</tr>
+<tr>
+<td>Admin：Profile Key 冷却 / 配额面板</td>
+<td>Admin</td>
+<td>指标已有，UI 与文档待对齐</td>
+</tr>
+<tr>
+<td>命中率 98% 前提说明</td>
+<td>文档</td>
+<td>已写入 DATA_PLANE + 数据面优化</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-prometheus">6. 推荐 Prometheus / 日志核对<a class="headerlink" href="#6-prometheus" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># 上游 Key 池
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>gateway_upstream_key_retries_total
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>gateway_rejected_requests_total{reason=&quot;upstream_key_exhausted&quot;}
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a># 缓存（勿与 L3 混淆）
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>gateway_cache_requests_total{tier,result}
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>gateway_prefix_index_warmup_total
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a># 合并
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>gateway_coalesced_requests_total
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a># 阶段耗时（区分 parse vs upstream）
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>gateway_request_phase_latency_seconds
+</code></pre></div>
+<p>网关日志关键词：<code>upstream rate limited</code>、<code>cooldown_only</code>、<code>Coalesce follower</code>、<code>trace line truncated</code>。</p>
+<hr />
+<h2 id="7">7. 维护约定<a class="headerlink" href="#7" title="Permanent link">&para;</a></h2>
+<ul>
+<li>新事故复盘：在本文件 <strong>§1</strong> 增补一行样本表，并在 <a href="../DATA_PLANE/">DATA_PLANE.md</a> 对照表同步。  </li>
+<li>数据面代码变更：仍只改 <a href="../DATA_PLANE/">DATA_PLANE.md</a> 状态表，不单独改优先级矩阵。  </li>
+<li>Cursor 限流文案：以 <a href="../CURSOR_SETUP/">CURSOR_SETUP.md</a> 为准（DeepSeek vs MiMo Profile 分节）。  </li>
+</ul>
+<hr />
+<h2 id="8-data-plane">8. Data Plane 诊断指南<a class="headerlink" href="#8-data-plane" title="Permanent link">&para;</a></h2>
+<h3 id="81">8.1 瓶颈定位流<a class="headerlink" href="#81" title="Permanent link">&para;</a></h3>
+<ol>
+<li>打开 Dashboard → <strong>Data Plane</strong> 页面（<code>/dataplane</code>）。</li>
+<li><strong>SLO 卡片</strong>检查：</li>
+<li><code>Cache Hit Rate</code> &lt; 60% → 详查 Trace 页 24h 影子日志（参考 §4）。</li>
+<li><code>P95 E2E Latency</code> &gt; 5000ms → 查看 <strong>Phase 延迟表</strong>，确认瓶颈在 <code>upstream_*</code>（上游支配）还是 <code>cache_lookup_done</code>、<code>json_parse_done</code>。</li>
+<li><code>Error Rate</code> &gt; 5% → 查看 <strong>错误归因</strong>面板，区分 client 与 upstream。</li>
+<li><strong>Phase 延迟表</strong>：</li>
+<li><code>cache_lookup_done</code> P99 &gt; 50ms → L2 语义查询延迟异常，检查 Qdrant 负载。</li>
+<li><code>upstream_body_done</code> P95 &gt;&gt; 其他阶段 → 上游推理耗时支配端到端延迟，非网关瓶颈。</li>
+<li><code>cache_write_done</code> 高 → 检查 Redis 写入延迟。</li>
+</ol>
+<h3 id="82">8.2 新指标速查<a class="headerlink" href="#82" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>排障用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway_cache_write_latency_seconds</code></td>
+<td>检测 L0/L1 写入慢</td>
+</tr>
+<tr>
+<td><code>gateway_upstream_response_status_total</code></td>
+<td>上游错误率（按 pipeline 分组）</td>
+</tr>
+<tr>
+<td><code>gateway_coalesce_leader_total</code></td>
+<td>Coalescing Leader 选举是否正常</td>
+</tr>
+<tr>
+<td><code>gateway_coalesce_follower_total</code></td>
+<td>Follower 去向分布（hit/fallthrough）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_write_total</code></td>
+<td>Trace 日志写入是否丢行</td>
+</tr>
+<tr>
+<td><code>gateway_rejection_by_source_total</code></td>
+<td>拒绝来自 client 还是 upstream</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83-trace">8.3 Trace 新字段排障<a class="headerlink" href="#83-trace" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>phase_durations_ms</code>：对比 Dashboard 各阶段基准值；若某一阶段持续偏高，说明该阶段代码或服务有性能退化。</li>
+<li><code>cache_decision</code>：<code>skip_coalesced</code> 表示请求被合并；<code>miss</code> 需结合 <code>limit_source</code> 确认是否因限流未查缓存。</li>
+<li><code>error_code</code> + <code>upstream_result</code>：直接定位上游错误类型。</li>
+</ul>
+<hr />
+<h2 id="9">9. 新增参考<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../OBSERVABILITY/">OBSERVABILITY.md</a> — Data Plane 诊断完整指标与 API 文档</li>
+<li>Dashboard → <code>/dataplane</code> — 实时 Data Plane 视图</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

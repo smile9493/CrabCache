@@ -1,0 +1,2267 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/archive/latency_optimization_analysis/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>MiMo v2.5-pro 全链路延迟优化方案 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mimo-v25-pro" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MiMo v2.5-pro 全链路延迟优化方案
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延迟瀑布：现状一览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心洞察
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        优化策略总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s1-request-passthrough-mimo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S1: Request Passthrough 全量覆盖 MiMo 请求 ⭐⭐⭐
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S1: Request Passthrough 全量覆盖 MiMo 请求 ⭐⭐⭐">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        优化方向
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预估收益
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        风险
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s2-body-gzip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S2: 客户端 body 压缩 (gzip) ⭐⭐⭐
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S2: 客户端 body 压缩 (gzip) ⭐⭐⭐">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        问题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        优化方向
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        代码参考
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实现要点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预估收益
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s3-mimo-context-retire_prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3: MiMo Context 精简 (retire_prefix) ⭐⭐
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S3: MiMo Context 精简 (retire_prefix) ⭐⭐">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        优化方向
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预估收益
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s4-chunked-transfer-encoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S4: 客户端 Chunked Transfer-Encoding 优化
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S4: 客户端 Chunked Transfer-Encoding 优化">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        问题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        优化方向
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s5-sse-upstream-gzip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S5: SSE 流禁用 Upstream gzip
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s6-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S6: 网关 CPU 热路径优化
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s7-http2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S7: HTTP/2 多路复用 (客户端→网关)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S7: HTTP/2 多路复用 (客户端→网关)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        问题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预估收益
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#s8-mimo-prefill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S8: MiMo Prefill 优化 (服务端)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="S8: MiMo Prefill 优化 (服务端)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        问题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可能优化
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合收益预估
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="综合收益预估">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        场景 A：仅网关侧优化（无需客户端改动）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-gzip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        场景 B：客户端配合 gzip 压缩
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cgzip-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        场景 C：全量优化（gzip + context 精简）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_25" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实施路线图
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="实施路线图">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — 确认现状（1 天）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-gzip23-roi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — 客户端 gzip（2–3 天，最高 ROI）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-context-35" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Context 精简（3–5 天）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — 微优化（持续）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_26" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        关键结论
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="mimo-v25-pro">MiMo v2.5-pro 全链路延迟优化方案<a class="headerlink" href="#mimo-v25-pro" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>基于 79 个请求的实测数据（body 450~560KB，E2E ~16s）和代码审查。</p>
+</blockquote>
+<hr />
+<h2 id="_1">延迟瀑布：现状一览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>客户端请求  ──────────────────────────────────────────────────────────── 响应完成
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│                                                                        │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├─ 0.00s  请求到达网关                                                    │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├─ 0.30s  pipeline_select_done (JSON 快解析 + 管线选择)                    │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├─ 0.30s  upstream_connect_done (连接池已有，~0ms)                         │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├─ 0.49s  upstream_headers_sent (发送请求头)                               │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│         ╔═══════════════════════════════════╗                           │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│         ║  6.10s  读客户端 body (450~560KB) ║ ← 最大瓶颈                 │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│         ╚═══════════════════════════════════╝                           │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>├─ 6.59s  body_read_done                                                  │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>├─ 6.59s  upstream_body_sent (~0.01s, 即发即完)                            │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│         ╔════════════════════════════╗                                  │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│         ║  3.96s  MiMo Prefill TTFT ║                                  │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│         ╚════════════════════════════╝                                  │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>├─10.55s  upstream_response_headers (首 token)                            │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│         ╔═══════════════════════════════╗                               │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│         ║  5.33s  MiMo 流式生成        ║                                │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│         ╚═══════════════════════════════╝                               │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>├─15.88s  upstream_body_done                                              │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>├─15.95s  logging_done (0.07s)                                            │
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>└─~16.0s  E2E                                                            │
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>耗时</th>
+<th>占比</th>
+<th>可优化性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>客户端→网关 body 传输</strong></td>
+<td><strong>6.1s</strong></td>
+<td><strong>38%</strong></td>
+<td>⭐⭐⭐ 网关侧可大幅改善</td>
+</tr>
+<tr>
+<td>MiMo 生成 (streaming)</td>
+<td>5.3s</td>
+<td>33%</td>
+<td>⭐ 服务端控制</td>
+</tr>
+<tr>
+<td>MiMo Prefill (TTFT)</td>
+<td>4.0s</td>
+<td>25%</td>
+<td>⭐⭐ 可提前触发</td>
+</tr>
+<tr>
+<td>网关处理开销</td>
+<td>0.6s</td>
+<td>4%</td>
+<td>⭐ 已很低</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_2">核心洞察<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>[!IMPORTANT]
+<strong>最大杠杆点不是优化网关 CPU 开销（已经只有 0.6s / 4%），而是消除 body 传输 (6.1s) 与 upstream prefill (4.0s) 之间的串行等待。</strong></p>
+</blockquote>
+<p>当前流程是：<strong>先读完全部 body → 再发给 MiMo → MiMo 开始 prefill</strong>。如果能让 body 边读边发（streaming body forward / request passthrough），prefill 可以提前 ~6s 开始。</p>
+<hr />
+<h2 id="_3">优化策略总览<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>编号</th>
+<th>优化项</th>
+<th>目标环节</th>
+<th>预估节省</th>
+<th>风险</th>
+<th>优先级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>S1</strong></td>
+<td>Request Passthrough 扩大覆盖</td>
+<td>body 传输 + prefill 重叠</td>
+<td><strong>~4–6s</strong></td>
+<td>中</td>
+<td><strong>P0</strong></td>
+</tr>
+<tr>
+<td><strong>S2</strong></td>
+<td>客户端 body 压缩 (gzip)</td>
+<td>body 传输</td>
+<td><strong>~3–5s</strong></td>
+<td>低</td>
+<td><strong>P0</strong></td>
+</tr>
+<tr>
+<td><strong>S3</strong></td>
+<td>MiMo context 精简 (retire_prefix)</td>
+<td>body 传输 + prefill</td>
+<td><strong>~2–4s</strong></td>
+<td>中</td>
+<td><strong>P1</strong></td>
+</tr>
+<tr>
+<td><strong>S4</strong></td>
+<td>Chunked Transfer-Encoding 优化</td>
+<td>body 传输</td>
+<td><strong>~0.5–1s</strong></td>
+<td>低</td>
+<td><strong>P1</strong></td>
+</tr>
+<tr>
+<td>S5</td>
+<td>SSE 流禁用 upstream gzip</td>
+<td>streaming 阶段 CPU</td>
+<td>~50–100ms</td>
+<td>低</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>S6</td>
+<td>网关 CPU 热路径优化 (已有方案)</td>
+<td>网关开销</td>
+<td>~15–20ms</td>
+<td>低</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>S7</td>
+<td>HTTP/2 多路复用 (客户端侧)</td>
+<td>body 传输</td>
+<td>~0.5–1s</td>
+<td>低</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>S8</td>
+<td>Prefill 批量/投机 (服务端)</td>
+<td>prefill TTFT</td>
+<td>~1–2s</td>
+<td>高</td>
+<td>P3</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="s1-request-passthrough-mimo">S1: Request Passthrough 全量覆盖 MiMo 请求 ⭐⭐⭐<a class="headerlink" href="#s1-request-passthrough-mimo" title="Permanent link">&para;</a></h2>
+<h3 id="_4">现状<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<p>代码已实现 <strong>request passthrough</strong> 路径（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L1014-L1061">request_filter.rs:1014-1061</a>）：</p>
+<ul>
+<li>在读到 ≥1024 字节、识别出 <code>"model"</code> 后，立即进入 passthrough 模式</li>
+<li>网关向 MiMo 发送 chunked body：partial prefix 先发，后续 chunk 边读边转发</li>
+<li><code>request_body_filter</code> 中逐 chunk 透传（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/upstream_request.rs#L221-L275">upstream_request.rs:221-275</a>）</li>
+</ul>
+<p>但触发条件限制了覆盖率：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1">// request_filter.rs:794-795</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">const</span><span class="w"> </span><span class="n">MIN_PASSTHROUGH_PREFIX_BYTES</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span><span class="p">;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1">// ...</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">if</span><span class="w"> </span><span class="n">session</span><span class="p">.</span><span class="n">is_body_done</span><span class="p">()</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">partial_body</span><span class="p">.</span><span class="n">len</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">MIN_PASSTHROUGH_PREFIX_BYTES</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>关键约束</strong>：只在 <code>mimo_direct_passthrough(pipeline)</code> 时触发（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L839">request_filter.rs:839</a>），且跳过了 cache / composition / reasoning 等阶段。</p>
+<h3 id="_5">优化方向<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>确认 passthrough 在 MiMo 管线已正常运行</strong>：检查 metrics <code>request_passthrough_total</code> 是否与 MiMo 请求量匹配</li>
+<li><strong>降低 <code>MIN_PASSTHROUGH_PREFIX_BYTES</code></strong>：450KB+ 的 body 在首次 <code>read_request_body</code> 就应该返回多个 chunk，1024 字节已很保守</li>
+<li><strong>如果 passthrough 命中率低</strong>，排查原因：</li>
+<li><code>session.is_body_done()</code> 在第一次 read 就为 true → 客户端使用 Content-Length 且一次性发送</li>
+<li><code>streaming_body_forward</code> feature flag 未开启</li>
+</ol>
+<h3 id="_6">预估收益<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<p>如果 passthrough 正常工作，body 传输与 upstream 连接/发送<strong>完全重叠</strong>：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>优化前 (串行):
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├─ 6.1s body read → 0.01s body sent → 3.96s prefill → 5.33s gen
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>│  E2E = 15.4s
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>优化后 (passthrough 重叠):
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>├─ body read 开始
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>├─ ~0.1s 后 prefix 发出 → upstream 开始接收
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>├─ 6.1s body 边读边发 (upstream 同步接收)
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>├─ body done → upstream 立即开始 prefill (已收完)
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>├─ 3.96s prefill → 5.33s gen
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>│  E2E = 15.4s (看起来没变？)
+</code></pre></div>
+<blockquote>
+<p>[!IMPORTANT]
+<strong>真正的收益在于 prefill 的提前触发</strong>：当 passthrough 运行时，upstream 在 body 到达后 <strong>0.01s</strong> 就能开始 prefill（<code>upstream_body_sent</code> 与 <code>body_read_done</code> 几乎同步）。但如果 MiMo 支持 <strong>部分 body 即可开始 prefill</strong>（incremental prefill / streaming input），则首 token 可以提前 <strong>~4–6s</strong>。</p>
+</blockquote>
+<p>对于 MiMo 模型，如果上游 API 在收到完整 JSON body 后才开始 prefill，passthrough 主要消除的是：
+- <code>body_read_done</code> 到 <code>upstream_body_sent</code> 之间的网关处理延迟（0.01s，已很小）
+- 但如果没有 passthrough，这个间隔是 <code>body_read_done</code> → JSON parse → pipeline → prepare → cache → key acquire → connect → send，可能需要 <strong>50-200ms</strong></p>
+<h3 id="_7">风险<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Passthrough 跳过 cache/coalesce，cache 命中率不受影响（MiMo body 通常 unique）</li>
+<li>需确认 MiMo 上游支持 chunked Transfer-Encoding</li>
+</ul>
+<hr />
+<h2 id="s2-body-gzip">S2: 客户端 body 压缩 (gzip) ⭐⭐⭐<a class="headerlink" href="#s2-body-gzip" title="Permanent link">&para;</a></h2>
+<h3 id="_8">问题<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p>450–560KB 的请求 body 需要 <strong>6.1s</strong> 才能传到网关，平均传输速率仅 <strong>~75–90 KB/s</strong>。这说明瓶颈在客户端上行带宽或中间网络。</p>
+<h3 id="_9">优化方向<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>客户端发送 gzip 压缩的 body</strong>：</li>
+<li>LLM chat 请求的 JSON body 压缩率通常 <strong>5:1 ~ 10:1</strong></li>
+<li>560KB body 压缩后约 <strong>56–112KB</strong></li>
+<li>
+<p>按 90 KB/s 传输速率计算，传输时间从 6.1s 降至 <strong>~0.6–1.2s</strong></p>
+</li>
+<li>
+<p><strong>网关侧接收解压</strong>：</p>
+</li>
+<li>在 <code>request_filter</code> 的 body read 循环中检测 <code>Content-Encoding: gzip</code></li>
+<li>使用 <code>flate2::read::GzDecoder</code> 流式解压</li>
+<li>
+<p>解压 CPU 开销极低（~1–5ms for 560KB）</p>
+</li>
+<li>
+<p><strong>网关已支持 upstream gzip 发送</strong>：</p>
+</li>
+<li><a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/upstream_request.rs#L66-L73">upstream_request.rs:66-73</a> 已有 <code>maybe_gzip_request_body</code></li>
+<li>双向压缩链路：客户端→网关 gzip + 网关→MiMo gzip</li>
+</ol>
+<h3 id="_10">代码参考<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
+<p>当前网关 body read 循环（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L1608-L1663">request_filter.rs:1608-1663</a>）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">loop</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">session</span><span class="p">.</span><span class="n">downstream_session</span><span class="p">.</span><span class="n">read_request_body</span><span class="p">().</span><span class="k">await</span><span class="o">?</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">        </span><span class="nb">Some</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">            </span><span class="c1">// 这里需要增加 gzip 解压逻辑</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">            </span><span class="n">hasher</span><span class="p">.</span><span class="n">update</span><span class="p">(</span><span class="o">&amp;</span><span class="n">data</span><span class="p">);</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">            </span><span class="n">full_body</span><span class="p">.</span><span class="n">extend_from_slice</span><span class="p">(</span><span class="o">&amp;</span><span class="n">data</span><span class="p">);</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="nb">None</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="k">break</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="c1">// ... passthrough / streaming defer arming</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="_11">实现要点<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">// 在 loop 开始前检测</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">client_gzip</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">session</span><span class="p">.</span><span class="n">req_header</span><span class="p">().</span><span class="n">headers</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">http</span><span class="p">::</span><span class="n">header</span><span class="p">::</span><span class="n">CONTENT_ENCODING</span><span class="p">)</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="p">.</span><span class="n">and_then</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="p">.</span><span class="n">to_str</span><span class="p">().</span><span class="n">ok</span><span class="p">())</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">s</span><span class="o">|</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="s">&quot;gzip&quot;</span><span class="p">))</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="p">.</span><span class="n">unwrap_or</span><span class="p">(</span><span class="kc">false</span><span class="p">);</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1">// 如果是 gzip，使用流式解压器</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">if</span><span class="w"> </span><span class="n">client_gzip</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">decoder</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">flate2</span><span class="p">::</span><span class="n">read</span><span class="p">::</span><span class="n">GzDecoder</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">data</span><span class="p">.</span><span class="n">as_ref</span><span class="p">());</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">decompressed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Vec</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="n">decoder</span><span class="p">.</span><span class="n">read_to_end</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">decompressed</span><span class="p">)</span><span class="o">?</span><span class="p">;</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="n">full_body</span><span class="p">.</span><span class="n">extend_from_slice</span><span class="p">(</span><span class="o">&amp;</span><span class="n">decompressed</span><span class="p">);</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="_12">预估收益<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>压缩率</th>
+<th>传输后大小</th>
+<th>传输时间</th>
+<th>节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5:1</td>
+<td>~110KB</td>
+<td>~1.2s</td>
+<td><strong>~4.9s</strong></td>
+</tr>
+<tr>
+<td>8:1</td>
+<td>~70KB</td>
+<td>~0.8s</td>
+<td><strong>~5.3s</strong></td>
+</tr>
+<tr>
+<td>10:1</td>
+<td>~56KB</td>
+<td>~0.6s</td>
+<td><strong>~5.5s</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!CAUTION]
+需要客户端配合发送 <code>Content-Encoding: gzip</code>。如果客户端是 Cursor 等第三方客户端，需要在客户端配置中启用。</p>
+</blockquote>
+<hr />
+<h2 id="s3-mimo-context-retire_prefix">S3: MiMo Context 精简 (retire_prefix) ⭐⭐<a class="headerlink" href="#s3-mimo-context-retire_prefix" title="Permanent link">&para;</a></h2>
+<h3 id="_13">现状<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<p><code>prepare_mimo_request</code> 支持 <code>retire_prefix_messages</code> 功能（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/phases/request_filter.rs#L428-L439">request_filter.rs:428-439</a>），可以裁剪历史消息，减少 body 体积。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">mimo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">prepare_mimo_request</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="n">payload</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="o">&amp;</span><span class="n">profile_fallback</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="n">features</span><span class="p">.</span><span class="n">mimo_retire_prefix_messages</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← 开关</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="n">features</span><span class="p">.</span><span class="n">mimo_keep_recent_turns</span><span class="p">,</span><span class="w">       </span><span class="c1">// ← 保留最近 N 轮</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">);</span>
+</code></pre></div>
+<h3 id="_14">优化方向<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>启用 <code>mimo_retire_prefix_messages</code></strong>：保留最近 5–10 轮对话，截断更早的历史</li>
+<li><strong>评估 body 体积降幅</strong>：</li>
+<li>典型 Cursor 编程会话的 messages 数组包含大量历史代码 context</li>
+<li>裁剪后 body 从 560KB 可能降至 100–200KB</li>
+<li><strong>联合 S2 的效果</strong>：200KB body + gzip 10:1 = ~20KB → 传输 <strong>~0.2s</strong></li>
+</ol>
+<h3 id="_15">预估收益<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>Body 大小</th>
+<th>传输时间</th>
+<th>总节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>裁剪 50%</td>
+<td>~280KB</td>
+<td>~3.1s</td>
+<td>~3.0s</td>
+</tr>
+<tr>
+<td>裁剪 70% + gzip</td>
+<td>~17KB</td>
+<td>~0.2s</td>
+<td>~5.9s</td>
+</tr>
+<tr>
+<td>无裁剪 + gzip</td>
+<td>~56KB</td>
+<td>~0.6s</td>
+<td>~5.5s</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!WARNING]
+裁剪历史消息可能影响 MiMo 的推理质量。需要 A/B 测试评估质量损失。</p>
+</blockquote>
+<hr />
+<h2 id="s4-chunked-transfer-encoding">S4: 客户端 Chunked Transfer-Encoding 优化<a class="headerlink" href="#s4-chunked-transfer-encoding" title="Permanent link">&para;</a></h2>
+<h3 id="_16">问题<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h3>
+<p>如果客户端使用 <code>Content-Length</code> 头发送请求，某些 HTTP 栈会<strong>先序列化完整 body 再发送</strong>，增加延迟。而 <code>Transfer-Encoding: chunked</code> 允许边构造边发送。</p>
+<h3 id="_17">现状<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h3>
+<p>网关已处理了两种模式：
+- <code>inbound_content_length</code>（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/streaming_body_forward.rs#L176-L183">streaming_body_forward.rs:176-183</a>）用于 defer 判断
+- Passthrough 模式下使用 chunked 转发（<a href="file:///home/smile/github_project/CrabCache/crates/crab-proxy/src/upstream_headers.rs">upstream_headers.rs</a> <code>prepare_passthrough_upstream_headers</code>）</p>
+<h3 id="_18">优化方向<a class="headerlink" href="#_18" title="Permanent link">&para;</a></h3>
+<p>确认客户端 SDK 配置：
+- Python <code>requests</code> 库默认用 Content-Length → 一次性发送
+- <code>httpx</code> 支持 streaming upload → chunked 发送
+- Cursor 客户端的 HTTP 库是否支持 chunked</p>
+<hr />
+<h2 id="s5-sse-upstream-gzip">S5: SSE 流禁用 Upstream gzip<a class="headerlink" href="#s5-sse-upstream-gzip" title="Permanent link">&para;</a></h2>
+<p>已在 <a href="file:///home/smile/github_project/CrabCache/latency_optimizations.md#L127-L163">latency_optimizations.md</a> 中详细描述（优化 C）。</p>
+<p><strong>要点</strong>：streaming 请求对 MiMo 设置 <code>Accept-Encoding: identity</code>，避免无谓的 gzip 解压开销。</p>
+<p><strong>预估收益</strong>：释放 ~50–100ms 总 CPU（8K token 输出）。</p>
+<hr />
+<h2 id="s6-cpu">S6: 网关 CPU 热路径优化<a class="headerlink" href="#s6-cpu" title="Permanent link">&para;</a></h2>
+<p>已在 <a href="file:///home/smile/github_project/CrabCache/latency_optimizations.md">latency_optimizations.md</a> 中详细描述（优化 A–I）。</p>
+<p><strong>关键项</strong>：
+- 消除第二次 JSON parse（~5–8ms）
+- <code>prepare_mimo_request</code> 短路（~3–5ms）
+- <code>extract_composition</code> 惰性化（~3–5ms）
+- Cache key 复用 req_hash（~1–2ms）</p>
+<p><strong>总计</strong>：对网关 0.6s 开销中的 ~15–20ms（约 3%），在 16s E2E 中占比极小。</p>
+<blockquote>
+<p>[!NOTE]
+网关 CPU 优化的收益在单请求延迟上微不足道（&lt;&lt; 1%），但在高并发下对吞吐量有帮助。</p>
+</blockquote>
+<hr />
+<h2 id="s7-http2">S7: HTTP/2 多路复用 (客户端→网关)<a class="headerlink" href="#s7-http2" title="Permanent link">&para;</a></h2>
+<h3 id="_19">问题<a class="headerlink" href="#_19" title="Permanent link">&para;</a></h3>
+<p>如果客户端→网关链路使用 HTTP/1.1，每个请求独占一条 TCP 连接。HTTP/2 的多路复用和头压缩可以减少连接建立开销。</p>
+<h3 id="_20">现状<a class="headerlink" href="#_20" title="Permanent link">&para;</a></h3>
+<p>网关 Pingora 支持 HTTP/2 下行。需确认客户端是否使用 HTTP/2。</p>
+<h3 id="_21">预估收益<a class="headerlink" href="#_21" title="Permanent link">&para;</a></h3>
+<ul>
+<li>连接复用：~0.5–1s（首次请求的 TLS 握手）</li>
+<li>后续请求：几乎为 0（连接已建立）</li>
+</ul>
+<hr />
+<h2 id="s8-mimo-prefill">S8: MiMo Prefill 优化 (服务端)<a class="headerlink" href="#s8-mimo-prefill" title="Permanent link">&para;</a></h2>
+<h3 id="_22">问题<a class="headerlink" href="#_22" title="Permanent link">&para;</a></h3>
+<p>MiMo prefill 3.96s（25%）是纯服务端开销，取决于：
+- 输入 token 数量（450–560KB JSON body → ~100K–150K tokens）
+- GPU 算力（prefill 是 compute-bound）
+- KV cache 命中率</p>
+<h3 id="_23">可能优化<a class="headerlink" href="#_23" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>KV cache 复用</strong>：如果 MiMo 支持 prompt caching，相同 prefix 的请求可以复用 KV cache，将 prefill 从 4s 降至 ~0.5s</li>
+<li><strong>Speculative decoding</strong>：用小模型预测 token，大模型验证，加速 generation 阶段</li>
+<li><strong>Context 压缩</strong>：在网关侧用摘要替代历史消息（与 S3 互补）</li>
+</ol>
+<blockquote>
+<p>这些需要 MiMo 服务端支持，网关侧无法单方面实施。</p>
+</blockquote>
+<hr />
+<h2 id="_24">综合收益预估<a class="headerlink" href="#_24" title="Permanent link">&para;</a></h2>
+<h3 id="a">场景 A：仅网关侧优化（无需客户端改动）<a class="headerlink" href="#a" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>优化</th>
+<th>当前</th>
+<th>优化后</th>
+<th>节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S1 passthrough 覆盖</td>
+<td>body 6.1s → send 0.01s → prefill</td>
+<td>body+send 重叠</td>
+<td>~0.05s</td>
+</tr>
+<tr>
+<td>S5 SSE identity</td>
+<td>N/A</td>
+<td>无解压</td>
+<td>~0.1s CPU</td>
+</tr>
+<tr>
+<td>S6 CPU 热路径</td>
+<td>0.6s gateway</td>
+<td>~0.58s</td>
+<td>~0.02s</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td><strong>~16.0s</strong></td>
+<td><strong>~15.8s</strong></td>
+<td><strong>~0.2s</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>仅网关侧优化效果有限，因为 6.1s body 传输是网络瓶颈。</p>
+</blockquote>
+<h3 id="b-gzip">场景 B：客户端配合 gzip 压缩<a class="headerlink" href="#b-gzip" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>优化</th>
+<th>当前</th>
+<th>优化后</th>
+<th>节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S2 client gzip (8:1)</td>
+<td>body 6.1s</td>
+<td>~0.8s</td>
+<td><strong>~5.3s</strong></td>
+</tr>
+<tr>
+<td>S1 passthrough</td>
+<td>send delay ~0.05s</td>
+<td>0s</td>
+<td>~0.05s</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td><strong>~16.0s</strong></td>
+<td><strong>~10.6s</strong></td>
+<td><strong>~5.4s (-34%)</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="cgzip-context">场景 C：全量优化（gzip + context 精简）<a class="headerlink" href="#cgzip-context" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>优化</th>
+<th>当前</th>
+<th>优化后</th>
+<th>节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S2 + S3 (gzip + retire 50%)</td>
+<td>body 6.1s</td>
+<td>~0.4s</td>
+<td><strong>~5.7s</strong></td>
+</tr>
+<tr>
+<td>S3 prefill 减少</td>
+<td>prefill 4.0s</td>
+<td>~2.5s</td>
+<td><strong>~1.5s</strong></td>
+</tr>
+<tr>
+<td>S1 + S5 + S6</td>
+<td>misc</td>
+<td>misc</td>
+<td>~0.2s</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td><strong>~16.0s</strong></td>
+<td><strong>~8.7s</strong></td>
+<td><strong>~7.3s (-46%)</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_25">实施路线图<a class="headerlink" href="#_25" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-1">Phase 1 — 确认现状（1 天）<a class="headerlink" href="#phase-1-1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] 检查 <code>request_passthrough_total</code> 指标，确认 passthrough 在 MiMo 请求上的命中率</li>
+<li>[ ] 检查 <code>streaming_body_forward</code> feature flag 是否已开启</li>
+<li>[ ] 测量客户端上行带宽（<code>body_read_done - body_read_start</code> 已有 timeline）</li>
+<li>[ ] 确认客户端是否使用 HTTP/1.1 还是 HTTP/2</li>
+</ul>
+<h3 id="phase-2-gzip23-roi">Phase 2 — 客户端 gzip（2–3 天，最高 ROI）<a class="headerlink" href="#phase-2-gzip23-roi" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] 网关侧实现 <code>Content-Encoding: gzip</code> 解压（request body 解压）</li>
+<li>[ ] 测试 passthrough 模式下的 gzip 解压兼容性</li>
+<li>[ ] 通知客户端团队启用 gzip 请求体压缩</li>
+<li>[ ] A/B 测试验证延迟降幅</li>
+</ul>
+<h3 id="phase-3-context-35">Phase 3 — Context 精简（3–5 天）<a class="headerlink" href="#phase-3-context-35" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] 评估 <code>mimo_retire_prefix_messages</code> 对推理质量的影响</li>
+<li>[ ] 设置合理的 <code>mimo_keep_recent_turns</code> 值</li>
+<li>[ ] 监控 body 体积和 prefill 时间的变化</li>
+</ul>
+<h3 id="phase-4">Phase 4 — 微优化（持续）<a class="headerlink" href="#phase-4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] SSE identity encoding</li>
+<li>[ ] 网关 CPU 热路径优化（参考 <a href="file:///home/smile/github_project/CrabCache/latency_optimizations.md">latency_optimizations.md</a>）</li>
+</ul>
+<hr />
+<h2 id="_26">关键结论<a class="headerlink" href="#_26" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>[!IMPORTANT]
+1. <strong>6.1s 的 body 传输是最大瓶颈</strong>（38%），但这是<strong>网络带宽问题</strong>，不是网关 CPU 问题
+2. <strong>最高 ROI 的优化是客户端 gzip</strong>（S2）：可节省 ~5s，需客户端配合
+3. <strong>网关侧 passthrough 已实现</strong>但需确认覆盖率（S1）
+4. <strong>网关 CPU 开销仅 0.6s（4%）</strong>，继续微优化收益递减
+5. <strong>MiMo prefill 4s + generation 5.3s 共 59%</strong>，需要服务端（MiMo）侧的改进才能进一步突破</p>
+</blockquote>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

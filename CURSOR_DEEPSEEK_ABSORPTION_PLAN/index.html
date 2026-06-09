@@ -1,0 +1,2488 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/CURSOR_DEEPSEEK_ABSORPTION_PLAN/">
+      
+      
+        <link rel="prev" href="../DEEPSEEK_CURSOR_PROXY_PARITY/">
+      
+      
+        <link rel="next" href="../RUNTIME_LOG_FINDINGS/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>功能吸收计划 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cursor-deepseek" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              功能吸收计划
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        背景与原则
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="背景与原则">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        参考项目职责边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        吸收原则
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        不采纳项（明确排除）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2026-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状快照（2026-05）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="现状快照（2026-05）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        已具备（无需重复建设）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#go" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主要缺口（相对 Go）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        改进项总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p0cursor-v4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0：Cursor 模型别名 + V4 管道联动（核心）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P0：Cursor 模型别名 + V4 管道联动（核心）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        目标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置设计（建议）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        代码触点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        管道选择逻辑（建议伪代码）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        验收标准
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        测试计划
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p1-models-tool_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1：合成 Models 列表 + tool_choice 降级
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P1：合成 Models 列表 + tool_choice 降级">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r3-v1models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R3：合成 /v1/models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#r4deepseek-tool_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R4：DeepSeek tool_choice 保守降级
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2：运维与可观测性
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P2：运维与可观测性">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r5management-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R5：Management API 别名管理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#r6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R6：指标与日志
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3：按需项
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P3：按需项">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R7：上游压缩体解压兜底
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实施顺序与里程碑
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        文档与配置变更清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        风险与缓解
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#definition-of-done" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        完成定义（Definition of Done）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        附录：三方能力矩阵（目标态）
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        背景与原则
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="背景与原则">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        参考项目职责边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        吸收原则
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        不采纳项（明确排除）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2026-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        现状快照（2026-05）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="现状快照（2026-05）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        已具备（无需重复建设）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#go" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主要缺口（相对 Go）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        改进项总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p0cursor-v4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0：Cursor 模型别名 + V4 管道联动（核心）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P0：Cursor 模型别名 + V4 管道联动（核心）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        目标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置设计（建议）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        代码触点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        管道选择逻辑（建议伪代码）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        验收标准
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        测试计划
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p1-models-tool_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1：合成 Models 列表 + tool_choice 降级
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P1：合成 Models 列表 + tool_choice 降级">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r3-v1models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R3：合成 /v1/models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#r4deepseek-tool_choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R4：DeepSeek tool_choice 保守降级
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2：运维与可观测性
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P2：运维与可观测性">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r5management-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R5：Management API 别名管理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#r6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R6：指标与日志
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#p3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3：按需项
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="P3：按需项">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R7：上游压缩体解压兜底
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实施顺序与里程碑
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        文档与配置变更清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        风险与缓解
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#definition-of-done" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        完成定义（Definition of Done）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        附录：三方能力矩阵（目标态）
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cursor-deepseek">Cursor-DeepSeek 优势吸收改进计划<a class="headerlink" href="#cursor-deepseek" title="Permanent link">&para;</a></h1>
+<p>本文档基于仓库内 Go 参考实现 <a href="../cursor-deepseek/"><code>cursor-deepseek/</code></a> 与当前 CrabCache <code>cursor_deepseek_v4</code> 管道能力对照，制定<strong>可分期落地</strong>的改进项。目标：在保留 V4 reasoning、三级缓存与运维能力的前提下，补齐 Cursor 侧「填 OpenAI 模型名即可用 DeepSeek」的体验。</p>
+<p>相关文档：</p>
+<ul>
+<li>Cursor 接入：<a href="../CURSOR_SETUP/"><code>CURSOR_SETUP.md</code></a></li>
+<li>Python 代理能力对照：<a href="../DEEPSEEK_CURSOR_PROXY_PARITY/"><code>DEEPSEEK_CURSOR_PROXY_PARITY.md</code></a></li>
+<li>参考实现：<a href="../cursor-deepseek/README.md"><code>cursor-deepseek/README.md</code></a></li>
+</ul>
+<hr />
+<h2 id="_1">背景与原则<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<h3 id="_2">参考项目职责边界<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cursor-deepseek</code> (Go)</td>
+<td>OpenAI 兼容层：模型别名、消息/tools 转换、响应 <code>model</code> 回写、CORS、可选合成 models 列表</td>
+</tr>
+<tr>
+<td><code>deepseek-cursor-proxy</code> (Python)</td>
+<td>V4 thinking：<code>reasoning_content</code> 注入/恢复、流式 Cursor 兼容</td>
+</tr>
+<tr>
+<td><strong>CrabCache</strong></td>
+<td>二者合一 + L0/L1/L2 缓存、密钥池、Management、可观测性</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_3">吸收原则<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>不削弱</strong>现有 V4 流式策略（流式不下发 <code>reasoning_content</code>、ReasoningStore recover）。</li>
+<li><strong>不默认</strong> <code>pipeline_mode = force_cursor_v4</code>（避免非 DeepSeek 模型误注入 <code>thinking</code>）。</li>
+<li><strong>配置优先</strong>：模型别名、合成 models 列表应可 TOML / Management API 热更新。</li>
+<li><strong>改动面小</strong>：优先扩展 <code>crab-pipeline</code> + <code>crab-reasoning::normalize</code>，避免在 <code>proxy.rs</code> 散落特殊逻辑。</li>
+</ol>
+<h3 id="_4">不采纳项（明确排除）<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Go 行为</th>
+<th>排除原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>去掉 reasoning 管道</td>
+<td>V4 多轮 tool 会 400</td>
+</tr>
+<tr>
+<td>流式保留 <code>delta.reasoning_content</code></td>
+<td>Cursor 断连（见 PARITY 文档）</td>
+</tr>
+<tr>
+<td>明文全量 body 日志</td>
+<td>已有脱敏 Trace；安全风险</td>
+</tr>
+<tr>
+<td>单环境变量即客户端+上游 Key</td>
+<td>与 <code>sk-cc-*</code> / 上游池设计冲突</td>
+</tr>
+<tr>
+<td>内置 ngrok</td>
+<td>由 OpenResty / Cloudflare Tunnel 承担</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2026-05">现状快照（2026-05）<a class="headerlink" href="#2026-05" title="Permanent link">&para;</a></h2>
+<h3 id="_5">已具备（无需重复建设）<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>functions</code> → <code>tools</code>、<code>function</code> 角色 → <code>tool</code>、<code>tool_choice</code> / <code>function_call</code> 规范化</li>
+<li>多模态 <code>content</code> 数组 → 字符串</li>
+<li>非 <code>deepseek-</code> 请求模型 → <code>[upstream].model</code> fallback（<code>upstream_model_for</code>）</li>
+<li>响应 / SSE chunk 中 <code>model</code> 回写为客户端 <code>original_model</code></li>
+<li>路径：<code>/v1/chat/completions</code>、<code>/chat/completions</code>；<code>GET /v1/models</code> 透传上游</li>
+<li>可选 <code>[gateway] cors_enabled</code></li>
+</ul>
+<h3 id="go">主要缺口（相对 Go）<a class="headerlink" href="#go" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>缺口</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cursor 填 <code>gpt-4o</code> 等不触发 <code>cursor_deepseek_v4</code></td>
+<td>无 reasoning 恢复，多轮 tool 易失败</td>
+</tr>
+<tr>
+<td><code>gpt-*</code> 可能解析到 <code>openai</code> profile</td>
+<td>请求发往错误上游</td>
+</tr>
+<tr>
+<td><code>/v1/models</code> 仅透传</td>
+<td>Cursor 下拉无别名模型；依赖上游 Key 池</td>
+</tr>
+<tr>
+<td>DeepSeek 不支持的 <code>tool_choice</code> 形态</td>
+<td>偶发上游 400（Go 强制降为 <code>auto</code>）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_6">改进项总览<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>编号</th>
+<th>改进项</th>
+<th>优先级</th>
+<th>预估工作量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>R1</td>
+<td>Cursor 模型别名表 + 上游模型解析</td>
+<td>P0</td>
+<td>2–3d</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>R2</td>
+<td>别名命中时自动选择 <code>cursor_deepseek_v4</code></td>
+<td>P0</td>
+<td>1d（与 R1 同 PR）</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>R3</td>
+<td>合成 <code>/v1/models</code> 列表（可配置）</td>
+<td>P1</td>
+<td>1–2d</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>R4</td>
+<td>DeepSeek <code>tool_choice</code> 保守降级</td>
+<td>P1</td>
+<td>0.5–1d</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>R5</td>
+<td>Management API：别名 CRUD + 文档</td>
+<td>P2</td>
+<td>1–2d</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>R6</td>
+<td>指标与管道选择 reason 可观测</td>
+<td>P2</td>
+<td>0.5d</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>R7</td>
+<td>上游压缩响应解压兜底（按需）</td>
+<td>P3</td>
+<td>1d（仅在有线上证据时）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="p0cursor-v4">P0：Cursor 模型别名 + V4 管道联动（核心）<a class="headerlink" href="#p0cursor-v4" title="Permanent link">&para;</a></h2>
+<h3 id="_7">目标<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<p>用户在 Cursor 中填写 <strong><code>gpt-4o</code> / <code>gpt-4</code> / <code>deepseek-chat</code></strong> 等时，行为接近 <code>cursor-deepseek</code>：</p>
+<ul>
+<li>出站上游模型为配置的 DeepSeek 模型（如 <code>deepseek-v4-pro</code>）</li>
+<li>响应 <code>model</code> 字段仍为 Cursor 请求的原始名</li>
+<li>在 DeepSeek profile + Cursor 信号下，自动走 <strong><code>cursor_deepseek_v4</code></strong>（含 reasoning 恢复）</li>
+</ul>
+<h3 id="_8">配置设计（建议）<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p>在 <code>config/gateway.example.toml</code> 增加：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[gateway.cursor_models]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># 客户端可见 model id → 上游 DeepSeek model</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># 未列出的 gpt-*/o1-*/o3-* 在 deepseek profile 下可回退到 [upstream].model</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">gpt-4o</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">upstream</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;deepseek-v4-pro&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">pipeline</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;cursor_deepseek_v4&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">gpt-4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">upstream</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;deepseek-v4-pro&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">pipeline</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;cursor_deepseek_v4&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">deepseek-chat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">upstream</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;deepseek-chat&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">pipeline</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;deepseek_light&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># 全局：别名请求是否强制 deepseek profile（避免 gpt-4o 走到 openai profile）</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">force_deepseek_profile_for_aliases</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</code></pre></div>
+<p>字段语义：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>upstream</code></td>
+<td>写入出站 JSON 的 <code>model</code></td>
+</tr>
+<tr>
+<td><code>pipeline</code></td>
+<td><code>cursor_deepseek_v4</code> | <code>deepseek_light</code> | <code>auto</code>（沿用现有 auto 规则）</td>
+</tr>
+<tr>
+<td><code>force_deepseek_profile_for_aliases</code></td>
+<td>为 true 时，<code>resolve_upstream_profile_id</code> 对别名请求固定 <code>deepseek</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码触点<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>变更</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>crates/crab-gateway/src/config.rs</code></td>
+<td><code>GatewaySection</code> 增加 <code>cursor_models: Option&lt;CursorModelAliases&gt;</code></td>
+</tr>
+<tr>
+<td><code>crates/crab-proxy/src/runtime.rs</code></td>
+<td>运行时可变别名表（Management 热更新，P2）</td>
+</tr>
+<tr>
+<td><code>crates/crab-pipeline/src/select.rs</code></td>
+<td><code>auto_pipeline</code>：别名 + Cursor 信号 → <code>CursorDeepSeekV4</code></td>
+</tr>
+<tr>
+<td><code>crates/crab-pipeline/src/profile.rs</code></td>
+<td>别名请求不仅凭 <code>gpt-</code> 前缀选 <code>openai</code></td>
+</tr>
+<tr>
+<td><code>crates/crab-reasoning/src/normalize.rs</code></td>
+<td><code>prepare_upstream_request</code> / <code>prepare_light_request</code> 使用别名解析后的 <code>upstream_model</code></td>
+</tr>
+<tr>
+<td><code>config/gateway.example.toml</code></td>
+<td>示例与注释</td>
+</tr>
+<tr>
+<td><code>docs/CURSOR_SETUP.md</code></td>
+<td>增加「可用 gpt-4o 别名」说明</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">管道选择逻辑（建议伪代码）<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>if alias.pipeline == cursor_deepseek_v4 &amp;&amp; provider == deepseek:
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    return CursorDeepSeekV4
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>if alias.pipeline == deepseek_light:
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    return DeepSeekLight
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a># 否则保持现有 is_deepseek_v4_model + cursor_signals 规则
+</code></pre></div>
+<h3 id="_11">验收标准<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] <code>model: gpt-4o</code> + Cursor UA / <code>x-conversation-id</code> → 管道 <code>cursor_deepseek_v4</code>，上游 body <code>model</code> 为 <code>deepseek-v4-pro</code>（或配置值）</li>
+<li>[ ] 响应 JSON / SSE 中 <code>model</code> 仍为 <code>gpt-4o</code></li>
+<li>[ ] 多轮 tool + thinking：第二轮不因缺失 <code>reasoning_content</code> 400（复用 <code>scripts/verify_cursor_e2e.sh</code>）</li>
+<li>[ ] 未配置别名时行为与当前版本一致（回归）</li>
+<li>[ ] 单元测试：<code>crab-pipeline</code> 别名 + profile；<code>normalize</code> 上游模型解析</li>
+</ul>
+<h3 id="_12">测试计划<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>crab-pipeline<span class="w"> </span>-p<span class="w"> </span>crab-reasoning
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># 配置 gateway.toml 别名后</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nv">CLIENT_API_KEY</span><span class="o">=</span>sk-cc-...<span class="w"> </span>bash<span class="w"> </span>scripts/verify_cursor_e2e.sh
+</code></pre></div>
+<hr />
+<h2 id="p1-models-tool_choice">P1：合成 Models 列表 + tool_choice 降级<a class="headerlink" href="#p1-models-tool_choice" title="Permanent link">&para;</a></h2>
+<h3 id="r3-v1models">R3：合成 <code>/v1/models</code><a class="headerlink" href="#r3-v1models" title="Permanent link">&para;</a></h3>
+<p><strong>目标</strong>：<code>GET /v1/models</code> 在配置开启时返回 OpenAI 兼容列表，包含别名 ID，减少 Cursor 手填模型名；可选与上游列表合并。</p>
+<p><strong>配置</strong>：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[gateway.cursor_models]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">synthetic_models_enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># 仅合成别名；false 时保持现有透传上游行为</span>
+</code></pre></div>
+<p><strong>行为</strong>：</p>
+<table>
+<thead>
+<tr>
+<th><code>synthetic_models_enabled</code></th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>false</code>（默认）</td>
+<td>与现网一致：需上游 Key，透传 DeepSeek <code>/v1/models</code></td>
+</tr>
+<tr>
+<td><code>true</code></td>
+<td>本地 JSON：<code>object: list</code>，<code>data[].id</code> 为别名键 + 可选 <code>deepseek-v4-*</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>代码触点</strong>：<code>crab-proxy/src/proxy.rs</code>（<code>is_models_list</code> 分支）、<code>crab-gateway</code> 配置。</p>
+<p><strong>验收</strong>：</p>
+<ul>
+<li>[ ] 无上游 Key 时，<code>synthetic_models_enabled=true</code> 仍返回 200 + 列表</li>
+<li>[ ] 列表含 <code>gpt-4o</code> 等配置的别名 id</li>
+</ul>
+<hr />
+<h3 id="r4deepseek-tool_choice">R4：DeepSeek <code>tool_choice</code> 保守降级<a class="headerlink" href="#r4deepseek-tool_choice" title="Permanent link">&para;</a></h3>
+<p><strong>目标</strong>：对齐 Go <code>convertToolChoice</code>：当 <code>tool_choice</code> 为「指定某一 function」且上游为 DeepSeek 时，出站改为 <code>"auto"</code>，降低 400。</p>
+<p><strong>代码触点</strong>：<code>crab-reasoning/src/normalize.rs</code> 中 <code>normalize_tool_choice</code>，或 DeepSeek 专用分支。</p>
+<p><strong>验收</strong>：</p>
+<ul>
+<li>[ ] 请求含 <code>tool_choice: { type: function, function: { name: "x" } }</code> 出站为 <code>"auto"</code></li>
+<li>[ ] <code>auto</code> / <code>none</code> / <code>required</code> 不变</li>
+</ul>
+<hr />
+<h2 id="p2">P2：运维与可观测性<a class="headerlink" href="#p2" title="Permanent link">&para;</a></h2>
+<h3 id="r5management-api">R5：Management API 别名管理<a class="headerlink" href="#r5management-api" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/v1/cursor/models</code></td>
+<td>列出别名</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/v1/cursor/models</code></td>
+<td>全量替换别名表</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td><code>/v1/cursor/models/{id}</code></td>
+<td>单条更新</td>
+</tr>
+</tbody>
+</table>
+<p>同步：<code>crab-control</code> 类型、<code>crab-gateway/tests/management_api.rs</code>、<code>crab-dashboard</code> Keys/设置页（可选）。</p>
+<h3 id="r6">R6：指标与日志<a class="headerlink" href="#r6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Prometheus：<code>gateway_pipeline_selected_total{pipeline,reason}</code> 已有则补充 <code>reason=alias</code> / <code>model_alias</code></li>
+<li>Trace JSONL：记录 <code>client_model</code>、<code>upstream_model</code>、<code>alias_hit</code></li>
+</ul>
+<hr />
+<h2 id="p3">P3：按需项<a class="headerlink" href="#p3" title="Permanent link">&para;</a></h2>
+<h3 id="r7">R7：上游压缩体解压兜底<a class="headerlink" href="#r7" title="Permanent link">&para;</a></h3>
+<p><strong>触发条件</strong>：非流式路径出现「上游 <code>Content-Encoding: gzip</code> 导致 JSON 改写失败」的线上案例。</p>
+<p><strong>实现</strong>：仅在 <code>rewrite_response_body</code> 前对 body 按 <code>Content-Encoding</code> 解压；依赖 <code>flate2</code> / <code>brotli</code>（评估 workspace 依赖）。</p>
+<p><strong>默认</strong>：不实现，除非 P3 有证据。</p>
+<hr />
+<h2 id="_13">实施顺序与里程碑<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gantt
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    title Cursor-DeepSeek 吸收里程碑
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    dateFormat YYYY-MM-DD
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    section P0
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    R1 R2 别名与管道     :p0, 2026-05-22, 4d
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    section P1
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    R3 合成 models      :p1a, after p0, 2d
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    R4 tool_choice      :p1b, after p0, 1d
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    section P2
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    R5 Management       :p2, after p1a, 3d
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    R6 指标             :p2b, after p1b, 1d
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    section P3
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    R7 解压兜底         :p3, after p2, 2d
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>里程碑</th>
+<th>交付物</th>
+<th>用户可见变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>M1 (P0)</strong></td>
+<td>R1+R2 合并 PR</td>
+<td>Cursor 可填 <code>gpt-4o</code>，自动 V4 + reasoning</td>
+</tr>
+<tr>
+<td><strong>M2 (P1)</strong></td>
+<td>R3+R4</td>
+<td>模型下拉更友好；tool 调用更稳</td>
+</tr>
+<tr>
+<td><strong>M3 (P2)</strong></td>
+<td>R5+R6</td>
+<td>Dashboard 改别名无需改 TOML</td>
+</tr>
+<tr>
+<td><strong>M4 (P3)</strong></td>
+<td>R7（可选）</td>
+<td>特定压缩场景稳定性</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_14">文档与配置变更清单<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>变更</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docs/CURSOR_DEEPSEEK_ABSORPTION_PLAN.md</code></td>
+<td>本文档</td>
+</tr>
+<tr>
+<td><code>docs/CURSOR_SETUP.md</code></td>
+<td>增加别名配置章节；默认仍推荐 <code>deepseek-v4-*</code></td>
+</tr>
+<tr>
+<td><code>docs/DEEPSEEK_CURSOR_PROXY_PARITY.md</code></td>
+<td>增加与 <code>cursor-deepseek</code> 对照一行</td>
+</tr>
+<tr>
+<td><code>config/gateway.example.toml</code></td>
+<td><code>[gateway.cursor_models]</code> 示例</td>
+</tr>
+<tr>
+<td><code>CLAUDE.md</code></td>
+<td>架构决策索引链到本计划（可选一句）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_15">风险与缓解<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>缓解</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>别名误配导致错误上游模型</td>
+<td>启动时校验：别名 <code>upstream</code> 须为 <code>deepseek-*</code> 或配置白名单</td>
+</tr>
+<tr>
+<td><code>gpt-4o</code> 走 V4 增加 token 成本</td>
+<td>文档说明；别名可设 <code>pipeline = deepseek_light</code></td>
+</tr>
+<tr>
+<td>合成 models 与真实上游不一致</td>
+<td>列表仅展示别名 id；响应 <code>model</code> 仍以客户端请求为准</td>
+</tr>
+<tr>
+<td>缓存键与别名</td>
+<td>缓存键继续用<strong>请求体原始 model + 消息指纹</strong>；别名只影响出站，避免命中错缓存</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="definition-of-done">完成定义（Definition of Done）<a class="headerlink" href="#definition-of-done" title="Permanent link">&para;</a></h2>
+<p>整个计划（P0–P2）完成时：</p>
+<ol>
+<li>新用户按 <code>CURSOR_SETUP.md</code> 使用 <strong><code>gpt-4o</code> 或 <code>deepseek-v4-pro</code></strong> 均可完成 Composer 多轮 tool + thinking。</li>
+<li><code>cargo test --workspace</code> 与 <code>cargo clippy --workspace</code> 通过。</li>
+<li>Management 集成测试覆盖别名 GET/PUT（P2）。</li>
+<li><code>scripts/verify_cursor_e2e.sh</code> 增加别名场景（可选 <code>MODEL=gpt-4o</code>）。</li>
+</ol>
+<hr />
+<h2 id="_16">附录：三方能力矩阵（目标态）<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th style="text-align: center;">cursor-deepseek</th>
+<th style="text-align: center;">deepseek-cursor-proxy</th>
+<th style="text-align: center;">CrabCache 目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>gpt-4o → DeepSeek 模型</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">✅ P0</td>
+</tr>
+<tr>
+<td>reasoning 恢复</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅ 已有</td>
+</tr>
+<tr>
+<td>流式 Cursor 安全 SSE</td>
+<td style="text-align: center;">部分</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅ 已有</td>
+</tr>
+<tr>
+<td>响应 model 回写</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">✅ 已有</td>
+</tr>
+<tr>
+<td>合成 /v1/models</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">✅ P1</td>
+</tr>
+<tr>
+<td>L0/L1/L2 缓存</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅ 已有</td>
+</tr>
+<tr>
+<td>sk-cc-* 密钥</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅ 已有</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

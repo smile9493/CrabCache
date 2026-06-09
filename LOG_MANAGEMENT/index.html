@@ -1,0 +1,2425 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/LOG_MANAGEMENT/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>日志管理运维手册 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              日志管理运维手册
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 子系统总览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 配置参考
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 配置参考">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-trace-trace_logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Trace 日志（[trace_logging]）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-raw-captureraw_capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Raw Capture（[raw_capture]）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-tracing-subscriber" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 运行日志（tracing-subscriber）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 调试日志
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 数据写入链路
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. 数据写入链路">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Trace 日志生命周期
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-jsonl-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 JSONL → PG 同步（已废弃）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-raw-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Raw Capture 采样决策
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. PG 表结构
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. PG 表结构">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-trace_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 trace_logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-request_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 request_logs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2 request_logs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request_logs-vs-trace_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_logs vs trace_logs 合并评估
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-audit_log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 audit_log
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 后台任务
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 日常运维操作
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. 日常运维操作">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 查看日志磁盘用量
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 查看 PG 日志表行数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 手动清理日志
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 更新保留策略
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#65-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.5 PG 手动修剪
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#66" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.6 查看请求日志
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#67-raw-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.7 查看 Raw Capture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Prometheus 指标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 前端页面
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. 前端页面">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 请求日志页（Logs）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82-logs-manage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 日志管理页（Logs Manage）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 审计日志页（Audit）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#84-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.4 Capture 页
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 故障排查
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. 故障排查">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 Trace 日志不生成
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#92-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.2 PG 同步滞后
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#93" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.3 磁盘占用过高
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#94-trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.4 Trace 截断
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#95-capture-body" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.5 Capture body 文件堆积
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. 保留策略默认值
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. 安全与脱敏
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. 架构决策
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="12. 架构决策">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jsonl-pg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        为什么同时写 JSONL 和 PG？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        为什么用增量尾读而非全量扫描？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trace-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        为什么 Trace 和 Capture 分开存储？
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="_1">日志管理运维手册<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>CrabCache 日志子系统包含 <strong>5 个独立模块</strong>：结构化运行日志、Trace 请求追踪日志、Raw Capture 原始抓包、审计日志、以及调试日志。本文档覆盖配置、运维操作、故障排查和架构细节。</p>
+<p><strong>相关文档</strong>：<a href="../OBSERVABILITY/">可观测性</a> · <a href="../PERSISTENCE/">持久化</a> · <a href="../OPS_RUNBOOK/">运维手册</a></p>
+<hr />
+<h2 id="1">1. 子系统总览<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>子系统</th>
+<th>存储格式</th>
+<th>写入方</th>
+<th>读取方</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>运行日志</strong></td>
+<td><code>./logs/gateway.log.YYYY-MM-DD</code>（JSON，按天轮转）</td>
+<td><code>tracing-appender</code></td>
+<td><code>journalctl</code> / 日志采集</td>
+<td>网关运行状态、错误、警告</td>
+</tr>
+<tr>
+<td><strong>Trace 日志</strong></td>
+<td><code>trace.jsonl</code>（JSONL，按行数轮转） + PostgreSQL <code>trace_logs</code></td>
+<td><code>TraceLogger</code>（mpsc 异步线程）</td>
+<td>Admin Dashboard / API</td>
+<td>每请求脱敏元数据（60+ 字段）</td>
+</tr>
+<tr>
+<td><strong>Raw Capture</strong></td>
+<td><code>index.jsonl</code> + <code>bodies/*.json</code></td>
+<td><code>RawCaptureLogger</code>（mpsc 异步线程）</td>
+<td>Admin Capture 页面</td>
+<td>完整请求/响应体抓包</td>
+</tr>
+<tr>
+<td><strong>审计日志</strong></td>
+<td>PostgreSQL <code>audit_log</code></td>
+<td>Admin API handler</td>
+<td>Dashboard 审计页面</td>
+<td>管理操作记录</td>
+</tr>
+<tr>
+<td><strong>调试日志</strong></td>
+<td>NDJSON 文件（<code>CRABCACHE_DEBUG_LOG_PATH</code>）</td>
+<td><code>debug_log::debug_agent_log</code></td>
+<td>人工分析</td>
+<td>假设验证式调试</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2">2. 配置参考<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
+<h3 id="21-trace-trace_logging">2.1 Trace 日志（<code>[trace_logging]</code>）<a class="headerlink" href="#21-trace-trace_logging" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[trace_logging]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">                          </span><span class="c1"># 启用 Trace 日志</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/crabcache/trace.jsonl&quot;</span><span class="w">  </span><span class="c1"># JSONL 文件路径</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">max_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span><span class="w">                        </span><span class="c1"># 单文件最大行数（触发轮转）</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">max_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span><span class="w">                            </span><span class="c1"># 保留的轮转文件数</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">max_payload_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">                    </span><span class="c1"># 请求体快照字节数（0=禁用，建议 4096）</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">max_response_preview_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">           </span><span class="c1"># 响应预览字节数（0=禁用，建议 2048）</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">pg_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="w">                             </span><span class="c1"># PG 双写 URL（可选）</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">[trace_logging.composition_debug]</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">                          </span><span class="c1"># Composition 调试日志</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/crabcache/trace-debug.jsonl&quot;</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">max_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">max_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span>
+</code></pre></div>
+<p><strong>环境变量覆盖</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>作用</th>
+<th>默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_TRACE_LOG_PATH</code></td>
+<td>Trace 日志路径</td>
+<td><code>/app/logs/trace.jsonl</code></td>
+</tr>
+<tr>
+<td><code>CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS</code></td>
+<td>Live 缓存 TTL（秒）</td>
+<td><code>3</code></td>
+</tr>
+<tr>
+<td><code>CRABCACHE_LIVE_TRACE_SOURCE</code></td>
+<td><strong>已废弃</strong>（PG 为唯一数据源）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_ADMIN_TRACE_PG_SYNC</code></td>
+<td><strong>已废弃</strong>（pg_sync 已移除，Gateway 直写 PG）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>CRADMIN_TRACE_RETENTION_DAYS</code></td>
+<td>PG trace_logs 保留天数覆盖</td>
+<td>策略值</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS</code></td>
+<td>列表 API 响应预览截断字符数</td>
+<td><code>200</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-raw-captureraw_capture">2.2 Raw Capture（<code>[raw_capture]</code>）<a class="headerlink" href="#22-raw-captureraw_capture" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[raw_capture]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/crabcache/raw_capture&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">max_index_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span><span class="w">                   </span><span class="c1"># index.jsonl 最大行数</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">max_body_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span><span class="w">                    </span><span class="c1"># bodies/ 最大文件数</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">max_client_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">                     </span><span class="c1"># 客户端 body 最大字节（0=无限制）</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">max_upstream_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">                   </span><span class="c1"># 上游 body 最大字节</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">mask_api_keys</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">                    </span><span class="c1"># body 中是否脱敏 sk-* 密钥</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">sample_rate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.0</span><span class="w">                        </span><span class="c1"># 采样率（0.0~1.0）</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">sample_always_on_error</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">            </span><span class="c1"># 错误请求必采</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">sample_always_on_large_body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">      </span><span class="c1"># 大请求必采</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">min_body_bytes_for_large</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2097152</span><span class="w">       </span><span class="c1"># 大请求阈值（2 MiB）</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">skip_paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/health&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/healthz&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/ready&quot;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="23-tracing-subscriber">2.3 运行日志（tracing-subscriber）<a class="headerlink" href="#23-tracing-subscriber" title="Permanent link">&para;</a></h3>
+<p>网关启动时自动初始化，无 TOML 配置项。通过环境变量控制：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>作用</th>
+<th>默认值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RUST_LOG</code></td>
+<td>文件日志级别过滤</td>
+<td><code>info</code></td>
+</tr>
+<tr>
+<td><code>RUST_LOG_STDOUT</code></td>
+<td>控制台日志级别过滤</td>
+<td><code>warn</code></td>
+</tr>
+</tbody>
+</table>
+<p>文件输出：<code>./logs/gateway.log</code>，按天轮转，JSON 格式，由 <code>tracing-appender</code> 管理。</p>
+<h3 id="24">2.4 调试日志<a class="headerlink" href="#24" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_DEBUG_LOG_PATH</code></td>
+<td>NDJSON 调试日志文件路径（不设置=禁用）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_DEBUG_RUN_ID</code></td>
+<td>调试运行标识（写入每行 JSON）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_DEBUG_SESSION_ID</code></td>
+<td>调试会话标识</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3">3. 数据写入链路<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
+<h3 id="31-trace">3.1 Trace 日志生命周期<a class="headerlink" href="#31-trace" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>请求完成 (ProxyHttp::logging)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  │
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  ├─ SanitizedLogEntry::from_request()
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  │   ├─ SHA256(body)[:16] → request_hash
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  │   ├─ SHA256(body)[:8] % 100 → semantic_cluster
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  │   └─ mask_api_keys(truncate(body)) → request_messages_snapshot
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  │
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>  ├─ 填充 60+ 字段（延迟/Token/路由/审计/阶段耗时）
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>  │   ├─ apply_user_id_audit_to_entry()
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>  │   ├─ compute_phase_durations()
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>  │   └─ build_response_preview()
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  │
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>  └─ TraceLogger::log(entry)
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>      │
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>      ├─ mpsc::channel → crab-trace-writer 线程
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>      │   └─ RotatingJsonlWriter → trace.jsonl
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>      │       ├─ 每 100 行 flush
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>      │       └─ 达 max_lines → rotate（rename + cleanup）
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>      │
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>      └─ pg_sink.try_send() → PG 批量写入
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>          └─ INSERT INTO trace_logs ... ON CONFLICT DO NOTHING
+</code></pre></div>
+<h3 id="32-jsonl-pg">3.2 JSONL → PG 同步（已废弃）<a class="headerlink" href="#32-jsonl-pg" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p><strong>注意</strong>：<code>pg_sync</code> 已在 PG 权威日志存储改造中移除。Gateway 直写 PG（配置 <code>trace_logging.pg_url</code>）是唯一推荐路径。JSONL 仅作为本地 fallback 缓冲，不再有从 Admin 侧同步到 PG 的代码路径。</p>
+</blockquote>
+<h3 id="33-raw-capture">3.3 Raw Capture 采样决策<a class="headerlink" href="#33-raw-capture" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>should_skip(path)?  →  跳过 /health 等
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>should_sample(error, body_bytes)?
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  ├─ AlwaysCapture: upstream 4xx/5xx 错误（sample_always_on_error=true）
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  ├─ AlwaysCapture: body &gt; min_body_bytes_for_large（sample_always_on_large_body=true）
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  ├─ Capture: random &lt; sample_rate
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  └─ Skip
+</code></pre></div>
+<hr />
+<h2 id="4-pg">4. PG 表结构<a class="headerlink" href="#4-pg" title="Permanent link">&para;</a></h2>
+<h3 id="41-trace_logs">4.1 trace_logs<a class="headerlink" href="#41-trace_logs" title="Permanent link">&para;</a></h3>
+<p>主键：<code>(request_hash, timestamp_ms)</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">trace_logs</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="n">request_hash</span><span class="w">    </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="n">timestamp_ms</span><span class="w">    </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">content_length</span><span class="w">  </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="n">semantic_cluster</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="n">model</span><span class="w">           </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="n">prompt_tokens</span><span class="w">   </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="n">latency_ms</span><span class="w">      </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="n">cache_hit</span><span class="w">       </span><span class="nb">BOOLEAN</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="n">conversation_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="n">consumer</span><span class="w">        </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="k">domain</span><span class="w">          </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="n">project_id</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="n">upstream_latency_ms</span><span class="w"> </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="p">,</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">    </span><span class="n">ttft_ms</span><span class="w">         </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">    </span><span class="n">input_tokens</span><span class="w">    </span><span class="nb">BIGINT</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">    </span><span class="n">output_tokens</span><span class="w">   </span><span class="nb">BIGINT</span><span class="p">,</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">    </span><span class="n">cache_tier</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">    </span><span class="n">composition</span><span class="w">     </span><span class="n">JSONB</span><span class="p">,</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">    </span><span class="n">request_messages_snapshot</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">    </span><span class="n">response_preview</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">    </span><span class="n">retired_prefix_messages</span><span class="w"> </span><span class="nb">INTEGER</span><span class="p">,</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">    </span><span class="n">reasoning_strategy</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">    </span><span class="n">prompt_cache_hit_ratio</span><span class="w"> </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="p">,</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">    </span><span class="n">upstream_profile_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">    </span><span class="n">pipeline</span><span class="w">        </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">    </span><span class="n">upstream_model</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">    </span><span class="n">client_body_user_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">    </span><span class="n">upstream_user_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">    </span><span class="n">user_id_audit</span><span class="w">   </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">    </span><span class="n">upstream_key_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">    </span><span class="n">session_store</span><span class="w">   </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="n">stable_session_kind</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">    </span><span class="n">upstream_outbound_bytes</span><span class="w"> </span><span class="nb">INTEGER</span><span class="p">,</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">    </span><span class="n">prefill_ms</span><span class="w">      </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="p">,</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="w">    </span><span class="n">pre_header_ms</span><span class="w">   </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="p">,</span>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">    </span><span class="n">affinity_key</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">    </span><span class="n">affinity_kind</span><span class="w">   </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">    </span><span class="n">backend_name</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="w">    </span><span class="n">session_fingerprint</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="w">    </span><span class="n">is_coalesced</span><span class="w">    </span><span class="nb">BOOLEAN</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">false</span><span class="p">,</span>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="w">    </span><span class="n">client_key_id</span><span class="w">   </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="w">    </span><span class="n">request_passthrough</span><span class="w"> </span><span class="nb">BOOLEAN</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">false</span><span class="p">,</span>
+<a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a><span class="w">    </span><span class="n">request_passthrough_prefix_len</span><span class="w"> </span><span class="nb">INTEGER</span><span class="p">,</span>
+<a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a><span class="w">    </span><span class="n">status_code</span><span class="w">     </span><span class="nb">INTEGER</span><span class="p">,</span>
+<a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a><span class="w">    </span><span class="n">error_code</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a><span class="w">    </span><span class="n">limit_source</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a><span class="w">    </span><span class="n">cache_decision</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a><span class="w">    </span><span class="n">upstream_result</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a><span class="w">    </span><span class="n">phase_durations_ms</span><span class="w"> </span><span class="n">JSONB</span><span class="p">,</span>
+<a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a><span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">request_hash</span><span class="p">,</span><span class="w"> </span><span class="n">timestamp_ms</span><span class="p">)</span>
+<a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a><span class="p">);</span>
+</code></pre></div>
+<p><strong>索引</strong>：
+- <code>idx_trace_ts</code> — <code>timestamp_ms DESC</code>
+- <code>idx_trace_consumer_ts</code> — <code>(consumer, timestamp_ms DESC)</code> WHERE consumer IS NOT NULL
+- <code>idx_trace_model_ts</code> — <code>(model, timestamp_ms DESC)</code>
+- <code>idx_trace_cache_tier</code> — <code>(cache_tier, timestamp_ms DESC)</code> WHERE cache_tier IS NOT NULL</p>
+<h3 id="42-request_logs">4.2 request_logs<a class="headerlink" href="#42-request_logs" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">request_logs</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="n">id</span><span class="w">              </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="n">timestamp_ms</span><span class="w">    </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="n">model</span><span class="w">           </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="n">consumer</span><span class="w">        </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="n">duration_ms</span><span class="w">     </span><span class="n">DOUBLE</span><span class="w"> </span><span class="k">PRECISION</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="n">input_tokens</span><span class="w">    </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="n">output_tokens</span><span class="w">   </span><span class="nb">BIGINT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="n">cache_status</span><span class="w">    </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="n">cache_tier</span><span class="w">      </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="n">status_code</span><span class="w">     </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">    </span><span class="n">conversation_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="n">route_backend</span><span class="w">   </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="n">request_payload</span><span class="w"> </span><span class="n">JSONB</span><span class="p">,</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="n">response_body</span><span class="w">   </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">    </span><span class="n">created_at</span><span class="w">      </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="n">now</span><span class="p">()</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="p">);</span>
+</code></pre></div>
+<h4 id="request_logs-vs-trace_logs">request_logs vs trace_logs 合并评估<a class="headerlink" href="#request_logs-vs-trace_logs" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th><code>trace_logs</code></th>
+<th><code>request_logs</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>列数</td>
+<td>43+</td>
+<td>14</td>
+</tr>
+<tr>
+<td>主键</td>
+<td><code>(request_hash, timestamp_ms)</code></td>
+<td><code>id TEXT</code></td>
+</tr>
+<tr>
+<td>数据来源</td>
+<td>Gateway tracing（完整生命周期）</td>
+<td>Gateway request_filter（基础信息）</td>
+</tr>
+<tr>
+<td>特有字段</td>
+<td><code>phase_durations_ms</code>、<code>affinity_key</code>、<code>session_fingerprint</code>、缓存决策等</td>
+<td><code>request_payload</code>（完整 JSONB）、<code>response_body</code>（完整 TEXT）</td>
+</tr>
+<tr>
+<td>查询用途</td>
+<td>性能分析、缓存命中率、Token 统计、过滤查询</td>
+<td>快速列表（无过滤）、内存缓存</td>
+</tr>
+<tr>
+<td>分区支持</td>
+<td>已实现（按天分区）</td>
+<td>未分区</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论：不建议合并</strong></p>
+<ol>
+<li><strong>用途不同</strong>：<code>trace_logs</code> 是分析热表（43+ 列，被 WHERE 条件频繁查询），<code>request_logs</code> 是快速列表缓存（14 列，主要内存访问）。</li>
+<li><strong>行宽影响</strong>：将 <code>request_payload</code>（JSONB，可达数 KB）和 <code>response_body</code>（TEXT，可达数 KB）合并到 <code>trace_logs</code> 会显著增大行宽，影响全表扫描性能。</li>
+<li><strong>已有桥接</strong>：Dashboard Logs 页的过滤查询已走 <code>trace_logs</code>（<code>query_trace_logs_paginated</code>），<code>trace_entry_to_request_log</code> 函数负责转换。</li>
+<li><strong>数据重复</strong>：<code>request_logs</code> 的核心字段（model、consumer、duration_ms、tokens 等）在 <code>trace_logs</code> 中已有更精确的版本。</li>
+</ol>
+<p><strong>可做的小优化</strong>：</p>
+<ul>
+<li><code>request_logs</code> 也改为分区表（复用 <code>trace_logs</code> 的分区基础设施），提升清理效率</li>
+<li>评估 <code>request_logs</code> 的 PG 持久化是否仍需保留（当前内存缓存 + 双写 PG，可考虑仅内存 + 定期归档）</li>
+<li>确认 <code>request_logs</code> 写入量与 <code>trace_logs</code> 基本一致（每请求 1 条），避免数据不一致</li>
+</ul>
+<h3 id="43-audit_log">4.3 audit_log<a class="headerlink" href="#43-audit_log" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">audit_log</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="n">id</span><span class="w">          </span><span class="n">BIGSERIAL</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="k">timestamp</span><span class="w">   </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="n">NOW</span><span class="p">(),</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="n">action</span><span class="w">      </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="n">actor</span><span class="w">       </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="n">target</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="n">detail</span><span class="w">      </span><span class="n">JSONB</span><span class="p">,</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="n">ip_address</span><span class="w">  </span><span class="nb">TEXT</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="p">);</span>
+</code></pre></div>
+<hr />
+<h2 id="5">5. 后台任务<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>间隔</th>
+<th>功能</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>log_retention_loop</code></td>
+<td>10 分钟</td>
+<td>JSONL 文件清理 + PG 行修剪 + Prometheus 指标更新</td>
+<td><code>RetentionPolicy</code>（Dashboard 可调）</td>
+</tr>
+<tr>
+<td><code>pg_sync</code></td>
+<td><strong>已移除</strong></td>
+<td>Gateway 直写 PG 替代</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>key_usage_sync</code></td>
+<td>60 秒</td>
+<td>从 trace 日志同步 Key 月度 Token 用量</td>
+<td><code>CRABCACHE_KEY_USAGE_SYNC_INTERVAL_SECS</code></td>
+</tr>
+<tr>
+<td><code>peak_hours_aggregator</code></td>
+<td>5 分钟</td>
+<td>模型高峰时段聚合写入 PG <code>model_peak_hours</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>domain_usage_sync</code></td>
+<td>60 秒</td>
+<td>Gateway 域名用量 → PG 同步</td>
+<td><code>CRABCACHE_DOMAIN_USAGE_SYNC_INTERVAL_SECS</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6">6. 日常运维操作<a class="headerlink" href="#6" title="Permanent link">&para;</a></h2>
+<h3 id="61">6.1 查看日志磁盘用量<a class="headerlink" href="#61" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># API 查询</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/disk-usage<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># 直接查看文件</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>ls<span class="w"> </span>-lh<span class="w"> </span>/var/log/crabcache/trace.jsonl*
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>ls<span class="w"> </span>-lh<span class="w"> </span>/var/log/crabcache/trace-debug.jsonl*
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>du<span class="w"> </span>-sh<span class="w"> </span>/var/log/crabcache/raw_capture/
+</code></pre></div>
+<h3 id="62-pg">6.2 查看 PG 日志表行数<a class="headerlink" href="#62-pg" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># API（通过 Prometheus 指标）</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:9090/metrics<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>admin_log_pg_rows
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># 直连 PG</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>psql<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CRADMIN_PG_URL</span><span class="s2">&quot;</span><span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="s2">  SELECT &#39;trace_logs&#39; AS tbl, count(*) FROM trace_logs</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s2">  UNION ALL</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="s2">  SELECT &#39;request_logs&#39;, count(*) FROM request_logs</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="s2">  UNION ALL</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="s2">  SELECT &#39;audit_log&#39;, count(*) FROM audit_log;</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="s2">&quot;</span>
+</code></pre></div>
+<h3 id="63">6.3 手动清理日志<a class="headerlink" href="#63" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># 清理所有轮转文件（保留活跃文件）</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/clear<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;target&quot;: &quot;all&quot;}&#39;</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1"># 仅清理 7 天前的 trace 轮转文件</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/clear<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;target&quot;: &quot;trace_rotated&quot;, &quot;older_than_hours&quot;: 168}&#39;</span>
+</code></pre></div>
+<p><strong>清理目标</strong>：<code>trace_rotated</code> | <code>debug_rotated</code> | <code>capture</code> | <code>all</code></p>
+<h3 id="64">6.4 更新保留策略<a class="headerlink" href="#64" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># 查看当前策略</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/retention<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># 更新策略</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/retention<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="s1">    &quot;max_age_hours&quot;: 168,</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="s1">    &quot;max_disk_mb&quot;: 500,</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="s1">    &quot;max_trace_files&quot;: 20,</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="s1">    &quot;max_capture_body_files&quot;: 5000,</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="s1">    &quot;pg_retention_days&quot;: 7,</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="s1">    &quot;compress_before_delete&quot;: true,</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="s1">    &quot;compressed_retention_days&quot;: 30</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<h3 id="65-pg">6.5 PG 手动修剪<a class="headerlink" href="#65-pg" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># 删除 7 天前的 trace_logs</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>psql<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CRADMIN_PG_URL</span><span class="s2">&quot;</span><span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="s2">  DELETE FROM trace_logs</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="s2">  WHERE timestamp_ms &lt; extract(epoch from now() - interval &#39;7 days&#39;) * 1000;</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="s2">&quot;</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># 删除 30 天前的 audit_log</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>psql<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CRADMIN_PG_URL</span><span class="s2">&quot;</span><span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="s2">  DELETE FROM audit_log</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="s2">  WHERE timestamp &lt; now() - interval &#39;30 days&#39;;</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="s2">&quot;</span>
+</code></pre></div>
+<h3 id="66">6.6 查看请求日志<a class="headerlink" href="#66" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># 最近 50 条</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/logs?limit=50&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">&#39;.items[:3]&#39;</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># 按 consumer 过滤</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/logs?consumer=alice&amp;limit=20&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1"># 游标分页</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/logs?cursor=TIMESTAMP:HASH&amp;limit=50&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+</code></pre></div>
+<h3 id="67-raw-capture">6.7 查看 Raw Capture<a class="headerlink" href="#67-raw-capture" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># 最近 capture 列表</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/capture/list?hours=24&amp;limit=20&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1"># 单条 capture 详情（含 body）</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/capture/REQUEST_ID&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="c1"># capture 统计</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18001/api/admin/capture/stats?hours=24&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+</code></pre></div>
+<hr />
+<h2 id="7-prometheus">7. Prometheus 指标<a class="headerlink" href="#7-prometheus" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>类型</th>
+<th>标签</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>admin_log_writes_total</code></td>
+<td>Counter</td>
+<td><code>{log_type}</code></td>
+<td>trace/debug/capture 写入计数</td>
+</tr>
+<tr>
+<td><code>admin_log_pg_write_errors_total</code></td>
+<td>Counter</td>
+<td>—</td>
+<td>PG 写入失败计数</td>
+</tr>
+<tr>
+<td><code>admin_log_disk_bytes</code></td>
+<td>Gauge</td>
+<td><code>{log_type}</code></td>
+<td>各类日志磁盘字节数</td>
+</tr>
+<tr>
+<td><code>admin_log_pg_rows</code></td>
+<td>Gauge</td>
+<td><code>{table}</code></td>
+<td>PG 日志表行数</td>
+</tr>
+</tbody>
+</table>
+<p><code>log_type</code> 取值：<code>trace</code>、<code>debug</code>、<code>capture_index</code>、<code>capture_body</code>
+<code>table</code> 取值：<code>trace_logs</code>、<code>request_logs</code>、<code>audit_log</code></p>
+<hr />
+<h2 id="8">8. 前端页面<a class="headerlink" href="#8" title="Permanent link">&para;</a></h2>
+<h3 id="81-logs">8.1 请求日志页（Logs）<a class="headerlink" href="#81-logs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>路径：Dashboard → Logs</li>
+<li>功能：列表、详情、按 consumer/model/cache_status 过滤、游标分页</li>
+<li>数据源：PG 优先 → JSONL 回退（<code>load_trace_with_opts_auto</code>）</li>
+<li>列表 API 响应预览截断 200 字符（<code>CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS</code>）</li>
+</ul>
+<h3 id="82-logs-manage">8.2 日志管理页（Logs Manage）<a class="headerlink" href="#82-logs-manage" title="Permanent link">&para;</a></h3>
+<ul>
+<li>路径：Dashboard → Logs → Manage</li>
+<li>功能：</li>
+<li>磁盘用量可视化（堆叠进度条）</li>
+<li>保留策略配置（表单，实时生效）</li>
+<li>手动清理（带二次确认）</li>
+</ul>
+<h3 id="83-audit">8.3 审计日志页（Audit）<a class="headerlink" href="#83-audit" title="Permanent link">&para;</a></h3>
+<ul>
+<li>路径：Dashboard → Audit</li>
+<li>功能：按 action 过滤、分页加载（每页 50 条）</li>
+<li>Action 类型：<code>create_key</code>、<code>revoke_key</code>、<code>put_domain_policies</code>、<code>cache_invalidate</code>、<code>update_cache_config</code>、<code>clear_logs</code></li>
+</ul>
+<h3 id="84-capture">8.4 Capture 页<a class="headerlink" href="#84-capture" title="Permanent link">&para;</a></h3>
+<ul>
+<li>路径：Dashboard → Capture</li>
+<li>功能：列表（多维过滤）、详情（client/upstream body）、统计（推理注入率等）</li>
+</ul>
+<hr />
+<h2 id="9">9. 故障排查<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
+<h3 id="91-trace">9.1 Trace 日志不生成<a class="headerlink" href="#91-trace" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：Dashboard Logs 页无数据，<code>trace.jsonl</code> 不存在。</p>
+<p><strong>排查</strong>：
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># 1. 检查配置</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>grep<span class="w"> </span>-A5<span class="w"> </span><span class="s1">&#39;\[trace_logging\]&#39;</span><span class="w"> </span>config/gateway.toml
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># 2. 检查目录权限</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>ls<span class="w"> </span>-la<span class="w"> </span>/var/log/crabcache/
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># 3. 检查网关日志</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>grep<span class="w"> </span>-i<span class="w"> </span><span class="s2">&quot;trace.*init\|trace.*fail&quot;</span><span class="w"> </span>./logs/gateway.log.*<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-5
+</code></pre></div></p>
+<p><strong>原因</strong>：<code>enabled = false</code>（默认）或目录无写权限。</p>
+<h3 id="92-pg">9.2 PG 同步滞后<a class="headerlink" href="#92-pg" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：Dashboard 数据延迟 &gt; 30 秒。</p>
+<p><strong>排查</strong>：
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># 1. 检查同步任务是否启用</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>grep<span class="w"> </span><span class="s2">&quot;PG sync&quot;</span><span class="w"> </span>./logs/gateway.log.*<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-3
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># 2. 检查 PG 连接</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>psql<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CRADMIN_PG_URL</span><span class="s2">&quot;</span><span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;SELECT 1&quot;</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># 3. 检查是否有冲突</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>grep<span class="w"> </span><span class="s2">&quot;duplicate key\|ON CONFLICT&quot;</span><span class="w"> </span>./logs/gateway.log.*<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-5
+</code></pre></div></p>
+<p><strong>原因</strong>：PG 不可达或 Gateway <code>trace_logging.pg_url</code> 未配置。JSONL 仅作为本地 fallback 缓冲，不再有 Admin 侧同步路径。推荐配置 <code>trace_logging.pg_url</code> 使 Gateway 直写 PG。</p>
+<h3 id="93">9.3 磁盘占用过高<a class="headerlink" href="#93" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：<code>admin_log_disk_bytes</code> 持续增长。</p>
+<p><strong>排查</strong>：
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># 查看各类日志占用</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/disk-usage<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1"># 查看保留策略</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18001/api/admin/logs/retention<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+</code></pre></div></p>
+<p><strong>处理</strong>：
+1. 降低 <code>max_age_hours</code> 或 <code>max_disk_mb</code>
+2. 降低 <code>max_trace_files</code>、<code>max_capture_body_files</code>
+3. 启用 <code>compress_before_delete</code> 压缩旧文件
+4. 手动执行 <code>POST /api/admin/logs/clear</code></p>
+<h3 id="94-trace">9.4 Trace 截断<a class="headerlink" href="#94-trace" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：日志中出现 <code>trace log truncated from tail</code>，分析丢失早期数据。</p>
+<p><strong>原因</strong>：<code>trace.jsonl</code> 超过 <code>MAX_TRACE_READ_BYTES</code>（32 MiB）。</p>
+<p><strong>处理</strong>：
+- 增加 <code>max_lines</code> 加速轮转（单文件更小）
+- 增加 <code>max_files</code> 保留更多历史
+- 使用 PG 作为主要查询源（无截断问题）</p>
+<h3 id="95-capture-body">9.5 Capture body 文件堆积<a class="headerlink" href="#95-capture-body" title="Permanent link">&para;</a></h3>
+<p><strong>症状</strong>：<code>capture_body_bytes</code> 过大。</p>
+<p><strong>处理</strong>：
+- 降低 <code>max_body_files</code>（默认 5000）
+- 降低 <code>sample_rate</code>（如 0.1 = 10% 采样）
+- 启用 <code>sample_always_on_large_body = false</code>
+- 手动清理：<code>POST /api/admin/logs/clear</code> target=<code>capture</code></p>
+<hr />
+<h2 id="10">10. 保留策略默认值<a class="headerlink" href="#10" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">RetentionPolicy</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span><span class="n">max_age_hours</span><span class="p">:</span><span class="w"> </span><span class="mi">168</span><span class="p">,</span><span class="w">           </span><span class="c1">// 7 天</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="n">max_disk_mb</span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="p">,</span><span class="w">             </span><span class="c1">// 500 MB</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="n">max_trace_files</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w">          </span><span class="c1">// 20 个轮转文件</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="n">max_capture_body_files</span><span class="p">:</span><span class="w"> </span><span class="mi">5000</span><span class="p">,</span><span class="w"> </span><span class="c1">// 5000 个 body 文件</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="n">pg_retention_days</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span><span class="w">         </span><span class="c1">// PG 保留 7 天</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">    </span><span class="n">compress_before_delete</span><span class="p">:</span><span class="w"> </span><span class="nc">false</span><span class="p">,</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="n">compressed_retention_days</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>轮转逻辑</strong>：
+- Gateway 侧：<code>RotatingJsonlWriter</code> 达到 <code>max_lines</code> 时 rename 当前文件为 <code>trace.jsonl.YYYYMMDD_HHMMSS</code>，创建新文件，删除超过 <code>max_files</code> 的旧文件
+- Admin 侧：<code>log_retention_loop</code> 每 10 分钟执行 <code>enforce_retention()</code>，按策略删除过期/超量/超大文件</p>
+<hr />
+<h2 id="11">11. 安全与脱敏<a class="headerlink" href="#11" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>机制</th>
+<th>位置</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API Key 脱敏</td>
+<td><code>masking.rs</code></td>
+<td>正则 <code>sk-[a-zA-Z0-9_-]{5,}</code> → 前 4 + 后 4（如 <code>sk-c...k1l2</code>）</td>
+</tr>
+<tr>
+<td>请求体截断</td>
+<td><code>max_payload_bytes</code></td>
+<td>UTF-8 安全截断（<code>floor_char_boundary</code>），附加 <code>...&lt;truncated&gt;</code></td>
+</tr>
+<tr>
+<td>响应预览截断</td>
+<td><code>max_response_preview_bytes</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td>列表 API 截断</td>
+<td><code>CRABCACHE_ADMIN_LOG_LIST_PREVIEW_CHARS</code></td>
+<td>默认 200 字符</td>
+</tr>
+<tr>
+<td>user_id 审计</td>
+<td><code>user_id_audit.rs</code></td>
+<td>5 种状态自动检测 DeepSeek 隔离泄漏</td>
+</tr>
+<tr>
+<td>SecretString</td>
+<td>配置加载</td>
+<td>密钥自动遮盖，不进日志</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12">12. 架构决策<a class="headerlink" href="#12" title="Permanent link">&para;</a></h2>
+<h3 id="jsonl-pg">为什么同时写 JSONL 和 PG？<a class="headerlink" href="#jsonl-pg" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>JSONL</strong>：零依赖、低延迟、Gateway 直接写入、适合实时 tail 读取</li>
+<li><strong>PG</strong>：结构化查询、索引过滤、分页、聚合分析、长期保留</li>
+<li><strong>双写</strong>：JSONL 作为热路径保证写入性能，PG 作为冷路径支持复杂查询</li>
+</ul>
+<h3 id="_2">为什么用增量尾读而非全量扫描？<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p><code>LiveTraceCache</code> 跟踪 file_len + inode，每次 poll 仅读取新增字节。2 秒轮询间隔下，增量读取开销 &lt; 10ms，全量扫描可能 &gt; 100ms（大文件）。</p>
+<h3 id="trace-capture">为什么 Trace 和 Capture 分开存储？<a class="headerlink" href="#trace-capture" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Trace</strong>：轻量元数据（~1KB/条），适合高频查询和聚合</li>
+<li><strong>Capture</strong>：完整 body（可能 &gt; 1MB/条），仅在需要排查时按需加载</li>
+<li>分离避免 Trace 查询被大 body 文件拖慢</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

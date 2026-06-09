@@ -1,0 +1,2027 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/CURSOR_SETUP/">
+      
+      
+        <link rel="prev" href="../DESIGN/">
+      
+      
+        <link rel="next" href="../NEW_API_MIGRATION/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Cursor + DeepSeek 接入 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cursor-deepseek-thinking" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Cursor + DeepSeek 接入
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        架构
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="架构">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        请求管道（自动选择）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        公网入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursor 配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reasoning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        上游与 reasoning 配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="上游与 reasoning 配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cursor_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐配置（Cursor 默认）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reasoningstore-recover-notice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReasoningStore 持久化 + 稳定会话（减少 recover / notice）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reasoning_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        清空 reasoning 缓存
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        过渡期（单 Key）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker 快速启动
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursor_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生产检查清单（跑通 Cursor）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-api-key-rate-limit-exceeded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限流排查（User API Key Rate limit exceeded）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="限流排查（User API Key Rate limit exceeded）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-profiledefault-cursordeepseekv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek Profile（default / CursorDeepSeekV4）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mimo-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MiMo Profile
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        通用
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#new-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        模型后缀（对齐 new-api）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15s-connectionclosed0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        上游 ~15s ConnectionClosed（0 字节响应）
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OBSERVABILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        架构
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="架构">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        请求管道（自动选择）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        公网入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursor 配置
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reasoning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        上游与 reasoning 配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="上游与 reasoning 配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cursor_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐配置（Cursor 默认）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reasoningstore-recover-notice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReasoningStore 持久化 + 稳定会话（减少 recover / notice）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reasoning_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        清空 reasoning 缓存
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        过渡期（单 Key）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker 快速启动
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursor_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生产检查清单（跑通 Cursor）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-api-key-rate-limit-exceeded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限流排查（User API Key Rate limit exceeded）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="限流排查（User API Key Rate limit exceeded）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-profiledefault-cursordeepseekv4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek Profile（default / CursorDeepSeekV4）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mimo-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MiMo Profile
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        通用
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#new-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        模型后缀（对齐 new-api）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15s-connectionclosed0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        上游 ~15s ConnectionClosed（0 字节响应）
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cursor-deepseek-thinking">Cursor + DeepSeek Thinking 接入指南<a class="headerlink" href="#cursor-deepseek-thinking" title="Permanent link">&para;</a></h1>
+<p>CrabCache 在网关内内置了与 <a href="https://github.com/yxlao/deepseek-cursor-proxy">deepseek-cursor-proxy</a> 等价的 <strong>reasoning_content</strong> 注入、恢复与流式缓存逻辑（Rust：<code>crab-reasoning</code>）。仓库内 <code>deepseek-cursor-proxy/</code> 与 Go 版 <a href="../cursor-deepseek/"><code>cursor-deepseek/</code></a> 仅为对照参考，无需单独部署。Go 侧「<code>gpt-4o</code> 等模型别名」体验的吸收路线图见 <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/"><code>CURSOR_DEEPSEEK_ABSORPTION_PLAN.md</code></a>；协议对照见 <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/"><code>DEEPSEEK_CURSOR_PROXY_PARITY.md</code></a>。</p>
+<h2 id="_1">架构<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Cursor  →  HTTPS  →  CrabCache (:8080)  →  DeepSeek API
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>              sk-cc-*              upstream key pool
+</code></pre></div>
+<ul>
+<li><strong>客户端 Key</strong>：Management API 颁发的 <code>sk-cc-*</code>（推荐）</li>
+<li><strong>上游 Key</strong>：<code>CRABCACHE_UPSTREAM_KEYS</code> 或 <code>[upstream].keys</code>（DeepSeek 账号密钥，勿下发给 Cursor）</li>
+</ul>
+<h3 id="_2">请求管道（自动选择）<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p>网关按 <strong>上游 profile</strong> 与 <strong>模型/客户端信号</strong> 选择三条管道之一（<code>crab-pipeline</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>管道</th>
+<th>典型场景</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cursor_deepseek_v4</code></td>
+<td>DeepSeek profile + <code>deepseek-v4-*</code> + Cursor/agent 信号</td>
+<td>Reasoning 注入/恢复、SSE 改写、L2 语义缓存</td>
+</tr>
+<tr>
+<td><code>deepseek_light</code></td>
+<td>DeepSeek profile + 其他 <code>deepseek-*</code>（如 <code>deepseek-chat</code>）</td>
+<td>仅字段规范化，<strong>不</strong>注入 <code>thinking</code></td>
+</tr>
+<tr>
+<td><code>generic_relay</code></td>
+<td>OpenAI/Anthropic 等 profile</td>
+<td>透传，不碰 reasoning</td>
+</tr>
+</tbody>
+</table>
+<p>默认 <strong>自动</strong>；可为 Key 或域名策略固定管道 / profile：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/keys&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;:&quot;cursor&quot;,&quot;enabled&quot;:true,&quot;pipeline&quot;:&quot;auto&quot;,&quot;upstream_profile&quot;:&quot;deepseek&quot;}&#39;</span>
+</code></pre></div>
+<p><code>pipeline_mode = "force_cursor_v4"</code>（<code>[gateway]</code>）可全局强制 V4 管道（调试）；生产建议 <code>auto</code>。</p>
+<p>多厂商上游见 <code>config/gateway.example.toml</code> 中 <code>[[upstream.profiles]]</code> 与 <code>[gateway] default_upstream_profile</code>。</p>
+<h2 id="_3">公网入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>Cursor 无法使用 <code>localhost</code> 作为 API Base URL。任选其一：</p>
+<ol>
+<li><strong>Nginx / Caddy</strong> 反代本机 <code>127.0.0.1:8080</code>（见 <a href="../deploy/nginx/crabcache-api.conf.example"><code>deploy/nginx/crabcache-api.conf.example</code></a>）</li>
+<li><strong><a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/">Cloudflare Tunnel</a></strong></li>
+<li><strong>手动 ngrok</strong>：<code>ngrok http 8080</code>，将打印的 HTTPS URL 用作 Base URL 根</li>
+</ol>
+<p>CrabCache <strong>不内置</strong> ngrok 子进程；隧道由外部工具提供。</p>
+<h2 id="cursor">Cursor 配置<a class="headerlink" href="#cursor" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Base URL</td>
+<td><code>https://&lt;你的域名&gt;/v1</code></td>
+</tr>
+<tr>
+<td>API Key</td>
+<td><code>sk-cc-...</code>（Management <code>POST /v1/keys</code> 创建）</td>
+</tr>
+<tr>
+<td>Model</td>
+<td><code>deepseek-v4-pro</code> / <code>deepseek-v4-flash-max</code>，或配置别名如 <code>gpt-4o</code>（见 <code>[gateway.cursor_models]</code>）</td>
+</tr>
+</tbody>
+</table>
+<p>创建客户端 Key：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/keys&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;:&quot;cursor&quot;,&quot;enabled&quot;:true}&#39;</span>
+</code></pre></div>
+<h2 id="reasoning">上游与 reasoning 配置<a class="headerlink" href="#reasoning" title="Permanent link">&para;</a></h2>
+<p><code>config/gateway.toml</code> 中 <code>[reasoning]</code> 段：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>missing_reasoning_strategy = "recover"</code></td>
+<td><strong>默认（与 deepseek-cursor-proxy 一致）</strong>；<code>client_key</code>/<code>x-conversation-id</code> 下就地补 reasoning，不截断 tool 历史</td>
+</tr>
+<tr>
+<td><code>missing_reasoning_strategy = "reject"</code></td>
+<td>无法恢复时 <strong>HTTP 409</strong>（与 proxy <code>--missing-reasoning-strategy reject</code> 一致）</td>
+</tr>
+<tr>
+<td><code>display_reasoning = true</code></td>
+<td>非流式：可折叠 <code>&lt;details&gt;</code> Thinking；<strong>流式</strong>：思考 mirror 到 <code>delta.content</code>，不下发 <code>reasoning_content</code> 字段</td>
+</tr>
+<tr>
+<td><code>display_reasoning = false</code></td>
+<td><strong>静默模式</strong>（默认，<code>gateway.toml</code> / <code>gateway.docker.toml</code>）：思考仅存 ReasoningStore；下发 Cursor 前统一 <code>sanitize_client_completion</code>（剥 <code>reasoning_content</code> 与 <code>&lt;details&gt;Thinking</code> 块）。缓存命中在静默模式下也会 regen 带 Thinking 标记的旧 <code>sse_body</code>。切换后见 <a href="../DSV4_CC_PROXY_REFERENCE/">DSV4_CC_PROXY_REFERENCE.md</a> 清 L0/L1</td>
+</tr>
+<tr>
+<td><code>stream_cache_enabled</code>（<code>[cache]</code>）</td>
+<td>流式响应缓存；Stop 后仍会持久化已收到的 partial reasoning</td>
+</tr>
+</tbody>
+</table>
+<p>公网域名+端口部署时 Base URL 须包含端口，例如 <code>https://v4.example.com:18000/v1</code>（不是无端口 URL）。</p>
+<h3 id="cursor_1">推荐配置（Cursor 默认）<a class="headerlink" href="#cursor_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[reasoning]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">thinking_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;enabled&quot;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">reasoning_effort</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;max&quot;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">missing_reasoning_strategy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;recover&quot;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">display_reasoning</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">collapsible_reasoning</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">[cache]</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">stream_cache_enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">[reasoning]</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">backend</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;redis&quot;</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">redis_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;redis://127.0.0.1:6379&quot;</span>
+</code></pre></div>
+<h3 id="reasoningstore-recover-notice">ReasoningStore 持久化 + 稳定会话（减少 recover / notice）<a class="headerlink" href="#reasoningstore-recover-notice" title="Permanent link">&para;</a></h3>
+<p>完整说明见 <strong><a href="../REASONING_STORE/">REASONING_STORE.md</a></strong>（scope 优先级、部署检查清单、验收脚本）。</p>
+<ol>
+<li><strong><code>[reasoning].backend = "redis"</code></strong>（或 <code>CRABCACHE_REASONING_BACKEND=redis</code>）：思考链写入 Redis <code>crab:reasoning:*</code>，容器重启、多副本共享；Docker 见 <code>config/gateway.docker.toml</code>（已默认 redis）。</li>
+<li><strong>稳定会话 ID</strong>：<code>x-conversation-id</code> / <code>prompt_cache_key</code> / <strong><code>client:&lt;sk-cc&gt;</code></strong> → ReasoningStore 固定 scope；多轮 tool 历史从 Redis 补全。</li>
+<li><strong>Cursor 侧</strong>：尽量带 <code>x-conversation-id</code>；否则自动用 <code>sk-cc</code> 哈希作 scope。</li>
+<li><strong>任务卡住</strong>：入站 recovery notice 会先剥离；有稳定 scope 时不做 <code>latest_user</code> 截断（见 H-G <code>upstream_msg_count</code>）。</li>
+<li><strong>验收</strong>：日志 <code>Prepared upstream request</code> 中 <code>patched &gt; 0</code>、<code>recovered = 0</code> 表示 Store 补全成功；若频繁 <code>recovered &gt; 0</code> 且出现 <code>[crabcache] Refreshed reasoning_content history.</code>，检查 Redis 与是否缺少会话头。</li>
+</ol>
+<p>部署或升级网关后，<strong>务必清理一次 L0/L1 旧缓存</strong>（旧条目可能混用 <code>stream:true/false</code> 键）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/cache/invalidate&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-cache-invalidate-confirm: all&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;scope&quot;:&quot;all&quot;}&#39;</span>
+</code></pre></div>
+<p>可选：将 <code>fingerprint_version</code> 加 1（<code>PUT /v1/cache/fingerprint</code>）使旧精确缓存键自然 miss。</p>
+<p><strong>L3 前缀</strong>：<code>recover</code> 会截断不可恢复历史（与 proxy 一致）；冲 L3 时固定 system + 追加消息，并配 <code>x-conversation-id</code>（见 <a href="../DEEPSEEK_PREFIX_CACHE/"><code>DEEPSEEK_PREFIX_CACHE.md</code></a>）。</p>
+<p>热更新（无需重启）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/runtime/pipeline&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;pipeline_mode&quot;:&quot;auto&quot;,&quot;default_upstream_profile&quot;:&quot;deepseek&quot;,&quot;profiles&quot;:[{&quot;id&quot;:&quot;deepseek&quot;,&quot;provider&quot;:&quot;deepseek&quot;}]}&#39;</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/runtime/reasoning&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;thinking_mode&quot;:&quot;enabled&quot;,&quot;reasoning_effort&quot;:&quot;max&quot;,&quot;missing_reasoning_strategy&quot;:&quot;recover&quot;,&quot;display_reasoning&quot;:true,&quot;collapsible_reasoning&quot;:true}&#39;</span>
+</code></pre></div>
+<h2 id="reasoning_1">清空 reasoning 缓存<a class="headerlink" href="#reasoning_1" title="Permanent link">&para;</a></h2>
+<p>当出现异常历史或调试 strict 模式时：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># CLI</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>crab-gateway<span class="w"> </span>--clear-reasoning-cache<span class="w"> </span>config/gateway.toml
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Management API</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:9080/v1/reasoning/cache&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;x-gateway-admin-key: </span><span class="si">${</span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="si">}</span><span class="s2">&quot;</span>
+</code></pre></div>
+<h2 id="key">过渡期（单 Key）<a class="headerlink" href="#key" title="Permanent link">&para;</a></h2>
+<p>若短期内无法更换 Cursor 中的 Key，可启用 legacy 客户端认证（<strong>不推荐生产</strong>）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[gateway]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">legacy_api_key_as_client_auth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</code></pre></div>
+<p>详见 <a href="../AGENT_CLIENT_KEY_MIGRATION/"><code>AGENT_CLIENT_KEY_MIGRATION.md</code></a>。</p>
+<h2 id="docker">Docker 快速启动<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1"># 设置 CRABCACHE_API_KEY、CRABCACHE_GATEWAY_ADMIN_KEY</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
+</code></pre></div>
+<p>验收（需先 <code>docker compose build gateway</code>）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">CLIENT_API_KEY</span><span class="o">=</span>sk-cc-...<span class="w"> </span>./scripts/verify_deployment.sh
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nv">CLIENT_API_KEY</span><span class="o">=</span>sk-cc-...<span class="w"> </span>bash<span class="w"> </span>scripts/verify_domain_port.sh
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># 可选第二模型</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nv">VERIFY_MODEL</span><span class="o">=</span>deepseek-v4-flash<span class="w"> </span><span class="nv">CLIENT_API_KEY</span><span class="o">=</span>sk-cc-...<span class="w"> </span>bash<span class="w"> </span>scripts/verify_domain_port.sh
+</code></pre></div>
+<p>脚本会校验流式响应中<strong>不得</strong>出现 <code>reasoning_content</code> 且包含 <code>data: [DONE]</code>。</p>
+<p>一键 Cursor 验收：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DOMAIN</span><span class="o">=</span>v4.example.com
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CLIENT_API_KEY</span><span class="o">=</span>sk-cc-...
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">CRABCACHE_GATEWAY_ADMIN_KEY</span><span class="o">=</span>...
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>bash<span class="w"> </span>scripts/verify_cursor_e2e.sh
+</code></pre></div>
+<h2 id="cursor_2">生产检查清单（跑通 Cursor）<a class="headerlink" href="#cursor_2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>命令 / 配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>多上游 Key</td>
+<td><code>.env</code> 设置 <code>CRABCACHE_UPSTREAM_KEYS=sk-1,sk-2,...</code></td>
+</tr>
+<tr>
+<td>客户端 Key</td>
+<td><code>POST /v1/keys</code> 创建 <code>sk-cc-*</code>，Cursor 仅填此 Key</td>
+</tr>
+<tr>
+<td>TLS</td>
+<td><code>curl -sS https://&lt;domain&gt;:18000/ready</code> 无 <code>-k</code> 返回 200</td>
+</tr>
+<tr>
+<td>清缓存</td>
+<td><code>POST /v1/cache/invalidate</code> + <code>x-cache-invalidate-confirm: all</code></td>
+</tr>
+<tr>
+<td>上游池状态</td>
+<td><code>GET /v1/upstream/keys</code> → <code>cooldown_remaining_secs</code> 应为 0</td>
+</tr>
+</tbody>
+</table>
+<h2 id="user-api-key-rate-limit-exceeded">限流排查（<code>User API Key Rate limit exceeded</code>）<a class="headerlink" href="#user-api-key-rate-limit-exceeded" title="Permanent link">&para;</a></h2>
+<p>Cursor 常把该文案显示为 <strong>「用户提供的 API Key 限流」</strong>，多数情况下指 <strong>网关转发的上游厂商 Key</strong>，而不是 Cursor 里填的 <code>sk-cc-*</code>（客户端 Key 默认 <code>rpm_limit=0</code> 即不限）。</p>
+<p>完整对照表与 Prometheus 核对见 <strong><a href="../OPS_RUNBOOK/">OPS_RUNBOOK.md</a></strong>。</p>
+<h3 id="deepseek-profiledefault-cursordeepseekv4">DeepSeek Profile（<code>default</code> / CursorDeepSeekV4）<a class="headerlink" href="#deepseek-profiledefault-cursordeepseekv4" title="Permanent link">&para;</a></h3>
+<p>上游账号来自 Profile 的 API Key 池（环境变量 <code>CRABCACHE_UPSTREAM_KEYS</code> 或 Management <code>PUT /v1/upstream/profiles/{id}/keys</code>）。</p>
+<ol>
+<li>确认上游 Key 与手动 <code>curl api.deepseek.com</code> 测试用的是<strong>同一批有效 Key</strong>。</li>
+<li><code>GET /v1/upstream/profiles/default/keys</code>（或 <code>GET /v1/upstream/keys</code> 视部署）查看 <code>cooldown_remaining_secs</code>。</li>
+<li>增加池内 Key 数量（对齐 new-api MultiKey）。</li>
+<li>将 <code>reasoning_effort</code> 降为 <code>medium</code>（热更新见上文）。</li>
+<li>高峰仍不足：临时 <code>missing_reasoning_strategy=recover</code>（省 token，牺牲 L3 前缀命中）。</li>
+</ol>
+<h3 id="mimo-profile">MiMo Profile<a class="headerlink" href="#mimo-profile" title="Permanent link">&para;</a></h3>
+<p>日志表现为 <code>upstream rate limited, attempting key rotation</code>、HTTP <strong>429</strong>；仅 <strong>1 把</strong> 上游 Key 时 Prometheus 可见 <code>gateway_upstream_key_retries_total{outcome="cooldown_only"}</code>，并可能出现 <code>gateway_rejected_requests_total{reason="upstream_key_exhausted"}</code>（503，未打到厂商）。</p>
+<p><strong>多 Key 会话绑定</strong>（<code>mimo_key_binding = true</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>Binding key 来源</th>
+<th>优先级</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>conv:{conversation_id}</code></td>
+<td>1</td>
+<td>Cursor 下发 conversation id 时优先</td>
+</tr>
+<tr>
+<td><code>pck:{prompt_cache_key}</code></td>
+<td>2</td>
+<td>厂商 prompt cache key</td>
+</tr>
+<tr>
+<td><code>sfp:{session_fingerprint}</code></td>
+<td>3</td>
+<td>首条 <code>user</code> 消息内容 SHA256 前 16 位（不同对话通常不同）</td>
+</tr>
+<tr>
+<td>无上述字段</td>
+<td>—</td>
+<td>不做 sticky，走 Key 池轮询（<strong>不会</strong>再用 <code>sk-cc-*</code> 哈希绑定）</td>
+</tr>
+</tbody>
+</table>
+<p>并发与溢出：<code>mimo_key_max_inflight</code> 限制单 Key 并发；超出时在 <code>mimo_key_overflow_wait_ms</code> 内等待绑定 Key 的 semaphore，超时则 <strong>spill</strong> 到其他 Key（绑定关系不变，保前缀缓存亲和）。绑定 Key 冷却或 429 时解绑并轮换。</p>
+<p><strong>Prometheus 验收</strong>（多 Cursor 对话并行压测 5 分钟）：</p>
+<ul>
+<li><code>gateway_key_binding_total{event="miss"}</code> 随对话数增长（&gt;1）</li>
+<li><code>gateway_key_binding_total{event="spill"}</code> 偶发（inflight/cooldown），请求仍应 200</li>
+<li><code>gateway_upstream_key_inflight</code> 出现多个不同 <code>key_id</code></li>
+<li>
+<p>不应再出现 <code>refusing random key switch</code> 洪流</p>
+</li>
+<li>
+<p><code>GET /v1/upstream/profiles/mimo/keys</code> — 至少 <strong>2 把</strong> 启用 Key；429 轮换仅在 <strong><code>account_id</code> 不同</strong> 的 Key 间进行。</p>
+</li>
+<li>高峰 <strong>降低 Cursor 并行</strong>（多 Agent/Task）；大 body（数百 KB）会放大 QPS 压力。</li>
+<li>勿与「网关 sk-cc 限流」混淆：日志中不应出现 <code>Rate limit exceeded for this API key</code>（除非 Management 显式设置了 <code>rpm_limit</code>）。</li>
+<li>Coalescing：Leader 上游 429/失败时 Follower <strong>不会</strong>再打上游；可能出现批量 Follower 502，属防雪崩设计。</li>
+</ul>
+<h3 id="_4">通用<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<ol>
+<li>网关 Coalescing：Leader 上游失败时 Follower <strong>不会</strong>再打上游（避免雪崩）；日志中不应再出现大量 <code>falling through to upstream</code> 紧随 429。</li>
+</ol>
+<p>从 new-api 迁移：见 <a href="../NEW_API_MIGRATION/"><code>NEW_API_MIGRATION.md</code></a>。</p>
+<h2 id="new-api">模型后缀（对齐 new-api）<a class="headerlink" href="#new-api" title="Permanent link">&para;</a></h2>
+<p>Cursor 可使用：</p>
+<ul>
+<li><code>deepseek-v4-flash</code> + 配置中的 <code>reasoning_effort</code></li>
+<li><code>deepseek-v4-flash-max</code> → 自动映射为 <code>flash</code> + <code>thinking.enabled</code> + <code>reasoning_effort=max</code></li>
+<li><code>deepseek-v4-pro-none</code> → <code>thinking.disabled</code></li>
+</ul>
+<p>实现：<code>crates/crab-reasoning/src/normalize.rs</code> 中 <code>parse_deepseek_v4_thinking_suffix</code>。</p>
+<h2 id="15s-connectionclosed0">上游 ~15s <code>ConnectionClosed</code>（0 字节响应）<a class="headerlink" href="#15s-connectionclosed0" title="Permanent link">&para;</a></h2>
+<p>日志形如 <code>Upstream ConnectionClosed ... bytes already read: 0 ... duration_ms≈15000</code> 时，按优先级排查：</p>
+<table>
+<thead>
+<tr>
+<th>原因</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Chunked + Content-Length 冲突</strong></td>
+<td>Cursor 经 OpenResty 多为 HTTP/2 入站；Pingora 转上游 H1 时可能带 <code>Transfer-Encoding: chunked</code>，网关已在 <code>upstream_request_filter</code> <strong>去掉 TE、只保留 Content-Length</strong>（<code>upstream_headers.rs</code>）。</td>
+</tr>
+<tr>
+<td><strong>&gt;64KiB body 未发到上游</strong></td>
+<td><code>request_filter</code> 读光 body 后 Pingora retry buffer 仅 64KiB；超限则跳过首次 <code>send_body_to_pipe</code>，导致只发头不发 body。已 patch <code>third_party/pingora-proxy</code>（<code>retry_buffer_truncated</code> 时仍触发 body filter）+ <code>request_body_filter</code> 注入 <code>new_request_body</code>。</td>
+</tr>
+<tr>
+<td>DeepSeek / <strong>MiMo</strong> 限流 / WAF</td>
+<td>对端在返回 HTTP 头前关连接；文案常为 <code>User API Key Rate limit exceeded</code> → 加对应 Profile 上游 Key，MiMo 见上文 <a href="#mimo-profile">MiMo Profile</a></td>
+</tr>
+<tr>
+<td>Coalescing 雪崩</td>
+<td>已修复：Leader 失败时 Follower <strong>不再</strong> <code>falling through to upstream</code></td>
+</tr>
+</tbody>
+</table>
+<p>网关对替换后的上游请求还会：</p>
+<ul>
+<li><code>User-Agent: curl/8.7.1</code>、<code>Accept-Encoding: gzip, deflate, br</code>（网关在上游响应侧解压，见 <code>upstream_response_decompress.rs</code>）</li>
+<li>流式：<code>Accept: text/event-stream</code>；非流式：<code>Accept: application/json</code></li>
+</ul>
+<p><strong>JA3 / TLS 指纹</strong>：主网关上游（chat/completions）由 Pingora BoringSSL 控制，仅支持曲线顺序调优（<code>[connection] upstream_tls_curves</code>），无法模拟完整浏览器 JA3/JA4。OAuth 出站（Claude/Gemini/xAI/Codex token exchange）已统一使用 <code>wreq</code> Chrome 浏览器仿真（JA3/JA4 级），可通过 <code>CRABCACHE_OAUTH_TLS_EMULATION</code> 环境变量切换预设（默认 <code>chrome130</code>，可选 <code>chrome124</code> 对齐 OmniRoute）。若 TE/CL 与请求头顺滑后仍断连，再考虑上游 TLS 套件调优（最后手段）。</p>
+<p>确认修复（<code>CRABCACHE_DEBUG_LOG_PATH</code>）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>build<span class="w"> </span>gateway<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>gateway
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>cat<span class="w"> </span>.cursor/debug-3f9816.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;select(.hypothesisId==&quot;H3&quot;)&#39;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># 期望：had_transfer_encoding 可为 true，但 header_names 中无 transfer-encoding</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>cat<span class="w"> </span>.cursor/debug-3f9816.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;select(.hypothesisId==&quot;R1&quot;)&#39;</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># header_to_body_ms 应 &lt; 50ms</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>cat<span class="w"> </span>.cursor/debug-3f9816.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;select(.hypothesisId==&quot;H1&quot;)&#39;</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># alpn 应为 &quot;H1&quot;</span>
+</code></pre></div>
+<p><code>[connection]</code> 推荐（已写入 <code>gateway.docker.toml</code>）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">upstream_force_http1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">upstream_request_timeout_secs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">upstream_write_timeout_secs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">upstream_connection_timeout_secs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">60</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">upstream_disable_keepalive</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

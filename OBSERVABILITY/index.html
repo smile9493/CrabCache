@@ -1,0 +1,3942 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CrabCache - 基于 Pingora 的多供应商 LLM API 高性能网关文档，以 DeepSeek V4 为重点">
+      
+      
+      
+        <link rel="canonical" href="https://smile9493.github.io/CrabCache/OBSERVABILITY/">
+      
+      
+        <link rel="prev" href="../REASONING_STORE/">
+      
+      
+        <link rel="next" href="../deploy-1panel-openresty/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>可观测性 - CrabCache 文档</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#crabcache" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="CrabCache 文档" class="md-header__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CrabCache 文档
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              可观测性
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换暗色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换暗色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换亮色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换亮色模式" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="CrabCache 文档" class="md-nav__button md-logo" aria-label="CrabCache 文档" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CrabCache 文档
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/smile9493/CrabCache" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    smile9493/CrabCache
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DESIGN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 设计规范
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    入门指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    入门指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor + DeepSeek 接入
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../NEW_API_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从 new-api 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_CLIENT_KEY_MIGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Key 迁移
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据面
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    数据面
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实现状态 P0-P2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_ACCEPTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2 验收手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DATA_PLANE_P3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P3 实验设计
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    供应商集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    供应商集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_PREFIX_CACHE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上游前缀缓存 L3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEEPSEEK_CURSOR_PROXY_PARITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cursor Proxy 对照
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CURSOR_DEEPSEEK_ABSORPTION_PLAN/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    功能吸收计划
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维管理
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    运维管理
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RUNTIME_LOG_FINDINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运行时日志结论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OPS_RUNBOOK/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维与事故处置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_TENANT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多租户隔离
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSISTENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    持久化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../REASONING_STORE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    推理内容存储
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        指标定义
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Dashboard
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Dashboard">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时客户端监控（/live）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="实时客户端监控（/live）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        调优建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-in-flight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        客户端 Key 并发（in-flight）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-per-user_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek per-user_id 并发软限（可选）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        影子日志
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="影子日志">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-user_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek user_id 隔离审计字段
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        请求组成分析（Request Composition）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="请求组成分析（Request Composition）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requestcomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RequestComposition 结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin 组成分析 API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 组成页面
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#composition-debug-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        组成调试日志（Composition Debug Logging）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="组成调试日志（Composition Debug Logging）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compositiondebugentry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CompositionDebugEntry 结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin 调试 API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dashboard_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 组成调试日志视图
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus 组成指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#raw-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        原始请求捕获（Raw Capture）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="原始请求捕获（Raw Capture）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        存储布局
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安全警告
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        思考模式上下文膨胀排查
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker 卷挂载
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus-grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus / Grafana（可选）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prometheus / Grafana（可选）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        域名标签
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据面可观测性指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="数据面可观测性指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Prometheus 指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#promql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PromQL 示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana 面板建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opentelemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetry（可选）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenTelemetry（可选）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        编译启用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行时配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#otel-collector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTel Collector 示例配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        敏感数据红线
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        客户端验证
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard-502-503" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 502 / 503 故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础设施监控
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="基础设施监控">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        采集机制
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据类型
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        环境变量
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        部署要求
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Plane 诊断
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Plane 诊断">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Prometheus 指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Trace 字段
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-plane-admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Plane Admin API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H3 部署要求
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限制
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview 验收清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy-1panel-openresty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1Panel + OpenResty
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../network-config.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    网络地址配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-signed-cert/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自签名证书
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        指标定义
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Dashboard
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Dashboard">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时客户端监控（/live）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="实时客户端监控（/live）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        调优建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-in-flight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        客户端 Key 并发（in-flight）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-per-user_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek per-user_id 并发软限（可选）
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        影子日志
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="影子日志">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deepseek-user_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek user_id 隔离审计字段
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        请求组成分析（Request Composition）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="请求组成分析（Request Composition）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requestcomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RequestComposition 结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin 组成分析 API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 组成页面
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#composition-debug-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        组成调试日志（Composition Debug Logging）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="组成调试日志（Composition Debug Logging）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compositiondebugentry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CompositionDebugEntry 结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin 调试 API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dashboard_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 组成调试日志视图
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus 组成指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#raw-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        原始请求捕获（Raw Capture）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="原始请求捕获（Raw Capture）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        存储布局
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安全警告
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-api_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        思考模式上下文膨胀排查
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker 卷挂载
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus-grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus / Grafana（可选）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prometheus / Grafana（可选）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        域名标签
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据面可观测性指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="数据面可观测性指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Prometheus 指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#promql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PromQL 示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana 面板建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opentelemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetry（可选）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenTelemetry（可选）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        编译启用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行时配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#otel-collector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTel Collector 示例配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        敏感数据红线
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        客户端验证
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard-502-503" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard 502 / 503 故障排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础设施监控
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="基础设施监控">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        采集机制
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        数据类型
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        环境变量
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        部署要求
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Plane 诊断
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Plane 诊断">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Prometheus 指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新增 Trace 字段
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-plane-admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Plane Admin API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H3 部署要求
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限制
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview 验收清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="crabcache">CrabCache 可观测性<a class="headerlink" href="#crabcache" title="Permanent link">&para;</a></h1>
+<p>三层架构：<strong>Prometheus（实时）</strong>、<strong>Admin Dashboard（运维）</strong>、<strong>影子追踪日志（离线调优）</strong>。</p>
+<p>数据面请求阶段耗时（<code>gateway_request_phase_latency_seconds</code>）与 prefix 索引预热计数见 <a href="../DATA_PLANE/">DATA_PLANE.md</a> 与下文指标表。</p>
+<p><strong>事故处置</strong>（MiMo 429、低命中率解读、Trace 截断）：见 <a href="../OPS_RUNBOOK/">OPS_RUNBOOK.md</a>。</p>
+<h2 id="_1">指标定义<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>指标 / UI 字段</th>
+<th>来源</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hit_rate_5m</code>（Dashboard）</td>
+<td>Admin 指标环，5 分钟增量</td>
+<td>网关 L0–L2 请求命中率（L2 路径先 <code>get_defer_miss</code> 再记 miss，避免 L2 命中双计；Coalesce Follower 回放计 hit）</td>
+</tr>
+<tr>
+<td><code>token_hit_rate_5m</code></td>
+<td><code>gateway_deepseek_input_tokens_total</code> 增量</td>
+<td>按 Token 加权的输入命中率（成本视角）</td>
+</tr>
+<tr>
+<td><code>hit_rate_cumulative</code></td>
+<td>Counter / 运行时间</td>
+<td>自网关进程启动以来的累计值</td>
+</tr>
+<tr>
+<td><code>prefix_cache_hit_ratio</code>（L3）</td>
+<td><code>gateway_upstream_prompt_cache_tokens_total</code></td>
+<td>DeepSeek 上游前缀缓存</td>
+</tr>
+<tr>
+<td><code>cache_hit_ratio</code>（Trace 页面）</td>
+<td><code>trace.jsonl</code> 近 N 小时</td>
+<td>影子日志实测命中率</td>
+</tr>
+<tr>
+<td><code>semantic_hits/rejected/skipped</code></td>
+<td><code>gateway_semantic_cache_requests_total</code></td>
+<td>语义守卫状态（非 L2 层级命中）</td>
+</tr>
+<tr>
+<td><code>coalesced_total</code> / <code>coalesced_5m</code></td>
+<td><code>gateway_coalesced_requests_total</code></td>
+<td>合并的并发重复键数（5m 来自环增量）</td>
+</tr>
+<tr>
+<td><code>gateway_request_phase_latency_seconds</code></td>
+<td>Histogram <code>{phase,pipeline,model}</code></td>
+<td>单请求阶段耗时：<code>body_read_done</code>、<code>json_parse_done</code>、<code>pipeline_select_done</code>、<code>cache_lookup_done</code>、<code>upstream_connect_done</code>、<code>upstream_headers_sent</code>、<code>upstream_body_sent</code>、<code>ttft</code>、<code>upstream_body_done</code>、<code>cache_write_done</code>、<code>logging_done</code></td>
+</tr>
+<tr>
+<td><code>gateway_prefix_index_warmup_total</code></td>
+<td>Counter</td>
+<td>Prefix-aware L0 命中时仅预热索引、请求仍走上游的次数</td>
+</tr>
+<tr>
+<td><code>client_key_inflight</code></td>
+<td><code>gateway_client_key_inflight{key_id,consumer}</code></td>
+<td>客户端 Key 当前 in-flight 请求数</td>
+</tr>
+<tr>
+<td><code>cost_saved_usd_total</code> / <code>cost_saved_usd_5m</code></td>
+<td><code>gateway_cache_cost_saved_usd_total</code></td>
+<td>网关估算的节省美元金额</td>
+</tr>
+<tr>
+<td><code>rejected_total</code> / <code>rejected_5m</code></td>
+<td><code>gateway_rejected_requests_total</code></td>
+<td>被拒绝的请求数（含 <code>upstream_key_exhausted</code> 等 <code>reason</code> 标签）</td>
+</tr>
+<tr>
+<td><code>upstream_key_retries</code></td>
+<td><code>gateway_upstream_key_retries_total{outcome}</code></td>
+<td>上游 Key 429 后轮换；单 Key 时常为 <code>cooldown_only</code></td>
+</tr>
+<tr>
+<td><code>ttft_ms</code></td>
+<td><code>gateway_stream_first_token_latency_seconds</code></td>
+<td>平均首字延迟（直方图）</td>
+</tr>
+<tr>
+<td><code>tier_deltas_5m</code></td>
+<td>按层级 <code>gateway_cache_requests_total</code></td>
+<td>5 分钟窗口内的 L0/L1/L2/未命中请求计数</td>
+</tr>
+<tr>
+<td><code>trace_summary.cache_hit_ratio</code></td>
+<td><code>trace.jsonl</code>（24h，缓存 60s）</td>
+<td>Trace 对比横幅的影子日志命中率</td>
+</tr>
+<tr>
+<td><code>suggestions[]</code></td>
+<td><code>build_overview</code> 中的规则引擎</td>
+<td>命中率和时序卡片下的可操作提示</td>
+</tr>
+</tbody>
+</table>
+<h2 id="admin-dashboard">Admin Dashboard<a class="headerlink" href="#admin-dashboard" title="Permanent link">&para;</a></h2>
+<ul>
+<li>概览每 <strong>10 秒</strong>轮询 <strong><code>GET /api/admin/overview/core</code></strong>（轻量指标，无时序数组）；时序与 24h Trace 分别由 <strong><code>GET /api/admin/overview/timeseries?window=1h|24h|7d</code></strong> 与 <strong><code>GET /api/admin/overview/trace</code></strong> 加载（每 <strong>60 秒</strong>自动刷新，与采样间隔和 Trace 缓存 TTL 对齐）。完整包 <strong><code>GET /api/admin/overview</code></strong> 保留向后兼容。<code>GET /api/admin/metrics</code> 保留向后兼容。</li>
+<li>概览包字段：</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>metrics</code></td>
+<td>扩展的 <code>MetricsSnapshot</code>（5m 速率、层级增量、历史元信息、时序数据）</td>
+</tr>
+<tr>
+<td><code>health</code></td>
+<td>网关可达性、流缓存、上游 Key 池计数</td>
+</tr>
+<tr>
+<td><code>prefix_cache</code></td>
+<td>L3 全局 + <code>by_model</code> 表格</td>
+</tr>
+<tr>
+<td><code>semantic</code></td>
+<td><code>enabled</code> + <code>similarity_threshold</code></td>
+</tr>
+<tr>
+<td><code>trace_summary</code></td>
+<td>24h 影子日志摘要（60s 服务端缓存）</td>
+</tr>
+<tr>
+<td><code>ops</code></td>
+<td>节省成本、合并/拒绝 5m、TTFT、prefix_break、reasoning 存储、SSE 省略</td>
+</tr>
+<tr>
+<td><code>suggestions</code></td>
+<td>基于规则的运维提示（<code>severity</code>、<code>target</code>、<code>message</code>），供 Overview 卡片使用</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>时序桶来自一个 <strong>60 秒的指标采样器</strong>（<code>CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS</code>，默认 60）。概览 <strong>使用趋势</strong> 图表常驻显示；<code>GET /overview/timeseries</code> 对窗口内时间轴 <strong>铺轨补零</strong>（无流量桶 <code>requests/tokens=0</code>），<strong>1h</strong> 固定 <strong>12</strong> 个 5 分钟桶、<strong>24h</strong> 固定 <strong>24</strong> 个 1 小时桶、<strong>7d</strong> 固定 <strong>7</strong> 个 1 天桶。全 0 折线表示暂无流量或单桶采样不足（需 ≥2 次采样才有增量）；图表下方「采集中」提示在全 0 时出现，有流量后非零桶逐渐抬升。</li>
+<li>当 5 分钟窗口内请求数少于 5 时，<code>metrics_sample_insufficient</code> 为 true；UI 对窗口速率显示"—"。</li>
+<li>UI 图例区分 <strong>L0–L2</strong>（网关完整响应）和 <strong>L3</strong>（上游前缀 Token）。</li>
+</ul>
+<p>环境变量：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_GATEWAY_METRICS_URL</code></td>
+<td><code>http://127.0.0.1:9090/metrics</code></td>
+<td>Prometheus 抓取目标</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS</code></td>
+<td><code>2</code></td>
+<td>Admin 在此窗口内去重抓取（概览每 10s 轮询）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_GATEWAY_METRICS_STALE_SECS</code></td>
+<td><code>30</code></td>
+<td>抓取失败时，在此时长内返回上次成功数据而非 HTTP 503</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_METRICS_SAMPLE_INTERVAL_SECS</code></td>
+<td><code>60</code></td>
+<td>历史环采样间隔</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_TRACE_LOG_PATH</code></td>
+<td><code>/app/logs/trace.jsonl</code></td>
+<td>Trace/日志页面的影子日志</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS</code></td>
+<td><code>3</code></td>
+<td>Live 监控页 trace 缓存 TTL（秒）；增量 tail + 文件轮转检测</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_UPSTREAM_RECONCILE_INTERVAL_SECS</code></td>
+<td><code>30</code></td>
+<td><code>GET /upstream/config</code> 网关协调的最小间隔</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_GATEWAY_PROBE_TTL_SECS</code></td>
+<td><code>3</code></td>
+<td>概览中 <code>/v1/ready</code> + <code>/v1/status</code> 捆绑探针的缓存 TTL</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_OVERVIEW_CORE_CACHE_TTL_SECS</code></td>
+<td><code>10</code></td>
+<td>Overview Core 服务端缓存 TTL（秒）；客户端 10s 轮询与此对齐</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_OVERVIEW_CORE_REFRESH_SECS</code></td>
+<td>与 <code>_CACHE_TTL</code> 相同</td>
+<td>Overview Core 后台预热间隔（秒）；SSE 广播触发源</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_ADMIN_METRICS_DB_PATH</code></td>
+<td><code>data/metrics.sqlite</code></td>
+<td>Admin 指标采样 SQLite 数据库路径</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_METRICS_DB_RETENTION_SECS</code></td>
+<td><code>2592000</code>（30 天）</td>
+<td>指标采样保留时长</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_KEY_USAGE_SYNC_INTERVAL_SECS</code></td>
+<td><code>60</code></td>
+<td>Key 月度用量同步周期（秒）；设为 0 禁用</td>
+</tr>
+</tbody>
+</table>
+<p>Trace 分析：<code>GET /api/admin/trace/analysis?hours=24</code>（默认 24；<code>hours=0</code> = 全文）。</p>
+<h3 id="live">实时客户端监控（<code>/live</code>）<a class="headerlink" href="#live" title="Permanent link">&para;</a></h3>
+<p>Dashboard <strong>实时监控 / Live</strong> 页面每 <strong>2 秒</strong>轮询 <strong><code>GET /api/admin/live-metrics</code></strong>（按选择的 Consumer）。</p>
+<table>
+<thead>
+<tr>
+<th>查询参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>consumer</code></td>
+<td>（必填）</td>
+<td>API Key <code>name</code> / trace <code>consumer</code>；另可通过 <code>GET /api/admin/live-metrics/consumers?window_secs=300</code> 获取可选 consumer 列表</td>
+</tr>
+<tr>
+<td><code>window_secs</code></td>
+<td><code>300</code></td>
+<td>最近 5 分钟（限制 60–900）</td>
+</tr>
+<tr>
+<td><code>bucket_secs</code></td>
+<td><code>5</code></td>
+<td>聚合桶宽度</td>
+</tr>
+</tbody>
+</table>
+<p>响应：<code>buckets[]</code>（每个桶的平均 e2e / 上游 / TTFT 延迟、Token 总和，<code>upstream_sample_count</code> / <code>ttft_sample_count</code> 为桶中实际样本数）、<code>summary</code>（加权平均，上游/TTFT 按实际样本数而非桶数加权）、可选的 <code>latest</code> 点、<code>available_consumers</code>。</p>
+<table>
+<thead>
+<tr>
+<th>UI 时序</th>
+<th>Trace 字段</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E2E 延迟</td>
+<td><code>latency_ms</code></td>
+<td>客户端 → 网关端到端时间（含完整流式响应）</td>
+</tr>
+<tr>
+<td>上游延迟</td>
+<td><code>upstream_latency_ms</code></td>
+<td>网关 → 上游 body EOS 总时长；<strong>仅未命中</strong>且仅含上游样本的加权平</td>
+</tr>
+<tr>
+<td>TTFT</td>
+<td><code>ttft_ms</code></td>
+<td>流式首字延迟（加权平均）</td>
+</tr>
+<tr>
+<td>Token</td>
+<td><code>input_tokens</code> / <code>output_tokens</code></td>
+<td>来自上游 <code>usage</code>；缓存命中使用缓存条目的用量</td>
+</tr>
+</tbody>
+</table>
+<p>需要 <code>[trace_logging] enabled = true</code> 且 API Key 具有 <strong>name</strong>（consumer 标签）。Admin 使用 <strong>PG 查询</strong>作为主要数据源（推荐配置 <code>trace_logging.pg_url</code> 使 Gateway 直写 PG，消除 JSONL→PG 10 秒同步延迟）。JSONL 文件仍作为本地 fallback 缓冲写入。</p>
+<p><strong>PG 直写模式（推荐）：</strong> 配置 <code>[trace_logging] pg_url = "postgres://..."</code> 后，Gateway 通过专用线程直接写入 PG <code>trace_logs</code> 表，Admin 查询和 <code>LiveTraceCache</code> 均以 PG 为权威数据源。需同时在 Admin 侧设置 <code>CRABCACHE_ADMIN_TRACE_PG_SYNC=false</code> 禁用旧的 JSONL→PG 同步任务。</p>
+<p><strong>性能：</strong> <code>LiveTraceCache</code> 在 <code>crab-admin</code> 中缓存 <strong>3 秒</strong>（可通过 <code>CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS</code> 配置，默认 3），文件追加时仅读取新字节（增量 tail）。文件轮转时自动全量重建。Dashboard 每 <strong>2 秒</strong>（5m 窗口）或 <strong>3 秒</strong>（15m 窗口）轮询，浏览器标签页隐藏时暂停。</p>
+<p><strong>502 防护：</strong> <code>load_live_trace_entries_from_pg</code> 对 PG 查询施加 <strong>10 秒超时</strong>（<code>LIVE_QUERY_TIMEOUT</code>）；超时时返回上一次成功的 stale 数据（<code>LiveTraceCache.stale_arc</code>），而非返回空结果。<code>get_live_metrics</code> handler 外层另有 <strong>15 秒请求级超时</strong>作为兜底。Dashboard 前端 fetch 失败时保留上一次成功数据并显示非阻塞错误横幅，图表不消失。</p>
+<h4 id="_2">调优建议<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认值</th>
+<th>建议值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_LIVE_TRACE_CACHE_TTL_SECS</code></td>
+<td>3</td>
+<td>5</td>
+<td>高流量下增大缓存 TTL 减少 PG 查询频率</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_LIVE_TRACE_MAX_ENTRIES</code></td>
+<td>10000</td>
+<td>—</td>
+<td>每次 PG 查询最大返回条数（覆盖默认 10K）</td>
+</tr>
+<tr>
+<td><code>CRADMIN_PG_MAX_POOL_SIZE</code></td>
+<td>24</td>
+<td>32</td>
+<td>Admin PG 连接池大小；并发页面轮询多时增大</td>
+</tr>
+</tbody>
+</table>
+<p><strong>响应字段：</strong> <code>available_consumers</code>（最多 50 个来自 trace 的名称，Dashboard 优先从此端点获取以移除 keys 硬依赖）、<code>buckets[].upstream_latency_ms</code> / <code>ttft_ms</code> 在桶中没有上游/TTFT 样本时（缓存命中）为 <code>null</code>，桶中还包含 <code>upstream_sample_count</code> / <code>ttft_sample_count</code> 以支持加权聚合。</p>
+<h3 id="key-in-flight">客户端 Key 并发（in-flight）<a class="headerlink" href="#key-in-flight" title="Permanent link">&para;</a></h3>
+<p>每个 <code>sk-cc-*</code> 客户端 Key 可配置 <code>max_concurrent</code>（0 = 不限制）。超限时网关返回 <strong>429</strong>，<code>code: client_concurrency_exceeded</code>，<code>gateway_rejected_requests_total{reason="client_concurrency_exceeded"}</code> 递增。</p>
+<p><strong>多副本部署：</strong> 并发计数与 <code>max_concurrent</code>  enforcement 均在<strong>单个网关进程内存</strong>中完成，不跨实例共享。运行 N 个网关副本时，集群级有效并发上限约为 <code>N × max_concurrent</code>；Management API / Dashboard 返回的 <code>inflight</code> 也是<strong>该实例</strong>上的实时值。Prometheus 按实例抓取 <code>gateway_client_key_inflight</code> 后可在集群层求和观测。若需集群级硬限流，需另行引入 Redis 等共享计数（当前未实现）。</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prometheus</td>
+<td><code>gateway_client_key_inflight{key_id, consumer}</code> — 当前 in-flight 数</td>
+</tr>
+<tr>
+<td>Management API</td>
+<td><code>GET /v1/keys</code> 返回 <code>inflight</code> + <code>max_concurrent</code>；<code>PATCH</code> 可热更新上限</td>
+</tr>
+<tr>
+<td>Dashboard Keys</td>
+<td><strong>并发</strong> 列显示 <code>inflight / max</code>（max=0 显示 ∞），每 5s 刷新</td>
+</tr>
+</tbody>
+</table>
+<p>PromQL 按 consumer 聚合：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">consumer</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="nv">gateway_client_key_inflight</span><span class="o">)</span>
+</code></pre></div>
+<h3 id="deepseek-per-user_id">DeepSeek per-<code>user_id</code> 并发软限（可选）<a class="headerlink" href="#deepseek-per-user_id" title="Permanent link">&para;</a></h3>
+<p>在 <code>gateway.toml</code> 启用 <code>[upstream.deepseek_user_concurrency]</code> 后，带 <code>project_id</code> 的 DeepSeek v4 请求受进程内 in-flight 限制（<code>v4_pro_per_user_id</code> / <code>v4_flash_per_user_id</code>）。超限时网关返回 <strong>429</strong>，<code>code: deepseek_user_concurrency_exceeded</code>（非上游 429，也不会触发同账号 Key 轮换）。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway_deepseek_user_id_concurrency_rejected_total{tier}</code></td>
+<td>按 pro/flash 分桶的网关拒绝次数</td>
+</tr>
+<tr>
+<td><code>gateway_deepseek_user_id_inflight{tier}</code></td>
+<td>各 tier 聚合 in-flight（低基数，不含 project_id）</td>
+</tr>
+<tr>
+<td><code>gateway_rejected_requests_total{reason="deepseek_user_concurrency_exceeded"}</code></td>
+<td>与其它拒绝原因统一计数</td>
+</tr>
+</tbody>
+</table>
+<p>单 Key 精确查询（<code>key_id</code> 为 Management API 返回的 <code>id</code> 字段）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">gateway_client_key_inflight</span><span class="p">{</span><span class="nl">key_id</span><span class="o">=</span><span class="p">&quot;</span><span class="s">...</span><span class="p">&quot;}</span>
+</code></pre></div>
+<h2 id="_3">影子日志<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>在 <code>gateway.toml</code> 中配置：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[trace_logging]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/app/logs/trace.jsonl&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">max_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">max_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
+</code></pre></div>
+<p>每行是一个 <code>SanitizedLogEntry</code>（不含原始 body）。包含 <code>consumer</code>（API Key name）、<code>cache_tier</code>、<code>prompt_cache_hit_ratio</code>，以及（当前网关构建版本）<code>upstream_latency_ms</code>、<code>ttft_ms</code>、<code>input_tokens</code>、<code>output_tokens</code>。</p>
+<p><strong>Admin 读取</strong>：Trace 页与部分 API 对单行/单响应有体积上限（约 <strong>4MB</strong>）；超大 <code>raw_capture</code> 会导致「截断」警告，不利于高峰事后分析。缓解：<code>max_lines</code> 轮转、控制 <code>raw_capture</code>、见 <a href="../OPS_RUNBOOK/">OPS_RUNBOOK.md</a> §P1。</p>
+<h3 id="deepseek-user_id">DeepSeek <code>user_id</code> 隔离审计字段<a class="headerlink" href="#deepseek-user_id" title="Permanent link">&para;</a></h3>
+<p>无需开启 <code>max_payload_bytes</code> 即可验收 <code>project_id</code> → 上游 <code>user_id</code> 注入：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>project_id</code></td>
+<td>网关解析的租户 ID（来自 <code>sk-cc-*</code> 绑定或匹配的 <code>X-Project-Id</code>）</td>
+</tr>
+<tr>
+<td><code>client_body_user_id</code></td>
+<td>客户端原始 body 中的 <code>user_id</code>（若有）</td>
+</tr>
+<tr>
+<td><code>upstream_user_id</code></td>
+<td><strong>实际上游</strong>请求体中的 <code>user_id</code>（权威）</td>
+</tr>
+<tr>
+<td><code>user_id_audit</code></td>
+<td><code>injected</code> / <code>absent</code> / <code>stripped_client</code> / <code>mismatch</code> / <code>not_applicable</code></td>
+</tr>
+<tr>
+<td><code>upstream_profile_id</code> / <code>pipeline</code> / <code>upstream_model</code></td>
+<td>路由上下文</td>
+</tr>
+</tbody>
+</table>
+<p>Admin Dashboard <strong>Trace 分析</strong>（<code>GET /api/admin/trace/analysis</code>）返回 <code>deepseek_user_id</code> 汇总：注入率、缺失 <code>project_id</code> 计数、<code>top_project_ids</code> 等。<code>isolation_ok=true</code> 表示近期 DeepSeek 请求基本均已正确注入。</p>
+<p>当 <code>crab-composition</code> crate 启用时，每条日志条目还包含 <code>composition</code> 字段：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>composition</code></td>
+<td><code>Option&lt;RequestComposition&gt;</code></td>
+<td>请求组成结构的脱敏指纹（不含原始消息内容，仅含哈希与计数）</td>
+</tr>
+</tbody>
+</table>
+<p>Docker：网关写入 <code>gateway_logs</code> 卷；admin 以只读方式挂载。</p>
+<h2 id="request-composition">请求组成分析（Request Composition）<a class="headerlink" href="#request-composition" title="Permanent link">&para;</a></h2>
+<p><code>crab-composition</code> crate 从请求的 OpenAI-compatible JSON payload 中提取结构化指纹，存储在 <code>SanitizedLogEntry.composition</code> 字段中。<strong>绝不存储原始消息内容</strong>——仅存储哈希值与计数，适用于隐私合规的离线分析。</p>
+<h3 id="requestcomposition">RequestComposition 结构<a class="headerlink" href="#requestcomposition" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">RequestComposition</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="c1">// ── 身份维度（来自 GatewayContext） ──</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="n">consumer</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w">           </span><span class="c1">// API Key name / consumer 标签</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">domain</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w">             </span><span class="c1">// 业务域（来自 API Key domain 或 &quot;default&quot;）</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="n">project_id</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="c1">// 多租户项目 ID（X-Project-Id）</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="n">pipeline</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w">           </span><span class="c1">// 请求管线：cursor_deepseek_v4 / deepseek_light / generic_relay / mimo_relay / mimo_token_plan_relay / mimo_payg_relay</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="n">user_agent</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="c1">// User-Agent（超 128 字符时截断）</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="c1">// ── 模型 ──</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">client_model</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span><span class="w">       </span><span class="c1">// 客户端请求中的 model 字段</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="n">upstream_model</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// 网关解析后的上游模型名</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="c1">// ── 系统前缀块 ──</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">    </span><span class="n">system_prefix_hash</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">  </span><span class="c1">// 首个连续 system 消息 + tools JSON 的 SHA256</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="n">system_message_count</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">           </span><span class="c1">// 连续 system 消息数量</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">    </span><span class="n">system_chars</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">                   </span><span class="c1">// system 消息内容总字符数</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">    </span><span class="c1">// ── 工具 ──</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">    </span><span class="n">tool_count</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">                    </span><span class="c1">// tools 数组长度</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">    </span><span class="n">tool_names_hash</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">    </span><span class="c1">// 排序后工具名称的 SHA256（无工具时为空）</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">    </span><span class="n">has_tools</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w">                    </span><span class="c1">// 是否存在工具定义</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="w">    </span><span class="c1">// ── 对话历史 ──</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">    </span><span class="n">message_count</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">                 </span><span class="c1">// messages 数组总长度</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">    </span><span class="n">roles</span><span class="p">:</span><span class="w"> </span><span class="nc">RoleCounts</span><span class="p">,</span><span class="w">                  </span><span class="c1">// 各角色消息数 { system, user, assistant, tool }</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="w">    </span><span class="n">tool_turn_count</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">               </span><span class="c1">// role == &quot;tool&quot; 的轮次计数</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="n">assistant_with_tool_calls_count</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">  </span><span class="c1">// 包含 tool_calls 的 assistant 消息数</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="w">    </span><span class="c1">// ── Cursor Agent 组件 ──</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">    </span><span class="n">components</span><span class="p">:</span><span class="w"> </span><span class="nc">CursorComponents</span><span class="p">,</span><span class="w">       </span><span class="c1">// 系统消息中检测到的 Cursor 构造</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="p">}</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">CursorComponents</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="w">    </span><span class="n">rules</span><span class="p">:</span><span class="w">    </span><span class="nc">ComponentFingerprint</span><span class="p">,</span><span class="w">  </span><span class="c1">// workspace rules / .cursor/rules / always_applied_workspace_rules</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="w">    </span><span class="n">skills</span><span class="p">:</span><span class="w">   </span><span class="nc">ComponentFingerprint</span><span class="p">,</span><span class="w">  </span><span class="c1">// available_skills / SKILL.md / agent_skill</span>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a><span class="w">    </span><span class="n">mcp</span><span class="p">:</span><span class="w">      </span><span class="nc">ComponentFingerprint</span><span class="p">,</span><span class="w">  </span><span class="c1">// mcpServers / CallMcpTool / mcp_file_system</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a><span class="w">    </span><span class="n">subagent</span><span class="p">:</span><span class="w"> </span><span class="nc">ComponentFingerprint</span><span class="p">,</span><span class="w">  </span><span class="c1">// subagent_type / Task tool / Launch.*agent</span>
+<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a><span class="p">}</span>
+<a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>
+<a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">ComponentFingerprint</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a><span class="w">    </span><span class="n">present</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">,</span><span class="w">                   </span><span class="c1">// 是否检测到该组件</span>
+<a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a><span class="w">    </span><span class="n">fingerprint</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w">     </span><span class="c1">// 检测到的内容段的 SHA256 前缀指纹</span>
+<a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a><span class="p">}</span>
+<a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a>
+<a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">RoleCounts</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a><span class="w">    </span><span class="n">system</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span>
+<a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a><span class="w">    </span><span class="n">user</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span>
+<a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a><span class="w">    </span><span class="n">assistant</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span>
+<a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a><span class="w">    </span><span class="n">tool</span><span class="p">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span>
+<a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="admin-api">Admin 组成分析 API<a class="headerlink" href="#admin-api" title="Permanent link">&para;</a></h3>
+<p>两个端点位于 <code>/api/admin/composition/*</code>，均需 <code>x-admin-key</code> 认证：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/composition/summary?hours=24&amp;project_id=&amp;consumer=</code></td>
+<td>聚合组成统计——模型分布、工具直方图、组件检测率、租户/消费者分布</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/composition/trends</code></td>
+<td>过去 24 小时逐小时请求量趋势</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>GET /api/admin/composition/summary</code></strong> 查询参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hours</code></td>
+<td>u32</td>
+<td>24</td>
+<td>回溯小时数</td>
+</tr>
+<tr>
+<td><code>project_id</code></td>
+<td>string</td>
+<td>—</td>
+<td>按项目 ID 筛选（可选）</td>
+</tr>
+<tr>
+<td><code>consumer</code></td>
+<td>string</td>
+<td>—</td>
+<td>按消费者名称筛选（可选）</td>
+</tr>
+</tbody>
+</table>
+<p>响应：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="nt">&quot;total_entries_in_window&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1847</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">        </span><span class="nt">&quot;total_entries&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1847</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">        </span><span class="nt">&quot;tenant_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nt">&quot;consumer_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">12</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">&quot;model_distribution&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;deepseek-v4-pro&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1200</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;deepseek-chat&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">400</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">        </span><span class="nt">&quot;project_distribution&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;project-alpha&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">900</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="nt">&quot;consumer_distribution&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cursor-user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">800</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">        </span><span class="nt">&quot;tool_count_histogram&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1400</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2-5&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">150</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;6-10&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;11-20&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;20+&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">17</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">        </span><span class="nt">&quot;message_count_histogram&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0-10&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">800</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;11-50&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">600</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;51-100&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;bucket_label&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;100+&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">147</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">        </span><span class="nt">&quot;component_rates&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;component&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;rules&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;present_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.27</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;component&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;skills&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;present_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.11</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;component&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;present_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">700</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.38</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">            </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;component&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;subagent&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;present_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">        </span><span class="nt">&quot;avg_latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">320.5</span><span class="p">,</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">        </span><span class="nt">&quot;avg_total_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4500</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong><code>GET /api/admin/composition/trends</code></strong> 响应：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nt">&quot;hours&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">24</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">&quot;points&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;timestamp_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1716480000000</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;request_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">85</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;timestamp_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1716483600000</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;request_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">120</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="p">]</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="dashboard">Dashboard 组成页面<a class="headerlink" href="#dashboard" title="Permanent link">&para;</a></h3>
+<p>在 <strong>Monitor</strong> 组新增 <code>/composition</code> 路由。页面功能：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>汇总卡片</strong></td>
+<td>总条目数、平均延迟、平均 Token、租户数、消费者数</td>
+</tr>
+<tr>
+<td><strong>模型分布</strong></td>
+<td>垂直柱状图，展示 Top 10 模型请求量</td>
+</tr>
+<tr>
+<td><strong>工具直方图</strong></td>
+<td>按桶展示工具数量分布（0、1、2-5、6-10、11-20、20+）</td>
+</tr>
+<tr>
+<td><strong>组件检测率</strong></td>
+<td>rules / skills / mcp / subagent 的检测率条形图</td>
+</tr>
+<tr>
+<td><strong>消息直方图</strong></td>
+<td>按桶展示消息数量分布（0-10、11-50、51-100、100+）</td>
+</tr>
+<tr>
+<td><strong>项目分布</strong></td>
+<td>按项目 ID 的请求量排名</td>
+</tr>
+<tr>
+<td><strong>消费者分布</strong></td>
+<td>按消费者的请求量排名</td>
+</tr>
+<tr>
+<td><strong>趋势图</strong></td>
+<td>过去 24 小时逐小时请求量折线图</td>
+</tr>
+<tr>
+<td><strong>时间窗口选择</strong></td>
+<td>1h / 6h / 24h / 72h / 168h</td>
+</tr>
+</tbody>
+</table>
+<p>页面每 <strong>10 秒</strong>轮询 summary 和 trends，浏览器标签页隐藏时自动暂停。</p>
+<h2 id="composition-debug-logging">组成调试日志（Composition Debug Logging）<a class="headerlink" href="#composition-debug-logging" title="Permanent link">&para;</a></h2>
+<p>通过 <code>[trace_logging.composition_debug]</code> 配置项启用。启用后，网关会将<strong>完整（未哈希的）system 消息文本和 tools 定义</strong>写入独立的 JSONL 日志文件，用于离线组成分析。</p>
+<p><strong>⚠️ 安全警告：此文件包含原始提示内容，不应在生产中长期启用，或应配置严格的日志轮转。</strong></p>
+<h3 id="_4">配置<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[trace_logging.composition_debug]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/crabcache/trace-debug.jsonl&quot;</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">max_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">max_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span>
+</code></pre></div>
+<p>环境变量：
+- <code>CRABCACHE_COMPOSITION_DEBUG_PATH</code>：覆盖调试日志路径（默认从 trace 路径自动派生）</p>
+<h3 id="compositiondebugentry">CompositionDebugEntry 结构<a class="headerlink" href="#compositiondebugentry" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>timestamp_ms</code></td>
+<td>u64</td>
+<td>Unix 毫秒时间戳</td>
+</tr>
+<tr>
+<td><code>request_hash</code></td>
+<td>String</td>
+<td>与 trace 日志 <code>request_hash</code> 关联</td>
+</tr>
+<tr>
+<td><code>consumer</code></td>
+<td>String</td>
+<td>API Key name / consumer 标签</td>
+</tr>
+<tr>
+<td><code>domain</code></td>
+<td>String</td>
+<td>业务域</td>
+</tr>
+<tr>
+<td><code>project_id</code></td>
+<td>Option<String></td>
+<td>多租户项目 ID</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>String</td>
+<td>请求模型</td>
+</tr>
+<tr>
+<td><code>system_text</code></td>
+<td>Option<String></td>
+<td>完整系统消息文本（最大 100K 字符，超长截断）</td>
+</tr>
+<tr>
+<td><code>tools_json</code></td>
+<td>Option<String></td>
+<td>完整工具定义 JSON（最大 100K 字符，超长截断）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="admin-api_1">Admin 调试 API<a class="headerlink" href="#admin-api_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/composition/debug?hours=24&amp;limit=100&amp;request_hash=&amp;consumer=&amp;project_id=</code></td>
+<td>列出调试条目，支持按哈希/消费者/项目筛选</td>
+</tr>
+</tbody>
+</table>
+<h3 id="dashboard_1">Dashboard 组成调试日志视图<a class="headerlink" href="#dashboard_1" title="Permanent link">&para;</a></h3>
+<p>组成页面底部显示"Composition Debug Log"区域，支持：
+- 按 <code>request_hash</code> 搜索
+- 按 <code>consumer</code> 筛选
+- 点击条目打开侧边面板查看完整 system 文本和 tools 定义
+- 显示 system/tools 存在标记（蓝色/绿色徽标）</p>
+<h3 id="prometheus">Prometheus 组成指标<a class="headerlink" href="#prometheus" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>类型</th>
+<th>标签</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway_composition_requests_total</code></td>
+<td>Counter</td>
+<td><code>project_id</code>, <code>pipeline</code>, <code>has_tools</code>, <code>msg_bucket</code></td>
+<td>按项目、管线、工具状态和消息桶计数的请求组成统计</td>
+</tr>
+<tr>
+<td><code>gateway_composition_component_total</code></td>
+<td>Counter</td>
+<td><code>component</code>, <code>present</code></td>
+<td>Cursor 组件检测计数（rules / skills / mcp / subagent）</td>
+</tr>
+<tr>
+<td><code>gateway_composition_tool_count</code></td>
+<td>Histogram</td>
+<td>—</td>
+<td>每次请求的工具数量分布（桶：0, 1, 5, 10, 20, 50）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="raw-capture">原始请求捕获（Raw Capture）<a class="headerlink" href="#raw-capture" title="Permanent link">&para;</a></h2>
+<p>独立于影子日志和组成分析的<strong>抓包级</strong>通道，记录完整 client/upstream JSON body 供离线结构对比分析。</p>
+<h3 id="_5">配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[raw_capture]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;/var/log/crabcache/raw_capture&quot;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">max_index_lines</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">max_body_files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5000</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">max_client_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w">    </span><span class="c1"># 0 = 仅受网关 64 MiB 限制</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">max_upstream_bytes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">mask_api_keys</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">   </span><span class="c1"># true = 脱敏 sk-* token</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">skip_paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/health&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/healthz&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;/ready&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>环境变量覆盖：<code>CRABCACHE_RAW_CAPTURE_DIR</code>。</p>
+<h3 id="_6">存储布局<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>raw_capture/
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  index.jsonl          # 每行一个 RawCaptureEntry（元数据 + 结构摘要 + body 文件路径）
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  bodies/
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    {request_id}.client.json
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    {request_id}.upstream.json  # 仅当 upstream body != client body 时写入
+</code></pre></div>
+<ul>
+<li><strong>index.jsonl</strong> 自动轮转（<code>max_index_lines</code>），保留结构摘要用于列表和统计</li>
+<li><strong>bodies/</strong> 目录超过 <code>max_body_files</code> 时自动删除最旧文件</li>
+<li>不做额外截断（<code>max_client_bytes = 0</code>），受网关 <code>limits.max_request_body_bytes</code> 约束</li>
+</ul>
+<h3 id="_7">安全警告<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<p><strong>Raw capture 默认关闭</strong>，且不脱敏。启用前请注意：</p>
+<ol>
+<li><strong>API Key 泄漏</strong>：body 中包含 Bearer Token。<code>mask_api_keys = true</code> 可部分脱敏</li>
+<li><strong>Prompt 内容</strong>：完整对话历史包含敏感业务数据</li>
+<li><strong>磁盘占用</strong>：每个请求写入 ~2x body 大小。64 MiB body = ~128 MiB 磁盘</li>
+<li><strong>部署建议</strong>：仅在受控内网环境启用；目录权限设为 <code>chmod 600</code>；不暴露公网</li>
+</ol>
+<h3 id="admin-api_2">Admin API<a class="headerlink" href="#admin-api_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/capture/list?hours=&amp;limit=&amp;consumer=&amp;project_id=&amp;request_hash=&amp;session_fingerprint=&amp;backend_name=&amp;client_key_fingerprint=&amp;affinity_kind=</code></td>
+<td>读 index.jsonl，返回摘要列表（含会话指纹、亲和键、后端、耗时等）</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/capture/{request_id}</code></td>
+<td>读 index + 加载 bodies/*.json，返回 client/upstream 全文 + 结构 diff</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/capture/stats?hours=</code></td>
+<td>聚合：平均 delta、reasoning 注入率、message_count P99、thinking 标记率</td>
+</tr>
+</tbody>
+</table>
+<p>Dashboard <strong>请求页 → 包捕获 Tab</strong> 提供图形化访问。</p>
+<p>每条 <code>index.jsonl</code> 记录（v2 字段，旧行缺失则为空）额外包含：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session_fingerprint</code></td>
+<td>首条 <code>user</code> 消息哈希，<strong>区分同 key 下不同 Cursor 会话</strong></td>
+</tr>
+<tr>
+<td><code>client_key_fingerprint</code></td>
+<td>客户端 Bearer 密钥哈希，<strong>区分不同 API key</strong></td>
+</tr>
+<tr>
+<td><code>affinity_key</code> / <code>affinity_kind</code></td>
+<td>Ketama 亲和键（<code>conv</code>/<code>pck</code>/<code>user</code>/<code>ip</code>）</td>
+</tr>
+<tr>
+<td><code>backend_name</code> / <code>upstream_host</code></td>
+<td><strong>负载均衡</strong>落到的上游节点</td>
+</tr>
+<tr>
+<td><code>duration_ms</code> / <code>ttft_ms</code> / <code>upstream_latency_ms</code></td>
+<td><strong>串行耗时</strong>与流式首字</td>
+</tr>
+<tr>
+<td><code>cache_hit</code> / <code>cache_tier</code> / <code>coalesce_leader</code> / <code>coalesced_follower</code></td>
+<td>缓存与请求合并（并行去重）</td>
+</tr>
+</tbody>
+</table>
+<p>筛选示例：<code>session_fingerprint=97d0e3a8e50d</code> 只看同一会话；<code>backend_name=deepseek-1</code> 看 LB 分布。</p>
+<h3 id="_8">思考模式上下文膨胀排查<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ol>
+<li>打开 Dashboard → Requests → Capture Tab</li>
+<li>查看 <strong>Delta</strong> 列：正数表示 upstream body 比 client 大</li>
+<li>查看 <strong>Reasoning</strong> 列：<code>Yes</code> 表示 upstream 获得了 reasoning_content</li>
+<li>点击行打开详情：</li>
+<li><strong>Structure Table</strong>：逐项对比 messages 字符数、reasoning 字符数、tool_calls 数</li>
+<li><strong>Client/Upstream JSON</strong>：左右分栏对比完整 body</li>
+<li>典型膨胀模式：</li>
+<li><code>delta_reasoning_chars</code> 远大于 0 → 思考链被注入到 assistant message</li>
+<li><code>delta_message_count</code> &gt; 0 → upstream 多出 recovery 消息</li>
+<li><code>thinking_markup = Yes</code> → 内容包含 <code>&lt;thinking&gt;</code> 标签</li>
+</ol>
+<h3 id="docker">Docker 卷挂载<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># docker-compose.yml</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">admin</span><span class="p">:</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gateway-logs:/var/log/crabcache:ro</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="nt">gateway-logs</span><span class="p">:</span>
+</code></pre></div>
+<p>Admin 以只读方式访问 raw_capture 目录（与 trace.jsonl 同卷）。</p>
+<h2 id="prometheus-grafana">Prometheus / Grafana（可选）<a class="headerlink" href="#prometheus-grafana" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker-compose.yml<span class="w"> </span>-f<span class="w"> </span>docker-compose.observability.yml<span class="w"> </span>--profile<span class="w"> </span>observability<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<ul>
+<li>Prometheus：http://127.0.0.1:9091</li>
+<li>Grafana：http://127.0.0.1:3001（添加 Prometheus 数据源 <code>http://prometheus:9090</code>）</li>
+</ul>
+<p>示例 PromQL（匹配 Dashboard 5 分钟命中率）：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_cache_requests_total</span><span class="p">{</span><span class="nl">result</span><span class="o">=</span><span class="p">&quot;</span><span class="s">hit</span><span class="p">&quot;}[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="o">/</span><span class="w"> </span><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_cache_requests_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+</code></pre></div>
+<p>按 Token 加权：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_deepseek_input_tokens_total</span><span class="p">{</span><span class="nl">cache_status</span><span class="o">=</span><span class="p">&quot;</span><span class="s">hit</span><span class="p">&quot;}[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="o">/</span><span class="w"> </span><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_deepseek_input_tokens_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+</code></pre></div>
+<p>告警规则：<code>config/prometheus/alerts.yml</code>。</p>
+<h3 id="_9">域名标签<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<p>API Key 可以设置 <code>domain</code>（业务线/项目）。指标使用 <code>domain</code> 标签；未设置的密钥记录为 <code>unclassified</code>。Dashboard <strong>域名/Domains</strong> 页面和 Overview 域名表格从 <code>GET /api/admin/overview</code> 读取 <code>domain_buckets</code>。域策略：<code>PUT /v1/domains/policies</code>（从 admin <code>data/admin-state.json</code> 同步）。</p>
+<p>按域名查询示例 PromQL：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">domain</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_deepseek_input_tokens_total</span><span class="p">{</span><span class="nl">cache_status</span><span class="o">=</span><span class="p">&quot;</span><span class="s">hit</span><span class="p">&quot;}[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="o">/</span><span class="w"> </span><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">domain</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_deepseek_input_tokens_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
+</code></pre></div>
+<h2 id="_10">数据面可观测性指标<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p>以下指标补充了请求级可观测性，覆盖全局 RPS、在途请求、流式截断、PG trace 写入和后台任务健康。</p>
+<h3 id="prometheus_1">新增 Prometheus 指标<a class="headerlink" href="#prometheus_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>类型</th>
+<th>标签</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway_active_requests</code></td>
+<td>Gauge</td>
+<td>—</td>
+<td>全局在途请求数（semaphore 准入后 +1，logging 结束 -1）</td>
+</tr>
+<tr>
+<td><code>gateway_admitted_requests_total</code></td>
+<td>Counter</td>
+<td><code>wire_api</code></td>
+<td>准入请求计数（<code>chat_completions</code> / <code>responses</code>）</td>
+</tr>
+<tr>
+<td><code>gateway_global_rps</code></td>
+<td>Gauge</td>
+<td>—</td>
+<td>估算的全局 RPS（pingora-limits 1s 双缓冲）</td>
+</tr>
+<tr>
+<td><code>gateway_stream_capture_truncated_total</code></td>
+<td>Counter</td>
+<td><code>pipeline</code></td>
+<td>StreamCapture 超限事件</td>
+</tr>
+<tr>
+<td><code>gateway_retry_buffer_truncated_total</code></td>
+<td>Counter</td>
+<td>—</td>
+<td>Pingora 64 KiB 重试缓冲区截断事件</td>
+</tr>
+<tr>
+<td><code>gateway_pingora_upstream_body_retry_emit_total</code></td>
+<td>Counter</td>
+<td><code>reason</code></td>
+<td>请求体重发次数（<code>truncated</code> / <code>eos</code>）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_write_total</code></td>
+<td>Counter</td>
+<td><code>sink</code>, <code>result</code></td>
+<td>追踪日志写入状态（<code>jsonl</code> / <code>pg</code>，<code>success</code> / <code>failure</code>）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_pg_dropped_total</code></td>
+<td>Counter</td>
+<td><code>reason</code></td>
+<td>PG trace 队列丢弃（<code>queue_full</code> / <code>shutdown</code>）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_pg_reconnect_total</code></td>
+<td>Counter</td>
+<td><code>result</code></td>
+<td>PG trace 重连次数</td>
+</tr>
+<tr>
+<td><code>gateway_trace_pg_queue_depth</code></td>
+<td>Gauge</td>
+<td>—</td>
+<td>PG trace 队列深度（近似）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_pg_flush_latency_seconds</code></td>
+<td>Histogram</td>
+<td>—</td>
+<td>PG trace 批量写入延迟</td>
+</tr>
+<tr>
+<td><code>gateway_background_task_healthy</code></td>
+<td>IntGauge</td>
+<td><code>task</code></td>
+<td>后台任务健康状态（1=健康，0=异常）</td>
+</tr>
+<tr>
+<td><code>gateway_background_task_last_success_timestamp_seconds</code></td>
+<td>IntGauge</td>
+<td><code>task</code></td>
+<td>后台任务最后成功时间戳</td>
+</tr>
+<tr>
+<td><code>gateway_background_task_shutdown_drained_total</code></td>
+<td>Counter</td>
+<td><code>task</code></td>
+<td>后台任务关停排水计数</td>
+</tr>
+</tbody>
+</table>
+<p><code>task</code> 标签值：<code>metrics_server</code>、<code>lb_health_check</code>、<code>connection_prewarm</code>、<code>pg_trace_writer</code>、<code>management_api</code>、<code>codex_quota_refresh</code>。</p>
+<h3 id="promql">PromQL 示例<a class="headerlink" href="#promql" title="Permanent link">&para;</a></h3>
+<p>全局 RPS：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nv">gateway_global_rps</span>
+</code></pre></div>
+<p>在途请求：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nv">gateway_active_requests</span>
+</code></pre></div>
+<p>按 wire API 的准入请求速率：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_admitted_requests_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">wire_api</span><span class="o">)</span>
+</code></pre></div>
+<p>PG trace 写入失败率：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_trace_write_total</span><span class="p">{</span><span class="nl">sink</span><span class="o">=</span><span class="p">&quot;</span><span class="s">pg</span><span class="p">&quot;,</span><span class="nl">result</span><span class="o">=</span><span class="p">&quot;</span><span class="s">failure</span><span class="p">&quot;}[</span><span class="s">5m</span><span class="p">]</span><span class="o">)</span>
+</code></pre></div>
+<p>后台任务健康：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="nv">gateway_background_task_healthy</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span>
+</code></pre></div>
+<h3 id="grafana">Grafana 面板建议<a class="headerlink" href="#grafana" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>全局 RPS</strong>：单值面板 + 趋势线</li>
+<li><strong>在途请求</strong>：面积图，叠加 <code>max_concurrent_requests</code> 阈值线</li>
+<li><strong>PG trace 队列深度</strong>：面积图，配合写入失败率告警</li>
+<li><strong>后台任务健康</strong>：状态网格（每行一个 task，红绿表示 0/1）</li>
+</ul>
+<h2 id="opentelemetry">OpenTelemetry（可选）<a class="headerlink" href="#opentelemetry" title="Permanent link">&para;</a></h2>
+<p>CrabCache 支持通过 <code>--features otel</code> 编译 OpenTelemetry tracing 集成。默认关闭，不增加二进制体积。</p>
+<h3 id="_11">编译启用<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>crab-gateway<span class="w"> </span>--features<span class="w"> </span>otel
+</code></pre></div>
+<h3 id="_12">运行时配置<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_OTEL_ENABLED</code></td>
+<td><code>false</code></td>
+<td>设为 <code>true</code> 启用 OTel tracing</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>（无）</td>
+<td>OTLP gRPC 端点（如 <code>http://otel-collector:4317</code>）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_OTEL_SERVICE_NAME</code></td>
+<td><code>crabcache-gateway</code></td>
+<td>服务名</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_OTEL_SAMPLE_RATIO</code></td>
+<td><code>0.05</code></td>
+<td>采样率（0.0–1.0）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>约束</strong>：<code>enabled=false</code> 或 endpoint 缺失时，OTel 不连接 collector，不阻塞启动。</p>
+<h3 id="otel-collector">OTel Collector 示例配置<a class="headerlink" href="#otel-collector" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># otel-collector-config.yml</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nt">receivers</span><span class="p">:</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">otlp</span><span class="p">:</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span><span class="nt">protocols</span><span class="p">:</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">      </span><span class="nt">grpc</span><span class="p">:</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">        </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0:4317</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="nt">exporters</span><span class="p">:</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="w">  </span><span class="nt">jaeger</span><span class="p">:</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="w">    </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">jaeger:14250</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">    </span><span class="nt">tls</span><span class="p">:</span>
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="w">      </span><span class="nt">insecure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>
+<a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="nt">service</span><span class="p">:</span>
+<a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="w">  </span><span class="nt">pipelines</span><span class="p">:</span>
+<a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a><span class="w">    </span><span class="nt">traces</span><span class="p">:</span>
+<a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a><span class="w">      </span><span class="nt">receivers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">otlp</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a><span class="w">      </span><span class="nt">exporters</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">jaeger</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<h3 id="_13">敏感数据红线<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Prometheus labels <strong>禁止</strong>包含 <code>request_id</code>、API Key、prompt 原文</li>
+<li>OTel span attributes 仅包含低基数字段：<code>request_id</code>、<code>wire_api</code>、<code>pipeline</code>、<code>profile</code>、<code>backend</code>、<code>model</code>、<code>cache_tier</code>、<code>status_class</code></li>
+<li><code>x-request-id</code> 用于日志/trace/OTel 关联，<strong>不进入</strong> Prometheus labels</li>
+</ul>
+<h2 id="_14">客户端验证<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h2>
+<p>从网关响应头中获取信息：</p>
+<ul>
+<li><code>x-cache-status</code>：<code>HIT</code> / <code>MISS</code></li>
+<li><code>x-request-id</code>：与网关日志关联</li>
+</ul>
+<h2 id="dashboard-502-503">Dashboard 502 / 503 故障排查<a class="headerlink" href="#dashboard-502-503" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>可能原因</th>
+<th>检查内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>浏览器 <strong>502</strong>（整个页面文档请求）</td>
+<td>OpenResty 无法连接 <code>crab-admin</code></td>
+<td><code>docker compose --profile admin up -d</code>；<code>curl -sf http://127.0.0.1:18001/</code>；<code>proxy_pass</code> 必须为 <code>127.0.0.1:18001</code>（非 <code>8080</code>/错误端口）。OpenResty <code>error.log</code>：<code>connect() failed (111: Connection refused)</code>。</td>
+</tr>
+<tr>
+<td>Overview 卡片 <strong>HTTP 503</strong></td>
+<td><code>GET /api/admin/overview</code> 构建指标失败</td>
+<td>网关 <code>:9090/metrics</code> 和 <code>CRABCACHE_GATEWAY_METRICS_URL</code>；<code>docker compose ps</code> 网关健康检查。</td>
+</tr>
+<tr>
+<td>Overview 卡片 <strong>HTTP 502</strong>（API，非 HTML）</td>
+<td>罕见；admin 被阻塞时上游代理重置</td>
+<td>Admin 日志；<code>trace.jsonl</code> 过大（tail 读取上限 32MB）；减少并发刷新。</td>
+</tr>
+<tr>
+<td>刷新时间歇性失败</td>
+<td>指标抓取超时或负载下网关 <code>:9090</code> 被阻塞</td>
+<td>Overview 仅轮询 <code>/api/admin/overview</code>；admin 缓存指标 2 秒（<code>CRABCACHE_GATEWAY_METRICS_CACHE_TTL_SECS</code>），临时错误时可提供最多 30 秒的过期数据（<code>CRABCACHE_GATEWAY_METRICS_STALE_SECS</code>）。确认 <code>CRABCACHE_GATEWAY_METRICS_URL</code>（Docker：<code>http://gateway:9090/metrics</code>）。</td>
+</tr>
+</tbody>
+</table>
+<p>快速检查：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-sf<span class="w"> </span>http://127.0.0.1:18001/
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>curl<span class="w"> </span>-sf<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;x-admin-key: </span><span class="nv">$CRABCACHE_ADMIN_KEY</span><span class="s2">&quot;</span><span class="w"> </span>http://127.0.0.1:18001/api/admin/overview<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">200</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>curl<span class="w"> </span>-sf<span class="w"> </span>http://127.0.0.1:9090/metrics<span class="w"> </span><span class="p">|</span><span class="w"> </span>head
+</code></pre></div>
+<h2 id="_15">基础设施监控<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<p>Admin Dashboard 的「基础设施」页面显示与网关同 <code>docker-compose</code> 项目的容器资源占用与宿主机磁盘使用情况。</p>
+<h3 id="_16">采集机制<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Admin 容器通过 <strong>只读 Docker Engine API</strong> (<code>/var/run/docker.sock</code>) 采集所有同项目容器的 CPU、内存与网络速率。</li>
+<li>容器过滤依据 Compose 自动标签 <code>com.docker.compose.project=&lt;project&gt;</code>；项目名受环境变量 <code>CRABCACHE_COMPOSE_PROJECT</code>（或 <code>COMPOSE_PROJECT_NAME</code>）控制，默认 <code>crabcache</code>。</li>
+<li><strong>单一后台采集协程</strong>周期性调用 Docker API，写入内存快照缓存；HTTP <code>GET /snapshot</code> 只读缓存，不在请求路径上采集。</li>
+<li>采集间隔默认 <code>max(CRABCACHE_INFRA_CACHE_TTL_SECS, 5)</code>（可用 <code>CRABCACHE_INFRA_COLLECT_INTERVAL_SECS</code> 覆盖）；历史环采样间隔默认 60s（<code>CRABCACHE_INFRA_SAMPLE_INTERVAL_SECS</code>）。</li>
+<li>前端每 10 秒轮询 <code>/api/admin/infra/snapshot</code>。</li>
+</ul>
+<h3 id="_17">数据类型<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>来源</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cpu_percent</code></td>
+<td>Docker stats CPU delta / system delta</td>
+<td>按 CPU 核数归一化的百分比（首次采样为 <code>null</code>）</td>
+</tr>
+<tr>
+<td><code>mem_usage_bytes</code></td>
+<td><code>memory_stats.usage</code></td>
+<td>当前 RSS 内存</td>
+</tr>
+<tr>
+<td><code>mem_limit_bytes</code></td>
+<td><code>memory_stats.limit</code></td>
+<td>容器内存上限（无限制时为宿主机内存）</td>
+</tr>
+<tr>
+<td><code>net_rx_bps</code> / <code>net_tx_bps</code></td>
+<td>网络接口累计值的差分速率</td>
+<td>字节/秒（首次采样为 <code>null</code>）</td>
+</tr>
+<tr>
+<td><code>host_disks[].usage_percent</code></td>
+<td><code>statvfs(/)</code></td>
+<td>宿主机根分区使用率；若 <code>/var/lib/docker</code> 为独立挂载点则额外展示</td>
+</tr>
+</tbody>
+</table>
+<h3 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/infra/snapshot</code></td>
+<td>容器表 + 宿主机磁盘 + <code>collected_at</code> Unix 秒</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/infra/status</code></td>
+<td>轻量：<code>docker_connected</code>、<code>compose_project</code>、<code>history_sample_count</code>、<code>last_collected_at</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/infra/timeseries</code></td>
+<td>历史曲线（<code>window=1h\|24h</code>，<code>container_id</code> 可选）</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/admin/infra/speed-test</code></td>
+<td>异步带宽测试（<code>direction</code>: download/upload/both）</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/admin/infra/speed-test/upload</code></td>
+<td>上传探针（<code>job_id</code> + <code>token</code>，无 Admin Key；有任务 TTL 与次数限制）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_18">环境变量<a class="headerlink" href="#_18" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CRABCACHE_COMPOSE_PROJECT</code></td>
+<td><code>crabcache</code></td>
+<td>用于过滤容器的 Docker Compose 项目名</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_DOCKER_HOST</code></td>
+<td><code>unix:///var/run/docker.sock</code></td>
+<td>Docker Engine API 地址</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_DOCKER_ALLOW_TCP</code></td>
+<td>（未设置）</td>
+<td>设为 <code>1</code> 时 Unix 失败才回退 <code>127.0.0.1:2375</code></td>
+</tr>
+<tr>
+<td><code>CRABCACHE_INFRA_CACHE_TTL_SECS</code></td>
+<td><code>5</code></td>
+<td>采集间隔下限参考（秒）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_INFRA_COLLECT_INTERVAL_SECS</code></td>
+<td><code>max(TTL,5)</code></td>
+<td>Docker 采集周期（秒）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_INFRA_SAMPLE_INTERVAL_SECS</code></td>
+<td><code>60</code></td>
+<td>写入历史环的采样周期（秒）</td>
+</tr>
+<tr>
+<td><code>CRABCACHE_SPEED_TEST_*</code></td>
+<td>见 <code>.env.example</code></td>
+<td>测速 URL 白名单、字节数、任务 TTL、上传上限等</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_19">部署要求<a class="headerlink" href="#_19" title="Permanent link">&para;</a></h3>
+<h2 id="data-plane">Data Plane 诊断<a class="headerlink" href="#data-plane" title="Permanent link">&para;</a></h2>
+<p>Data Plane 诊断页面 (<code>/dataplane</code>) 提供聚焦数据面性能的实时视图，从 Prometheus 和 PG trace_logs 聚合。</p>
+<h3 id="prometheus_2">新增 Prometheus 指标<a class="headerlink" href="#prometheus_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>类型</th>
+<th>标签</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway_cache_write_latency_seconds</code></td>
+<td>Histogram</td>
+<td><code>{tier}</code></td>
+<td>L0/L1 缓存写入准备延迟</td>
+</tr>
+<tr>
+<td><code>gateway_upstream_response_status_total</code></td>
+<td>Counter</td>
+<td><code>{status_class,pipeline}</code></td>
+<td>上游 HTTP 响应状态（2xx/3xx/4xx/5xx）</td>
+</tr>
+<tr>
+<td><code>gateway_coalesce_leader_total</code></td>
+<td>Counter</td>
+<td><code>{outcome}</code></td>
+<td>Request Coalescing Leader 选举结果</td>
+</tr>
+<tr>
+<td><code>gateway_coalesce_follower_total</code></td>
+<td>Counter</td>
+<td><code>{outcome}</code></td>
+<td>Request Coalescing Follower 去向（hit/fallthrough/timeout）</td>
+</tr>
+<tr>
+<td><code>gateway_trace_write_total</code></td>
+<td>Counter</td>
+<td><code>{sink,result}</code></td>
+<td>追踪日志写入状态（JSONL/PG，成功/失败）</td>
+</tr>
+<tr>
+<td><code>gateway_rejection_by_source_total</code></td>
+<td>Counter</td>
+<td><code>{source}</code></td>
+<td>按来源分类的拒绝计数（client/upstream）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="trace">新增 Trace 字段<a class="headerlink" href="#trace" title="Permanent link">&para;</a></h3>
+<p><code>trace.jsonl</code> 中每条记录新增 6 个可选字段：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>status_code</code></td>
+<td>int</td>
+<td>上游 HTTP 返回码</td>
+</tr>
+<tr>
+<td><code>error_code</code></td>
+<td>string</td>
+<td>结构化错误标识（<code>rate_limited</code>、<code>upstream_error</code> 等）</td>
+</tr>
+<tr>
+<td><code>limit_source</code></td>
+<td>string</td>
+<td>限流来源（<code>upstream_rate_limit</code>）</td>
+</tr>
+<tr>
+<td><code>cache_decision</code></td>
+<td>string</td>
+<td>缓存决策理由（<code>hit</code>、<code>miss</code>、<code>skip_coalesced</code>、<code>skip_passthrough</code>）</td>
+</tr>
+<tr>
+<td><code>upstream_result</code></td>
+<td>string</td>
+<td>上游结果分类（<code>success</code>、<code>429_rate_limited</code>、<code>401_unauthorized</code> 等）</td>
+</tr>
+<tr>
+<td><code>phase_durations_ms</code></td>
+<td>json</td>
+<td>每阶段耗时（ms），如 <code>{"body_read_done": 12.3, "cache_lookup_done": 0.8, ...}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="data-plane-admin-api">Data Plane Admin API<a class="headerlink" href="#data-plane-admin-api" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/dataplane/summary</code></td>
+<td>SLO 摘要：命中率、P95 延迟、错误率、节省成本</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/dataplane/phases</code></td>
+<td>各阶段 P50/P95/P99 延迟（ms）</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/dataplane/errors</code></td>
+<td>错误归因：拒绝原因、错误来源、PG 错误明细</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/admin/dataplane/slo</code></td>
+<td>SLO 合规：采样数、QPS、指标新鲜度</td>
+</tr>
+</tbody>
+</table>
+<h3 id="h3">H3 部署要求<a class="headerlink" href="#h3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Admin 容器必须挂载 <code>docker.sock</code>（只读）：
+  <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="nt">volumes</span><span class="p">:</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/run/docker.sock:/var/run/docker.sock:ro</span>
+</code></pre></div></li>
+<li><strong>安全</strong>：<code>docker.sock</code> 等价宿主机 root 权限。仅 Admin 容器使用只读挂载，且 Admin API 已由 <code>X-Admin-Key</code> 保护。将 Admin 暴露到公网时必须使用强密钥。</li>
+<li><strong>裸机开发</strong>：无 Docker Socket 时页面显示「Docker 不可用」提示，不影响其他 Admin 功能。</li>
+</ul>
+<h2 id="_20">限制<a class="headerlink" href="#_20" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Admin 指标历史现由 SQLite <code>data/metrics.sqlite</code> 持久化；重启 <code>crab-admin</code> 后时序数据从数据库恢复（网关上的 Counter 不受影响）。</li>
+<li>低流量部署可能显示不稳定的 5 分钟窗口速率，直到积累足够的样本。</li>
+<li>Overview <code>trace_summary</code> 在 Admin 服务器上缓存 60 秒（与 Trace 页面相比最多 1 分钟延迟）。</li>
+</ul>
+<h2 id="overview">Overview 验收清单<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<ol>
+<li>启动 <code>crab-gateway</code> 和 <code>crab-admin</code>；1–2 分钟后，时序条非空且 5 分钟命中率不显示"—"。</li>
+<li>L3 <strong>按模型</strong> 表格在有流量时显示行；<code>cost_saved_usd_total</code> 与 <code>:9090/metrics</code> 上的 <code>gateway_cache_cost_saved_usd_total</code> 匹配。</li>
+<li>网关配置中 <code>semantic.enabled = false</code> 时，Overview 显示已禁用徽标；Trace 横幅 <code>cache_hit_ratio</code> 与 Trace 页面 24h 值匹配。</li>
+<li>有负载时，Ops 行 TTFT/coalescing/rejected <strong>5m</strong> 值在 5 分钟窗口内变化。</li>
+<li>重启 <code>crab-admin</code> 后，时序曲线在 1–2 分钟内恢复；若网关同时重启，概览将显示 <code>HistoryMetaHint</code> 提示。</li>
+</ol>
+<p><strong>Admin 指标时序环</strong>现由 SQLite <code>data/metrics.sqlite</code> 持久化，重启 <code>crab-admin</code> 后从数据库恢复；若网关同时重启，累计值可能归零但历史曲线尚存。Key 配额等扩展字段见 <code>data/admin-state.json</code>（<a href="../PERSISTENCE/">PERSISTENCE.md</a>）。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
