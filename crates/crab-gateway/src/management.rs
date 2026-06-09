@@ -145,7 +145,7 @@ pub struct ManagementState {
     pub tiered_cache: Arc<TieredCache>,
     pub reasoning_store: Arc<ReasoningBackend>,
     pub state_store: Option<Arc<RedisStateStore>>,
-    pub reasoning_config: Arc<RwLock<ReasoningConfig>>,
+    pub reasoning_config: Arc<RwLock<Arc<ReasoningConfig>>>,
     pub admin_key: String,
     /// Global rate limiter bucket (used by some deployments; kept for compatibility).
     pub global_rate: Arc<pingora_limits::rate::Rate>,
@@ -2299,7 +2299,7 @@ async fn get_reasoning_runtime(
 ) -> Result<Json<ReasoningRuntimeConfigView>, Response> {
     authorize(&headers, &state.admin_key)?;
     let cfg = state.reasoning_config.read();
-    Ok(Json(reasoning_runtime_view(&cfg)))
+    Ok(Json(reasoning_runtime_view(&*cfg)))
 }
 
 async fn put_reasoning_runtime(
@@ -2337,30 +2337,33 @@ async fn put_reasoning_runtime(
             .into_response());
     }
 
-    let mut cfg = state.reasoning_config.write();
-    let display_reasoning_changed = cfg.display_reasoning != req.display_reasoning;
-    cfg.thinking_mode = thinking_mode;
-    cfg.reasoning_effort = req.reasoning_effort;
-    cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
-    cfg.display_reasoning = req.display_reasoning;
-    cfg.collapsible_reasoning = req.collapsible_reasoning;
+    let mut cfg_guard = state.reasoning_config.write();
+    let old: &ReasoningConfig = cfg_guard.as_ref();
+    let display_reasoning_changed = old.display_reasoning != req.display_reasoning;
+    let mut new_cfg = old.clone();
+    new_cfg.thinking_mode = thinking_mode;
+    new_cfg.reasoning_effort = req.reasoning_effort;
+    new_cfg.missing_reasoning_strategy = req.missing_reasoning_strategy;
+    new_cfg.display_reasoning = req.display_reasoning;
+    new_cfg.collapsible_reasoning = req.collapsible_reasoning;
 
     if display_reasoning_changed {
         tracing::warn!(
-            display_reasoning = cfg.display_reasoning,
+            display_reasoning = new_cfg.display_reasoning,
             "display_reasoning changed: invalidate L0/L1 cache (POST /v1/cache/invalidate scope=all) \
              or bump fingerprint to avoid stale SSE/content"
         );
     }
 
     tracing::info!(
-        thinking_mode = %cfg.thinking_mode,
-        missing_reasoning_strategy = %cfg.missing_reasoning_strategy,
+        thinking_mode = %new_cfg.thinking_mode,
+        missing_reasoning_strategy = %new_cfg.missing_reasoning_strategy,
         "Reasoning runtime config updated"
     );
 
-    let mut view = reasoning_runtime_view(&cfg);
+    let mut view = reasoning_runtime_view(&new_cfg);
     view.cache_invalidate_recommended = display_reasoning_changed;
+    *cfg_guard = Arc::new(new_cfg);
     Ok(Json(view))
 }
 

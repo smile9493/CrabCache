@@ -66,8 +66,8 @@ impl GatewayProxy {
         Self { state }
     }
 
-    pub(crate) fn reasoning_config(&self) -> ReasoningConfig {
-        self.state.reasoning_config.read().clone()
+    pub(crate) fn reasoning_config(&self) -> Arc<ReasoningConfig> {
+        Arc::clone(&self.state.reasoning_config.read())
     }
 
     pub(crate) fn authorize_client(

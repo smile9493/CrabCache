@@ -1460,7 +1460,7 @@ fn main() -> Result<()> {
     // The LB's built-in consecutive-threshold mechanism replaces our custom
     // BackendHealth + CircuitBreakerConfig + TCP health check thread.
 
-    let reasoning_config_shared = Arc::new(RwLock::new(reasoning_config));
+    let reasoning_config_shared = Arc::new(RwLock::new(Arc::new(reasoning_config)));
 
     let client_key_limiter = ClientKeyLimiter::new();
     client_key_limiter.sync_all_keys(&runtime.keys);

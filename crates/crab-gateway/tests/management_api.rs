@@ -45,7 +45,7 @@ async fn test_management_state() -> Option<ManagementState> {
         runtime: common::test_runtime(),
         tiered_cache,
         reasoning_store,
-        reasoning_config: Arc::new(RwLock::new(ReasoningConfig::default())),
+        reasoning_config: Arc::new(RwLock::new(Arc::new(ReasoningConfig::default()))),
         admin_key: "test-admin".to_string(),
         state_store: None,
         invalidate_all_in_progress: Arc::new(AtomicBool::new(false)),

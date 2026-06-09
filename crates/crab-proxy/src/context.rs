@@ -417,6 +417,15 @@ impl Default for UpstreamState {
     }
 }
 
+/// How a streaming response completion was determined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamCompletion {
+    /// Served from L0/L1 cache hit (no upstream call).
+    CacheHit,
+    /// Upstream aborted early; synthetic tail emitted.
+    SyntheticAbortTail,
+}
+
 /// Streaming response processing state (SSE rewriting, reasoning accumulation).
 #[derive(Default)]
 pub struct StreamState {
@@ -430,6 +439,8 @@ pub struct StreamState {
     pub client_sse_body: crate::stream_capture::StreamCapture,
     /// One-shot flag to avoid duplicate `stream_capture_truncated_total` increments.
     pub stream_capture_truncated_recorded: bool,
+    /// How the stream completion was determined (for metrics/logging).
+    pub stream_completion: Option<StreamCompletion>,
     pub pending_recovery_notice: Option<String>,
     /// One-shot warn when CursorDeepSeekV4 streams without `prepared_request`.
     pub reasoning_bypass_warned: bool,
@@ -550,8 +561,8 @@ pub struct GatewayContext {
     /// Accumulated response body for trace logging (non-streaming / streaming).
     /// Only populated when `trace_logging.max_response_preview_bytes > 0`.
     pub response_body_preview: Vec<u8>,
-    /// Per-request cached reasoning config snapshot (avoids repeated RwLock reads).
-    pub cached_reasoning_config: ReasoningConfig,
+    /// Per-request shared reference to reasoning config snapshot (cheap Arc::clone, avoids repeated RwLock reads and deep copies).
+    pub cached_reasoning_config: Arc<ReasoningConfig>,
     /// Session fingerprint derived from the first user message (SHA-256 prefix).
     /// Computed once in `request_filter` and shared by trace logger + raw capture.
     pub session_fingerprint: Option<String>,
@@ -630,7 +641,7 @@ impl GatewayContext {
             upstream: UpstreamState::default(),
             stream: StreamState::default(),
             response_body_preview: Vec::new(),
-            cached_reasoning_config: ReasoningConfig::default(),
+            cached_reasoning_config: Arc::new(ReasoningConfig::default()),
             session_fingerprint: None,
             stable_session_kind: None,
             affinity_prompt_cache_hits: 0,
@@ -1084,7 +1095,7 @@ pub struct GatewayState {
     /// Client-controlled idempotency store (short-lived dedup for retries).
     pub idempotency: Arc<crab_cache::IdempotencyStore>,
     pub reasoning_store: Arc<ReasoningBackend>,
-    pub reasoning_config: Arc<parking_lot::RwLock<ReasoningConfig>>,
+    pub reasoning_config: Arc<parking_lot::RwLock<Arc<ReasoningConfig>>>,
     pub cors_enabled: Arc<AtomicBool>,
     pub trace_logger: Option<Arc<TraceLogger>>,
     pub raw_capture_logger: Option<Arc<RawCaptureLogger>>,
