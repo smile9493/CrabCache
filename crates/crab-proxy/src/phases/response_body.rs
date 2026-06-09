@@ -211,12 +211,54 @@ pub(crate) fn run(
         }
 
         if !ctx.is_streaming {
-            ctx.accumulated_body.extend_from_slice(&data);
-            ctx.response_body_preview.extend_from_slice(&data);
+            if ctx.non_stream_body_truncated {
+                // Already exceeded limit for non-error responses; skip accumulation.
+            } else {
+                ctx.accumulated_body.extend_from_slice(&data);
+                ctx.response_body_preview.extend_from_slice(&data);
+                // Enforce non-streaming memory bounds on successful responses.
+                // Error responses (>= 400) are always small and should be accumulated fully.
+                if !upstream_error {
+                    let max_sse = proxy.state.max_sse_cache_bytes;
+                    if max_sse > 0 && ctx.accumulated_body.len() > max_sse {
+                        ctx.non_stream_body_truncated = true;
+                        warn!(
+                            request_id = %ctx.request_id,
+                            body_len = ctx.accumulated_body.len(),
+                            limit = max_sse,
+                            "Non-streaming upstream response exceeded max_sse_cache_bytes; will reject at EOS"
+                        );
+                        const NON_STREAMING_TAIL: usize = 256;
+                        if ctx.accumulated_body.len() > NON_STREAMING_TAIL {
+                            let drain = ctx.accumulated_body.len() - NON_STREAMING_TAIL;
+                            ctx.accumulated_body.drain(..drain);
+                        }
+                    }
+                }
+            }
         }
 
         if ctx.is_streaming && ctx.upstream.error_passthrough {
+            let max_sse = proxy.state.max_sse_cache_bytes;
+            if max_sse > 0
+                && !ctx.non_stream_body_truncated
+                && ctx.accumulated_body.len() + data.len() > max_sse
+            {
+                ctx.non_stream_body_truncated = true;
+                warn!(
+                    request_id = %ctx.request_id,
+                    limit = max_sse,
+                    "Streaming error-passthrough accumulated_body exceeded limit"
+                );
+            }
             ctx.accumulated_body.extend_from_slice(&data);
+            if ctx.non_stream_body_truncated {
+                // Tail retention for diagnostics; the actual error body is constructed at EOS.
+                const STREAMING_TAIL_CAP: usize = 64 * 1024; // 64 KiB
+                if ctx.accumulated_body.len() > STREAMING_TAIL_CAP {
+                    ctx.accumulated_body.drain(..(ctx.accumulated_body.len() - STREAMING_TAIL_CAP));
+                }
+            }
             if end_of_stream {
                 let status = ctx.upstream.http_status.unwrap_or(500);
                 let client_body = upstream_error_body_for_client(ctx, status);
@@ -248,10 +290,8 @@ pub(crate) fn run(
                     select_sse_pipeline(ctx, proxy.state.reasoning_store.clone());
             }
 
-            // Configure StreamCapture memory limit on first streaming chunk.
-            if ctx.stream.client_sse_body.max_bytes() == 0 {
-                ctx.stream.client_sse_body.reconfigure(proxy.state.max_sse_cache_bytes);
-            }
+            // Apply the configured StreamCapture memory limit (picks up runtime config changes).
+            ctx.stream.client_sse_body.reconfigure(proxy.state.max_sse_cache_bytes);
 
             // Detect rate-limit errors embedded in SSE data chunks.
             // Only cooldown the key — do NOT acquire a new key because the upstream
@@ -302,6 +342,7 @@ pub(crate) fn run(
                 // Enforce streaming memory bounds on accumulated_body.
                 let max_sse = proxy.state.max_sse_cache_bytes;
                 if max_sse > 0 && ctx.accumulated_body.len() > max_sse {
+                    ctx.non_stream_body_truncated = true;
                     const STREAMING_TAIL_CAP: usize = 64 * 1024; // 64 KiB
                     if ctx.accumulated_body.len() > STREAMING_TAIL_CAP {
                         ctx.accumulated_body.drain(..(ctx.accumulated_body.len() - STREAMING_TAIL_CAP));
@@ -373,6 +414,32 @@ pub(crate) fn run(
     }
 
     if end_of_stream && !ctx.is_streaming {
+        // Reject non-streaming responses that exceeded the memory limit.
+        // Non-streaming responses are JSON; truncation would corrupt them, so
+        // we return an error body instead.
+        if ctx.non_stream_body_truncated {
+            // CRITICAL: mark coalesce complete before returning to prevent follower hangs.
+            if let Some(guard) = &ctx.coalesce_guard {
+                guard.mark_completed();
+            }
+            warn!(
+                request_id = %ctx.request_id,
+                limit = proxy.state.max_sse_cache_bytes,
+                "Non-streaming response body too large; returning 502-style error"
+            );
+            let error_json = serde_json::json!({
+                "error": {
+                    "message": "upstream response body too large",
+                    "type": "server_error",
+                    "code": "upstream_body_too_large"
+                }
+            });
+            *body = Some(bytes::Bytes::from(
+                serde_json::to_vec(&error_json).unwrap_or_default(),
+            ));
+            return Ok(None);
+        }
+
         if ctx.upstream.http_status.is_some_and(|s| s >= 400) {
             let status = ctx.upstream.http_status.unwrap_or(500);
             let client_body = format_upstream_error_for_client(&ctx.accumulated_body, status);

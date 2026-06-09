@@ -431,6 +431,8 @@ pub enum StreamCompletion {
 pub struct StreamState {
     pub accumulator: Option<StreamAccumulator>,
     pub display_adapter: Option<CursorReasoningDisplayAdapter>,
+    /// How the stream completed (for metrics/tracing).
+    pub stream_completion: Option<StreamCompletion>,
     /// Set when streaming SSE receives upstream `[DONE]` and reasoning was stored.
     pub reasoning_finalized: bool,
     /// Incomplete SSE line bytes spanning upstream body chunks.
@@ -517,6 +519,9 @@ pub struct GatewayContext {
     pub request_start: Instant,
     pub ttft: Option<std::time::Duration>,
     pub accumulated_body: Vec<u8>,
+    /// Non-streaming upstream response exceeded `max_sse_cache_bytes`; further
+    /// chunks are dropped and EOS returns an error body to the client.
+    pub non_stream_body_truncated: bool,
     pub is_coalesced_follower: bool,
     pub coalesce_guard: Option<CoalesceGuard>,
     pub original_request_body: Option<Bytes>,
@@ -613,6 +618,7 @@ impl GatewayContext {
             request_start: Instant::now(),
             ttft: None,
             accumulated_body: Vec::new(),
+            non_stream_body_truncated: false,
             is_coalesced_follower: false,
             coalesce_guard: None,
             original_request_body: None,

@@ -114,6 +114,11 @@ impl StreamCapture {
     /// If the current buffer already exceeds the new limit, it is trimmed
     /// to `tail_capacity` and `over_limit` is set.
     pub fn reconfigure(&mut self, max_bytes: usize) {
+        if max_bytes == 0 {
+            self.max_bytes = 0;
+            self.over_limit = false;
+            return;
+        }
         self.max_bytes = max_bytes;
         if self.buffer.len() > self.max_bytes && !self.over_limit {
             self.over_limit = true;
@@ -138,12 +143,16 @@ impl StreamCapture {
 }
 
 impl Default for StreamCapture {
-    /// Default: no limit (max_bytes = 0 means unbounded, matching original Vec<u8> behavior).
+    /// Default: 512 KiB tail-only retention buffer.
+    ///
+    /// This is a safety net against unbounded memory growth. Callers that need
+    /// a different limit should use `new(max_bytes)` or call `reconfigure()`.
+    /// A `max_bytes` of `0` still means unbounded (for explicit opt-in).
     fn default() -> Self {
         Self {
             buffer: Vec::new(),
             total_seen: 0,
-            max_bytes: 0, // 0 = no limit
+            max_bytes: 512 * 1024, // 512 KiB
             tail_capacity: DEFAULT_TAIL_CAPACITY,
             over_limit: false,
         }
@@ -232,7 +241,7 @@ mod tests {
 
     #[test]
     fn default_no_limit() {
-        let mut cap = StreamCapture::default();
+        let mut cap = StreamCapture::new(0); // explicit unbounded, not Default
         // Write a lot of data — should not be limited
         let data = vec![0u8; 1_000_000];
         cap.extend_from_slice(&data);
@@ -241,8 +250,14 @@ mod tests {
     }
 
     #[test]
+    fn default_has_512kib_limit() {
+        let cap = StreamCapture::default();
+        assert_eq!(cap.max_bytes(), 512 * 1024);
+    }
+
+    #[test]
     fn reconfigure_applies_new_limit() {
-        let mut cap = StreamCapture::default(); // no limit
+        let mut cap = StreamCapture::new(100);
         cap.extend_from_slice(b"0123456789"); // 10 bytes
         assert!(!cap.is_over_limit());
 
@@ -254,7 +269,7 @@ mod tests {
 
     #[test]
     fn reconfigure_with_small_tail() {
-        let mut cap = StreamCapture::default(); // no limit
+        let mut cap = StreamCapture::new(100);
         cap.extend_from_slice(b"0123456789"); // 10 bytes
 
         let mut cap2 = StreamCapture::with_tail_capacity(5, 3);
