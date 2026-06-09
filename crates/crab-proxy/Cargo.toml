@@ -50,6 +50,7 @@ bb8-redis.workspace = true
 redis.workspace = true
 once_cell.workspace = true
 reqwest.workspace = true
+smallvec.workspace = true
 
 [features]
 default = []

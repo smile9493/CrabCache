@@ -342,7 +342,7 @@ pub(crate) async fn run(
                     None
                 };
                 entry.guardrail_blocked = ctx.guardrail_blocked;
-                entry.guardrail_labels = ctx.guardrail_hits.clone();
+                entry.guardrail_labels = ctx.guardrail_hits.to_vec();
                 entry.client_ip = ctx.client_ip.clone();
                 entry.client_peer_addr = ctx.client_peer_addr.clone();
                 entry.client_kind = Some(ctx.client_kind.as_str().to_string());

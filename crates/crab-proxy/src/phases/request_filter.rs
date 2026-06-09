@@ -518,7 +518,7 @@ async fn run_post_body_phases(
     if direct_mimo {
         if let Some(payload) = guardrail_payload.as_ref() {
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
-            ctx.guardrail_hits = guardrail.labels.clone();
+            ctx.guardrail_hits = smallvec::SmallVec::from(guardrail.labels.clone());
             ctx.guardrail_blocked = guardrail.blocked;
             if !guardrail.labels.is_empty() {
                 warn!(
@@ -644,7 +644,7 @@ async fn run_post_body_phases(
             && let Some(payload) = guardrail_payload.as_ref()
         {
             let guardrail = evaluate_request_guardrails(payload, &session.req_header().headers);
-            ctx.guardrail_hits = guardrail.labels.clone();
+            ctx.guardrail_hits = smallvec::SmallVec::from(guardrail.labels.clone());
             ctx.guardrail_blocked = guardrail.blocked;
             if !guardrail.labels.is_empty() {
                 warn!(
